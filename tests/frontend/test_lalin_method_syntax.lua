@@ -6,33 +6,39 @@ local Expr = require("lalin.syntax.expr")
 local Decl = require("lalin.syntax.decl")
 local Ast = require("lalin.syntax.ast")
 local Document = require("lalin.syntax.document")
+local lalin_syntax = require("lalin.syntax")
+local asdl = require("lalin.asdl")
+local T = asdl.context()
+require("lalin.schema_projection")(T)
+local ToTree = require("lalin.syntax.to_tree")(T)
+local Tr = T.LalinTree
 
 -- Test 1: basic method call
 local lex = Lexer.new("p:norm()", "@test1")
 local ast = Expr.parse(lex, { add_ref = function() end })
-assert(ast.tag == "Call", "should be a Call node")
-assert(ast.callee.tag == "Name" and ast.callee.name == "norm", "callee should be Name(norm)")
-assert(#ast.args == 1 and ast.args[1].tag == "Name" and ast.args[1].name == "p",
-  "first arg should be Name(p)")
-print("Test 1: p:norm() -> norm(p) OK")
+assert(ast.tag == "MethodCall", "should be a MethodCall node")
+assert(ast.name == "norm", "method name should be norm")
+assert(ast.receiver.tag == "Name" and ast.receiver.name == "p", "receiver should be Name(p)")
+assert(#ast.args == 0, "method call stores explicit args separately from receiver")
+print("Test 1: p:norm() preserves method-call intent OK")
 
 -- Test 2: method call with arguments
 local lex2 = Lexer.new("obj:method(a, b)", "@test2")
 local ast2 = Expr.parse(lex2, { add_ref = function() end })
-assert(ast2.tag == "Call", "should be Call")
-assert(ast2.callee.name == "method", "callee name")
-assert(#ast2.args == 3, "should have 3 args (obj, a, b)")
-assert(ast2.args[1].name == "obj", "first arg is self")
-assert(ast2.args[2].name == "a", "second arg is a")
-assert(ast2.args[3].name == "b", "third arg is b")
-print("Test 2: obj:method(a,b) -> method(obj,a,b) OK")
+assert(ast2.tag == "MethodCall", "should be MethodCall")
+assert(ast2.name == "method", "method name")
+assert(ast2.receiver.name == "obj", "receiver is obj")
+assert(#ast2.args == 2, "should have 2 explicit args (a, b)")
+assert(ast2.args[1].name == "a", "first explicit arg is a")
+assert(ast2.args[2].name == "b", "second explicit arg is b")
+print("Test 2: obj:method(a,b) preserves receiver + args OK")
 
 -- Test 3: chained method calls
 local lex3 = Lexer.new("p:norm():other()", "@test3")
 local ast3 = Expr.parse(lex3, { add_ref = function() end })
-assert(ast3.tag == "Call" and ast3.callee.name == "other", "outer call")
-assert(ast3.args[1].tag == "Call" and ast3.args[1].callee.name == "norm", "inner call")
-print("Test 3: p:norm():other() -> other(norm(p)) OK")
+assert(ast3.tag == "MethodCall" and ast3.name == "other", "outer method call")
+assert(ast3.receiver.tag == "MethodCall" and ast3.receiver.name == "norm", "inner method call")
+print("Test 3: p:norm():other() preserves nested method-call intent OK")
 
 -- Test 4: method in document context
 local doc_src = [=[
@@ -51,9 +57,9 @@ assert(#doc.body[2].body == 1, "fn body has 1 stmt")
 local ret_stmt = doc.body[2].body[1]
 assert(ret_stmt.tag == "StmtReturn", "return stmt")
 local expr = ret_stmt.values[1]
-assert(expr.tag == "Call", "method desugars to Call")
-assert(expr.callee.name == "g", "callee is g")
-assert(expr.args[1].name == "self", "self is first arg")
+assert(expr.tag == "MethodCall", "method parses as MethodCall")
+assert(expr.name == "g", "method is g")
+assert(expr.receiver.name == "self", "receiver is self")
 print("Test 4: method in document OK")
 
 -- Test 5: method call with self as ptr arg to another function
@@ -75,20 +81,20 @@ assert(doc2.body[3].tag == "DeclFunc", "caller fn parsed")
 local ret_stmt2 = doc2.body[3].body[1]
 assert(ret_stmt2.tag == "StmtReturn")
 local call_expr = ret_stmt2.values[1]
-assert(call_expr.tag == "Call" and call_expr.callee.name == "helper",
-  "method desugars to helper call")
-assert(call_expr.args[1].name == "p", "self is p")
-assert(call_expr.args[2].value == 3, "second arg is 3")
-print("Test 5: p:helper(3) -> helper(p, 3) OK")
+assert(call_expr.tag == "MethodCall" and call_expr.name == "helper",
+  "method parses as helper MethodCall")
+assert(call_expr.receiver.name == "p", "receiver is p")
+assert(call_expr.args[1].value == 3, "first explicit arg is 3")
+print("Test 5: p:helper(3) preserves receiver and explicit arg OK")
 
 -- Test 6: zero-arg method
 local lex6 = Lexer.new("list:clear()", "@test6")
 local ast6 = Expr.parse(lex6, { add_ref = function() end })
-assert(ast6.tag == "Call" and ast6.callee.name == "clear",
-  "zero-arg method should desugar to clear(list)")
-assert(#ast6.args == 1 and ast6.args[1].name == "list",
-  "one arg (self) for zero-arg method")
-print("Test 6: list:clear() -> clear(list) OK")
+assert(ast6.tag == "MethodCall" and ast6.name == "clear",
+  "zero-arg method should parse as MethodCall")
+assert(ast6.receiver.name == "list" and #ast6.args == 0,
+  "receiver plus zero explicit args")
+print("Test 6: list:clear() preserves receiver and zero explicit args OK")
 
 -- Test 7: qualified function fn Point.norm(...)
 local doc7_src = [=[
@@ -116,6 +122,29 @@ assert(doc8.env.Point.norm.tag == "DeclFunc" and doc8.env.Point.norm.name == "no
   "Point.norm should be the norm function")
 assert(doc8.env.norm ~= nil, "norm should also be in env for method dispatch")
 print("Test 8: env binding fn Point.norm -> Point.norm = <function> OK")
+
+-- Test 8b: Lua-style colon method declaration injects self
+local doc8b_src = [=[
+struct Point
+  x [i32]
+  y [i32]
+end
+
+fn Point:sum() [i32]
+  return self.x + self.y
+end
+]=]
+local doc8b = Document.parse(doc8b_src, "@test8b.lln")
+local fn8b = doc8b.body[2]
+assert(fn8b.tag == "DeclFunc" and fn8b.name == "sum", "colon method fn parsed")
+assert(fn8b.implicit_self == true, "colon method records implicit self")
+assert(#fn8b.qualifier == 1 and fn8b.qualifier[1] == "Point", "colon method stores owner qualifier")
+assert(#fn8b.params == 1 and fn8b.params[1].name == "self" and fn8b.params[1].implicit == true, "colon method injects self param")
+local decls8b, mat8b = Document.materialize(doc8b)
+assert(mat8b.env.Point.sum ~= nil and mat8b.env.sum ~= nil, "colon method binds like qualified dot method")
+local module8b = require("lalin.syntax").to_module(doc8b, "colon_method_doc")
+assert(#module8b.items[2].func.params == 1 and module8b.items[2].func.params[1].name == "self", "colon method self lowers as first function param")
+print("Test 8b: fn Point:sum() injects self and binds as Point.sum OK")
 
 -- Test 9: deep qualification fn Deep.Point.norm(...) in document
 local doc9_src = [=[
@@ -179,6 +208,32 @@ assert(doc11.env.open ~= nil, "open in env scope")
 assert(doc11.env.Ref ~= nil, "Ref in env scope")
 print("Test 11: qualified region/handle env bindings OK")
 
+-- Test 11b: Lua-style colon region declaration injects self
+local doc11b_src = [=[
+struct Store
+  n [index]
+end
+
+region Store:borrow(ref [i32];
+  borrowed,
+  missing
+)
+  entry start()
+    jump missing
+  end
+end
+]=]
+local doc11b = Document.parse(doc11b_src, "@test11b.lln")
+local reg11b = doc11b.body[2]
+assert(reg11b.tag == "DeclRegion" and reg11b.name == "borrow", "colon region parsed")
+assert(reg11b.implicit_self == true, "colon region records implicit self")
+assert(#reg11b.inputs == 2 and reg11b.inputs[1].name == "self" and reg11b.inputs[1].implicit == true, "colon region injects self input")
+local module11b = lalin_syntax.to_module(doc11b, "colon_region_doc", T)
+assert(asdl.classof(module11b.items[2]) == Tr.ItemRegion, "colon region lowers to ItemRegion")
+assert(module11b.items[2].region.name == "Store.borrow", "colon region keeps qualified compiler name")
+assert(#module11b.items[2].region.params == 2 and module11b.items[2].region.params[1].name == "self", "colon region self lowers as first input")
+print("Test 11b: region Store:borrow(...) injects self OK")
+
 -- Test 12: region call syntax mirrors declaration signature
 local Stmt = require("lalin.syntax.stmt")
 local lex12 = Lexer.new('call Connection.open("localhost:8080"; connected = handle, refused = retry, timeout = retry)', "@test12")
@@ -204,11 +259,6 @@ assert(stmt13.cont_wiring[1].name == "borrowed" and stmt13.cont_wiring[1].target
 print("Test 13: emit Region(args; cont = block) parses OK")
 
 -- Test 14: region invocation lowers to explicit ASDL leaves
-local asdl = require("lalin.asdl")
-local T = asdl.context()
-require("lalin.schema_projection")(T)
-local ToTree = require("lalin.syntax.to_tree")(T)
-local Tr = T.LalinTree
 local lowered12 = ToTree.stmt(stmt12)
 assert(asdl.classof(lowered12) == Tr.StmtRegionCall, "call region should lower to StmtRegionCall")
 assert(lowered12.target.path.parts[1].text == "Connection" and lowered12.target.path.parts[2].text == "open", "region target path lowered")
@@ -220,7 +270,6 @@ assert(#lowered13.args == 2 and #lowered13.wiring == 3, "emit args/wiring lowere
 print("Test 14: region invocation lowers to ASDL leaves OK")
 
 -- Test 15: parsed region declarations lower to ItemRegion
-local lalin_syntax = require("lalin.syntax")
 local module15 = lalin_syntax.to_module(doc10, "region_doc", T)
 assert(asdl.classof(module15.items[2]) == Tr.ItemRegion, "DeclRegion should lower to ItemRegion")
 assert(module15.items[2].region.name == "Connection.open", "qualified region item keeps compiler path name")
@@ -228,5 +277,25 @@ assert(#module15.items[2].region.params == 1, "region input params lowered")
 assert(#module15.items[2].region.conts == 2, "region continuations lowered")
 assert(asdl.classof(module15.items[2].region.entry.body[1]) == Tr.StmtJumpCont, "jump to declared continuation retargeted")
 print("Test 15: parsed DeclRegion lowers to ItemRegion OK")
+
+-- Test 16: jump payload bare-name shorthand means name = name
+local doc16_src = [=[
+region Parse.step(pos [index], code [i32];
+  failed(pos [index], code [i32])
+)
+  entry start()
+    jump failed(pos, code)
+  end
+end
+]=]
+local doc16 = Document.parse(doc16_src, "@test16.lln")
+local jump16 = doc16.body[1].blocks[1].body[1]
+assert(jump16.tag == "StmtJump", "jump parsed")
+assert(jump16.payload[1].key == "pos" and jump16.payload[1].value.name == "pos" and jump16.payload[1].shorthand == true, "pos shorthand parsed as pos=pos")
+assert(jump16.payload[2].key == "code" and jump16.payload[2].value.name == "code" and jump16.payload[2].shorthand == true, "code shorthand parsed as code=code")
+local module16 = lalin_syntax.to_module(doc16, "jump_shorthand_doc", T)
+local args16 = module16.items[1].region.entry.body[1].args
+assert(args16[1].name == "pos" and args16[2].name == "code", "jump shorthand lowers to named JumpArg")
+print("Test 16: jump failed(pos, code) -> failed(pos=pos, code=code) OK")
 
 print("\nAll method syntax tests passed!")

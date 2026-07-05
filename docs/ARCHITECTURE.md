@@ -237,7 +237,7 @@ ASDL first; nullary variants also receive methods directly with normal
 
 | File | Role |
 |------|------|
-| `lua/lalin/frontend_pipeline.lua` | Orchestrates DSL→Tree→Typecheck→Code pipeline. Entry points: `typecheck_module`, `checked_to_code_result`, `code_result_to_back`, `code_result_to_c`. |
+| `lua/lalin/frontend_pipeline.lua` | Orchestrates DSL→Tree→Typecheck→Code pipeline. Entry points: `typecheck_module`, `checked_to_code_result`, `code_result_to_c`. |
 | `lua/lalin/tree_typecheck.lua` | Typecheck entrypoint and remaining stage orchestration while LalinTree methods are being split out. |
 | `lua/lalin/tree_typecheck_type.lua` | Type-owned typecheck semantics for `LalinType` and literals. |
 | `lua/lalin/tree_typecheck_expr.lua` | Expression/ref-owned typecheck semantics for `LalinTree.Expr*` and `LalinBind.ValueRef*`. |
@@ -246,7 +246,6 @@ ASDL first; nullary variants also receive methods directly with normal
 | `lua/lalin/tree_stmt_type.lua` | Statement-level type operations (termination, etc.). |
 | `lua/lalin/tree_place_type.lua` | Place (lvalue) type inference. |
 | `lua/lalin/tree_module_type.lua` | Module-level type resolution, type environments, imports. |
-| `lua/lalin/tree_field_resolve.lua` | Field resolution — struct.field to types and offsets. |
 | `lua/lalin/tree_contract_facts.lua` | Contract facts from function declarations (bounds, disjointness, SoA). |
 | `lua/lalin/tree_control_facts.lua` | Control-flow facts from control regions (entry/block/continuation). |
 | `lua/lalin/tree_to_code.lua` | Typed AST to `LalinCode` lowering; ASDL classes own tree→code methods. |
@@ -266,7 +265,6 @@ ASDL first; nullary variants also receive methods directly with normal
 | `lua/lalin/code_schedule_plan.lua` | Schedule planning — assigns scalar/vector/closed-form strategies per kernel; schedule selection is typed ASDL behavior. |
 | `lua/lalin/code_lower_plan.lua` | Lowering strategy — decides code/kernel/closed-form per fragment; lower-fragment selection is typed ASDL behavior. |
 | `lua/lalin/code_aggregate_abi.lua` | Aggregate type ABI classification — scalar/view/slice/bytespan/aggregate. |
-| `lua/lalin/code_to_back.lua` | Maps `LalinCode` types/shapes to `LalinBack` back IR. |
 | `lua/lalin/code_to_c.lua` | Maps `LalinCode` types/shapes to `LalinC` C IR. |
 
 ### Stencil & Execution Plans
@@ -278,7 +276,6 @@ ASDL first; nullary variants also receive methods directly with normal
 | `lua/lalin/stencil_artifact_plan.lua` | Generates canonical stencil artifacts: `store_n`, `reduce_n`, `scan_n`, and scatter-reduce descriptors. Store-shaped loops are `store_n` with explicit point body, sink, and layout modes. |
 | `lua/lalin/stencil_c.lua` | Generates complete C translation units for the separate C/AOT artifact path; it is not the native template-bank source path. |
 | `lua/lalin/stencil_metastencil.lua` | Stencil matching/support analysis for non-native experiments; it is not a native-bank equivalence layer. |
-| `lua/lalin/stencil_support_matrix.lua` | Declares stencil operation support for semantic planning and diagnostics. |
 
 ### Explicit LuaJIT Bytecode Backend
 
@@ -300,8 +297,8 @@ ASDL first; nullary variants also receive methods directly with normal
 | `lua/lalin/native.lua` | Core `LalinNative` methods: compile request, equality, patch writes, ABI-projection calls. |
 | `lua/lalin/native_mc.lua` | Imports embedded template banks, selects copy plans, lays out copied code/constants, applies relocations and patches, and installs executable memory. |
 | `lua/lalin/native_object.lua` | Internal ELF64/x64 object parser used by the offline bank generator/verifier. |
-| `lua/lalin/native_template_sources.lua` | ASDL leaf-owned C-stencil source generation from support domains and manifests. |
-| `lua/lalin/native_template_support.lua` | Constructors/helpers for native support domains, manifests, generators, signatures, and ABI projections. |
+| `lua/lalin/native_template_sources.lua` | ASDL leaf-owned C-stencil source generation from complete-bank capabilities, subset helpers, and manifests. |
+| `lua/lalin/native_template_support.lua` | Constructors/helpers for native complete-bank/subset capabilities, manifests, generators, signatures, and ABI micro-op classes. |
 | `lua/lalin/native_code_methods.lua` | Native lowering methods owned by `LalinCode` leaves. |
 | `lua/lalin/native_kernel_methods.lua` | Native lowering methods owned by `LalinKernel` leaves. |
 | `lua/lalin/native_stencil_methods.lua` | Native lowering methods owned by `LalinStencil` leaves. |
@@ -315,7 +312,6 @@ ASDL first; nullary variants also receive methods directly with normal
 | `lua/lalin/c_validate.lua` | Validates C IR invariants. |
 | `lua/lalin/c_helpers.lua` | C helper function library for stencil operations. |
 | `lua/lalin/c_tcc.lua` | Legacy in-process C tooling boundary; not part of runtime native copy-patch compilation. |
-| `lua/lalin/c_abi.lua` | C ABI classification — how types are passed/returned. |
 | `lua/lalin/c_coverage.lua` | Explicit C-backend support diagnostics; not native compiler coverage accounting. |
 
 ### Compiler Process
@@ -323,7 +319,7 @@ ASDL first; nullary variants also receive methods directly with normal
 | File | Role |
 |------|------|
 | `lua/lalin/compiler_driver.lua` | Public orchestration boundary — lowers modules through the compiler-process graph. |
-| `lua/lalin/compiler_package.lua` | Defines the compiler process as a `LalinPhase` package with worlds, machines, phases, roots. `LalinPhase` is process vocabulary, not the removed PVM recording runtime. |
+| `lua/lalin/compiler_package.lua` | Defines the compiler process as a `LalinPhase` package with worlds, machines, phases, roots. |
 | `lua/lalin/compiler_machines.lua` | Concrete machine implementations (typecheck, checked→c_code, code→c). |
 | `lua/lalin/compiler_model.lua` | Loads full schema into a context. |
 | `lua/lalin/compiler_abi.lua` | CodeResult ABI validation. |
@@ -339,8 +335,6 @@ ASDL first; nullary variants also receive methods directly with normal
 |------|------|
 | `lua/lalin/back_program.lua` | Back IR program construction utilities. |
 | `lua/lalin/back_inspect.lua` | Inspection/debug tools for back IR. |
-| `lua/lalin/back_command_binary.lua` | External compiler invocation for explicit offline/AOT tooling; not used by runtime native copy-patch compilation. |
-| `lua/lalin/back_provenance.lua` | Provenance tracking for back IR values. |
 | `lua/lalin/back_target_model.lua` | Target model — CPU features, ABI, capabilities. |
 | `lua/lalin/back_validate.lua` | Back IR validation. |
 
@@ -366,7 +360,6 @@ ASDL first; nullary variants also receive methods directly with normal
 |------|------|
 | `lua/lalin/source_anchor_index.lua` | Source anchor index — maps positions to anchors. |
 | `lua/lalin/source_position_index.lua` | Line/column position index. |
-| `lua/lalin/source_map.lua` | Source location mapping utilities. |
 | `lua/lalin/source_analysis.lua` | Source analysis utilities. |
 | `lua/lalin/source_text_apply.lua` | Source text manipulation operations. |
 
@@ -397,8 +390,6 @@ ASDL first; nullary variants also receive methods directly with normal
 | `lua/lalin/project_asdl.lua` | Project ASDL utilities. |
 | `lua/lalin/project_ready_facts.lua` | Project readiness facts. |
 | `lua/lalin/project_report.lua` | Project report generation. |
-| `lua/lalin/buffer_view.lua` | Buffer view utilities. |
-| `lua/lalin/flatline.lua` | Flatline — debug representation for ASDL values. |
 
 ---
 
@@ -426,10 +417,9 @@ the ASDL types for that domain:
 | `native.lua` | NativeTemplateBankRequest/Manifest, template sources, object facts, copy plans, patch coordinates, ABI projections |
 | `back.lua` | BackTargetModel, BackFunc, BackBlock, BackInst, BackProgram |
 | `c.lua` | CBackendUnit, CBackendFunc, CBackendType, CBackendStmt |
-| `c_ast.lua` | C AST node types |
 | `luajit.lua` | LJModule, LJFunc, LJBlock, LJExpr, LJInst, LJCType, LJStencilMachine |
 | `luatrace.lua` | LuaTrace trace descriptors, BC bank types |
-| `compiler.lua` | CodeResult, FlatlineImageIssue |
+| `compiler.lua` | CodeResult |
 | `phase.lua` | Package, World, Machine, Phase, Root, Plan, PlanStep |
 | `bind.lua` | Binding, ValueRef |
 | `sem.lua` | FieldRef, FieldLayout, TypeLayout, LayoutEnv, ConstValue |
@@ -437,7 +427,6 @@ the ASDL types for that domain:
 | `host.lua` | Host field representation |
 | `parse.lua` | Parse tree types |
 | `source.lua` | Source location types |
-| `mlua.lua` | MLua document analysis |
 | `project.lua` | Project structure |
 
 ---
@@ -474,14 +463,16 @@ families exist in the bank. Patch identity is node/instance-scoped so the same
 compiled template can be copied repeatedly with different frame offsets,
 constants, continuations, or runtime capabilities.
 
-The source side is manifest-first: a `NativeTemplateSupportDomain` records scalar
-support, ABI adapter support, code/kernel/stencil source-shape support, frame
-limits, atomics, and constant-pool capabilities; it computes a
-`NativeTemplateSourceManifest` and then emits exactly matching
-`NativeTemplateSource` values. `LalinCode` uses ABI, storage/layout,
-module-address, and call projections. `LalinKernel` and `LalinStencil` split
-program-specific projections/lowering inputs from finite source-shape axes so
-bank families never carry concrete program bodies as identity.
+The source side is manifest-first: `NativeCompleteBankCapability` records closed
+target, scalar/value, logical-location, Code, ABI, Kernel, Stencil, runtime,
+frame, atomic, and constant-pool capability classes. It computes a
+`NativeTemplateSourceManifest` and emits exactly matching `NativeTemplateSource`
+values. Subset support helpers exist for tests and target subsets only; they are
+not complete-bank coverage. `LalinCode`, `LalinKernel`, and `LalinStencil` use
+program-specific projections/lowering inputs for layout, ABI, address, proof, and
+runtime facts, then compose primitive micro-op graph nodes. Bank families never
+carry concrete program bodies, full signatures, field names, ranks, raw counts,
+sizes, strides, scales, steps, or flag strings as identity.
 
 ## Explicit LuaJIT Bytecode Mode
 
@@ -499,6 +490,38 @@ LalinCode facts
 
 The bytecode path may build bytecode artifacts in-process because bytecode is
 its own selected artifact form. It does not satisfy a missing native bank.
+
+## Lua C API Extern Boundary
+
+The hosted runtime is reachable through the ordinary C extern machinery. Lua C
+API entry points are not special compiler intrinsics: they are extern symbols
+with typed signatures, runtime-symbol addresses, and the same call planning as
+other C functions.
+
+```text
+Lalin extern declaration
+  -> LalinCode.CodeExtern
+  -> native runtime symbol / C extern symbol
+  -> ordinary call lowering
+```
+
+This is deliberately only the substrate. Direct calls to `lua_gettop`,
+`lua_settop`, `lua_pcall`, `luaL_ref`, and `luaL_unref` expose stack slots,
+integer status codes, and registry integers. The architectural object layer is a
+LuaBridge object vocabulary on top of those externs:
+
+```text
+LuaState / LuaRegistry / LuaStackMark / LuaRef
+  -> qualified functions and regions
+  -> owned registry-reference obligations
+  -> typed ok/error continuations
+  -> raw externs hidden inside bridge-private implementations
+```
+
+So the backend does not need a separate Lua-object calling convention to begin
+with; externs are sufficient to touch the Lua API. The object API is still
+necessary because it turns raw C ABI facts into Lalin ownership and control
+facts.
 
 ---
 

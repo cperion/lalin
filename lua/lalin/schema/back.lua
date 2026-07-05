@@ -773,47 +773,12 @@ return schema. LalinBack {
     inspection [LalinBack.BackInspectionReport],
     disassembly [many [LalinBack.BackDisasmInspection]],
   },
-  sum. BackFlow { BackFallsThrough, BackTerminates, },
   product. BackSigSpec {
     interned,
     params [many [LalinBack.BackScalar]],
     results [many [LalinBack.BackScalar]],
   },
   product. BackStackSlotSpec { interned, size [number], align [number], },
-  sum. BackExprLowering {
-    BackExprPlan {
-      variant_unique,
-      cmds [many [LalinBack.Cmd]],
-      field. value [LalinBack.BackValId],
-      field. ty [LalinBack.BackScalar],
-    },
-    BackExprTerminated { variant_unique, cmds [many [LalinBack.Cmd]], },
-  },
-  sum. BackAddrLowering {
-    BackAddrWrites { variant_unique, cmds [many [LalinBack.Cmd]], },
-    BackAddrTerminated { variant_unique, cmds [many [LalinBack.Cmd]], },
-  },
-  sum. BackViewLowering {
-    BackViewPlan {
-      variant_unique,
-      cmds [many [LalinBack.Cmd]],
-      data [LalinBack.BackValId],
-      len [LalinBack.BackValId],
-      stride [LalinBack.BackValId],
-    },
-    BackViewTerminated { variant_unique, cmds [many [LalinBack.Cmd]], },
-  },
-  sum. BackReturnTarget {
-    BackReturnValue,
-    BackReturnSret { variant_unique, addr [LalinBack.BackValId], },
-  },
-  product. BackStmtPlan {
-    interned,
-    cmds [many [LalinBack.Cmd]],
-    flow [LalinBack.BackFlow],
-  },
-  product. BackFuncPlan { interned, cmds [many [LalinBack.Cmd]], },
-  product. BackItemPlan { interned, cmds [many [LalinBack.Cmd]], },
   product. BackProgram { interned, cmds [many [LalinBack.Cmd]], },
   product. BackCommandTape { interned, version [number], command_count [number], payload [str], },
 }

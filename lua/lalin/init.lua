@@ -34,8 +34,9 @@ M.phase_execute = require("lalin.phase_execute")
 M.compiler_package = require("lalin.compiler_package")
 M.compiler_model = require("lalin.compiler_model")
 M.compiler_driver = require("lalin.compiler_driver")
-M.flatline = require("lalin.flatline")
 M.ast = require("lalin.ast")
+M.exotype = require("lalin.exotype")
+M.store = require("lalin.store")
 local facade_T = M.asdl.context()
 M.schema_projection(facade_T)
 M.dsl = require("lalin.dsl")(facade_T)
@@ -55,7 +56,6 @@ M.code_type = require("lalin.code_type")
 M.code_validate = require("lalin.code_validate")
 M.tree_to_code = require("lalin.tree_to_code")
 M.code_to_c = require("lalin.code_to_c")
-M.code_to_back = require("lalin.code_to_back")
 M.exec_plan = require("lalin.exec_plan")
 M.stencil_methods = require("lalin.stencil_methods")
 M.stencil_artifact_plan = require("lalin.stencil_artifact_plan")
@@ -642,20 +642,23 @@ local function compile_args(name_or_decls, decls_or_opts, maybe_opts)
 end
 
 local function reject_luajit_native_options(opts, where)
-    if opts.native_bank ~= nil or opts.native_embedded_bank ~= nil or opts.bank ~= nil or opts.embedded_bank ~= nil then
-        error(where .. ": native banks are not accepted by LuaJIT artifact APIs; use compile_native with a NativeTemplateBank/NativeEmbeddedTemplateBank manifest", 3)
+    if opts.native_bank ~= nil or opts.native_bank_artifact ~= nil or opts.bank ~= nil or opts.bank_artifact ~= nil or opts.native_embedded_bank ~= nil or opts.embedded_bank ~= nil then
+        error(where .. ": native banks are not accepted by LuaJIT artifact APIs; use compile_native with a C-owned NativeBankArtifact or NativeLoadedBank", 3)
     end
     if opts.mc_bank ~= nil then
-        error(where .. ": mc_bank belongs to the removed LuaJIT machine-code path; use NativeTemplateBank with compile_native", 3)
+        error(where .. ": mc_bank belongs to the removed LuaJIT machine-code path; use compile_native with a C-owned NativeBankArtifact or NativeLoadedBank", 3)
     end
 end
 
 local function reject_native_removed_options(opts, where)
     if opts.mc_bank ~= nil then
-        error(where .. ": mc_bank is removed; pass opts.native_bank/opts.bank as a NativeTemplateBank with a NativeTemplateSourceManifest", 3)
+        error(where .. ": mc_bank is removed; pass opts.native_bank/opts.bank as a C-owned NativeBankArtifact or NativeLoadedBank", 3)
+    end
+    if opts.native_embedded_bank ~= nil or opts.embedded_bank ~= nil then
+        error(where .. ": NativeEmbeddedTemplateBank is removed; pass opts.native_bank/opts.bank as a C-owned NativeBankArtifact or NativeLoadedBank", 3)
     end
     if opts.residual ~= nil or opts.residual_mode ~= nil or opts.build_mc_bank ~= nil or opts.tcc ~= nil or opts.native_compile_c ~= nil then
-        error(where .. ": residual/TCC/build_mc_bank options are removed; native runtime compilation only copies, patches, and installs a supplied NativeTemplateBank", 3)
+        error(where .. ": residual/TCC/build_mc_bank options are removed; native runtime compilation only asks the C-owned bank selector/installer to install a supplied NativeBankArtifact or NativeLoadedBank", 3)
     end
 end
 
@@ -808,13 +811,21 @@ local function native_manifest_for(opts)
     return opts.native_template_manifest or opts.native_manifest or opts.template_manifest
 end
 
+local function native_bank_shared_object_for(opts)
+    return opts.native_bank_shared_object
+        or opts.native_bank_shared_object_path
+        or opts.bank_shared_object
+        or opts.bank_shared_object_path
+end
+
 local function native_bank_for(Backend, opts, target)
     local expected_manifest = native_manifest_for(opts)
-    if opts.native_bank ~= nil then return Backend.require_native_bank(opts.native_bank, target, expected_manifest) end
-    if opts.bank ~= nil then return Backend.require_native_bank(opts.bank, target, expected_manifest) end
-    if opts.native_embedded_bank ~= nil then return Backend.require_imported_bank(opts.native_embedded_bank, expected_manifest) end
-    if opts.embedded_bank ~= nil then return Backend.require_imported_bank(opts.embedded_bank, expected_manifest) end
-    error("compile_native requires opts.native_bank/opts.bank NativeTemplateBank or opts.native_embedded_bank/opts.embedded_bank NativeEmbeddedTemplateBank; runtime native compilation does not invoke compilers, readelf/object tools, TCC, or implicit bank builders", 3)
+    local shared_object_path = native_bank_shared_object_for(opts)
+    if opts.native_bank ~= nil then return Backend.require_native_bank(opts.native_bank, target, expected_manifest, shared_object_path) end
+    if opts.bank ~= nil then return Backend.require_native_bank(opts.bank, target, expected_manifest, shared_object_path) end
+    if opts.native_bank_artifact ~= nil then return Backend.require_native_bank(opts.native_bank_artifact, target, expected_manifest, shared_object_path) end
+    if opts.bank_artifact ~= nil then return Backend.require_native_bank(opts.bank_artifact, target, expected_manifest, shared_object_path) end
+    error("compile_native requires opts.native_bank/opts.bank as a C-owned NativeBankArtifact descriptor or NativeLoadedBank handle; runtime native compilation does not invoke compilers, readelf/object tools, TCC, Lua linear bank import, or implicit bank builders", 3)
 end
 
 local function native_runtime_for(Backend, opts)

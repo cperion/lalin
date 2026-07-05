@@ -36,7 +36,7 @@ fn array_lit() [i32]
 end
 
 fn struct_lit() [i32]
-  let p [named("Pair")] = { left = 20, right = 22 }
+  let p [Pair] = Pair { left = 20, right = 22 }
   return p.left + p.right
 end
 

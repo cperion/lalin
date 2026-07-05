@@ -43,8 +43,10 @@ Important rules:
   expression must evaluate to a Lalin type value.
 - Type constructors are Lua values too. Use `ptr [i32]`, `array [i32] [4]`,
   `view [i32]`, and similar constructor calls inside the outer type escape.
-- Structs own their protocol vocabulary: attach functions, regions, and handles
-  with a qualified name (`fn Struct.method`, `region Struct.open`, `handle Struct.Ref`).
+- Lalin's object model is struct-owned protocols: plain structs are structural
+  values, `unique` structs are identity-bearing semantic entities, and functions,
+  regions, and handles attach with qualified names (`fn Struct.method`,
+  `region Struct.open`, `handle Struct.Ref`).
 - Every block path terminates.
 - Region protocols are explicit named exits.
 - Memory identity and access are explicit: handles are durable names, leases are
@@ -61,7 +63,8 @@ not execute top-level Lua statements.
 
 Root document items are:
 
-- Lalin declarations: `fn`, `struct`, `union`, `handle`, and `region`
+- Lalin declarations: `fn`, `extern`, `struct`, `union`, `handle`, and `region`
+- top-level type meta-property assignments such as `Type.metamethods.__getdecls = generator`
 - top-level `[lua_expr]` HostEval splices that produce declarations or ordered
   declaration arrays
 
@@ -130,6 +133,67 @@ The core rule is:
 Lua builds host values.
 .lln documents offer those values to roles through HostEval brackets.
 The Lalin dialect gives those values typed/backend meaning.
+```
+
+### Type Meta-Properties
+
+Lalin follows the useful part of Terra exotypes without adding a second kind of
+source declaration. A parsed type declaration is already the meta-object owner:
+
+```text
+struct / union / handle declaration = first-class type value + meta-properties
+```
+
+After a declaration is materialized, the type name is available to later
+HostEval brackets and to top-level declaration-time meta assignments:
+
+```lln
+struct Student
+  score [i32]
+end
+
+Student.metamethods.__methodmissing = record_setters
+
+fn use(s [ptr [Student]]) [void]
+  s:setscore(99)
+  return
+end
+```
+
+The assignment above is not a runtime statement. It mutates the host-side
+`Student` type value while the declaration document is materialized, just like a
+Lua/Terra meta-object assignment. A simple right-hand side name is resolved in
+the document host environment. Use `[lua_expr]` only when the value is an
+expression rather than a simple name:
+
+```lln
+Student.metamethods.__methodmissing = [make_record_setters("set")]
+```
+
+The standard property table is `T.metamethods`. Important hooks include:
+
+```lua
+T.metamethods.__typename(T)              -- diagnostic/generated name
+T.metamethods.__getentries(T)            -- generated fields for host-built type families
+T.metamethods.__getdecls(T)              -- generated declaration family
+T.metamethods.__getmethod(T, name)       -- explicit staged method lookup
+T.metamethods.__methodmissing(T, name)   -- staged missing-method synthesis
+T.metamethods.__entrymissing(T, name)    -- staged field/lens synthesis
+T.metamethods.__apply(T, ...)            -- staged callable-object behavior
+T.metamethods.__cast(T, from, to, expr)  -- staged conversion behavior
+```
+
+A hook returns ordinary Lalin artifacts: declarations, fragments, ASDL values, or
+a diagnostic/error. `__getdecls` returns a declaration family. `__methodmissing`
+commonly returns a qualified function declaration such as
+`fn Student.setscore(...) ... end`. The generated artifact is then lowered
+normally. The compiled program never keeps a dynamic "method-missing" branch.
+
+The boundary rule is strict:
+
+```text
+type meta-property query = staged synthesis
+compiled Lalin method call = static call/region/protocol artifact
 ```
 
 ### Document Host Environment
@@ -211,8 +275,8 @@ may evaluate to a Lalin type value or to a named declaration value:
 [i32]
 [ptr [i32]]
 [array [i32] [4]]
-[named("Pair")]
 [Pair]         -- after `struct Pair ... end` in the same document
+[named("Pair")] -- dynamic/metaprogrammed fallback when only the name string is available
 ```
 
 In product/field-list positions, `[lua_expr]` adapts under the product role and
@@ -312,7 +376,8 @@ value:
 [ptr [i32]]
 [array [i32] [4]]
 [view [i32]]
-[named("Pair")]
+[Pair]         -- after `struct Pair ... end` in the same document
+[named("Pair")] -- dynamic/metaprogrammed fallback when only the name string is available
 ```
 
 There is no separate parsed type grammar. `i32` is not a parsed keyword in type
@@ -440,6 +505,27 @@ end
 
 Parameters are immutable values. Mutable local state is introduced with `var`.
 
+### Externs
+
+Extern declarations name C ABI functions supplied by the host process, emitted C
+artifact, or native runtime symbol table:
+
+```lln
+extern lua_gettop(L [rawptr]) [i32]
+end
+
+extern host_add(x [i32]) [i32]
+  symbol = "my_host_add"
+end
+```
+
+The declaration name is the Lalin value used at call sites and, by default, the
+external C symbol to link or resolve. Write a `symbol` fact only when the C
+symbol differs from the Lalin declaration name. Externs are the correct substrate
+for the Lua C API and other foreign C functions, but ordinary object APIs should
+wrap raw externs in qualified functions or regions that state ownership and
+control protocols.
+
 ### Structs
 
 ```lln
@@ -454,6 +540,273 @@ Fields are named and typed. Struct field access uses dot syntax:
 ```lua
 p.right
 ```
+
+A plain struct is a structural value. Its fields are the value. Use plain
+structs for coordinates, ranges, layout descriptors, small records, and other
+facts where copying the same fields really means copying the same value.
+
+### Object Model: Structs Own Protocols
+
+Lalin's object model is not class inheritance, hidden vtables, or dynamic method
+lookup. The object model is:
+
+```text
+struct/unique struct identity
++ qualified functions as methods
++ qualified regions as access/control protocols
++ qualified handles as durable references
+```
+
+The struct is the protocol owner. A declaration qualified by a struct name is
+attached to that struct's vocabulary:
+
+```lln
+struct Connection
+  fd [i32]
+  state [u32]
+end
+
+fn Connection.read(self [ptr [Connection]], buf [ptr [u8]], len [index]) [index]
+  return 0
+end
+
+-- Lua-style method declaration sugar injects `self [ptr [Connection]]`.
+fn Connection:status() [u32]
+  return self.state
+end
+
+region Connection.open(addr [slice [u8]];
+  connected(conn [ptr [Connection]]),
+  refused,
+  timeout
+)
+  entry start()
+    jump refused
+  end
+end
+
+handle Connection.Ref [u32]
+  invalid = 0
+  domain [Connection]
+  target [Connection]
+end
+```
+
+This is the Lalin equivalent of the compiler's ASDL + methods pattern. The
+struct names the semantic thing; qualified functions and regions name the
+operations and protocols owned by that thing. There is no handler table, no
+string action selector, and no compatibility dispatch layer.
+
+This is Lalin's definition of object-oriented programming: an object packages
+both the data type and the typed control-flow protocols over that data. Classic
+OOP missed this by separating data from behavior while still leaving functions
+as single-exit calls. Because ordinary functions have only one return edge,
+protocol-rich behavior spills control back into data: `Result` objects, tagged
+unions, status codes, callbacks, visitors, and follow-up dispatch functions.
+That creates artificial types for ceremony, causes type explosion, and adds
+runtime call/branch overhead. In Lalin, the region belongs to the object, so
+control alternatives stay typed as continuations instead of being boxed into a
+return value.
+
+#### Example: avoid result-object protocols
+
+A conventional design usually turns a multi-outcome parser step into data:
+
+```text
+ParserNextResult = Token(tok) | Eof | Syntax(pos, code)
+Parser.next(...) -> ParserNextResult
+consumer switches on ParserNextResult and dispatches again
+```
+
+That shape invents a result type solely because the function has one return
+edge. The protocol is really control, not data. In Lalin the parser object owns
+that control protocol directly:
+
+```lln
+struct Parser
+  source [slice [u8]]
+  pos [index]
+end
+
+region Parser.next(self [ptr [Parser]];
+  token(tok [Token]),
+  eof,
+  syntax(pos [index], code [i32])
+)
+  entry start()
+    -- inspect self.source/self.pos and jump to exactly one protocol exit
+    jump eof
+  end
+end
+
+region ParserDriver.step(self [ptr [ParserDriver]], p [ptr [Parser]];
+  ok,
+  failed(pos [index], code [i32])
+)
+  entry start()
+    emit Parser.next(p;
+      token = got_token,
+      eof = done,
+      syntax = bad_syntax
+    )
+  end
+
+  block got_token(tok [Token])
+    -- token path is statically typed; no Result switch is needed
+    jump ok
+  end
+
+  block done()
+    jump ok
+  end
+
+  block bad_syntax(pos [index], code [i32])
+    jump failed(pos, code)
+  end
+end
+```
+
+The object owns the bytes/state (`Parser`) and the protocol over that state
+(`Parser.next`). The consumer wires continuations instead of unpacking a boxed
+result and calling a dispatcher.
+
+A useful default is **one object per machine**. If a subsystem has retained
+state, repeated execution, diagnostics, cache identity, ownership authority, or
+named outcomes, model it as a struct or `unique` struct and attach its operations
+there:
+
+```lln
+struct Parser
+  unique
+  source [slice [u8]]
+  pos [index]
+end
+
+region Parser.next(self [ptr [Parser]];
+  token(tok [Token]),
+  eof,
+  syntax(pos [index], code [i32])
+)
+  entry start()
+    jump eof
+  end
+end
+```
+
+The object is the machine; fields are its persistent state or world reference;
+qualified functions are ordinary operations; qualified regions are protocol
+operations. A colon declaration is sugar for the ordinary qualified form with an
+implicit pointer receiver:
+
+```lln
+fn Parser:reset() [void]
+  return
+end
+
+-- means:
+fn Parser.reset(self [ptr [Parser]]) [void]
+  return
+end
+```
+
+Use the explicit dot form when the receiver needs a more precise access or
+ownership type than `ptr [Parser]`.
+
+The Lua/LLBL host layer may also synthesize struct-owned protocols by assigning
+meta-properties on the type value:
+
+```lln
+Parser.metamethods.__methodmissing = parser_method_generator
+```
+
+That mechanism creates explicit Lalin declarations or fragments during staging;
+it does not add dynamic method lookup to compiled Lalin. It is how reusable
+object families replace templates without reintroducing runtime dispatch.
+
+#### Example: staged boilerplate eating
+
+The ownership/handle style naturally creates repeated names: `Ref`, `borrow`,
+`stale`, `missing`, `invalidate`, `capacity`, `compact`, serializers, and debug
+views. Do not hide those facts at runtime; synthesize the repetitive declarations
+at staging time:
+
+```lln
+struct BufferStore
+  slots [ptr [BufferSlot]]
+  capacity [index]
+  epoch [u32]
+end
+
+BufferStore.metamethods.__methodmissing = store_method_boilerplate
+
+fn use_store(s [ptr [BufferStore]]) [index]
+  -- If not already explicit, this call asks BufferStore's meta-property hook to
+  -- synthesize an ordinary `fn BufferStore.capacity_left(...) [index]`.
+  return s:capacity_left()
+end
+```
+
+The hook lives in Lua, but its product is not dynamic Lua behavior. It returns
+ordinary Lalin declarations/fragments. After materialization the module contains
+explicit `fn BufferStore.capacity_left`, explicit region/handle declarations if
+the family generated them, and no runtime method-missing branch.
+
+### Unique Structs And Semantic Identity
+
+Some structs are not mere field-wise values. A declaration, symbol, scope, AST
+node, type variable, inference hole, store record, or user-authored type-system
+entity needs identity. Two type variables with the same fields are still two
+different type variables. A named declaration is not interchangeable with
+another declaration just because its current fields match.
+
+Those entities are modeled as `unique` structs:
+
+```lln
+struct TypeVar
+  unique
+  level [u32]
+  solution [ptr [Type]]
+end
+
+struct TypeDecl
+  unique
+  name [ptr [Name]]
+  fields [ptr [FieldList]]
+end
+```
+
+A `unique` struct is identity-bearing. Allocation/construction gives the object
+an identity separate from its fields. Facts can attach to that identity through
+fields or through typed phase projections, instead of living in side tables keyed
+by raw nodes or names.
+
+Use the rule:
+
+```text
+plain struct  = value, compared/copied by its fields
+unique struct = entity/object, identified by its allocation or canonical handle
+```
+
+Examples:
+
+```text
+Position, SourceRange, LayoutSize     -> plain structs
+Scope, Symbol, TypeDecl, TypeVar      -> unique structs
+ExprCall AST node, TypedExpr result   -> unique structs
+Builtin type descriptors              -> interned/canonical unique structs
+```
+
+`unique` is also the surface counterpart of ASDL `unique`/`interned`: ASDL uses
+identity-bearing products so compiler facts have stable owners; Lalin exposes
+the same design to user code so users can author their own safe semantic systems
+and type systems with typed entities plus owned methods.
+
+Current implementation note: qualified struct protocols (`fn Struct.method`,
+`region Struct.name`, `handle Struct.Ref`) are implemented in the parsed
+surface. The `unique` marker is the documented identity model for struct-owned
+semantic entities; implementations that do not yet lower the marker directly
+should represent durable identity with qualified handles and explicit stores
+rather than side tables.
 
 ### Unions
 
@@ -514,18 +867,21 @@ end
 
 #### Method Call Syntax
 
-`obj:method(a, b)` desugars to `method(obj, a, b)` at parse time. The implicit
-self argument is inserted as the first argument. Chaining works naturally:
+`obj:method(a, b)` preserves method-call intent during document materialization
+so type meta-properties can synthesize a missing static method when needed. It
+then lowers to an ordinary static call with the receiver inserted as the first
+argument. Chaining works naturally:
 
 ```lln
-p:norm()           -- norm(p)
-p:helper(a, b)     -- helper(p, a, b)
-p:norm():other()   -- other(norm(p))
-p:clear()          -- clear(p)
+p:norm()           -- lowers to norm(p)
+p:helper(a, b)     -- lowers to helper(p, a, b)
+p:norm():other()   -- lowers to other(norm(p))
+p:clear()          -- lowers to clear(p)
 ```
 
-Methods have no special runtime behavior or vtable dispatch. They are purely
-syntactic sugar for passing the receiver as the first argument.
+Methods have no special runtime behavior or vtable dispatch. The only extra
+step is staging-time method synthesis from the receiver's type value; the
+compiled artifact contains ordinary static calls.
 
 #### Qualified Declaration Names
 
@@ -612,6 +968,64 @@ fn add(a [i32], b [i32]) [i32]
   return a + b
 end
 ```
+
+### Lua C API Boundary
+
+The Lua runtime is reachable through the same extern mechanism used for other C
+functions. The Lua C API is C, so calls such as `lua_gettop`, `lua_settop`,
+`lua_pcall`, `luaL_ref`, and `luaL_unref` should be modeled as ordinary extern
+symbols at the low level.
+
+That raw layer is only the substrate. The object API belongs on top:
+
+```text
+raw externs        -> exact Lua C ABI calls
+LuaState object    -> owns lua_State* authority and stack discipline
+LuaRef handle      -> durable registry reference
+LuaBridge regions  -> protected calls, stack restoration, typed error exits
+```
+
+The reason is the same as store objects. A stack index is temporary access, a
+registry integer is a durable handle only when owned by the registry protocol,
+and a Lua status code is a control exit trying to masquerade as data. Ordinary
+Lalin code should consume object-owned bridge protocols, not scatter raw Lua C
+API calls.
+
+A bridge module declares the raw Lua C API entry points as parsed externs:
+
+```lln
+extern lua_gettop(L [rawptr]) [i32]
+end
+
+extern lua_pcall(L [rawptr], nargs [i32], nresults [i32], errfunc [i32]) [i32]
+end
+```
+
+Then a Lalin-facing object wraps those externs with typed regions:
+
+```lln
+struct LuaState
+  L [rawptr]
+end
+
+handle LuaState.Ref [u32]
+  invalid = 0
+  domain [LuaState]
+end
+
+region LuaState.pcall(self [ptr [LuaState]], nargs [i32], nresults [i32];
+  ok,
+  error(status [i32])
+)
+  entry start()
+    -- bridge-private implementation calls raw lua_pcall extern and jumps ok/error
+    jump error(status)
+  end
+end
+```
+
+The extern call gets you access. The object protocol makes that access safe,
+composable, and checkable.
 
 ---
 
@@ -850,17 +1264,21 @@ The compiler stores the decoded Lua string bytes in module data and produces a
 include a trailing NUL for C/LuaJIT interop, but that byte is not part of the
 slice length.
 
-Brace literals are contextual:
+Brace literals are contextual, but named structs are also their own explicit
+constructors:
 
 ```lln
 let xs [array [i32] [3]] = { 10, 20, 12 }
-let pair [named("Pair")] = { left = 20, right = 22 }
+let pair [Pair] = Pair { left = 20, right = 22 }
 ```
 
-Positional braces lower to array literals. Named braces lower to struct
-aggregate literals. A single brace literal cannot mix positional and named
-fields. Empty `{}` is accepted only where the expected type makes the aggregate
-meaning unambiguous.
+Positional braces lower to array literals. Named bare braces lower to contextual
+struct aggregate literals when the expected type is already known. The preferred
+object-style form is `StructName { field = value }`: the struct name supplies
+the aggregate type directly, matching the rule that structs own their product
+constructor. A single brace literal cannot mix positional and named fields.
+Empty `{}` is accepted only where the expected type makes the aggregate meaning
+unambiguous.
 
 ### Names
 
@@ -970,7 +1388,7 @@ selects the concrete machine cast.
 ### Sizeof
 
 ```lln
-sizeof [named("Pair")]
+sizeof [Pair]
 sizeof [i32]
 ```
 
@@ -1071,10 +1489,14 @@ done([i32])
 Regions transfer control inside a region with `jump`:
 
 ```lln
-jump connected(conn = conn)
-jump done(result = x)
-jump done(x)           -- positional
+jump connected(conn)       -- shorthand for conn = conn
+jump failed(pos, code)     -- shorthand for pos = pos, code = code
+jump done(result = x)      -- explicit named payload
+jump done(x)               -- positional payload for anonymous fields
 ```
+
+In a named payload position, a bare identifier means `name = name`. Use the
+explicit `field = expr` form when the payload field and source expression differ.
 
 Regions are invoked with the same shape as their signature. Data arguments come
 before `;`; continuation wiring comes after `;` as `continuation = block` pairs.
@@ -1157,18 +1579,156 @@ ordinary block code, but source `loop` is the domain/stencil-facing construct.
 
 ## Borrow Checking, Handles, And Ownership
 
-Lalin's borrow checking is region-shaped rather than Rust-shaped. The core
-rules are:
+Lalin's borrow checking is region-shaped and object-local rather than
+Rust-shaped. The core rules are:
 
 ```text
 Handles may escape. Leases may not.
-Stores own bytes. Regions grant access facts.
+Stores/machine objects own bytes. Regions grant access facts.
 Owned values must be discharged exactly once.
 ```
 
 A raw `ptr(T)` is only an address. Durable identity is a handle. Temporary
 memory access is a lease, usually granted by a resolver region or by a trusted
 boundary contract.
+
+The preferred memory-management shape is also one object per machine/store:
+
+```text
+machine/store object = owner + resolver authority + invalidation boundary
+```
+
+The same object that owns storage should own the handle namespace, resolver
+regions, preserving operations, and invalidating operations. This keeps
+ownership, freshness epochs, generation counters, and lease invalidation local
+instead of spreading them through side tables or ambient context.
+
+This is where the object model and memory model meet. A memory-management object
+is not just a container of bytes; it is the authority that names durable handles,
+grants temporary leases through regions, proves preservation, and performs
+invalidation. Because those protocols are owned by the store object, user code
+can interact with a clean handle/region vocabulary while the object manages the
+lease discipline internally.
+
+Type meta-properties are the boilerplate valve for this pattern. Ownership plus
+handles naturally produces repetitive resolver, stale/missing, borrow,
+invalidate, and serializer code. A type-family or store object may synthesize
+that vocabulary through `T.metamethods` so the source stays small while the
+compiled artifact still contains explicit structs, handles, regions, and
+functions.
+
+The built-in arena-store policy is just a Lua declaration generator installed by
+ordinary meta assignment; the parser has no store-specific syntax:
+
+```lln
+struct Token
+  kind [u32]
+  start [index]
+  stop [index]
+end
+
+struct TokenStore
+  storage [ptr [Token]]
+  count [index]
+  capacity [index]
+  epoch [u32]
+end
+
+TokenStore.store.target = Token
+TokenStore.metamethods.__getdecls = arena_store
+
+fn token_space(s [ptr [TokenStore]]) [index]
+  return s:capacity_left()
+end
+```
+
+Materialization expands the policy into ordinary declarations such as
+`handle TokenStore.Ref`, `region TokenStore.borrow`, `region TokenStore.compact`,
+`fn TokenStore.capacity_left`, and `fn TokenStore.len`. Those generated names
+then behave exactly like hand-written qualified declarations.
+
+#### Example: a store object owns handles and leases
+
+```lln
+struct BufferRecord
+  ptr [ptr [u8]]
+  len [index]
+  generation [u32]
+end
+
+struct BufferStore
+  records [ptr [BufferRecord]]
+  count [index]
+  epoch [u32]
+end
+
+handle BufferStore.Ref [u32]
+  invalid = 0
+  domain [BufferStore]
+  target [BufferRecord]
+end
+
+region BufferStore.borrow(
+  self [readonly [ptr [BufferStore]]],
+  ref [named("BufferStore.Ref")];
+  borrowed(record [lease("self", ptr [BufferRecord])]),
+  stale(ref [named("BufferStore.Ref")]),
+  missing(ref [named("BufferStore.Ref")])
+)
+  entry start()
+    -- Store-private validation checks index/generation/epoch.
+    -- Only the borrowed continuation receives the temporary lease.
+    jump missing(ref)
+  end
+end
+
+region BufferStore.compact(self [invalidate [ptr [BufferStore]]];
+  done,
+  busy
+)
+  entry start()
+    -- Cannot run while leases from `self` are live.
+    -- The checker sees this because borrow grants lease("self", ...), while
+    -- compact takes invalidate ptr(BufferStore).
+    jump done
+  end
+end
+```
+
+A client does not manually check generations or scatter nil/stale branches. It
+wires the store protocol:
+
+```lln
+region Reader.read_one(self [ptr [Reader]], store [ptr [BufferStore]], ref [named("BufferStore.Ref")];
+  ok(len [index]),
+  stale,
+  missing
+)
+  entry start()
+    emit BufferStore.borrow(store, ref;
+      borrowed = got_record,
+      stale = got_stale,
+      missing = got_missing
+    )
+  end
+
+  block got_record(record [lease("store", ptr [BufferRecord])])
+    jump ok(len = record.len)
+  end
+
+  block got_stale(ref [named("BufferStore.Ref")])
+    jump stale
+  end
+
+  block got_missing(ref [named("BufferStore.Ref")])
+    jump missing
+  end
+end
+```
+
+The store object hides memory discipline behind typed exits. The handle may
+escape; the lease cannot. Invalidating store methods are naturally checked
+against live leases because both facts are attached to the same object protocol.
 
 ### Handle Resolution
 
@@ -1355,11 +1915,13 @@ banks are rejected by the LuaJIT bytecode APIs.
 ### Offline Native Template Banks
 
 Use `NativeTemplateBankRequest` and its `NativeTemplateSourceManifest` when you
-want to build or reuse a native bank outside the runtime compile path. A native
-support domain first computes a manifest, then generates exactly matching
-`NativeTemplateSource` C stencils. The offline generator consumes the request,
-compiles those stencils ahead of time, verifies typed object facts with Lalin's
-internal ELF/object parser, and emits the checked-in/native binary artifacts:
+want to build or reuse a native bank outside the runtime compile path. A complete
+native bank is generated from closed native capability classes; subset support
+helpers are only for tests or explicit target subsets. The capability first
+computes a manifest, then generates exactly matching `NativeTemplateSource` C
+stencils. The offline generator consumes the request, compiles those stencils
+ahead of time, verifies typed object facts with Lalin's internal ELF/object
+parser, and emits the checked-in/native binary artifacts:
 
 ```sh
 luajit tools/gen_lalin_mc_bank.lua \
@@ -1611,23 +2173,30 @@ The formatter currently prints the Lua/LLBL DSL surface.
 | Construct | Status |
 |---|---|
 | `fn name(params) [result] ... end` | implemented |
-| `fn Struct.name(...) ... end` | implemented; attaches function to struct value in env |
-| `region Struct.name(...; ...) ... end` | implemented; qualified regions bind to struct value in env |
-| `handle Struct.name [repr] ... end` | implemented; qualified handles bind to struct value in env |
+| `extern name(params) [result] ... end` | implemented; declares C ABI extern with optional `symbol` fact |
+| `fn Struct.name(...) ... end` | implemented; attaches function to struct value in env; this is the explicit method form |
+| `fn Struct:name(...) ... end` | implemented; injects `self [ptr [Struct]]` and binds as `Struct.name` |
+| `region Struct.name(...; ...) ... end` | implemented; qualified regions bind to struct value in env; this is the explicit protocol/access form |
+| `region Struct:name(...; ...) ... end` | implemented; injects `self [ptr [Struct]]` and binds as `Struct.name` |
+| `handle Struct.name [repr] ... end` | implemented; qualified handles bind to struct value in env; this is Lalin's durable reference form |
+| `unique` marker inside `struct` | documented identity model; direct parsed lowering is pending, use handles/stores for durable identity today |
 | `handle Name [repr] ... end` | implemented; handle fact types use bracket type values |
 | `region name(params; exits) ... end` | parser implemented; integration is narrower than function/struct/union |
 | `emit Region(args; cont = block)` | parsed, lowered to ASDL, expanded into enclosing control CFG before backend lowering |
 | `call Region(args; cont = block)` | parsed and lowered to ASDL; frame expansion pending and diagnosed if used |
+| `jump exit(name)` | implemented as shorthand for `jump exit(name = name)` in named payloads |
 | `let` / `var` | implemented |
-| assignment | implemented |
+| assignment | implemented in statement blocks |
+| `Type.path.slot = host_name` top-level meta assignment | implemented for declaration-time type meta-properties |
 | `return` | implemented |
 | `requires` | implemented, including memory/effect contracts such as `bounds`, `readonly`, `writeonly`, `noalias`, `disjoint`, `preserve`, and `invalidate` |
 | access / lease / owned type values | implemented through Lua type values in brackets |
-| `expr:method(args)` method call | implemented; desugars to `method(expr, args)` at parse time |
+| `expr:method(args)` method call | implemented; preserves method intent for staging, then lowers to `method(expr, args)` static call |
 | `if` / `elseif` / `else` | implemented |
 | `loop i in 0 .. n do ... end` | implemented |
 | parsed `fold` / `scan` inside loops | implemented |
 | parsed `grid`, `tiled grid`, `window` domains | implemented |
+| `StructName { field = value }` struct constructor | implemented for named/qualified struct paths; lowers to typed aggregate construction |
 | host escapes `[lua_expr]` | implemented |
 | `as [T](expr)` | implemented |
 | `sizeof [T]` | implemented |

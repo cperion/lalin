@@ -23,45 +23,10 @@ local type_layouts = Native.NativeCodeTypeLayoutPlan({}, {}, {})
 local addresses = Native.NativeModuleAddressPlan({}, {}, {}, {}, {}, {})
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 
-local function fake_compiled(id_text, family)
-    return Native.NativeCompiledTemplate(
-        Native.NativeTemplateId(id_text),
-        family,
-        target,
-        Native.NativeExtractTerminalContinuation,
-        Support.spill_all_stencil_signature(Support.scalar_bool8(), {}, {}),
-        Native.NativeTextSection(Native.NativeTemplateBytes("\195", 1), 1),
-        {},
-        {},
-        {},
-        {},
-        {},
-        Native.NativeConstantPoolLayout({}, 0, 1)
-    )
-end
-
-local function fake_kernel_entry(shape, index)
-    local family = Support.family(
-        Support.kernel_family_id(shape:native_kernel_op_source_token()),
-        shape:native_kernel_template_role(),
-        { Support.axis_target(target), Support.axis_kernel(Native.NativeKernelSourceShapeAxis(shape)) },
-        Support.protocol_void_none()
-    )
-    return Native.NativeTemplateBankEntry(family, fake_compiled("native.kernel_stencil.fake.kernel." .. tostring(index), family))
-end
-
-local function fake_stencil_entry(shape, index)
-    local family = shape:native_stencil_template_family({ target = target })
-    return Native.NativeTemplateBankEntry(family, fake_compiled("native.kernel_stencil.fake.stencil." .. tostring(index), family))
-end
-
-local function bank(id, entries)
-    return Native.NativeTemplateBank(
-        Native.NativeBankId(id),
-        target,
-        Native.NativeTemplateSourceManifest(Native.NativeTemplateManifestId(id .. ".manifest"), Native.NativeTemplateSupportDomainId(id .. ".support"), {}, #entries),
-        entries
-    )
+local function bank(id)
+    local manifest = Native.NativeTemplateSourceManifest(Native.NativeTemplateManifestId(id .. ".manifest"), Native.NativeTemplateSupportDomainId(id .. ".support"), {}, 0)
+    local artifact = Native.NativeBankArtifact(Native.NativeBankId(id), target, manifest, 0, "lalin_native_bank_artifact", "lalin_native_bank_select", "lalin_native_bank_install")
+    return Native.NativeLoadedBank(artifact, 1)
 end
 
 -- Kernel graph lowering: counted domain, lane address, scalar expr, store effect, proof, result.
@@ -108,9 +73,7 @@ local kshapes = {
     Native.NativeKernelProofOpShape(Native.NativeKernelProofFlowShape),
     Native.NativeKernelResultOpShape(result:native_kernel_result_projection(i32, target, type_layouts):native_kernel_result_source_shape(target, type_layouts)),
 }
-local kentries = {}
-for i, shape in ipairs(kshapes) do kentries[#kentries + 1] = fake_kernel_entry(shape, i) end
-local kgraph = kplan:plan_native_copy(Native.NativePlanInput(target, runtime, bank("native.kernel_stencil.kernel.bank", kentries)), klowering)
+local kgraph = kplan:plan_native_copy(Native.NativePlanInput(target, runtime, bank("native.kernel_stencil.kernel.bank")), klowering)
 assert(asdl.isa(kgraph, Native.NativeTemplateGraph), "KernelPlanned should lower to a graph")
 assert(#kgraph.nodes == 8, "kernel graph should contain plan/body/domain/lane/expr/effect/proof/result nodes")
 local kernel_has_domain_branch = false
@@ -138,7 +101,7 @@ local point = Stencil.StencilPointBinary(
 local descriptor = Stencil.StencilDescriptor(producer, { access }, Stencil.StencilBodyPoint(point), Stencil.StencilSinkStore(access_ref, Stencil.StencilStoreElementwise))
 local schedule = Stencil.StencilScheduleScalar(Stencil.StencilCompilerPolicy(Stencil.StencilCompilerGcc, Stencil.StencilOptO2, Stencil.StencilMachineNative, {}))
 local instance = Stencil.StencilInstance(Stencil.StencilInstanceId("native.kernel_stencil.stencil"), descriptor, schedule, Stencil.StencilAbi({ i32 }, nil), {})
-local empty_plan = Native.NativePlanInput(target, runtime, bank("native.kernel_stencil.stencil.empty", {}))
+local empty_plan = Native.NativePlanInput(target, runtime, bank("native.kernel_stencil.stencil.empty"))
 local slowering = instance:native_stencil_lowering_input(empty_plan, type_layouts, addresses)
 assert(asdl.isa(slowering, Native.NativeStencilLoweringInput), "stencil should build typed lowering input")
 assert(#slowering.producers == 1, "stencil producer should allocate loop frame roles")
@@ -159,9 +122,7 @@ local sshapes = {
     sprojection.descriptor.body.shape,
     sprojection.descriptor.sink.shape,
 }
-local sentries = {}
-for i, shape in ipairs(sshapes) do sentries[#sentries + 1] = fake_stencil_entry(shape, i) end
-local sgraph = instance:plan_native_copy(Native.NativePlanInput(target, runtime, bank("native.kernel_stencil.stencil.bank", sentries)))
+local sgraph = instance:plan_native_copy(Native.NativePlanInput(target, runtime, bank("native.kernel_stencil.stencil.bank")))
 assert(asdl.isa(sgraph, Native.NativeTemplateGraph), "StencilInstance should lower to a graph")
 assert(#sgraph.nodes == 8, "stencil graph should contain schedule/producer/access/point/body/sink nodes")
 local stencil_has_producer_branch = false

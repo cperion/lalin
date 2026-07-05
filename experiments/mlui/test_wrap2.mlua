@@ -1,4 +1,0 @@
-local m = lalin.require("test_m1")
-func g(x: i32): i32
-    return m.f(x)
-end

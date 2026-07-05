@@ -30,34 +30,32 @@ local function bind_context(T)
     end
 
     local function manifest_matches(left, right)
-        return left ~= nil and right ~= nil and left.id == right.id and left.support_domain == right.support_domain and left.total_count == right.total_count
+        return left ~= nil
+            and right ~= nil
+            and left.id == right.id
+            and left.support_domain == right.support_domain
+            and left.total_count == right.total_count
     end
 
-    local function require_manifest_cardinality(manifest, entry_count, subject_name)
+    local function require_manifest_cardinality(manifest, template_count, subject_name)
         require_typed(manifest, Native.NativeTemplateSourceManifest, subject_name .. " manifest")
-        if manifest.total_count ~= entry_count then
-            boundary_error(subject_name .. " manifest total_count " .. tostring(manifest.total_count) .. " does not match entry count " .. tostring(entry_count))
+        if manifest.total_count ~= template_count then
+            boundary_error(subject_name .. " manifest total_count " .. tostring(manifest.total_count) .. " does not match C template count " .. tostring(template_count))
         end
         return manifest
     end
 
-    local function require_bank(bank, target, expected_manifest)
-        require_typed(bank, Native.NativeTemplateBank, "NativeTemplateBank")
-        if target ~= nil and bank.target ~= target then boundary_error("NativeTemplateBank target does not match compile target") end
-        require_manifest_cardinality(bank.manifest, #(bank.entries or {}), "NativeTemplateBank")
-        if expected_manifest ~= nil and not manifest_matches(bank.manifest, expected_manifest) then
-            boundary_error("NativeTemplateBank manifest does not match expected native template manifest")
+    local function require_artifact(artifact, target, expected_manifest)
+        require_typed(artifact, Native.NativeBankArtifact, "NativeBankArtifact")
+        if target ~= nil and artifact.target ~= target then boundary_error("NativeBankArtifact target does not match compile target") end
+        require_manifest_cardinality(artifact.manifest, artifact.template_count, "NativeBankArtifact")
+        if expected_manifest ~= nil and not manifest_matches(artifact.manifest, expected_manifest) then
+            boundary_error("NativeBankArtifact manifest does not match expected native template manifest")
         end
-        return bank
-    end
-
-    local function require_embedded_bank(embedded, expected_manifest)
-        require_typed(embedded, Native.NativeEmbeddedTemplateBank, "NativeEmbeddedTemplateBank")
-        require_manifest_cardinality(embedded.manifest, #(embedded.entries or {}), "NativeEmbeddedTemplateBank")
-        if expected_manifest ~= nil and not manifest_matches(embedded.manifest, expected_manifest) then
-            boundary_error("NativeEmbeddedTemplateBank manifest does not match expected native template manifest")
-        end
-        return embedded
+        if artifact.api_symbol == nil or artifact.api_symbol == "" then boundary_error("NativeBankArtifact is missing its C API symbol") end
+        if artifact.selector_symbol == nil or artifact.selector_symbol == "" then boundary_error("NativeBankArtifact is missing its C selector symbol") end
+        if artifact.installer_symbol == nil or artifact.installer_symbol == "" then boundary_error("NativeBankArtifact is missing its C installer symbol") end
+        return artifact
     end
 
     local function reject_summary(rejects)
@@ -66,80 +64,85 @@ local function bind_context(T)
         return tostring(count) .. " typed reject(s); first reject: " .. tostring(rejects[1])
     end
 
-    function Native.NativeEmbeddedBankImported:required_native_bank()
-        return self.bank
-    end
-
-    function Native.NativeEmbeddedBankRejected:required_native_bank()
-        boundary_error("embedded native bank import rejected: " .. reject_summary(self.rejects))
-    end
-
     function Native.NativeCompileResult:native_executable()
         return self.executable
     end
 
-    local function native_request(subject, target, runtime, bank, expected_manifest)
+    local function load_result_required(result)
+        return result:required_native_bank()
+    end
+
+    local function require_loaded_bank(bank, target, expected_manifest, shared_object_path)
+        require_value(bank, "NativeLoadedBank or NativeBankArtifact")
+        if asdl.isa(bank, Native.NativeLoadedBank) then
+            if shared_object_path ~= nil then boundary_error("shared object path can only be supplied with a NativeBankArtifact descriptor") end
+            require_artifact(bank.artifact, target, expected_manifest)
+            if bank.handle_address == nil or bank.handle_address == 0 then boundary_error("NativeLoadedBank has no C bank handle address") end
+            return bank
+        end
+        if asdl.isa(bank, Native.NativeBankArtifact) then
+            local artifact = require_artifact(bank, target, expected_manifest)
+            return load_result_required(Native.NativeBankLoadRequest(artifact, shared_object_path):load_native_bank())
+        end
+        boundary_error("native bank must be a C-owned NativeLoadedBank or NativeBankArtifact descriptor")
+    end
+
+    local function artifact_for(value)
+        require_value(value, "NativeLoadedBank or NativeBankArtifact")
+        if asdl.isa(value, Native.NativeLoadedBank) then return value.artifact end
+        if asdl.isa(value, Native.NativeBankArtifact) then return value end
+        boundary_error("native bank descriptor must be NativeBankArtifact or NativeLoadedBank")
+    end
+
+    local function native_request(subject, target, runtime, bank, expected_manifest, shared_object_path)
         target = require_typed(target, Native.NativeTarget, "NativeTarget")
         return Native.NativeCompileRequest(
             require_value(subject, "NativeCompileSubject"),
             target,
             require_typed(runtime, Native.NativeRuntime, "NativeRuntime"),
-            require_bank(bank, target, expected_manifest)
+            require_loaded_bank(bank, target, expected_manifest, shared_object_path)
         )
     end
 
-    local function compile_subject(subject, target, runtime, bank, expected_manifest)
-        return native_request(subject, target, runtime, bank, expected_manifest):compile_native()
+    local function compile_subject(subject, target, runtime, bank, expected_manifest, shared_object_path)
+        return native_request(subject, target, runtime, bank, expected_manifest, shared_object_path):compile_native()
     end
 
-    local function bank_from_embedded(embedded, expected_manifest)
-        embedded = require_embedded_bank(embedded, expected_manifest)
-        return Native.NativeEmbeddedBankImportRequest(embedded):import_native_bank():required_native_bank()
+    function api.load_native_bank(artifact, shared_object_path, target, expected_manifest)
+        artifact = require_artifact(artifact, target, expected_manifest)
+        return Native.NativeBankLoadRequest(artifact, shared_object_path):load_native_bank()
     end
 
-    function api.import_embedded_bank(embedded, expected_manifest)
-        embedded = require_embedded_bank(embedded, expected_manifest)
-        return Native.NativeEmbeddedBankImportRequest(embedded):import_native_bank()
+    function api.require_native_bank(bank, target, expected_manifest, shared_object_path)
+        return require_loaded_bank(bank, target, expected_manifest, shared_object_path)
     end
 
-    function api.require_imported_bank(embedded, expected_manifest)
-        return bank_from_embedded(embedded, expected_manifest)
+    function api.require_loaded_bank(bank, target, expected_manifest, shared_object_path)
+        return require_loaded_bank(bank, target, expected_manifest, shared_object_path)
     end
 
-    function api.require_native_bank(bank, target, expected_manifest)
-        return require_bank(bank, target, expected_manifest)
+    function api.require_bank_artifact(artifact, target, expected_manifest)
+        return require_artifact(artifact, target, expected_manifest)
     end
 
     function api.bank_manifest(bank)
-        return require_bank(bank).manifest
-    end
-
-    function api.embedded_bank_manifest(embedded)
-        return require_embedded_bank(embedded).manifest
+        return require_artifact(artifact_for(bank)).manifest
     end
 
     function api.runtime(symbols)
         return Native.NativeRuntime(symbols or {})
     end
 
-    function api.compile_subject(subject, target, runtime, bank, expected_manifest)
-        return compile_subject(subject, target, runtime, bank, expected_manifest)
+    function api.compile_subject(subject, target, runtime, bank, expected_manifest, shared_object_path)
+        return compile_subject(subject, target, runtime, bank, expected_manifest, shared_object_path)
     end
 
-    function api.compile_subject_with_embedded_bank(subject, target, runtime, embedded, expected_manifest)
-        return compile_subject(subject, target, runtime, bank_from_embedded(embedded, expected_manifest), expected_manifest)
+    function api.compile_subject_with_runtime_symbols(subject, target, symbols, bank, expected_manifest, shared_object_path)
+        return compile_subject(subject, target, api.runtime(symbols), bank, expected_manifest, shared_object_path)
     end
 
-    function api.compile_subject_with_runtime_symbols(subject, target, symbols, bank, expected_manifest)
-        return compile_subject(subject, target, api.runtime(symbols), bank, expected_manifest)
-    end
-
-    function api.compile_subject_executable(subject, target, runtime, bank, expected_manifest)
-        return compile_subject(subject, target, runtime, bank, expected_manifest):native_executable()
-    end
-
-    function api.compile_subject_with_embedded_bank_executable(subject, target, runtime, embedded, expected_manifest)
-        return compile_subject(subject, target, runtime, bank_from_embedded(embedded, expected_manifest), expected_manifest):native_executable()
+    function api.compile_subject_executable(subject, target, runtime, bank, expected_manifest, shared_object_path)
+        return compile_subject(subject, target, runtime, bank, expected_manifest, shared_object_path):native_executable()
     end
 
     function api.code_module_subject(module)
@@ -158,40 +161,24 @@ local function bind_context(T)
         return Native.NativeCompileStencilInstance(require_value(instance, "StencilInstance"))
     end
 
-    function api.compile_code_module(module, target, runtime, bank, expected_manifest)
-        return compile_subject(api.code_module_subject(module), target, runtime, bank, expected_manifest)
+    function api.compile_code_module(module, target, runtime, bank, expected_manifest, shared_object_path)
+        return compile_subject(api.code_module_subject(module), target, runtime, bank, expected_manifest, shared_object_path)
     end
 
-    function api.compile_code_module_with_embedded_bank(module, target, runtime, embedded, expected_manifest)
-        return compile_subject(api.code_module_subject(module), target, runtime, bank_from_embedded(embedded, expected_manifest), expected_manifest)
+    function api.compile_code_func(func, signature, target, runtime, bank, expected_manifest, shared_object_path)
+        return compile_subject(api.code_func_subject(func, signature), target, runtime, bank, expected_manifest, shared_object_path)
     end
 
-    function api.compile_code_func(func, signature, target, runtime, bank, expected_manifest)
-        return compile_subject(api.code_func_subject(func, signature), target, runtime, bank, expected_manifest)
+    function api.compile_code_func_with_runtime_symbols(func, signature, target, symbols, bank, expected_manifest, shared_object_path)
+        return compile_subject(api.code_func_subject(func, signature), target, api.runtime(symbols), bank, expected_manifest, shared_object_path)
     end
 
-    function api.compile_code_func_with_embedded_bank(func, signature, target, runtime, embedded, expected_manifest)
-        return compile_subject(api.code_func_subject(func, signature), target, runtime, bank_from_embedded(embedded, expected_manifest), expected_manifest)
+    function api.compile_kernel_plan(plan, lowering, target, runtime, bank, expected_manifest, shared_object_path)
+        return compile_subject(api.kernel_plan_subject(plan, lowering), target, runtime, bank, expected_manifest, shared_object_path)
     end
 
-    function api.compile_code_func_with_runtime_symbols(func, signature, target, symbols, bank, expected_manifest)
-        return compile_subject(api.code_func_subject(func, signature), target, api.runtime(symbols), bank, expected_manifest)
-    end
-
-    function api.compile_kernel_plan(plan, lowering, target, runtime, bank)
-        return compile_subject(api.kernel_plan_subject(plan, lowering), target, runtime, bank)
-    end
-
-    function api.compile_kernel_plan_with_embedded_bank(plan, lowering, target, runtime, embedded)
-        return compile_subject(api.kernel_plan_subject(plan, lowering), target, runtime, bank_from_embedded(embedded))
-    end
-
-    function api.compile_stencil_instance(instance, target, runtime, bank)
-        return compile_subject(api.stencil_instance_subject(instance), target, runtime, bank)
-    end
-
-    function api.compile_stencil_instance_with_embedded_bank(instance, target, runtime, embedded)
-        return compile_subject(api.stencil_instance_subject(instance), target, runtime, bank_from_embedded(embedded))
+    function api.compile_stencil_instance(instance, target, runtime, bank, expected_manifest, shared_object_path)
+        return compile_subject(api.stencil_instance_subject(instance), target, runtime, bank, expected_manifest, shared_object_path)
     end
 
     function api.host_target()
@@ -202,44 +189,24 @@ local function bind_context(T)
         return Support.empty_runtime()
     end
 
-    function api.compile_subject_on_host(subject, bank)
-        return compile_subject(subject, api.host_target(), api.empty_runtime(), bank)
+    function api.compile_subject_on_host(subject, bank, shared_object_path)
+        return compile_subject(subject, api.host_target(), api.empty_runtime(), bank, nil, shared_object_path)
     end
 
-    function api.compile_subject_with_embedded_bank_on_host(subject, embedded)
-        return compile_subject(subject, api.host_target(), api.empty_runtime(), bank_from_embedded(embedded))
+    function api.compile_code_module_on_host(module, bank, shared_object_path)
+        return compile_subject(api.code_module_subject(module), api.host_target(), api.empty_runtime(), bank, nil, shared_object_path)
     end
 
-    function api.compile_code_module_on_host(module, bank)
-        return compile_subject(api.code_module_subject(module), api.host_target(), api.empty_runtime(), bank)
+    function api.compile_code_func_on_host(func, signature, bank, shared_object_path)
+        return compile_subject(api.code_func_subject(func, signature), api.host_target(), api.empty_runtime(), bank, nil, shared_object_path)
     end
 
-    function api.compile_code_module_with_embedded_bank_on_host(module, embedded)
-        return compile_subject(api.code_module_subject(module), api.host_target(), api.empty_runtime(), bank_from_embedded(embedded))
+    function api.compile_kernel_plan_on_host(plan, lowering, bank, shared_object_path)
+        return compile_subject(api.kernel_plan_subject(plan, lowering), api.host_target(), api.empty_runtime(), bank, nil, shared_object_path)
     end
 
-    function api.compile_code_func_on_host(func, signature, bank)
-        return compile_subject(api.code_func_subject(func, signature), api.host_target(), api.empty_runtime(), bank)
-    end
-
-    function api.compile_code_func_with_embedded_bank_on_host(func, signature, embedded)
-        return compile_subject(api.code_func_subject(func, signature), api.host_target(), api.empty_runtime(), bank_from_embedded(embedded))
-    end
-
-    function api.compile_kernel_plan_on_host(plan, lowering, bank)
-        return compile_subject(api.kernel_plan_subject(plan, lowering), api.host_target(), api.empty_runtime(), bank)
-    end
-
-    function api.compile_kernel_plan_with_embedded_bank_on_host(plan, lowering, embedded)
-        return compile_subject(api.kernel_plan_subject(plan, lowering), api.host_target(), api.empty_runtime(), bank_from_embedded(embedded))
-    end
-
-    function api.compile_stencil_instance_on_host(instance, bank)
-        return compile_subject(api.stencil_instance_subject(instance), api.host_target(), api.empty_runtime(), bank)
-    end
-
-    function api.compile_stencil_instance_with_embedded_bank_on_host(instance, embedded)
-        return compile_subject(api.stencil_instance_subject(instance), api.host_target(), api.empty_runtime(), bank_from_embedded(embedded))
+    function api.compile_stencil_instance_on_host(instance, bank, shared_object_path)
+        return compile_subject(api.stencil_instance_subject(instance), api.host_target(), api.empty_runtime(), bank, nil, shared_object_path)
     end
 
     T._lalin_api_cache.native_backend = api

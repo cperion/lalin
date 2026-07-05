@@ -10,7 +10,7 @@ local S = T.LalinSource
 local P = PositionIndex(T)
 
 local function doc(text)
-    return S.DocumentSnapshot(S.DocUri("file:///test.mlua"), S.DocVersion(1), S.LangMlua, text)
+    return S.DocumentSnapshot(S.DocUri("file:///test.lalin"), S.DocVersion(1), S.LangLalin, text)
 end
 
 local d = doc("a\nb")

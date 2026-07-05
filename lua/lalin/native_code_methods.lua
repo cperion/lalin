@@ -263,12 +263,6 @@ local function bind_context(T)
         return placement
     end
 
-    local function selected_entry(plan, family)
-        local selected = plan.bank:select_native_template(Native.NativeTemplateSelectionInput(plan.target, family))
-        if asdl.isa(selected, Native.NativeTemplateSelected) then return selected.entry end
-        internal_error("native template selection failed for " .. family.id.text .. ": " .. tostring(selected))
-    end
-
     local function append_node(state, node)
         local previous = state.control_plan.nodes[#state.control_plan.nodes]
         state.control_plan.nodes[#state.control_plan.nodes + 1] = node
@@ -320,11 +314,11 @@ local function bind_context(T)
         return false
     end
 
-    local function materialize_bindings(node_id, instance, entry, binding_specs)
+    local function materialize_bindings(node_id, instance, binding_specs)
         local bindings = {}
         for _, spec in ipairs(binding_specs or {}) do
             if type(spec) == "function" then
-                bindings[#bindings + 1] = spec(node_id, instance, entry)
+                bindings[#bindings + 1] = spec(node_id, instance)
             else
                 bindings[#bindings + 1] = spec
             end
@@ -335,14 +329,13 @@ local function bind_context(T)
     local function append_family_node(input, role, family, inputs, outputs, binding_specs)
         local node_id = node_id_for(input.state, role)
         local instance = instance_id_for(node_id)
-        local entry = selected_entry(input.plan, family)
         local node = Native.NativeTemplateNode(
             node_id,
             instance,
-            entry,
+            family,
             inputs or {},
             outputs or {},
-            materialize_bindings(node_id, instance, entry, binding_specs)
+            materialize_bindings(node_id, instance, binding_specs)
         )
         return append_node(input.state, node)
     end
@@ -375,29 +368,10 @@ local function bind_context(T)
         )
     end
 
-    local function binding_target_for_hole_id(entry, hole_id)
-        local compiled = entry and entry.compiled
-        if compiled ~= nil then
-            local symbol
-            for _, layout in ipairs(compiled.holes or {}) do
-                if layout.id == hole_id then
-                    symbol = layout.symbol
-                    break
-                end
-            end
-            if symbol ~= nil then
-                for _, ordinal in ipairs(compiled.hole_ordinals or {}) do
-                    if ordinal.symbol == symbol then return Native.NativePatchBindingHoleOrdinal(ordinal.id) end
-                end
-            end
-        end
-        return Native.NativePatchBindingHoleId(hole_id)
-    end
-
     local function hole(id, coordinate)
         local hole_id = Native.NativePatchHoleId(id)
-        return function(node_id, instance, entry)
-            return Native.NativePatchBinding(node_id, instance, binding_target_for_hole_id(entry, hole_id), coordinate)
+        return function(node_id, instance)
+            return Native.NativePatchBinding(node_id, instance, Native.NativePatchBindingHoleId(hole_id), coordinate)
         end
     end
 
@@ -1636,24 +1610,11 @@ local function bind_context(T)
         end
     end
 
-    local function frame_size_coordinate_value(coordinate)
-        if asdl.isa(coordinate, Native.NativePatchFrameSize) then return coordinate.size end
-        internal_error("native entry extraction must carry a concrete NativePatchFrameSize for frame-limit enforcement")
+    local function native_public_abi_adapter_stack_limit(projection)
+        return Native.NativeFrameStackLimit(256, target_frame_alignment(projection.target))
     end
 
-    local function entry_frame_stack_limit(entry)
-        local extraction = entry.compiled.extraction
-        if asdl.isa(extraction, Native.NativeExtractEntryCallable) then
-            return Native.NativeFrameStackLimit(frame_size_coordinate_value(extraction.frame_bytes), target_frame_alignment(entry.compiled.target))
-        end
-        if asdl.isa(extraction, Native.NativeExtractPublicAbiAdapter) then
-            return Native.NativeFrameStackLimit(256, extraction.frame_alignment)
-        end
-        internal_error("native Code graph entry is not a frame-owning entry callable")
-    end
-
-    local function enforce_entry_frame_stack_limit(entry, layout)
-        local limit = entry_frame_stack_limit(entry)
+    local function enforce_frame_stack_limit(limit, layout)
         local aligned_size = align_up(layout.size, limit.alignment)
         if aligned_size > limit.max_bytes then
             internal_error("native frame layout requires " .. tostring(aligned_size) .. " bytes, exceeding entry frame stack limit " .. tostring(limit.max_bytes))
@@ -1855,8 +1816,7 @@ local function bind_context(T)
     local function append_block_entry_node(input, block)
         local family = Support.code_term_family("jump.next", input.plan.target, Native.NativeCodeTermJumpAxis, Support.protocol_void_none())
         local node_id = block_entry_node_id(block.id)
-        local entry = selected_entry(input.plan, family)
-        local node = Native.NativeTemplateNode(node_id, instance_id_for(node_id), entry, {}, {}, {})
+        local node = Native.NativeTemplateNode(node_id, instance_id_for(node_id), family, {}, {}, {})
         return append_node(input.state, node)
     end
 
@@ -1883,6 +1843,637 @@ local function bind_context(T)
             specs[#specs + 1] = hole("native.hole.code.func.public_abi_adapter." .. token .. ".result", Native.NativePatchFrameOffset(result_slot.offset))
         end
         return specs
+    end
+
+    local function native_fast_block_entry_region_id(func, block_id)
+        return Native.NativeFastRegionId("native.fast.code." .. func.id.text .. "." .. block_id.text .. ".entry")
+    end
+
+    local function native_fast_inst_region_id(func, inst, suffix)
+        return Native.NativeFastRegionId("native.fast.code." .. func.id.text .. "." .. inst.id.text .. (suffix and ("." .. suffix) or ""))
+    end
+
+    local function native_fast_term_region_id(func, term, suffix)
+        return Native.NativeFastRegionId("native.fast.code." .. func.id.text .. "." .. term.id.text .. (suffix and ("." .. suffix) or ""))
+    end
+
+    local function native_fast_code_region_origin(func, block, first_inst, last_inst)
+        if first_inst ~= nil and last_inst ~= nil then
+            return Native.NativeCodeTraceRegion(func.id, first_inst.id, last_inst.id)
+        end
+        return Native.NativeCodeBlockRegion(func.id, block.id)
+    end
+
+    local function native_fast_region(id, origin, body, inputs, outputs, transfer)
+        return Native.NativeFastRegion(id, origin, body, inputs or {}, outputs or {}, transfer)
+    end
+
+    local function frame_residence_for_placement(placement)
+        if asdl.isa(placement.location, Native.NativeValueFrameSlotLocation) then
+            return Native.NativeResidenceFrameSlot(placement.location.slot)
+        end
+        internal_error("native fast Code region requires a frame-slot boundary residence")
+    end
+
+    local function frame_binding_for_placement(placement)
+        return Native.NativeRegionValueBinding(placement.value, placement.representation:native_scalar_rep(), frame_residence_for_placement(placement))
+    end
+
+    local function frame_binding_for_code_value(input, value)
+        return frame_binding_for_placement(placement_for_value(input.state, value))
+    end
+
+    local function immediate_binding_for_code_value(value, scalar, coordinate)
+        return Native.NativeRegionValueBinding(native_value_id(value), scalar, Native.NativeResidenceImmediate(scalar, coordinate))
+    end
+
+    local function append_native_fast_input_atom(bindings, binding)
+        local ordinal = #bindings
+        bindings[#bindings + 1] = binding
+        return Native.NativeExprInput(ordinal, binding.scalar)
+    end
+
+    local function append_native_fast_frame_atom(input, bindings, value)
+        return append_native_fast_input_atom(bindings, frame_binding_for_code_value(input, value))
+    end
+
+    function Code.CodeConst:native_fast_immediate_coordinate(_target)
+        return nil
+    end
+
+    function Code.CodeConstLiteral:native_fast_immediate_coordinate(target)
+        local scalar = self.ty:native_machine_scalar(target)
+        return self.literal:native_patch_coordinate_for_scalar(scalar), scalar
+    end
+
+    function Code.CodeConstNull:native_fast_immediate_coordinate(target)
+        local scalar = self.ty:native_machine_scalar(target)
+        return scalar:native_null_patch_coordinate(), scalar
+    end
+
+    function Code.CodeConstUndef:native_fast_immediate_coordinate(_target)
+        return nil
+    end
+
+    function Code.CodeInstOp:native_fast_output_value()
+        return nil
+    end
+
+    function Code.CodeInstConst:native_fast_output_value() return self.dst end
+    function Code.CodeInstAlias:native_fast_output_value() return self.dst end
+    function Code.CodeInstUnary:native_fast_output_value() return self.dst end
+    function Code.CodeInstBinary:native_fast_output_value() return self.dst end
+    function Code.CodeInstFloatBinary:native_fast_output_value() return self.dst end
+    function Code.CodeInstCompare:native_fast_output_value() return self.dst end
+    function Code.CodeInstCast:native_fast_output_value() return self.dst end
+    function Code.CodeInstSelect:native_fast_output_value() return self.dst end
+    function Code.CodeInstIntrinsic:native_fast_output_value() return self.dst end
+    function Code.CodeInstAddrOf:native_fast_output_value() return self.dst end
+    function Code.CodeInstGlobalRef:native_fast_output_value() return self.dst end
+    function Code.CodeInstPtrOffset:native_fast_output_value() return self.dst end
+    function Code.CodeInstLoad:native_fast_output_value() return self.dst end
+    function Code.CodeInstAggregate:native_fast_output_value() return self.dst end
+    function Code.CodeInstArray:native_fast_output_value() return self.dst end
+    function Code.CodeInstViewMake:native_fast_output_value() return self.dst end
+    function Code.CodeInstViewData:native_fast_output_value() return self.dst end
+    function Code.CodeInstViewLen:native_fast_output_value() return self.dst end
+    function Code.CodeInstViewStride:native_fast_output_value() return self.dst end
+    function Code.CodeInstSliceMake:native_fast_output_value() return self.dst end
+    function Code.CodeInstSliceData:native_fast_output_value() return self.dst end
+    function Code.CodeInstSliceLen:native_fast_output_value() return self.dst end
+    function Code.CodeInstByteSpanMake:native_fast_output_value() return self.dst end
+    function Code.CodeInstByteSpanData:native_fast_output_value() return self.dst end
+    function Code.CodeInstByteSpanLen:native_fast_output_value() return self.dst end
+    function Code.CodeInstClosure:native_fast_output_value() return self.dst end
+    function Code.CodeInstVariantCtor:native_fast_output_value() return self.dst end
+    function Code.CodeInstVariantTag:native_fast_output_value() return self.dst end
+    function Code.CodeInstVariantPayload:native_fast_output_value() return self.dst end
+    function Code.CodeInstCall:native_fast_output_value() return self.dst end
+    function Code.CodeInstAtomicLoad:native_fast_output_value() return self.dst end
+    function Code.CodeInstAtomicRmw:native_fast_output_value() return self.dst end
+    function Code.CodeInstAtomicCas:native_fast_output_value() return self.dst end
+
+    function Code.CodeInst:native_fast_output_value()
+        return self.op:native_fast_output_value()
+    end
+
+    function Code.CodeInst:preallocate_native_fast_storage(input, frame_alignment)
+        local value = self:native_fast_output_value()
+        if value == nil then return nil end
+        local layout = self:produced_native_storage_layout(value, input.plan.target, input.lowering.module.type_layouts)
+        if layout ~= nil then return ensure_value_storage_slot(input.state, value, layout, frame_alignment) end
+    end
+
+    local function find_native_fast_producer(block, value, max_index)
+        local last = max_index or #(block.insts or {})
+        for i = last, 1, -1 do
+            local inst = block.insts[i]
+            if inst:native_fast_output_value() == value then return inst, i end
+        end
+    end
+
+    local function native_fast_immediate_from_inst(input, inst)
+        if inst == nil or not asdl.isa(inst.op, Code.CodeInstConst) then return nil end
+        local coordinate, scalar = inst.op.const:native_fast_immediate_coordinate(input.plan.target)
+        if coordinate == nil then return nil end
+        return immediate_binding_for_code_value(inst.op.dst, scalar, coordinate), scalar
+    end
+
+    local function native_fast_atom_for_value(input, block, value, max_index, bindings)
+        local producer = find_native_fast_producer(block, value, max_index)
+        local immediate, scalar = native_fast_immediate_from_inst(input, producer)
+        if immediate ~= nil then
+            bindings[#bindings + 1] = immediate
+            return Native.NativeExprImmediate(scalar), producer
+        end
+        return append_native_fast_frame_atom(input, bindings, value), nil
+    end
+
+    function Native.NativeCodeResultShape:native_fast_direct_result_scalar()
+        return nil
+    end
+
+    function Native.NativeCodeResultScalarShape:native_fast_direct_result_scalar()
+        return self.scalar
+    end
+
+    function Native.NativeCodeResultPointerShape:native_fast_direct_result_scalar()
+        return self.scalar
+    end
+
+    local function native_fast_public_result_binding(input, value, _scalar)
+        return frame_binding_for_code_value(input, value)
+    end
+
+    function Code.CodeIntOverflow:native_fast_wrapping_overflow()
+        return false
+    end
+
+    function Code.CodeIntWrap:native_fast_wrapping_overflow()
+        return true
+    end
+
+    function Code.CodeDivPolicy:native_fast_div_policy_supported()
+        return false
+    end
+
+    function Code.CodeDivTrapOnZero:native_fast_div_policy_supported()
+        return true
+    end
+
+    function Code.CodeShiftPolicy:native_fast_shift_policy_supported()
+        return false
+    end
+
+    function Code.CodeShiftMaskCount:native_fast_shift_policy_supported()
+        return true
+    end
+
+    function Code.CodeIntSemantics:native_fast_wrap_mask_semantics()
+        return self.overflow:native_fast_wrapping_overflow()
+            and self.div:native_fast_div_policy_supported()
+            and self.shift:native_fast_shift_policy_supported()
+    end
+
+    function Core.BinaryOp:native_fast_int_binary_supported(_semantics)
+        return false
+    end
+
+    function Core.BinAdd:native_fast_int_binary_supported(semantics) return semantics:native_fast_wrap_mask_semantics() end
+    function Core.BinSub:native_fast_int_binary_supported(semantics) return semantics:native_fast_wrap_mask_semantics() end
+    function Core.BinMul:native_fast_int_binary_supported(semantics) return semantics:native_fast_wrap_mask_semantics() end
+    function Core.BinBitAnd:native_fast_int_binary_supported(_semantics) return true end
+    function Core.BinBitOr:native_fast_int_binary_supported(_semantics) return true end
+    function Core.BinBitXor:native_fast_int_binary_supported(_semantics) return true end
+    function Core.BinShl:native_fast_int_binary_supported(semantics) return semantics.shift:native_fast_shift_policy_supported() end
+    function Core.BinLShr:native_fast_int_binary_supported(semantics) return semantics.shift:native_fast_shift_policy_supported() end
+    function Core.BinAShr:native_fast_int_binary_supported(semantics) return semantics.shift:native_fast_shift_policy_supported() end
+
+    function Core.BinaryOp:native_fast_mul_op_supported()
+        return false
+    end
+
+    function Core.BinMul:native_fast_mul_op_supported()
+        return true
+    end
+
+    function Core.BinaryOp:native_fast_add_op_supported()
+        return false
+    end
+
+    function Core.BinAdd:native_fast_add_op_supported()
+        return true
+    end
+
+    function Code.CodeInstOp:native_frame_micro_op_region_parts(_input)
+        internal_error("CodeInstOp leaf is missing native fast baseline micro-op projection")
+    end
+
+    function Code.CodeInstConst:native_frame_micro_op_region_parts(input)
+        local scalar = self.const.ty:native_machine_scalar(input.plan.target)
+        local output = frame_binding_for_code_value(input, self.dst)
+        local family = Support.code_const_frame_family("literal." .. scalar_token(scalar), input.plan.target, scalar, Native.NativeCodeConstLiteralAxis(self.const.ty))
+        return Native.NativeFrameMicroOpRegion(family), {}, { output }
+    end
+
+    function Code.CodeInstAlias:native_frame_micro_op_region_parts(input)
+        local scalar = self.ty:native_machine_scalar(input.plan.target)
+        local family = Support.code_inst_frame_family("alias." .. scalar_token(scalar), input.plan.target, scalar, Native.NativeCodeInstAliasAxis(self.ty))
+        return Native.NativeFrameMicroOpRegion(family), { frame_binding_for_code_value(input, self.src) }, { frame_binding_for_code_value(input, self.dst) }
+    end
+
+    function Code.CodeInstUnary:native_frame_micro_op_region_parts(input)
+        local source_scalar = self.ty:native_machine_scalar(input.plan.target)
+        local result_scalar = self.op:native_unary_result_scalar(self.ty, input.plan.target)
+        local name = self.op:native_unary_family_name()
+        local family = Support.code_inst_frame_family("unary." .. scalar_token(source_scalar) .. "." .. name, input.plan.target, source_scalar, Native.NativeCodeInstUnaryAxis(self.op, self.ty))
+        return Native.NativeFrameMicroOpRegion(family), { frame_binding_for_code_value(input, self.value) }, { frame_binding_for_code_value(input, self.dst) }
+    end
+
+    function Code.CodeInstBinary:native_frame_micro_op_region_parts(input)
+        local scalar = self.ty:native_machine_scalar(input.plan.target)
+        local name = self.op:native_binary_family_name()
+        local family = Support.code_inst_frame_family("binary." .. scalar_token(scalar) .. "." .. name, input.plan.target, scalar, Native.NativeCodeInstBinaryAxis(self.op, self.ty, self.semantics))
+        return Native.NativeFrameMicroOpRegion(family), { frame_binding_for_code_value(input, self.lhs), frame_binding_for_code_value(input, self.rhs) }, { frame_binding_for_code_value(input, self.dst) }
+    end
+
+    function Code.CodeInstFloatBinary:native_frame_micro_op_region_parts(input)
+        local scalar = self.ty:native_machine_scalar(input.plan.target)
+        local name = self.op:native_binary_family_name()
+        local family = Support.code_inst_frame_family("float_binary." .. scalar_token(scalar) .. "." .. name, input.plan.target, scalar, Native.NativeCodeInstFloatBinaryAxis(self.op, self.ty, self.mode))
+        return Native.NativeFrameMicroOpRegion(family), { frame_binding_for_code_value(input, self.lhs), frame_binding_for_code_value(input, self.rhs) }, { frame_binding_for_code_value(input, self.dst) }
+    end
+
+    function Code.CodeInstCompare:native_frame_micro_op_region_parts(input)
+        local operand_scalar = self.operand_ty:native_machine_scalar(input.plan.target)
+        local name = self.op:native_compare_family_name()
+        local family = Support.code_inst_frame_family("compare." .. scalar_token(operand_scalar) .. "." .. name, input.plan.target, operand_scalar, Native.NativeCodeInstCompareAxis(self.op, self.operand_ty))
+        return Native.NativeFrameMicroOpRegion(family), { frame_binding_for_code_value(input, self.lhs), frame_binding_for_code_value(input, self.rhs) }, { frame_binding_for_code_value(input, self.dst) }
+    end
+
+    function Code.CodeInst:native_frame_micro_op_region(input, func, block, transfer)
+        local body, inputs, outputs = self.op:native_frame_micro_op_region_parts(input)
+        return native_fast_region(
+            native_fast_inst_region_id(func, self),
+            native_fast_code_region_origin(func, block, self, self),
+            body,
+            inputs,
+            outputs,
+            transfer
+        )
+    end
+
+    function Code.CodeInstUnary:native_fast_return_expr_region(input, func, block, inst, term, result_scalar)
+        local inputs = {}
+        local atom = native_fast_atom_for_value(input, block, self.value, nil, inputs)
+        local shape = Native.NativeExprReturnUnary(result_scalar, self.op, atom)
+        return native_fast_region(
+            native_fast_term_region_id(func, term, "return_unary"),
+            native_fast_code_region_origin(func, block, inst, inst),
+            Native.NativeCodeExprRegion(shape),
+            inputs,
+            { native_fast_public_result_binding(input, self.dst, result_scalar) },
+            Native.NativeRegionReturn
+        ), #block.insts
+    end
+
+    function Code.CodeInstFloatBinary:native_fast_return_expr_region(input, func, block, inst, term, result_scalar)
+        local inputs = {}
+        local lhs = native_fast_atom_for_value(input, block, self.lhs, nil, inputs)
+        local rhs = native_fast_atom_for_value(input, block, self.rhs, nil, inputs)
+        local shape = Native.NativeExprReturnBinary(result_scalar, self.op, lhs, rhs)
+        return native_fast_region(
+            native_fast_term_region_id(func, term, "return_float_binary"),
+            native_fast_code_region_origin(func, block, inst, inst),
+            Native.NativeCodeExprRegion(shape),
+            inputs,
+            { native_fast_public_result_binding(input, self.dst, result_scalar) },
+            Native.NativeRegionReturn
+        ), #block.insts
+    end
+
+    local function native_fast_binary_immediate_region(input, func, block, inst, term, result_scalar, const_inst, first_index)
+        local op = inst.op
+        local immediate = native_fast_immediate_from_inst(input, const_inst)
+        if immediate == nil then return nil end
+        local inputs = {}
+        local lhs = append_native_fast_frame_atom(input, inputs, op.lhs)
+        inputs[#inputs + 1] = immediate
+        local shape = Native.NativeExprReturnBinaryImmRhs(result_scalar, op.op, lhs)
+        return native_fast_region(
+            native_fast_term_region_id(func, term, "return_binary_imm_rhs"),
+            native_fast_code_region_origin(func, block, const_inst, inst),
+            Native.NativeCodeExprRegion(shape),
+            inputs,
+            { native_fast_public_result_binding(input, op.dst, result_scalar) },
+            Native.NativeRegionReturn
+        ), first_index
+    end
+
+    local function native_fast_mul_add_immediate_region(input, func, block, inst, term, result_scalar, mul_inst, const_inst, first_index)
+        local add = inst.op
+        local mul = mul_inst.op
+        if not add.op:native_fast_add_op_supported() or not mul.op:native_fast_mul_op_supported() then return nil end
+        if not mul.semantics:native_fast_wrap_mask_semantics() then return nil end
+        local immediate = native_fast_immediate_from_inst(input, const_inst)
+        if immediate == nil then return nil end
+        local inputs = {}
+        local lhs = native_fast_atom_for_value(input, block, mul.lhs, nil, inputs)
+        local rhs = native_fast_atom_for_value(input, block, mul.rhs, nil, inputs)
+        inputs[#inputs + 1] = immediate
+        local shape = Native.NativeExprReturnMulAddImm(result_scalar, lhs, rhs)
+        return native_fast_region(
+            native_fast_term_region_id(func, term, "return_mul_add_imm"),
+            native_fast_code_region_origin(func, block, block.insts[first_index], inst),
+            Native.NativeCodeExprRegion(shape),
+            inputs,
+            { native_fast_public_result_binding(input, add.dst, result_scalar) },
+            Native.NativeRegionReturn
+        ), first_index
+    end
+
+    function Code.CodeInstBinary:native_fast_return_expr_region(input, func, block, inst, term, result_scalar)
+        if not self.op:native_fast_int_binary_supported(self.semantics) then return nil end
+        local inst_index = #block.insts
+        local left_producer, left_index = find_native_fast_producer(block, self.lhs, inst_index - 1)
+        local right_producer, right_index = find_native_fast_producer(block, self.rhs, inst_index - 1)
+        if left_producer ~= nil and asdl.isa(left_producer.op, Code.CodeInstBinary) and right_producer ~= nil and asdl.isa(right_producer.op, Code.CodeInstConst) then
+            local fused, first = native_fast_mul_add_immediate_region(input, func, block, inst, term, result_scalar, left_producer, right_producer, math.min(left_index, right_index))
+            if fused ~= nil then return fused, first end
+        end
+        if right_producer ~= nil and asdl.isa(right_producer.op, Code.CodeInstBinary) and left_producer ~= nil and asdl.isa(left_producer.op, Code.CodeInstConst) then
+            local fused, first = native_fast_mul_add_immediate_region(input, func, block, inst, term, result_scalar, right_producer, left_producer, math.min(left_index, right_index))
+            if fused ~= nil then return fused, first end
+        end
+        local previous = block.insts[inst_index - 1]
+        if previous ~= nil and self.rhs == previous:native_fast_output_value() then
+            local imm_region, imm_first = native_fast_binary_immediate_region(input, func, block, inst, term, result_scalar, previous, inst_index - 1)
+            if imm_region ~= nil then return imm_region, imm_first end
+        end
+        local inputs = {}
+        local lhs = native_fast_atom_for_value(input, block, self.lhs, inst_index - 1, inputs)
+        local rhs = native_fast_atom_for_value(input, block, self.rhs, inst_index - 1, inputs)
+        local shape = Native.NativeExprReturnBinary(result_scalar, self.op, lhs, rhs)
+        return native_fast_region(
+            native_fast_term_region_id(func, term, "return_binary"),
+            native_fast_code_region_origin(func, block, inst, inst),
+            Native.NativeCodeExprRegion(shape),
+            inputs,
+            { native_fast_public_result_binding(input, self.dst, result_scalar) },
+            Native.NativeRegionReturn
+        ), inst_index
+    end
+
+    function Code.CodeInstOp:native_fast_return_expr_region(_input, _func, _block, _inst, _term, _result_scalar)
+        return nil
+    end
+
+    local function native_fast_return_atom_region(input, func, block, term, result_value, result_scalar)
+        local inputs = {}
+        local atom = native_fast_atom_for_value(input, block, result_value, #block.insts, inputs)
+        return native_fast_region(
+            native_fast_term_region_id(func, term, "return_atom"),
+            native_fast_code_region_origin(func, block, nil, nil),
+            Native.NativeCodeExprRegion(Native.NativeExprReturnAtom(result_scalar, atom)),
+            inputs,
+            { native_fast_public_result_binding(input, result_value, result_scalar) },
+            Native.NativeRegionReturn
+        ), nil
+    end
+
+    local function native_fast_compare_shape_for_inst(input, block, inst, inst_index, inputs)
+        local cmp = inst.op
+        local scalar = cmp.operand_ty:native_machine_scalar(input.plan.target)
+        local rhs_producer = find_native_fast_producer(block, cmp.rhs, inst_index - 1)
+        local immediate = native_fast_immediate_from_inst(input, rhs_producer)
+        if immediate ~= nil and rhs_producer == block.insts[inst_index - 1] then
+            local lhs = append_native_fast_frame_atom(input, inputs, cmp.lhs)
+            inputs[#inputs + 1] = immediate
+            return Native.NativeCompareBranchImmRhs(cmp.op, scalar, lhs), inst_index - 1
+        end
+        local lhs = native_fast_atom_for_value(input, block, cmp.lhs, inst_index - 1, inputs)
+        local rhs = native_fast_atom_for_value(input, block, cmp.rhs, inst_index - 1, inputs)
+        return Native.NativeCompareBranchAtoms(cmp.op, scalar, lhs, rhs), inst_index
+    end
+
+    function Code.CodeTermOp:native_fast_terminal_region(_input, _func, _block, _term)
+        internal_error("CodeTermOp leaf is missing native fast terminal projection")
+    end
+
+    local function native_fast_term_return_baseline_region(input, func, block, term)
+        local shape = input.lowering.active_func.abi.result:native_code_result_shape()
+        local scalar = shape:native_result_family_scalar(input.plan.target)
+        local family = Support.code_term_frame_family("return." .. shape:native_result_shape_token(), input.plan.target, scalar, Native.NativeCodeTermReturnShapeAxis(shape))
+        local inputs = {}
+        if #(term.values or {}) == 1 then inputs[1] = frame_binding_for_code_value(input, term.values[1]) end
+        local outputs = {}
+        if #(term.values or {}) == 1 and shape:native_fast_direct_result_scalar() ~= nil then
+            outputs[1] = native_fast_public_result_binding(input, term.values[1], shape:native_fast_direct_result_scalar())
+        end
+        return native_fast_region(
+            native_fast_term_region_id(func, term, "return_baseline"),
+            native_fast_code_region_origin(func, block, nil, nil),
+            Native.NativeFrameMicroOpRegion(family),
+            inputs,
+            outputs,
+            Native.NativeRegionReturn
+        ), nil
+    end
+
+    function Code.CodeTermReturn:native_fast_terminal_region(input, func, block, term)
+        if #(self.values or {}) > 1 then internal_error("Lalin native CodeTermReturn is invalid: Lalin has zero or one return value") end
+        local shape = input.lowering.active_func.abi.result:native_code_result_shape()
+        local result_scalar = shape:native_fast_direct_result_scalar()
+        if result_scalar == nil or #(self.values or {}) ~= 1 then return native_fast_term_return_baseline_region(input, func, block, term) end
+        local result_value = self.values[1]
+        local last_inst = block.insts[#block.insts]
+        if last_inst ~= nil and last_inst:native_fast_output_value() == result_value then
+            local region, first_index = last_inst.op:native_fast_return_expr_region(input, func, block, last_inst, term, result_scalar)
+            if region ~= nil then return region, first_index end
+        end
+        return native_fast_return_atom_region(input, func, block, term, result_value, result_scalar)
+    end
+
+    function Code.CodeTermJump:native_fast_terminal_region(input, func, block, term)
+        local family = Support.code_term_family("jump.next", input.plan.target, Native.NativeCodeTermJumpAxis, Support.protocol_void_none())
+        return native_fast_region(
+            native_fast_term_region_id(func, term, "jump_baseline"),
+            native_fast_code_region_origin(func, block, nil, nil),
+            Native.NativeFrameMicroOpRegion(family),
+            {},
+            {},
+            Native.NativeRegionJump(native_fast_block_entry_region_id(func, self.dest))
+        ), nil
+    end
+
+    function Code.CodeTermBranch:native_fast_terminal_region(input, func, block, term)
+        local last_inst = block.insts[#block.insts]
+        if last_inst ~= nil and asdl.isa(last_inst.op, Code.CodeInstCompare) and last_inst.op.dst == self.cond and #(self.then_args or {}) == 0 and #(self.else_args or {}) == 0 then
+            local inputs = {}
+            local shape, first_index = native_fast_compare_shape_for_inst(input, block, last_inst, #block.insts, inputs)
+            return native_fast_region(
+                native_fast_term_region_id(func, term, "compare_branch"),
+                native_fast_code_region_origin(func, block, block.insts[first_index], last_inst),
+                Native.NativeCodeCompareBranchRegion(shape),
+                inputs,
+                {},
+                Native.NativeRegionBranch(native_value_id(self.cond), native_fast_block_entry_region_id(func, self.then_dest), native_fast_block_entry_region_id(func, self.else_dest))
+            ), first_index
+        end
+        local cond = frame_binding_for_code_value(input, self.cond)
+        local family = Support.code_term_family("branch.bool8.slot", input.plan.target, Native.NativeCodeTermBranchAxis, Support.protocol_void_none())
+        return native_fast_region(
+            native_fast_term_region_id(func, term, "branch_baseline"),
+            native_fast_code_region_origin(func, block, nil, nil),
+            Native.NativeFrameMicroOpRegion(family),
+            { cond },
+            {},
+            Native.NativeRegionBranch(cond.value, native_fast_block_entry_region_id(func, self.then_dest), native_fast_block_entry_region_id(func, self.else_dest))
+        ), nil
+    end
+
+    function Code.CodeTermSwitch:native_fast_terminal_region(input, func, block, term)
+        local key = frame_binding_for_code_value(input, self.value)
+        local scalar = key.scalar
+        local family = Support.code_term_family("switch_step." .. scalar_token(scalar) .. ".slot.imm", input.plan.target, Native.NativeCodeTermSwitchAxis, Support.protocol_void_none())
+        local cases = {}
+        for _, case in ipairs(self.cases or {}) do
+            cases[#cases + 1] = Native.NativeRegionSwitchCase(case.literal, native_fast_block_entry_region_id(func, case.dest))
+        end
+        return native_fast_region(
+            native_fast_term_region_id(func, term, "switch_baseline"),
+            native_fast_code_region_origin(func, block, nil, nil),
+            Native.NativeFrameMicroOpRegion(family),
+            { key },
+            {},
+            Native.NativeRegionSwitch(key.value, cases, native_fast_block_entry_region_id(func, self.default_dest))
+        ), nil
+    end
+
+    function Code.CodeTermVariantSwitch:native_fast_terminal_region(input, func, block, term)
+        local key = frame_binding_for_code_value(input, self.tag)
+        local scalar = key.scalar
+        local family = Support.code_term_family("variant_switch_step." .. scalar_token(scalar) .. ".slot.imm", input.plan.target, Native.NativeCodeTermVariantSwitchAxis, Support.protocol_void_none())
+        local cases = {}
+        for _, case in ipairs(self.cases or {}) do
+            cases[#cases + 1] = Native.NativeRegionSwitchCase(Core.LitInt(tostring(case.variant.tag_value)), native_fast_block_entry_region_id(func, case.dest))
+        end
+        return native_fast_region(
+            native_fast_term_region_id(func, term, "variant_switch_baseline"),
+            native_fast_code_region_origin(func, block, nil, nil),
+            Native.NativeFrameMicroOpRegion(family),
+            { key },
+            {},
+            Native.NativeRegionSwitch(key.value, cases, native_fast_block_entry_region_id(func, self.default_dest))
+        ), nil
+    end
+
+    function Code.CodeTermTrap:native_fast_terminal_region(input, func, block, term)
+        local family = Support.code_term_family("trap.trap", input.plan.target, Native.NativeCodeTermTrapAxis, Support.protocol_void_none())
+        return native_fast_region(native_fast_term_region_id(func, term, "trap_baseline"), native_fast_code_region_origin(func, block, nil, nil), Native.NativeFrameMicroOpRegion(family), {}, {}, Native.NativeRegionTrap), nil
+    end
+
+    function Code.CodeTermUnreachable:native_fast_terminal_region(input, func, block, term)
+        local family = Support.code_term_family("unreachable.trap", input.plan.target, Native.NativeCodeTermUnreachableAxis, Support.protocol_void_none())
+        return native_fast_region(native_fast_term_region_id(func, term, "unreachable_baseline"), native_fast_code_region_origin(func, block, nil, nil), Native.NativeFrameMicroOpRegion(family), {}, {}, Native.NativeRegionTrap), nil
+    end
+
+    function Code.CodeTerm:native_fast_terminal_region(input, func, block)
+        return self.op:native_fast_terminal_region(input, func, block, self)
+    end
+
+    function Native.NativeRegionTransfer:native_fast_region_is_exit()
+        return false
+    end
+
+    function Native.NativeRegionReturn:native_fast_region_is_exit()
+        return true
+    end
+
+    function Native.NativeRegionTrap:native_fast_region_is_exit()
+        return true
+    end
+
+    function Code.CodeBlock:append_native_fast_regions(input, func, regions)
+        local terminal_region, first_terminal_inst = self.term:native_fast_terminal_region(input, func, self)
+        local prefix_end = first_terminal_inst and (first_terminal_inst - 1) or #(self.insts or {})
+        local first_body_region_id = prefix_end >= 1 and native_fast_inst_region_id(func, self.insts[1]) or terminal_region.id
+        regions[#regions + 1] = native_fast_region(
+            native_fast_block_entry_region_id(func, self.id),
+            Native.NativeCodeBlockRegion(func.id, self.id),
+            Native.NativeFrameMicroOpRegion(Support.code_term_family("jump.next", input.plan.target, Native.NativeCodeTermJumpAxis, Support.protocol_void_none())),
+            {},
+            {},
+            Native.NativeRegionFallthrough(first_body_region_id)
+        )
+        for i = 1, prefix_end do
+            local inst = self.insts[i]
+            local next_id = (i < prefix_end) and native_fast_inst_region_id(func, self.insts[i + 1]) or terminal_region.id
+            regions[#regions + 1] = inst:native_frame_micro_op_region(input, func, self, Native.NativeRegionFallthrough(next_id))
+        end
+        regions[#regions + 1] = terminal_region
+    end
+
+    local function native_fast_exits_from_regions(regions)
+        local exits = {}
+        for _, region in ipairs(regions or {}) do
+            if region.transfer:native_fast_region_is_exit() then exits[#exits + 1] = region.id end
+        end
+        return exits
+    end
+
+    local function initialize_native_fast_code_build(func, plan, lowering, signature)
+        if lowering == nil and signature == nil then internal_error("native CodeFunc fast-region projection requires an ASDL CodeSig, not only CodeFunc.sig id") end
+        local lowering_input = lowering or native_code_lowering_for_single_function(func, signature, plan)
+        local state = Native.NativeCodeGraphBuilderState(
+            Native.NativeValueLocationPlan({}, lowering_input.module.addresses),
+            Native.NativeFrameLayoutPlan({}, {}, {}, {}, 0),
+            Native.NativeControlPlan({}, {}, {}, {}),
+            Native.NativeEdgeCopyPlan({}),
+            {}
+        )
+        local build = Native.NativeCodeGraphBuildInput(plan, lowering_input, state)
+        local frame_alignment = target_frame_alignment(plan.target)
+        allocate_abi_frame_slots(func, lowering_input.active_func.abi, state, plan.target, lowering_input.module.type_layouts, frame_alignment)
+        allocate_result_frame_slot(func, lowering_input.active_func.abi, state, plan.target)
+        for _, block in ipairs(func.blocks or {}) do
+            for _, param in ipairs(block.params or {}) do
+                allocate_ordered_storage_slot(state, param.value, param.ty:native_storage_layout(plan.target, lowering_input.module.type_layouts), "block_param", frame_alignment)
+            end
+        end
+        for _, local_storage_entry in ipairs(lowering_input.active_func.local_storage or {}) do
+            if local_storage_entry.residence ~= Code.CodeResidenceStatic then
+                local slot = allocate_local_storage_slot(state, local_storage_entry.local_id, local_storage_entry.storage, frame_alignment)
+                append_local_address_entry(state, plan.target, local_storage_entry.local_id, local_storage_entry.ty, Native.NativeCodeAddressFrameSlot(slot.id))
+            end
+        end
+        for _, block in ipairs(func.blocks or {}) do
+            for _, inst in ipairs(block.insts or {}) do inst:preallocate_native_storage(build, frame_alignment) end
+        end
+        for _, block in ipairs(func.blocks or {}) do
+            for _, inst in ipairs(block.insts or {}) do inst:preallocate_native_fast_storage(build, frame_alignment) end
+        end
+        for _, block in ipairs(func.blocks or {}) do
+            for _, inst in ipairs(block.insts or {}) do inst:append_native_address_plan(build) end
+        end
+        return build
+    end
+
+    function Code.CodeFunc:plan_native_fast_regions(plan, lowering, signature)
+        local build = initialize_native_fast_code_build(self, plan, lowering, signature)
+        local entry_block
+        for _, candidate in ipairs(self.blocks or {}) do if candidate.id == self.entry then entry_block = candidate end end
+        if entry_block == nil then internal_error("native CodeFunc fast-region entry block is absent: " .. self.entry.text) end
+        local regions = {}
+        for _, block in ipairs(self.blocks or {}) do block:append_native_fast_regions(build, self, regions) end
+        return Native.NativeFastRegionPlan(
+            plan.target,
+            Support.native_call_code_sig(build.lowering.active_func.abi),
+            regions,
+            native_fast_block_entry_region_id(self, self.entry),
+            native_fast_exits_from_regions(regions),
+            frame_layout_from_state(plan.target, build.state)
+        )
     end
 
     function Code.CodeFunc:plan_native_copy(plan, lowering, signature)
@@ -1923,16 +2514,15 @@ local function bind_context(T)
         local projection = lowering_input.active_func.abi
         local family = native_public_abi_adapter_family(plan.target, projection)
         local entry_node_id = Native.NativeTemplateNodeId("native.code.node.entry." .. self.id.text)
-        local entry_entry = selected_entry(plan, family)
         local entry_node = Native.NativeTemplateNode(
             entry_node_id,
             instance_id_for(entry_node_id),
-            entry_entry,
+            family,
             {},
             {},
-            materialize_bindings(entry_node_id, instance_id_for(entry_node_id), entry_entry, entry_binding_specs_for_projection(self, projection, state))
+            materialize_bindings(entry_node_id, instance_id_for(entry_node_id), entry_binding_specs_for_projection(self, projection, state))
         )
-        enforce_entry_frame_stack_limit(entry_entry, frame_layout_from_state(plan.target, state))
+        enforce_frame_stack_limit(native_public_abi_adapter_stack_limit(projection), frame_layout_from_state(plan.target, state))
         return graph_from_state(plan, state, Support.native_call_code_sig(projection), entry_node)
     end
 

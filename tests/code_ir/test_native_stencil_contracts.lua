@@ -78,12 +78,13 @@ local domain = Support.support_domain_with_sources(
 )
 assert(domain.stencil_sources == stencil_sources, "support domains should carry stencil source support separately from kernel support")
 
-local lowering_plan = Native.NativePlanInput(target, Support.empty_runtime(), Native.NativeTemplateBank(
-    Native.NativeBankId("native.stencil.contracts.empty"),
-    target,
-    Native.NativeTemplateSourceManifest(Native.NativeTemplateManifestId("native.stencil.contracts.empty.manifest"), Native.NativeTemplateSupportDomainId("native.stencil.contracts.empty.support"), {}, 0),
-    {}
-))
+local function fake_loaded_bank(id)
+    local manifest = Native.NativeTemplateSourceManifest(Native.NativeTemplateManifestId(id .. ".manifest"), Native.NativeTemplateSupportDomainId(id .. ".support"), {}, 0)
+    local artifact = Native.NativeBankArtifact(Native.NativeBankId(id), target, manifest, 0, "lalin_native_bank_artifact", "lalin_native_bank_select", "lalin_native_bank_install")
+    return Native.NativeLoadedBank(artifact, 1)
+end
+
+local lowering_plan = Native.NativePlanInput(target, Support.empty_runtime(), fake_loaded_bank("native.stencil.contracts.empty"))
 local lowering = instance:native_stencil_lowering_input(lowering_plan, type_layouts, Native.NativeModuleAddressPlan({}, {}, {}, {}, {}, {}))
 assert(asdl.isa(lowering, Native.NativeStencilLoweringInput), "StencilInstance should build a typed NativeStencilLoweringInput")
 assert(lowering.instance == instance, "stencil lowering should carry the instance")
@@ -93,24 +94,6 @@ assert(#lowering.accesses == 1, "stencil lowering should allocate access address
 assert(#lowering.point_values == 3, "recursive point expression lowering should allocate child and root point value entries")
 assert(lowering.body_value.expr == point, "body value should reference the root point expression")
 
-local function fake_stencil_entry(shape, index)
-    local family = shape:native_stencil_template_family({ target = target })
-    local compiled = Native.NativeCompiledTemplate(
-        Native.NativeTemplateId("native.stencil.fake." .. tostring(index)),
-        family,
-        target,
-        Native.NativeExtractTerminalContinuation,
-        Support.spill_all_stencil_signature(Support.scalar_bool8(), {}, {}),
-        Native.NativeTextSection(Native.NativeTemplateBytes("\195", 1), 1),
-        {},
-        {},
-        {},
-        {},
-        {},
-        Native.NativeConstantPoolLayout({}, 0, 1)
-    )
-    return Native.NativeTemplateBankEntry(family, compiled)
-end
 
 local input_shape = point.left:native_stencil_projection(target, type_layouts, descriptor).shape
 local const_shape = point.right:native_stencil_projection(target, type_layouts, descriptor).shape
@@ -124,14 +107,7 @@ local graph_shapes = {
     projection.descriptor.body.shape,
     projection.descriptor.sink.shape,
 }
-local graph_entries = {}
-for i, shape in ipairs(graph_shapes) do graph_entries[#graph_entries + 1] = fake_stencil_entry(shape, i) end
-local graph_bank = Native.NativeTemplateBank(
-    Native.NativeBankId("native.stencil.contracts.fake.bank"),
-    target,
-    Native.NativeTemplateSourceManifest(Native.NativeTemplateManifestId("native.stencil.contracts.fake.manifest"), Native.NativeTemplateSupportDomainId("native.stencil.contracts.fake.support"), {}, #graph_entries),
-    graph_entries
-)
+local graph_bank = fake_loaded_bank("native.stencil.contracts.fake.bank")
 local graph = instance:plan_native_copy(Native.NativePlanInput(target, Support.empty_runtime(), graph_bank))
 assert(asdl.isa(graph, Native.NativeTemplateGraph), "StencilInstance should lower to a NativeTemplateGraph")
 assert(graph.frame_layout.size > 0, "stencil graph should use a concrete NativeFrameLayout")

@@ -1,0 +1,101 @@
+{
+	"version": 1,
+	"workflowId": "wf-native-fast-region-asdl",
+	"planId": "main",
+	"revision": 8,
+	"nextId": 7,
+	"createdAt": "2026-07-05T17:41:07.793Z",
+	"updatedAt": "2026-07-05T18:24:38.661Z",
+	"tasks": [
+		{
+			"id": "T001",
+			"title": "Install fast-region ASDL vocabulary",
+			"detail": "Implement the ASDL design now documented in docs/RESIDUAL_NATIVE_ARCHITECTURE.md under `Fast region protocol: residence, fallthrough, and bounded fusion`: NativeFastRegionPlan, NativeFastRegion, NativeFastRegionOrigin, NativeRegionBoundaryResidence, NativeRegionValueBinding, NativeRegionTransfer, NativeFastRegionBody, bounded Code expression/compare/memory/kernel/stencil region shape products, NativeFastPublicAbiShape, and NativeFastRegionCapability. Keep products precise; no generic context/table/map fields; no string opcode tags.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [],
+			"status": "done",
+			"order": 1,
+			"claimedBy": "agent-3RNF2Y",
+			"evidence": "Implemented fast-region ASDL vocabulary in lua/lalin/schema/native.lua: NativeFastRegionId, NativeFastRegionPlan/Region/Origin/Body, NativeRegionBoundaryResidence/ValueBinding/Transfer/SwitchCase, bounded fast public ABI, Code expr/compare/memory shapes, kernel step and stencil point region shapes, and NativeFastRegionCapability. Added tests/schema/test_native_fast_region_schema.lua to instantiate the new vocabulary without generic maps/context bags or string opcode tags. Verified with `luajit tests/schema/test_schema_native.lua && luajit tests/schema/test_native_fast_region_schema.lua` and `luajit tests/run.lua schema` (12 passed). Note: NativeKernelBodyRegion references existing LalinKernel.KernelId because the current kernel schema has KernelId/KernelPlan, not a KernelPlanId product.",
+			"notes": [],
+			"createdAt": "2026-07-05T17:41:07.793Z",
+			"updatedAt": "2026-07-05T17:47:54.110Z"
+		},
+		{
+			"id": "T002",
+			"title": "Add fast-region projection methods",
+			"detail": "Add leaf-method-owned projection from CodeFunc/CodeBlock/CodeInst/CodeTerm into NativeFastRegionPlan. Start with scalar Code expression regions: return atom, unary, binary, binary-imm-rhs, mul-add-imm, and compare-branch where locally typed. Preserve baseline NativeFrameMicroOpRegion for unsupported fast shapes. Do not use Lua opcode string scans or side tables; facts must be typed ASDL values.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 2,
+			"claimedBy": "agent-F2KN1Z",
+			"evidence": "Implemented Code fast-region projection methods in lua/lalin/native_code_methods.lua: CodeFunc:plan_native_fast_regions builds a NativeFastRegionPlan with typed frame/public/immediate residences; CodeBlock/CodeInst/CodeTerm leaf-owned methods project return atom, unary, binary, binary-imm-rhs, mul-add-imm, compare-branch, and baseline NativeFrameMicroOpRegion terminal/inst regions for unsupported scalar/control shapes. Added typed immediate patch coordinates to NativeResidenceImmediate in lua/lalin/schema/native.lua and updated docs/RESIDUAL_NATIVE_ARCHITECTURE.md so immediate residences carry NativePatchCoordinate rather than an untyped side fact. Added tests/code_ir/test_native_fast_region_projection.lua covering return atom/unary/binary-imm/mul-add/compare-branch projection and typed immediate coordinates. Verified with `luajit tests/run.lua schema` (12 passed) and `luajit tests/run.lua code_ir` (51 passed, 1 skipped).",
+			"notes": [],
+			"createdAt": "2026-07-05T17:41:07.793Z",
+			"updatedAt": "2026-07-05T18:05:27.792Z"
+		},
+		{
+			"id": "T003",
+			"title": "Generate fast region template families",
+			"detail": "Generate closed C-owned bank source families for NativeCodeExprRegionShape and bounded NativeFastPublicAbiShape. Include a fallthrough-capable extraction form where the template has no artificial successor jump. Immediate/constants/frame/public ABI bindings must be holes or typed install ABI coordinates, not family axes.",
+			"file": "lua/lalin/native_template_sources.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 3,
+			"claimedBy": "agent-Z4D32G",
+			"evidence": "Implemented fast-region template source generation and tests. Changed lua/lalin/native_template_sources.lua to generate NativeCodeExprRegionShape fallthrough sources and bounded NativeFastPublicAbiShape sources through typed ASDL leaf methods, added NativeExtractFallthroughFragment/fast axes/source input vocabulary in lua/lalin/schema/native.lua, wired extraction equality/support/generator verification in lua/lalin/native.lua, lua/lalin/native_template_support.lua, and tools/gen_lalin_mc_bank.lua, documented the extraction mode in docs/RESIDUAL_NATIVE_ARCHITECTURE.md, and added tests/code_ir/test_native_fast_region_template_sources.lua. Verified with `luajit tests/run.lua schema` (12 passed) and `luajit tests/run.lua code_ir` (52 passed, 1 skipped).",
+			"notes": [],
+			"createdAt": "2026-07-05T17:41:07.793Z",
+			"updatedAt": "2026-07-05T18:24:05.525Z"
+		},
+		{
+			"id": "T004",
+			"title": "Teach graph lowering and installer fallthrough layout",
+			"detail": "Lower NativeFastRegionPlan to NativeTemplateGraph/NativeBankInstallPlan with explicit NativeRegionFallthrough contracts. Extend generated C installer metadata/API as needed so fallthrough-capable templates are laid out adjacent and not patched as jumps; reject unsatisfied fallthrough layout with a typed install reject. Keep real branch/switch/call edges as real control transfers.",
+			"file": "lua/lalin/native_mc.lua",
+			"after": [
+				"T002",
+				"T003"
+			],
+			"status": "claimed",
+			"order": 4,
+			"claimedBy": "agent-1WWTK7",
+			"notes": [],
+			"createdAt": "2026-07-05T17:41:07.793Z",
+			"updatedAt": "2026-07-05T18:24:38.661Z"
+		},
+		{
+			"id": "T005",
+			"title": "Use fused public/scalar traces in Code backend",
+			"detail": "Route eligible scalar functions through bounded fast public ABI + expression region templates so `return a*b+imm` becomes one native region and no frame micro-op chain. Baseline remains semantic lowering for non-fast shapes, not a compatibility shim. Add graph assertions that fast regions produce fewer nodes and no artificial continuation jumps.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T004"
+			],
+			"status": "todo",
+			"order": 5,
+			"notes": [],
+			"createdAt": "2026-07-05T17:41:07.793Z",
+			"updatedAt": "2026-07-05T17:41:07.793Z"
+		},
+		{
+			"id": "T006",
+			"title": "Benchmark and disassemble fast-region output",
+			"detail": "Extend the benchmark/disassembly script to compare baseline micro-op and fast-region output for const, binary, mul-add, f64 add, branch, and switch. Verify the `a*b+5` fast path emits a compact fused sequence close to `mov/imul/add/ret` or frame-bound equivalent with no internal temporary spills. Run schema/code_ir tests and benchmark smoke.",
+			"file": "benchmarks/bench_native_backend.lua",
+			"after": [
+				"T005"
+			],
+			"status": "todo",
+			"order": 6,
+			"notes": [],
+			"createdAt": "2026-07-05T17:41:07.793Z",
+			"updatedAt": "2026-07-05T17:41:07.793Z"
+		}
+	]
+}

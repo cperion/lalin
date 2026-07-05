@@ -2,10 +2,10 @@
 	"version": 1,
 	"workflowId": "wf-native-cp-refactor",
 	"planId": "main",
-	"revision": 182,
-	"nextId": 39,
+	"revision": 189,
+	"nextId": 46,
 	"createdAt": "2026-07-02T17:26:00.699Z",
-	"updatedAt": "2026-07-05T05:27:10.423Z",
+	"updatedAt": "2026-07-05T12:25:13.233Z",
 	"tasks": [
 		{
 			"id": "T001",
@@ -1166,6 +1166,114 @@
 			"notes": [],
 			"createdAt": "2026-07-05T05:21:27.939Z",
 			"updatedAt": "2026-07-05T05:27:10.423Z"
+		},
+		{
+			"id": "T039",
+			"title": "Define and build complete language native bank",
+			"detail": "Final acceptance task for complete current Lalin language-surface native bank. Build generated embedded bank C/H/Lua artifacts from the complete manifest, compile C bridge, import Lua ASDL bank, and report template count/artifact sizes. This must not scope down to host_scalar or i32-only and must not use arbitrary bounds/placeholders/program-specific axes.",
+			"file": "tools/gen_lalin_mc_bank.lua",
+			"after": [
+				"T045"
+			],
+			"status": "todo",
+			"order": 74,
+			"claimedBy": "agent-0T2NTM",
+			"blockedReason": "Blocked before editing: a complete finite language-surface native bank cannot be defined honestly with the current ASDL/source axes. `NativeKernelSourceSupport`/`NativeStencilSourceSupport` enumerate exact source shapes, but several implemented source-shape constructors carry unbounded/program-specific fields with no ASDL-declared language support bounds or abstraction: `NativeKernelValueBytesShape(size, alignment)`, `NativeKernelExprAffineShape(term_count)`, `NativeKernelPredicateLogicalShape(term_count)`, `NativeKernelCallEffectOnlyShape(effect_count)`, `NativeKernelBodySourceShape(lane_count, binding_count, effect_count)`; and `NativeStencilValueBytesShape(size, alignment)`, producer `rank/window_count/tile_count/step`, access `stride/scale/term_count`, access `field_name`/SoA `field_name`, point `offset_count`, reduce scopes over axis counts, and schedule compiler flags/named machine/vector features. Public ABI adapters are likewise finite only for explicitly listed `NativeAbiFunctionProjection` values; arbitrary Code signatures are not bounded by a language-surface ASDL support set. Any generated default bank would either omit implemented semantic leaves or invent arbitrary limits/placeholders, violating T039's no-scope-reduction/no-placeholder requirement.",
+			"notes": [
+				"Prior block was valid but exposed a design gap: complete-bank closure was not proven before source-builder work. T040-T045 now model and implement that missing closure before rerunning final build."
+			],
+			"createdAt": "2026-07-05T05:36:02.642Z",
+			"updatedAt": "2026-07-05T05:39:57.846Z"
+		},
+		{
+			"id": "T040",
+			"title": "Define complete-bank closure ASDL doctrine",
+			"detail": "Add/adjust ASDL vocabulary so a complete language-surface native bank means a closed finite set of source families, not a support-domain sample. Define precise bank-support/closure products or source-shape contracts that make unbounded/program-specific facts illegal as family axes. Source axes must be operation/control shapes only; sizes, alignments, field offsets/names, strides, steps, counts, schedule details, and program signatures must be holes/frame/runtime params, graph repetition, or closed support leaves. No arbitrary max bounds or placeholders.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T038"
+			],
+			"status": "done",
+			"order": 75,
+			"evidence": "Closed the complete-bank closure architecture in docs/RESIDUAL_NATIVE_ARCHITECTURE.md and docs/COPY_PATCH_TEMPLATE_ENUMERATION_NOTES.md. The binding doc now states that support-domain samples are not complete banks, forbids unbounded/program-specific axis payloads, classifies required representations (graph repetition, holes, frame/runtime values, lowering facets), names forbidden payloads, and defines closed replacement micro-op families for Code/Kernel/Stencil/ABI complete-bank enumeration.",
+			"notes": [
+				"Tightened target architecture after review: removed vague class placeholder language in docs/RESIDUAL_NATIVE_ARCHITECTURE.md by defining closed meanings for scalar/value/predicate/reducer/descriptor/vector/unroll/order/call classes; removed phased implementation wording from Closed Design Decisions. Verified no separate NATIVE_COMPLETE_BANK_CLOSURE doc exists and no stale placeholder-plan phrases remain in the architecture section.",
+				"Second consistency pass after user review: removed separate complete-bank plan doc, folded target architecture into docs/RESIDUAL_NATIVE_ARCHITECTURE.md, replaced migration/support-domain/source-shape/sample language with closed NativeCompleteBankCapability and primitive micro-op families, updated docs/ARCHITECTURE.md, docs/LANGUAGE_REFERENCE.md, and docs/COPY_PATCH_TEMPLATE_ENUMERATION_NOTES.md to align. Sanity rg checks for sampled/support-domain-scope, stale source-shape axis terms, K_int/K_float, NativeAbiProjection, TODO/TBD/phased/migration-gap language returned no hits in the relevant docs."
+			],
+			"createdAt": "2026-07-05T05:39:57.846Z",
+			"updatedAt": "2026-07-05T12:25:13.233Z"
+		},
+		{
+			"id": "T041",
+			"title": "Normalize Kernel source shapes for complete bank closure",
+			"detail": "Refactor Kernel native source-shape/schema/methods/sources so complete bank enumeration is finite without arbitrary limits. Remove exact bytes size/alignment, affine term_count, logical term_count, call effect_count, and body lane/binding/effect counts as bank axes. Model repeated terms/effects/body composition as graph nodes/chains; move size/alignment/count data to holes/frame/runtime params or typed lowering facts. Update native_kernel_methods/native_template_sources/tests accordingly.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T040"
+			],
+			"status": "todo",
+			"order": 76,
+			"notes": [],
+			"createdAt": "2026-07-05T05:39:57.846Z",
+			"updatedAt": "2026-07-05T05:39:57.846Z"
+		},
+		{
+			"id": "T042",
+			"title": "Normalize Stencil source shapes for complete bank closure",
+			"detail": "Refactor Stencil native source-shape/schema/methods/sources so complete bank enumeration is finite without program-specific axes. Remove or replace exact bytes size/alignment, ranks/window_count/tile_count, numeric step/stride/scale/term_count, field_name/SoA field_name, point offset_count, reduce axis-count specifics, and arbitrary schedule compiler flags/named features as family axes. Use generic source leaves plus holes/frame/runtime params or graph repetition; keep only closed operation/control alternatives as axes. Update native_stencil_methods/native_template_sources/tests accordingly.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T040"
+			],
+			"status": "todo",
+			"order": 77,
+			"notes": [],
+			"createdAt": "2026-07-05T05:39:57.846Z",
+			"updatedAt": "2026-07-05T05:39:57.846Z"
+		},
+		{
+			"id": "T043",
+			"title": "Normalize native ABI adapter enumeration for complete bank closure",
+			"detail": "Replace arbitrary public ABI adapter/signature enumeration as a complete-bank requirement with finite ABI projection shapes/protocol source families. CodeSig-specific facts must bind through lowering inputs and graph composition, not bank axes. Update support-domain helpers, source builders, and tests so complete bank can include ABI/call adapters without listing every CodeSig.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [
+				"T040"
+			],
+			"status": "todo",
+			"order": 78,
+			"notes": [],
+			"createdAt": "2026-07-05T05:39:57.846Z",
+			"updatedAt": "2026-07-05T05:39:57.846Z"
+		},
+		{
+			"id": "T044",
+			"title": "Add complete language native bank manifest and Makefile target",
+			"detail": "Add a first-class manifest/helper for the complete current language-surface native support domain and a Makefile target that builds it. It must include Code scalar/memory/control/call/ABI families plus complete Kernel and Stencil finite source families after source-shape normalization. It must not use host_scalar/i32-only scope, arbitrary limits, placeholders, or program-specific semantic objects.",
+			"file": "tools/lalin_native_complete_bank_manifest.lua",
+			"after": [
+				"T041",
+				"T042",
+				"T043"
+			],
+			"status": "todo",
+			"order": 79,
+			"notes": [],
+			"createdAt": "2026-07-05T05:39:57.846Z",
+			"updatedAt": "2026-07-05T05:39:57.846Z"
+		},
+		{
+			"id": "T045",
+			"title": "Verify complete language native bank build/import",
+			"detail": "Add focused verification for the complete language native bank: generate C/H/Lua embedded bank artifacts from the complete manifest, compile the generated C bridge, load/import the Lua ASDL bank, and assert manifest/source/bank consistency. Add stale-axis assertions that no complete-bank family axes carry unbounded/program-specific facts. Run this plus schema/code_ir checks.",
+			"file": "tests/code_ir/test_native_complete_bank.lua",
+			"after": [
+				"T044"
+			],
+			"status": "todo",
+			"order": 80,
+			"notes": [],
+			"createdAt": "2026-07-05T05:39:57.846Z",
+			"updatedAt": "2026-07-05T05:39:57.846Z"
 		},
 		{
 			"id": "T017",

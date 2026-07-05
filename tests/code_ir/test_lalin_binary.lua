@@ -44,10 +44,10 @@ local ok, err = pcall(function()
   lalin.compile("embedded_native_no_bank", { add })
 end)
 assert(not ok, "default native compile without a supplied bank must fail")
-assert(tostring(err):find("compile_native requires opts.native_bank", 1, true), tostring(err))
+assert(tostring(err):find("NativeBankArtifact", 1, true), tostring(err))
 assert(not tostring(err):lower():find("fallback", 1, true), tostring(err))
 ]=])
-assert(command_ok("target/lalin " .. shell_quote(no_bank_path)), "expected native compile without supplied NativeTemplateBank to error clearly")
+assert(command_ok("target/lalin " .. shell_quote(no_bank_path)), "expected native compile without supplied NativeBankArtifact/NativeLoadedBank to error clearly")
 
 local native_dir = "target/lalin_binary_smoke/native_bank"
 assert(command_ok("rm -rf " .. shell_quote(native_dir)))
@@ -70,6 +70,8 @@ local gen_cmd = table.concat({
     "2>", shell_quote(native_dir .. "/generator.log"),
 }, " ")
 assert(command_ok(gen_cmd), "expected test to generate a non-empty native scalar bank")
+local native_so = native_dir .. "/libbank.so"
+assert(command_ok("gcc -shared -fPIC " .. shell_quote(native_c) .. " -o " .. shell_quote(native_so)), "expected test to build the generated C-owned native scalar bank as a shared object")
 
 local native_path = "target/lalin_binary_smoke/native_scalar.lua"
 write_file(native_path, string.format([=[
@@ -81,9 +83,9 @@ local Native = T.LalinNative
 local Code = T.LalinCode
 local Core = T.LalinCore
 local NativeBackend = require("lalin.native_backend")(T)
-local embedded = dofile(%q)(T)
-local bank = NativeBackend.require_imported_bank(embedded)
+local artifact = dofile(%q)(T)
 local target = NativeBackend.host_target()
+local bank = NativeBackend.require_native_bank(artifact, target, nil, %q)
 local runtime = NativeBackend.empty_runtime()
 local origin = Code.CodeOriginUnknown
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -110,8 +112,8 @@ local func = Code.CodeFunc(
 local sig = Code.CodeSig(func.sig, { i32, i32 }, { i32 })
 local result = NativeBackend.compile_code_func(func, sig, target, runtime, bank)
 local call = result.executable.protocol:call_native_executable(Native.NativeExecutableCallInput(result.executable, { Native.NativeCallArgI32(20), Native.NativeCallArgI32(22) }))
-assert(call.value == 42, "minimal scalar native compile should execute from supplied non-empty NativeTemplateBank")
-]=], native_lua))
+assert(call.value == 42, "minimal scalar native compile should execute from supplied non-empty C-owned NativeBankArtifact")
+]=], native_lua, native_so))
 assert(command_ok("target/lalin " .. shell_quote(native_path)), "expected embedded Lalin executable to run a minimal supplied-bank native scalar compile")
 
 io.write("lalin binary ok\n")

@@ -299,6 +299,125 @@ assert(descriptor_source("native.code.func.public_abi_adapter." .. descriptor_to
 assert(descriptor_source("native.code.inst.call.direct." .. descriptor_token).c_text:find("__builtin_memcpy", 1, true), "descriptor call source should copy descriptor results through frame storage")
 assert(descriptor_source("native.code.inst.result_copy.descriptor.layout.16").c_text:find("__builtin_memcpy", 1, true), "descriptor result-copy source should be byte-copy based")
 
+local complete_i32 = Support.scalar_i32()
+local complete_ptr = Support.scalar_pointer(NativeBackend.host_target().pointer_bits)
+local complete_scalar_class = Support.complete_scalar_pointer_scalar_class(complete_i32)
+local complete_code_abi_capability = Native.NativeCompleteBankCapability(
+    Support.complete_bank_capability_id("test.code-abi"),
+    NativeBackend.host_target(),
+    { complete_i32, complete_ptr },
+    { Support.complete_value_scalar_class(complete_i32), Support.complete_value_pointer_class(complete_ptr) },
+    { Support.complete_scalar_bytes_scalar_class(complete_i32) },
+    { complete_scalar_class },
+    { Support.complete_index_class(NativeBackend.host_target().pointer_bits) },
+    {},
+    Support.complete_runtime_capability({}, {}, {}),
+    Support.complete_frame_capability(complete_ptr, {}, {}),
+    Support.complete_constant_pool_capability({}),
+    Support.complete_atomic_capability(Native.NativeAtomicNoCodegen, {}, {}, {}),
+    Support.complete_code_capability({
+        Native.NativeCodeMicroOpFrameEntryShape,
+        Native.NativeCodeMicroOpBinaryShape(Core.BinAdd, complete_i32),
+        Native.NativeCodeMicroOpLoadShape(Support.complete_scalar_bytes_scalar_class(complete_i32)),
+        Native.NativeCodeMicroOpCallIndirectShape,
+        Native.NativeCodeMicroOpReturnScalarShape(complete_i32),
+    }),
+    Support.complete_abi_capability({
+        Native.NativeAbiMicroOpParamRegisterShape(complete_scalar_class),
+        Native.NativeAbiMicroOpCallIndirectShape,
+        Native.NativeAbiMicroOpReturnScalarShape(complete_scalar_class),
+    }),
+    Support.complete_kernel_capability({}),
+    Support.complete_stencil_capability({})
+)
+local complete_code_abi_request = Sources.bank_request_for_complete_capability(complete_code_abi_capability, Native.NativeBankId("native.template.test.complete.code-abi"))
+Sources.assert_manifest_matches_sources(complete_code_abi_request.manifest, complete_code_abi_request.sources)
+assert(#complete_code_abi_request.sources == #complete_code_abi_capability.code.micro_ops + #complete_code_abi_capability.abi.micro_ops, "complete Code/ABI request should expand one source per closed micro-op")
+for _, source in ipairs(complete_code_abi_request.sources) do
+    local saw_closed_axis = false
+    for _, axis in ipairs(source.family.axes) do
+        assert(not asdl.isa(axis, Native.NativeAxisCodeType), "complete Code/ABI sources must not use CodeType axes")
+        assert(not asdl.isa(axis, Native.NativeAxisCodeSig), "complete Code/ABI sources must not use CodeSig axes")
+        saw_closed_axis = saw_closed_axis or asdl.isa(axis, Native.NativeAxisCodeMicroOp) or asdl.isa(axis, Native.NativeAxisAbiMicroOp)
+    end
+    assert(saw_closed_axis, source.family.id.text .. " should carry a closed micro-op axis")
+end
+
+local complete_kernel_value_class = Support.complete_value_scalar_class(complete_i32)
+local complete_kernel_reducer = Native.NativeReducerClass(Value.ReductionAdd, complete_kernel_value_class)
+local complete_kernel_capability = Native.NativeCompleteBankCapability(
+    Support.complete_bank_capability_id("test.kernel"),
+    NativeBackend.host_target(),
+    { complete_i32, complete_ptr },
+    { complete_kernel_value_class },
+    {}, {}, {}, {},
+    Support.complete_runtime_capability({}, {}, {}),
+    Support.complete_frame_capability(complete_ptr, {}, {}),
+    Support.complete_constant_pool_capability({}),
+    Support.complete_atomic_capability(Native.NativeAtomicNoCodegen, {}, {}, {}),
+    Support.complete_code_capability({}),
+    Support.complete_abi_capability({}),
+    Support.complete_kernel_capability({
+        Native.NativeKernelMicroOpScalarLoadShape(complete_i32),
+        Native.NativeKernelMicroOpExprBinaryShape(Core.BinAdd, complete_kernel_value_class),
+        Native.NativeKernelMicroOpAffineAddTermShape(complete_kernel_value_class),
+        Native.NativeKernelMicroOpPredicateCompareConstShape(Core.CmpEq, complete_kernel_value_class),
+        Native.NativeKernelMicroOpEffectScanShape(complete_kernel_reducer, Stencil.StencilScanInclusive),
+        Native.NativeKernelMicroOpResultReductionShape(complete_kernel_reducer),
+    }),
+    Support.complete_stencil_capability({})
+)
+local complete_kernel_request = Sources.bank_request_for_complete_capability(complete_kernel_capability, Native.NativeBankId("native.template.test.complete.kernel"))
+Sources.assert_manifest_matches_sources(complete_kernel_request.manifest, complete_kernel_request.sources)
+assert(#complete_kernel_request.sources == #complete_kernel_capability.kernel.micro_ops, "complete Kernel request should expand one source per primitive micro-op")
+for _, source in ipairs(complete_kernel_request.sources) do
+    local saw_kernel_micro_axis = false
+    for _, axis in ipairs(source.family.axes) do
+        assert(not asdl.isa(axis, Native.NativeAxisKernel), "complete Kernel sources must not use exact Kernel source-shape/projection axes")
+        saw_kernel_micro_axis = saw_kernel_micro_axis or asdl.isa(axis, Native.NativeAxisKernelMicroOp)
+    end
+    assert(saw_kernel_micro_axis, source.family.id.text .. " should carry a closed Kernel micro-op axis")
+end
+
+local complete_stencil_capability = Native.NativeCompleteBankCapability(
+    Support.complete_bank_capability_id("test.stencil"),
+    NativeBackend.host_target(),
+    { complete_i32, complete_ptr },
+    { complete_kernel_value_class },
+    {}, {}, { Support.complete_index_class(NativeBackend.host_target().pointer_bits) }, {},
+    Support.complete_runtime_capability({}, {}, {}),
+    Support.complete_frame_capability(complete_ptr, {}, {}),
+    Support.complete_constant_pool_capability({}),
+    Support.complete_atomic_capability(Native.NativeAtomicNoCodegen, {}, {}, {}),
+    Support.complete_code_capability({}),
+    Support.complete_abi_capability({}),
+    Support.complete_kernel_capability({}),
+    Support.complete_stencil_capability({
+        Native.NativeStencilMicroOpProducerEnterShape,
+        Native.NativeStencilMicroOpAccessIndexedShape(complete_kernel_value_class, Support.complete_index_class(NativeBackend.host_target().pointer_bits)),
+        Native.NativeStencilMicroOpPointBinaryShape(Stencil.StencilBinaryAdd, complete_kernel_value_class),
+        Native.NativeStencilMicroOpPointSelectShape(Native.NativePredicateNonZeroClass, complete_kernel_value_class),
+        Native.NativeStencilMicroOpSinkReduceShape(complete_kernel_reducer, Native.NativeStencilReduceScopeDomainClass),
+        Native.NativeStencilMicroOpScheduleUnrolledShape(Native.NativeUnrollFixed(4)),
+    })
+)
+local complete_stencil_request = Sources.bank_request_for_complete_capability(complete_stencil_capability, Native.NativeBankId("native.template.test.complete.stencil"))
+Sources.assert_manifest_matches_sources(complete_stencil_request.manifest, complete_stencil_request.sources)
+assert(#complete_stencil_request.sources == #complete_stencil_capability.stencil.micro_ops, "complete Stencil request should expand one source per primitive micro-op")
+for _, source in ipairs(complete_stencil_request.sources) do
+    local saw_stencil_micro_axis = false
+    for _, axis in ipairs(source.family.axes) do
+        assert(not asdl.isa(axis, Native.NativeAxisStencilProducer), "complete Stencil sources must not use producer exact axes")
+        assert(not asdl.isa(axis, Native.NativeAxisStencilAccess), "complete Stencil sources must not use access exact axes")
+        assert(not asdl.isa(axis, Native.NativeAxisStencilPoint), "complete Stencil sources must not use point exact axes")
+        assert(not asdl.isa(axis, Native.NativeAxisStencilBody), "complete Stencil sources must not use body exact axes")
+        assert(not asdl.isa(axis, Native.NativeAxisStencilSink), "complete Stencil sources must not use sink exact axes")
+        assert(not asdl.isa(axis, Native.NativeAxisStencilSchedule), "complete Stencil sources must not use schedule exact axes")
+        saw_stencil_micro_axis = saw_stencil_micro_axis or asdl.isa(axis, Native.NativeAxisStencilMicroOp)
+    end
+    assert(saw_stencil_micro_axis, source.family.id.text .. " should carry a closed Stencil micro-op axis")
+end
+
 local kernel_value_i32 = Native.NativeKernelValueScalarShape(Support.scalar_i32())
 local kernel_loop_shape = Native.NativeKernelLoopRange1DShape(Support.scalar_index(NativeBackend.host_target().pointer_bits), Native.NativeKernelTripDynamicNonNegativeShape, true)
 local kernel_lane_shape = Native.NativeKernelLaneContiguousAddressShape(kernel_value_i32, Support.scalar_pointer(NativeBackend.host_target().pointer_bits), Support.scalar_index(NativeBackend.host_target().pointer_bits))
@@ -557,6 +676,7 @@ local dir = "target/test_artifacts/test_native_template_sources"
 local c_path = dir .. "/bank.c"
 local h_path = dir .. "/bank.h"
 local lua_path = dir .. "/bank.lua"
+local so_path = dir .. "/bank.so"
 local manifest_path = dir .. "/manifest.lua"
 
 assert(command_ok("rm -rf " .. shell_quote(dir)))
@@ -584,34 +704,39 @@ local cmd = table.concat({
 }, " ")
 assert(command_ok(cmd), "native bank generator should build the scalar i32 source slice")
 assert(command_ok("gcc -c " .. shell_quote(c_path) .. " -o " .. shell_quote(dir .. "/bank.o")), "generated C bridge should compile")
+assert(command_ok("gcc -shared -fPIC " .. shell_quote(c_path) .. " -o " .. shell_quote(so_path)), "generated C bank should link as a shared object")
 
 local log = read_file(dir .. "/generator.log")
 local header = read_file(h_path)
 local c_source = read_file(c_path)
 local lua_source = read_file(lua_path)
-assert(log:find("embedded native template bank", 1, true), "generator should report a native template bank")
-assert(header:find("LalinNativeEmbeddedTemplateBank", 1, true), "header should expose native embedded bank structs")
-assert(c_source:find("lalin_native_template_entries", 1, true), "C bridge should carry raw native template entries")
-assert(c_source:find("Runtime ASDL import uses the generated Lua bridge", 1, true), "C bridge should be marked as raw build data")
-assert(lua_source:find("NativeEmbeddedTemplateBank", 1, true), "Lua bridge should construct NativeEmbeddedTemplateBank")
-assert(lua_source:find("Code.CodeTyInt", 1, true), "Lua bridge should preserve CodeType axes as ASDL")
-assert(lua_source:find("Core.BinAdd", 1, true), "Lua bridge should preserve Core operation axes as ASDL")
+assert(log:find("C-owned native template bank", 1, true), "generator should report a C-owned native template bank")
+assert(header:find("LalinNativeBankArtifact", 1, true), "header should expose C-owned native bank artifact structs")
+assert(header:find("lalin_native_bank_install", 1, true), "header should declare the C installer API")
+assert(c_source:find("lalin_native_templates", 1, true), "C bank should carry native template entries")
+assert(c_source:find("lalin_native_bank_select", 1, true), "C bank should own template selection")
+assert(c_source:find("lalin_native_bank_install", 1, true), "C bank should own installation")
+assert(lua_source:find("NativeBankArtifact", 1, true), "Lua bridge should construct only a NativeBankArtifact descriptor")
+assert(not lua_source:find("NativeEmbeddedTemplateBank", 1, true), "Lua bridge must not construct NativeEmbeddedTemplateBank")
+assert(lua_source:find("Code.CodeTyInt", 1, true), "Lua descriptor should preserve CodeType axes as ASDL manifest data")
+assert(lua_source:find("Core.BinAdd", 1, true), "Lua descriptor should preserve Core operation axes as ASDL manifest data")
 assert_no_forbidden_terms("generated C bridge", c_source)
 assert_no_forbidden_terms("generated Lua bridge", lua_source)
-assert(not c_source:find("lalin_install_embedded_native_bank", 1, true), "generator must not emit runtime install hooks")
+assert(not c_source:find("lalin_install_embedded_native_bank", 1, true), "generator must not emit old embedded-bank install hooks")
 assert(not c_source:find("lalin_mc_template_entries", 1, true), "generator must not emit old MC template manifests")
 
-local embedded = dofile(lua_path)(T)
-assert(embedded.manifest.total_count == request.manifest.total_count, "embedded bank should preserve manifest cardinality")
-assert(#embedded.entries == #request.sources, "embedded bank should preserve every generated source")
-local imported = Native.NativeEmbeddedBankImportRequest(embedded):import_native_bank()
-assert(asdl.isa(imported, Native.NativeEmbeddedBankImported), tostring(imported))
-assert(imported.bank.manifest.total_count == request.manifest.total_count, "imported bank should preserve native template manifest")
-assert(#imported.bank.entries == #request.sources, "imported bank should contain every generated source")
+local artifact = dofile(lua_path)(T)
+assert(asdl.isa(artifact, Native.NativeBankArtifact), tostring(artifact))
+assert(artifact.manifest.total_count == request.manifest.total_count, "artifact should preserve manifest cardinality")
+assert(artifact.template_count == #request.sources, "artifact should describe every generated source")
+local loaded = NativeBackend.require_native_bank(artifact, request.target, request.manifest, so_path)
+assert(asdl.isa(loaded, Native.NativeLoadedBank), tostring(loaded))
 
 for _, source in ipairs(request.sources) do
-    local selected = imported.bank:select_native_template(Native.NativeTemplateSelectionInput(request.target, source.family))
-    assert(asdl.isa(selected, Native.NativeTemplateSelected), "expected selection for " .. source.family.id.text .. ": " .. tostring(selected))
+    local key = Native.NativeTemplateSelectorKey(request.target, source.family)
+    local selected = loaded:select_native_template(Native.NativeTemplateSelectionInput(loaded, key))
+    assert(asdl.isa(selected, Native.NativeTemplateSelected), "expected C selector match for " .. source.family.id.text .. ": " .. tostring(selected))
+    assert(selected.handle.family == source.family, "C selector should preserve the selected ASDL family")
 end
 
 io.write("native template source closure ok\n")

@@ -139,7 +139,8 @@ local lowering_manifest = Native.NativeTemplateSourceManifest(
     {},
     0
 )
-local lowering_bank = Native.NativeTemplateBank(Native.NativeBankId("native.value.lowering.empty.bank"), target, lowering_manifest, {})
+local lowering_artifact = Native.NativeBankArtifact(Native.NativeBankId("native.value.lowering.empty.bank"), target, lowering_manifest, 0, "lalin_native_bank_artifact", "lalin_native_bank_select", "lalin_native_bank_install")
+local lowering_bank = Native.NativeLoadedBank(lowering_artifact, 1)
 local lowering_plan = Native.NativePlanInput(target, lowering_runtime, lowering_bank)
 local lowering_input = lowering_module:native_code_lowering_input(module_facts, lowering_func, lowering_plan)
 assert(#lowering_input.module.signatures == 1, "CodeBackModuleFacts native lowering should populate signature ABI entries")

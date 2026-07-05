@@ -15,7 +15,7 @@ Directories:
 
 - `asdl/` - ASDL model and builder mechanics
 - `compiler_process/` - compiler process/package orchestration tests
-- `frontend/` - syntax, parsing, open expansion, RNF, splicing, `.mlua`
+- `frontend/` - syntax, parsing, open expansion, RNF, splicing
 - `code_ir/` - Tree/Code IR phases, validation, facts, lowering plans, explicit LuaJIT bytecode backend, and native copy-patch template/source/object/install tests
 - `c_backend/` - C emission/AOT path
 - `host/` - hosted Lua builder/value APIs
@@ -25,6 +25,6 @@ Directories:
 - `core/` - core operators, types, source utilities, std facade
 - `tooling/` - reports, explainer coverage, link planning
 - `debug/` - debug interpreter/debugger and ELF parser tests
-- `ui/` - retired SDL/UI tests; still depends on the old top-level PVM runtime and is not in aggregate suites
+- `ui/` - retired SDL/UI tests; not in aggregate suites
 - `experiments/` - experiment/spongejit tests; may require experiment modules
-- `fixtures/` - `.mlua` fixtures consumed by tests
+- `fixtures/` - fixture data consumed by tests

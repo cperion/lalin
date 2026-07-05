@@ -478,29 +478,10 @@ local function bind_context(T)
         )
     end
 
-    local function binding_target_for_hole_id(entry, hole_id)
-        local compiled = entry and entry.compiled
-        if compiled ~= nil then
-            local symbol
-            for _, layout in ipairs(compiled.holes or {}) do
-                if layout.id == hole_id then
-                    symbol = layout.symbol
-                    break
-                end
-            end
-            if symbol ~= nil then
-                for _, ordinal in ipairs(compiled.hole_ordinals or {}) do
-                    if ordinal.symbol == symbol then return Native.NativePatchBindingHoleOrdinal(ordinal.id) end
-                end
-            end
-        end
-        return Native.NativePatchBindingHoleId(hole_id)
-    end
-
     local function hole_binding(id, coordinate)
         local hole_id = Native.NativePatchHoleId(id)
-        return function(node_id, instance, entry)
-            return Native.NativePatchBinding(node_id, instance, binding_target_for_hole_id(entry, hole_id), coordinate)
+        return function(node_id, instance)
+            return Native.NativePatchBinding(node_id, instance, Native.NativePatchBindingHoleId(hole_id), coordinate)
         end
     end
 
@@ -522,16 +503,10 @@ local function bind_context(T)
         return scalar_immediate_hole_id(id, scalar)
     end
 
-    local function materialize_bindings(node_id, instance, entry, binding_specs)
+    local function materialize_bindings(node_id, instance, binding_specs)
         local bindings = {}
-        for _, spec in ipairs(binding_specs or {}) do bindings[#bindings + 1] = spec(node_id, instance, entry) end
+        for _, spec in ipairs(binding_specs or {}) do bindings[#bindings + 1] = spec(node_id, instance) end
         return bindings
-    end
-
-    local function selected_entry(plan, family)
-        local selected = plan.bank:select_native_template(Native.NativeTemplateSelectionInput(plan.target, family))
-        if asdl.isa(selected, Native.NativeTemplateSelected) then return selected.entry end
-        internal_error("stencil native template selection failed for " .. family.id.text .. ": " .. tostring(selected))
     end
 
     function Native.NativeStencilProducerSourceShape:native_stencil_template_family(plan)
@@ -575,8 +550,8 @@ local function bind_context(T)
     local function append_stencil_node(input, role, shape, outputs, binding_specs)
         local node_id = stencil_node_id(input.state, role)
         local instance = stencil_instance_id(node_id)
-        local entry = selected_entry(input.plan, shape:native_stencil_template_family(input.plan))
-        local node = Native.NativeTemplateNode(node_id, instance, entry, {}, outputs or {}, materialize_bindings(node_id, instance, entry, binding_specs))
+        local family = shape:native_stencil_template_family(input.plan)
+        local node = Native.NativeTemplateNode(node_id, instance, family, {}, outputs or {}, materialize_bindings(node_id, instance, binding_specs))
         input.state.nodes[#input.state.nodes + 1] = node
         return node
     end

@@ -35,6 +35,31 @@ fact, pass state, return a decision, or route to behavior, first ask what ASDL
 type is missing. Add that product, union, leaf, field, projection, facet, or
 result before writing implementation code.
 
+## Pure Lalin Mirror
+
+The ASDL + Lua-method pattern has a direct compiled Lalin mirror:
+
+```text
+ASDL product        -> Lalin struct
+ASDL unique product -> Lalin unique struct
+ASDL sum/leaf       -> Lalin union or encoded product + consumer region
+Lua method          -> qualified fn Struct.method
+Lua protocol helper -> qualified region Struct.protocol
+ASDL identity fact  -> unique struct identity or qualified handle
+```
+
+Use the Lua ASDL pattern for bootstrap compiler semantics, staging, schema
+projection, and tooling. Prefer the pure Lalin mirror for fast monomorphic
+semantic systems, including future compiler phases rewritten in Lalin. The
+architectural rule is the same in both forms: the semantic thing owns its
+behavior.
+
+For repeated systems, make the machine an object. One struct or unique struct
+should own the machine's retained state, methods, resolver regions, handles,
+world products, diagnostics, and memory-invalidation authority. Split only when
+there are genuinely separate owners. Do not replace a missing machine object
+with a generic context bag or side table.
+
 ## Products And Unions
 
 Use products for records with named fields:

@@ -65,6 +65,26 @@ local function bind_context(T)
     return C.Path(out)
   end
 
+  local function path_parts_from_expr(expr)
+    if type(expr) ~= "table" then return nil end
+    if expr.tag == "Name" then return { expr.name } end
+    if expr.tag == "Field" then
+      local base = path_parts_from_expr(expr.base)
+      if base == nil then return nil end
+      base[#base + 1] = expr.name
+      return base
+    end
+    return nil
+  end
+
+  local function type_ref_from_constructor_expr(expr)
+    local parts = path_parts_from_expr(expr)
+    if parts == nil or #parts == 0 then
+      error("parsed_to_tree: struct constructor callee must be a struct name or qualified struct path", 2)
+    end
+    return Ty.TNamed(Ty.TypeRefPath(path_from_parts(parts)))
+  end
+
   local function region_target(parsed)
     if parsed.callee_path ~= nil then
       return Tr.RegionInvokeTarget(path_from_parts(parsed.callee_path))
@@ -141,6 +161,13 @@ local function bind_context(T)
       end
       return Tr.ExprCall(Tr.ExprSurface, ToTree.expr(parsed.callee), args)
 
+    elseif tag == "MethodCall" then
+      local args = { ToTree.expr(parsed.receiver) }
+      for i, a in ipairs(parsed.args or {}) do
+        args[#args + 1] = ToTree.expr(a)
+      end
+      return Tr.ExprCall(Tr.ExprSurface, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(parsed.name)), args)
+
     elseif tag == "Index" then
       return Tr.ExprIndex(Tr.ExprSurface,
         Tr.IndexBaseExpr(ToTree.expr(parsed.base)),
@@ -168,6 +195,16 @@ local function bind_context(T)
       local elems = {}
       for i, f in ipairs(fields) do elems[i] = ToTree.expr(f.value) end
       return Tr.ExprArray(Tr.ExprSurface, Ty.TScalar(C.ScalarVoid), elems)
+
+    elseif tag == "StructCtor" then
+      local inits = {}
+      for i, f in ipairs(parsed.fields or {}) do
+        if f.key == nil then
+          error("parsed_to_tree: struct constructors require named fields", 2)
+        end
+        inits[i] = Tr.FieldInit(f.key, ToTree.expr(f.value), 0)
+      end
+      return Tr.ExprAgg(Tr.ExprSurface, type_ref_from_constructor_expr(parsed.callee), inits)
 
     elseif tag == "Paren" then
       return ToTree.expr(parsed.value)

@@ -204,9 +204,9 @@ local function bind_context(T)
     end
 
     function Native.NativeCompileRequest:compile_native()
-        local plan = self.subject:plan_native_copy(Native.NativePlanInput(self.target, self.runtime, self.bank))
-        local copy_plan = plan:select_native_copy_plan(Native.NativeCopyPlanSelectionInput(self.target, self.runtime))
-        local install = copy_plan:install_native(Native.NativeInstallInput(self.target, self.runtime, Native.NativeExecutableAllocatorMmap))
+        local graph = self.subject:plan_native_copy(Native.NativePlanInput(self.target, self.runtime, self.bank))
+        local install_plan = graph:select_native_bank_install_plan(Native.NativeBankInstallPlanSelectionInput(self.target, self.runtime))
+        local install = Native.NativeBankInstallRequest(self.bank, install_plan, Native.NativeExecutableAllocatorMmap):install_native()
         return install:compile_native_result()
     end
 
@@ -228,26 +228,6 @@ local function bind_context(T)
 
     function Native.NativeInstallSucceeded:compile_native_result()
         return Native.NativeCompileResult(self.executable)
-    end
-
-    function Native.NativeTemplateBank:select_native_template(input)
-        return Native.NativeTemplateSelectionRejected({
-            Native.NativeSelectionRejectMissingBankEntry(input.family),
-        })
-    end
-
-    function Native.NativeTemplateBankEntry:select_native_template(input)
-        if self.compiled.target ~= input.target then
-            return Native.NativeTemplateSelectionRejected({
-                Native.NativeSelectionRejectTargetMismatch(input.target, self.compiled.target),
-            })
-        end
-        if not self.family:native_family_equals(input.family) then
-            return Native.NativeTemplateSelectionRejected({
-                Native.NativeSelectionRejectFamilyMismatch(input.family, self.family),
-            })
-        end
-        return Native.NativeTemplateSelected(self)
     end
 
     function Native.NativeTemplateFamily:native_family_equals(other)
@@ -700,6 +680,9 @@ local function bind_context(T)
     function Native.NativeExtractContinuationFragment:native_template_extraction_equals(other) return other:native_template_extraction_equals_continuation_fragment(self.successors) end
     function Native.NativeTemplateExtraction:native_template_extraction_equals_continuation_fragment(_successors) return false end
     function Native.NativeExtractContinuationFragment:native_template_extraction_equals_continuation_fragment(successors) return value_list_equals(self.successors, successors) end
+    function Native.NativeExtractFallthroughFragment:native_template_extraction_equals(other) return other:native_template_extraction_equals_fallthrough_fragment() end
+    function Native.NativeTemplateExtraction:native_template_extraction_equals_fallthrough_fragment() return false end
+    function Native.NativeExtractFallthroughFragment:native_template_extraction_equals_fallthrough_fragment() return true end
     function Native.NativeExtractTerminalContinuation:native_template_extraction_equals(other) return other:native_template_extraction_equals_terminal_continuation() end
     function Native.NativeTemplateExtraction:native_template_extraction_equals_terminal_continuation() return false end
     function Native.NativeExtractTerminalContinuation:native_template_extraction_equals_terminal_continuation() return true end
@@ -759,6 +742,24 @@ local function bind_context(T)
     function Native.NativeAxisCodeSig:native_axis_equals(other) return other:native_axis_equals_code_sig(self.sig) end
     function Native.NativeTemplateAxis:native_axis_equals_code_sig(_sig) return false end
     function Native.NativeAxisCodeSig:native_axis_equals_code_sig(sig) return self.sig == sig end
+    function Native.NativeAxisCodeMicroOp:native_axis_equals(other) return other:native_axis_equals_code_micro_op(self.shape) end
+    function Native.NativeTemplateAxis:native_axis_equals_code_micro_op(_shape) return false end
+    function Native.NativeAxisCodeMicroOp:native_axis_equals_code_micro_op(shape) return self.shape == shape end
+    function Native.NativeAxisFastCodeExpr:native_axis_equals(other) return other:native_axis_equals_fast_code_expr(self.shape) end
+    function Native.NativeTemplateAxis:native_axis_equals_fast_code_expr(_shape) return false end
+    function Native.NativeAxisFastCodeExpr:native_axis_equals_fast_code_expr(shape) return self.shape == shape end
+    function Native.NativeAxisFastPublicAbi:native_axis_equals(other) return other:native_axis_equals_fast_public_abi(self.shape) end
+    function Native.NativeTemplateAxis:native_axis_equals_fast_public_abi(_shape) return false end
+    function Native.NativeAxisFastPublicAbi:native_axis_equals_fast_public_abi(shape) return self.shape == shape end
+    function Native.NativeAxisAbiMicroOp:native_axis_equals(other) return other:native_axis_equals_abi_micro_op(self.shape) end
+    function Native.NativeTemplateAxis:native_axis_equals_abi_micro_op(_shape) return false end
+    function Native.NativeAxisAbiMicroOp:native_axis_equals_abi_micro_op(shape) return self.shape == shape end
+    function Native.NativeAxisKernelMicroOp:native_axis_equals(other) return other:native_axis_equals_kernel_micro_op(self.shape) end
+    function Native.NativeTemplateAxis:native_axis_equals_kernel_micro_op(_shape) return false end
+    function Native.NativeAxisKernelMicroOp:native_axis_equals_kernel_micro_op(shape) return self.shape == shape end
+    function Native.NativeAxisStencilMicroOp:native_axis_equals(other) return other:native_axis_equals_stencil_micro_op(self.shape) end
+    function Native.NativeTemplateAxis:native_axis_equals_stencil_micro_op(_shape) return false end
+    function Native.NativeAxisStencilMicroOp:native_axis_equals_stencil_micro_op(shape) return self.shape == shape end
     function Native.NativeAxisCodeInst:native_axis_equals(other) return other:native_axis_equals_code_inst(self.axis) end
     function Native.NativeTemplateAxis:native_axis_equals_code_inst(_axis) return false end
     function Native.NativeAxisCodeInst:native_axis_equals_code_inst(axis) return self.axis:native_code_inst_axis_equals(axis) end

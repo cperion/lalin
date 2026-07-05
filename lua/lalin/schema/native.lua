@@ -25,6 +25,8 @@ return schema. LalinNative {
   product. NativeObjectSectionId { interned, text [str], },
   product. NativeObjectSymbolId { interned, text [str], },
   product. NativeObjectRelocationId { interned, text [str], },
+  product. NativeCompleteBankCapabilityId { interned, text [str], },
+  product. NativeFastRegionId { interned, text [str], },
 
   sum. NativeArch {
     NativeArchX64,
@@ -361,6 +363,270 @@ return schema. LalinNative {
     field. result [LalinNative.NativeAbiResultProjection],
   },
 
+  sum. NativeFastPublicAbiShape {
+    NativeFastAbi0 { field. result [LalinNative.NativeAbiProjection], },
+    NativeFastAbi1 {
+      field. p0 [LalinNative.NativeAbiProjection],
+      field. result [LalinNative.NativeAbiProjection],
+    },
+    NativeFastAbi2 {
+      field. p0 [LalinNative.NativeAbiProjection],
+      field. p1 [LalinNative.NativeAbiProjection],
+      field. result [LalinNative.NativeAbiProjection],
+    },
+    NativeFastAbi3 {
+      field. p0 [LalinNative.NativeAbiProjection],
+      field. p1 [LalinNative.NativeAbiProjection],
+      field. p2 [LalinNative.NativeAbiProjection],
+      field. result [LalinNative.NativeAbiProjection],
+    },
+  },
+
+  sum. NativeCodeExprAtomShape {
+    NativeExprInput {
+      field. ordinal [number],
+      field. scalar [LalinNative.NativeMachineScalarRep],
+    },
+    NativeExprImmediate { field. scalar [LalinNative.NativeMachineScalarRep], },
+    NativeExprConstPool { field. scalar [LalinNative.NativeMachineScalarRep], },
+  },
+
+  sum. NativeCodeExprRegionShape {
+    NativeExprReturnAtom {
+      field. result [LalinNative.NativeMachineScalarRep],
+      field. atom [LalinNative.NativeCodeExprAtomShape],
+    },
+    NativeExprReturnUnary {
+      field. result [LalinNative.NativeMachineScalarRep],
+      field. op [LalinCore.UnaryOp],
+      field. src [LalinNative.NativeCodeExprAtomShape],
+    },
+    NativeExprReturnBinary {
+      field. result [LalinNative.NativeMachineScalarRep],
+      field. op [LalinCore.BinaryOp],
+      field. lhs [LalinNative.NativeCodeExprAtomShape],
+      field. rhs [LalinNative.NativeCodeExprAtomShape],
+    },
+    NativeExprReturnBinaryImmRhs {
+      field. result [LalinNative.NativeMachineScalarRep],
+      field. op [LalinCore.BinaryOp],
+      field. lhs [LalinNative.NativeCodeExprAtomShape],
+    },
+    NativeExprReturnMulAddImm {
+      field. result [LalinNative.NativeMachineScalarRep],
+      field. mul_lhs [LalinNative.NativeCodeExprAtomShape],
+      field. mul_rhs [LalinNative.NativeCodeExprAtomShape],
+    },
+  },
+
+  sum. NativeCodeCompareShape {
+    NativeCompareBranchAtoms {
+      field. cmp [LalinCore.CmpOp],
+      field. scalar [LalinNative.NativeMachineScalarRep],
+      field. lhs [LalinNative.NativeCodeExprAtomShape],
+      field. rhs [LalinNative.NativeCodeExprAtomShape],
+    },
+    NativeCompareBranchImmRhs {
+      field. cmp [LalinCore.CmpOp],
+      field. scalar [LalinNative.NativeMachineScalarRep],
+      field. lhs [LalinNative.NativeCodeExprAtomShape],
+    },
+  },
+
+  sum. NativeCodeMemoryAddressShape {
+    NativeMemoryAddressInput {
+      field. ordinal [number],
+      field. pointer [LalinNative.NativeMachineScalarRep],
+    },
+    NativeMemoryAddressInputOffsetImm {
+      field. ordinal [number],
+      field. pointer [LalinNative.NativeMachineScalarRep],
+    },
+    NativeMemoryAddressConstPool { field. pointer [LalinNative.NativeMachineScalarRep], },
+    NativeMemoryAddressRuntimeSymbol {
+      field. pointer [LalinNative.NativeMachineScalarRep],
+      field. symbol [LalinNative.NativeRuntimeSymbolId],
+    },
+  },
+
+  sum. NativeCodeMemoryRegionShape {
+    NativeMemoryLoadReturn {
+      field. result [LalinNative.NativeMachineScalarRep],
+      field. address [LalinNative.NativeCodeMemoryAddressShape],
+      field. access [LalinCode.CodeMemoryAccess],
+    },
+    NativeMemoryStoreInput {
+      field. value_input [number],
+      field. value [LalinNative.NativeMachineScalarRep],
+      field. address [LalinNative.NativeCodeMemoryAddressShape],
+      field. access [LalinCode.CodeMemoryAccess],
+    },
+    NativeMemoryLoadBinaryStore {
+      field. value [LalinNative.NativeMachineScalarRep],
+      field. op [LalinCore.BinaryOp],
+      field. rhs [LalinNative.NativeCodeExprAtomShape],
+      field. address [LalinNative.NativeCodeMemoryAddressShape],
+      field. access [LalinCode.CodeMemoryAccess],
+    },
+    NativeMemoryLoadBinaryStoreImmRhs {
+      field. value [LalinNative.NativeMachineScalarRep],
+      field. op [LalinCore.BinaryOp],
+      field. address [LalinNative.NativeCodeMemoryAddressShape],
+      field. access [LalinCode.CodeMemoryAccess],
+    },
+  },
+
+  sum. NativeKernelStepRegionShape {
+    NativeKernelStepLoopRegion { field. loop [LalinNative.NativeKernelLoopSourceShape], },
+    NativeKernelStepLaneRegion { field. lane [LalinNative.NativeKernelLaneAddressSourceShape], },
+    NativeKernelStepExprRegion { field. expr [LalinNative.NativeKernelValueExprSourceShape], },
+    NativeKernelStepEffectRegion { field. effect [LalinNative.NativeKernelEffectSourceShape], },
+    NativeKernelStepResultRegion { field. result [LalinNative.NativeKernelResultSourceShape], },
+  },
+
+  sum. NativeStencilPointRegionShape {
+    NativeStencilPointInputRegionShape { field. value [LalinNative.NativeStencilValueSourceShape], },
+    NativeStencilPointWindowInputRegionShape {
+      field. value [LalinNative.NativeStencilValueSourceShape],
+      field. offset_count [number],
+    },
+    NativeStencilPointConstRegionShape { field. value [LalinNative.NativeStencilValueSourceShape], },
+    NativeStencilPointUnaryRegionShape {
+      field. op [LalinStencil.StencilUnaryOp],
+      field. value [LalinNative.NativeStencilValueSourceShape],
+    },
+    NativeStencilPointBinaryRegionShape {
+      field. op [LalinStencil.StencilBinaryOp],
+      field. value [LalinNative.NativeStencilValueSourceShape],
+    },
+    NativeStencilPointCastRegionShape {
+      field. op [LalinCore.MachineCastOp],
+      field. from [LalinNative.NativeStencilValueSourceShape],
+      field. to [LalinNative.NativeStencilValueSourceShape],
+    },
+    NativeStencilPointPredicateRegionShape {
+      field. pred [LalinNative.NativeKernelPredicateSourceShape],
+      field. value [LalinNative.NativeStencilValueSourceShape],
+    },
+    NativeStencilPointCompareRegionShape {
+      field. cmp [LalinCore.CmpOp],
+      field. value [LalinNative.NativeStencilValueSourceShape],
+    },
+    NativeStencilPointSelectRegionShape {
+      field. pred [LalinNative.NativeKernelPredicateSourceShape],
+      field. value [LalinNative.NativeStencilValueSourceShape],
+    },
+  },
+
+  product. NativeFastRegionCapability {
+    interned,
+    field. public_abi_shapes [many [LalinNative.NativeFastPublicAbiShape]],
+    field. code_expr_shapes [many [LalinNative.NativeCodeExprRegionShape]],
+    field. memory_shapes [many [LalinNative.NativeCodeMemoryRegionShape]],
+    field. kernel_shapes [many [LalinNative.NativeKernelStepRegionShape]],
+    field. stencil_shapes [many [LalinNative.NativeStencilPointRegionShape]],
+  },
+
+  sum. NativeRegionBoundaryResidence {
+    NativeResidencePublicParam {
+      field. index [number],
+      field. abi [LalinNative.NativeAbiProjection],
+    },
+    NativeResidencePublicResult { field. abi [LalinNative.NativeAbiProjection], },
+    NativeResidenceFrameSlot { field. slot [LalinNative.NativeFrameSlot], },
+    NativeResidenceImmediate {
+      field. scalar [LalinNative.NativeMachineScalarRep],
+      field. coordinate [LalinNative.NativePatchCoordinate],
+    },
+    NativeResidenceConstantPool { field. entry [LalinNative.NativeConstantPoolEntryId], },
+    NativeResidenceRuntimeSymbol { field. symbol [LalinNative.NativeRuntimeSymbolId], },
+    NativeResidenceDiscard,
+  },
+
+  product. NativeRegionValueBinding {
+    interned,
+    field. value [LalinNative.NativeTemplateValueId],
+    field. scalar [LalinNative.NativeMachineScalarRep],
+    field. residence [LalinNative.NativeRegionBoundaryResidence],
+  },
+
+  sum. NativeFastRegionOrigin {
+    NativeCodeBlockRegion {
+      field. func [LalinCode.CodeFuncId],
+      field. block [LalinCode.CodeBlockId],
+    },
+    NativeCodeTraceRegion {
+      field. func [LalinCode.CodeFuncId],
+      field. first [LalinCode.CodeInstId],
+      field. last [LalinCode.CodeInstId],
+    },
+    NativeKernelBodyRegion { field. plan [LalinKernel.KernelId], },
+    NativeStencilBodyRegion { field. instance [LalinStencil.StencilInstanceId], },
+    NativeAbiBoundaryRegion { field. projection [LalinNative.NativeAbiFunctionProjection], },
+  },
+
+  product. NativeRegionSwitchCase {
+    interned,
+    field. key [LalinCore.Literal],
+    field. to [LalinNative.NativeFastRegionId],
+  },
+
+  sum. NativeRegionTransfer {
+    NativeRegionFallthrough { field. to [LalinNative.NativeFastRegionId], },
+    NativeRegionJump { field. to [LalinNative.NativeFastRegionId], },
+    NativeRegionBranch {
+      field. condition [LalinNative.NativeTemplateValueId],
+      field. then_to [LalinNative.NativeFastRegionId],
+      field. else_to [LalinNative.NativeFastRegionId],
+    },
+    NativeRegionSwitch {
+      field. key [LalinNative.NativeTemplateValueId],
+      field. cases [many [LalinNative.NativeRegionSwitchCase]],
+      field. default [LalinNative.NativeFastRegionId],
+    },
+    NativeRegionCallReturn {
+      field. call_symbol [LalinNative.NativeRuntimeSymbolId],
+      field. return_to [LalinNative.NativeFastRegionId],
+    },
+    NativeRegionReturn,
+    NativeRegionTrap,
+  },
+
+  sum. NativeFastRegionBody {
+    NativeFrameMicroOpRegion { field. family [LalinNative.NativeTemplateFamily], },
+    NativeCodeExprRegion { field. shape [LalinNative.NativeCodeExprRegionShape], },
+    NativeCodeCompareBranchRegion { field. compare [LalinNative.NativeCodeCompareShape], },
+    NativeCodeLoadOpStoreRegion { field. shape [LalinNative.NativeCodeMemoryRegionShape], },
+    NativeKernelStepRegion { field. shape [LalinNative.NativeKernelStepRegionShape], },
+    NativeStencilPointRegion { field. shape [LalinNative.NativeStencilPointRegionShape], },
+  },
+
+  product. NativeFastRegion {
+    interned,
+    field. id [LalinNative.NativeFastRegionId],
+    field. origin [LalinNative.NativeFastRegionOrigin],
+    field. body [LalinNative.NativeFastRegionBody],
+    field. inputs [many [LalinNative.NativeRegionValueBinding]],
+    field. outputs [many [LalinNative.NativeRegionValueBinding]],
+    field. transfer [LalinNative.NativeRegionTransfer],
+  },
+
+  product. NativeFastRegionPlan {
+    interned,
+    field. target [LalinNative.NativeTarget],
+    field. public_protocol [LalinNative.NativeCallProtocol],
+    field. regions [many [LalinNative.NativeFastRegion]],
+    field. entry [LalinNative.NativeFastRegionId],
+    field. exits [many [LalinNative.NativeFastRegionId]],
+    field. frame_layout [LalinNative.NativeFrameLayout],
+  },
+
+  product. NativeFastRegionTemplateSourceInput {
+    interned,
+    field. target [LalinNative.NativeTarget],
+    field. capability [LalinNative.NativeFastRegionCapability],
+  },
+
   sum. NativeRuntimeAddressCapability {
     NativeRuntimeAddressSupplied { field. address [number], },
     NativeRuntimeAddressLinkerSymbol { field. symbol_name [str], },
@@ -537,6 +803,399 @@ return schema. LalinNative {
   sum. NativeAtomicCodegenCapability {
     NativeAtomicNoCodegen,
     NativeAtomicGccBuiltins,
+  },
+
+  -- Complete-bank capability vocabulary.  These classes are the closed
+  -- machine/control basis for enumerating a complete native bank.  They are
+  -- intentionally separate from NativeTemplateSupportDomain and from the
+  -- existing exact source-shape subset helpers below: complete-bank classes do
+  -- not carry CodeSig/CodeType values, field names, ranks, sizes, strides,
+  -- scales, steps, compiler flag strings, or program-specific counts.
+  sum. NativeCompleteValueClass {
+    NativeCompleteValueVoidClass,
+    NativeCompleteValueScalarClass { field. scalar [LalinNative.NativeMachineScalarRep], },
+    NativeCompleteValuePointerClass { field. pointer_scalar [LalinNative.NativeMachineScalarRep], },
+    NativeCompleteValueBytesClass,
+  },
+
+  sum. NativeCompleteScalarBytesClass {
+    NativeCompleteScalarBytesScalarClass { field. scalar [LalinNative.NativeMachineScalarRep], },
+    NativeCompleteScalarBytesPointerClass { field. pointer_scalar [LalinNative.NativeMachineScalarRep], },
+    NativeCompleteScalarBytesBytesClass,
+  },
+
+  sum. NativeCompleteScalarPointerClass {
+    NativeCompleteScalarPointerScalarClass { field. scalar [LalinNative.NativeMachineScalarRep], },
+    NativeCompleteScalarPointerPointerClass { field. pointer_scalar [LalinNative.NativeMachineScalarRep], },
+  },
+
+  product. NativeCompleteIndexClass {
+    interned,
+    field. pointer_width [number],
+  },
+
+  sum. NativeLogicalLocationClass {
+    NativeLogicalContinuationArgumentClass,
+    NativeLogicalFrameSlotClass,
+    NativeLogicalConstantPoolClass,
+    NativeLogicalImmediateClass,
+    NativeLogicalStackSlotClass,
+    NativeLogicalRuntimeParamClass,
+    NativeLogicalPatchCoordinateClass,
+    NativeLogicalAccumulatorClass,
+  },
+
+  product. NativeCompleteFrameCapability {
+    interned,
+    field. frame_pointer_scalar [LalinNative.NativeMachineScalarRep],
+    field. slot_value_classes [many [LalinNative.NativeCompleteValueClass]],
+    field. location_classes [many [LalinNative.NativeLogicalLocationClass]],
+  },
+
+  sum. NativeConstantPoolValueClass {
+    NativeConstantPoolScalarValueClass { field. scalar [LalinNative.NativeMachineScalarRep], },
+    NativeConstantPoolPointerValueClass { field. pointer_scalar [LalinNative.NativeMachineScalarRep], },
+    NativeConstantPoolBytesValueClass,
+  },
+
+  product. NativeCompleteConstantPoolCapability {
+    interned,
+    field. value_classes [many [LalinNative.NativeConstantPoolValueClass]],
+  },
+
+  sum. NativeCallClass {
+    NativeCallDirectClass,
+    NativeCallExternClass,
+    NativeCallIndirectClass,
+    NativeCallClosureClass,
+  },
+
+  product. NativeCompleteRuntimeCapability {
+    interned,
+    field. value_classes [many [LalinNative.NativeCompleteValueClass]],
+    field. call_classes [many [LalinNative.NativeCallClass]],
+    field. location_classes [many [LalinNative.NativeLogicalLocationClass]],
+  },
+
+  product. NativeCompleteAtomicCapability {
+    interned,
+    field. codegen [LalinNative.NativeAtomicCodegenCapability],
+    field. orderings [many [LalinCore.AtomicOrdering]],
+    field. rmw_ops [many [LalinCore.AtomicRmwOp]],
+    field. value_classes [many [LalinNative.NativeCompleteScalarPointerClass]],
+  },
+
+  sum. NativePredicateClass {
+    NativePredicateNonZeroClass,
+    NativePredicateCompareConstClass {
+      field. cmp [LalinCore.CmpOp],
+      field. value_class [LalinNative.NativeCompleteValueClass],
+    },
+    NativePredicateRangeClass { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativePredicateLogicalClass,
+    NativePredicateFloatClass { field. value_class [LalinNative.NativeCompleteValueClass], },
+  },
+
+  product. NativeReducerClass {
+    interned,
+    field. reduction [LalinValue.ReductionOp],
+    field. value_class [LalinNative.NativeCompleteValueClass],
+  },
+
+  sum. NativeDescriptorUserFieldKind {
+    NativeDescriptorUserElementSizeField,
+    NativeDescriptorUserCapacityField,
+    NativeDescriptorUserAlignmentField,
+    NativeDescriptorUserLengthField,
+  },
+
+  sum. NativeDescriptorFieldClass {
+    NativeDescriptorDataField,
+    NativeDescriptorLengthField,
+    NativeDescriptorStrideField,
+    NativeDescriptorBaseField,
+    NativeDescriptorUserField { field. kind [LalinNative.NativeDescriptorUserFieldKind], },
+  },
+
+  sum. NativeVectorCapabilityClass {
+    NativeVectorDisabled,
+    NativeVectorNative,
+    NativeVectorSSE2,
+    NativeVectorAVX2,
+    NativeVectorAVX512F,
+  },
+
+  sum. NativeUnrollCapabilityClass {
+    NativeUnrollScalar,
+    NativeUnrollFixed { field. factor [number], },
+  },
+
+  sum. NativeStencilStoreSemanticsClass {
+    NativeStencilStoreElementwiseClass,
+    NativeStencilStoreCopyClass { field. copy_semantics [LalinStencil.StencilCopySemantics], },
+    NativeStencilStoreScatterClass { field. conflict_semantics [LalinStencil.StencilScatterConflictSemantics], },
+    NativeStencilStorePartitionClass { field. partition_semantics [LalinStencil.StencilPartitionSemantics], },
+  },
+
+  sum. NativeStencilReduceScopeClass {
+    NativeStencilReduceScopeDomainClass,
+    NativeStencilReduceScopeAxesClass,
+    NativeStencilReduceScopeWindowClass,
+  },
+
+  sum. NativeStencilScatterReduceConflictClass {
+    NativeStencilScatterReduceSequentialClass,
+    NativeStencilScatterReduceUniqueIndicesClass,
+    NativeStencilScatterReduceAtomicClass { field. ordering [LalinCore.AtomicOrdering], },
+    NativeStencilScatterReducePrivatizedClass,
+  },
+
+  sum. NativeCodeMicroOpShape {
+    NativeCodeMicroOpFrameEntryShape,
+    NativeCodeMicroOpScalarLoadShape { field. scalar [LalinNative.NativeMachineScalarRep], },
+    NativeCodeMicroOpScalarStoreShape { field. scalar [LalinNative.NativeMachineScalarRep], },
+    NativeCodeMicroOpScalarCopyShape { field. scalar [LalinNative.NativeMachineScalarRep], },
+    NativeCodeMicroOpBytesCopyShape,
+    NativeCodeMicroOpBytesMoveShape,
+    NativeCodeMicroOpConstShape { field. scalar [LalinNative.NativeMachineScalarRep], },
+    NativeCodeMicroOpUnaryShape {
+      field. op [LalinCore.UnaryOp],
+      field. scalar [LalinNative.NativeMachineScalarRep],
+    },
+    NativeCodeMicroOpBinaryShape {
+      field. op [LalinCore.BinaryOp],
+      field. scalar [LalinNative.NativeMachineScalarRep],
+    },
+    NativeCodeMicroOpCompareShape {
+      field. cmp [LalinCore.CmpOp],
+      field. scalar [LalinNative.NativeMachineScalarRep],
+    },
+    NativeCodeMicroOpCastShape {
+      field. op [LalinCore.MachineCastOp],
+      field. from_scalar [LalinNative.NativeMachineScalarRep],
+      field. to_scalar [LalinNative.NativeMachineScalarRep],
+    },
+    NativeCodeMicroOpSelectShape { field. scalar [LalinNative.NativeMachineScalarRep], },
+    NativeCodeMicroOpAddressBaseShape,
+    NativeCodeMicroOpAddressFieldShape,
+    NativeCodeMicroOpAddressIndexShape,
+    NativeCodeMicroOpAddressOffsetShape,
+    NativeCodeMicroOpLoadShape { field. value_class [LalinNative.NativeCompleteScalarBytesClass], },
+    NativeCodeMicroOpStoreShape { field. value_class [LalinNative.NativeCompleteScalarBytesClass], },
+    NativeCodeMicroOpDescriptorFieldShape,
+    NativeCodeMicroOpAggregateStepShape,
+    NativeCodeMicroOpArrayStepShape,
+    NativeCodeMicroOpVariantTagShape,
+    NativeCodeMicroOpVariantPayloadShape,
+    NativeCodeMicroOpJumpShape,
+    NativeCodeMicroOpBranchShape,
+    NativeCodeMicroOpSwitchStepShape,
+    NativeCodeMicroOpTrapShape,
+    NativeCodeMicroOpUnreachableShape,
+    NativeCodeMicroOpReturnVoidShape,
+    NativeCodeMicroOpReturnScalarShape { field. scalar [LalinNative.NativeMachineScalarRep], },
+    NativeCodeMicroOpReturnSretShape,
+    NativeCodeMicroOpCallDirectShape,
+    NativeCodeMicroOpCallExternShape,
+    NativeCodeMicroOpCallIndirectShape,
+    NativeCodeMicroOpCallClosureShape,
+  },
+
+  product. NativeCompleteCodeCapability {
+    interned,
+    field. micro_ops [many [LalinNative.NativeCodeMicroOpShape]],
+  },
+
+  sum. NativeAbiMicroOpShape {
+    NativeAbiMicroOpParamRegisterShape { field. value_class [LalinNative.NativeCompleteScalarPointerClass], },
+    NativeAbiMicroOpParamStackShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeAbiMicroOpParamByRefShape,
+    NativeAbiMicroOpResultRegisterShape { field. value_class [LalinNative.NativeCompleteScalarPointerClass], },
+    NativeAbiMicroOpResultSretShape,
+    NativeAbiMicroOpResultVoidShape,
+    NativeAbiMicroOpCallDirectShape,
+    NativeAbiMicroOpCallExternShape,
+    NativeAbiMicroOpCallIndirectShape,
+    NativeAbiMicroOpCallClosureShape,
+    NativeAbiMicroOpReturnVoidShape,
+    NativeAbiMicroOpReturnScalarShape { field. value_class [LalinNative.NativeCompleteScalarPointerClass], },
+    NativeAbiMicroOpReturnSretShape,
+  },
+
+  product. NativeCompleteAbiCapability {
+    interned,
+    field. micro_ops [many [LalinNative.NativeAbiMicroOpShape]],
+    field. public_adapters [many [LalinNative.NativeAbiFunctionProjection]],
+  },
+
+  sum. NativeKernelMicroOpShape {
+    NativeKernelMicroOpScalarLoadShape { field. scalar [LalinNative.NativeMachineScalarRep], },
+    NativeKernelMicroOpScalarStoreShape { field. scalar [LalinNative.NativeMachineScalarRep], },
+    NativeKernelMicroOpPointerLoadShape { field. pointer_scalar [LalinNative.NativeMachineScalarRep], },
+    NativeKernelMicroOpPointerStoreShape { field. pointer_scalar [LalinNative.NativeMachineScalarRep], },
+    NativeKernelMicroOpBytesCopyShape,
+    NativeKernelMicroOpBytesMoveShape,
+    NativeKernelMicroOpLaneAddressBaseShape,
+    NativeKernelMicroOpLaneAddressAddIndexShape,
+    NativeKernelMicroOpLaneAddressAddStrideShape,
+    NativeKernelMicroOpLaneAddressAddOffsetShape,
+    NativeKernelMicroOpExprConstShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeKernelMicroOpExprCodeValueShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeKernelMicroOpExprKernelValueShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeKernelMicroOpExprLaneLoadShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeKernelMicroOpExprUnaryShape {
+      field. op [LalinCore.UnaryOp],
+      field. value_class [LalinNative.NativeCompleteValueClass],
+    },
+    NativeKernelMicroOpExprBinaryShape {
+      field. op [LalinCore.BinaryOp],
+      field. value_class [LalinNative.NativeCompleteValueClass],
+    },
+    NativeKernelMicroOpExprCastShape {
+      field. op [LalinCore.MachineCastOp],
+      field. from_class [LalinNative.NativeCompleteValueClass],
+      field. to_class [LalinNative.NativeCompleteValueClass],
+    },
+    NativeKernelMicroOpExprCompareShape {
+      field. cmp [LalinCore.CmpOp],
+      field. value_class [LalinNative.NativeCompleteValueClass],
+    },
+    NativeKernelMicroOpExprSelectShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeKernelMicroOpAffineInitShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeKernelMicroOpAffineAddTermShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeKernelMicroOpAffineFinishShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeKernelMicroOpPredicateNonZeroShape,
+    NativeKernelMicroOpPredicateCompareConstShape {
+      field. cmp [LalinCore.CmpOp],
+      field. value_class [LalinNative.NativeCompleteValueClass],
+    },
+    NativeKernelMicroOpPredicateRangeShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeKernelMicroOpPredicateLogicalInitShape,
+    NativeKernelMicroOpPredicateLogicalTermShape,
+    NativeKernelMicroOpPredicateLogicalFinishShape,
+    NativeKernelMicroOpPredicateFloatClassShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeKernelMicroOpLoopEnterShape,
+    NativeKernelMicroOpLoopStepShape,
+    NativeKernelMicroOpLoopExitShape,
+    NativeKernelMicroOpBodyEnterShape,
+    NativeKernelMicroOpBodyNextShape,
+    NativeKernelMicroOpBodyExitShape,
+    NativeKernelMicroOpEffectStoreShape,
+    NativeKernelMicroOpEffectCopyShape,
+    NativeKernelMicroOpEffectScanShape {
+      field. reducer_class [LalinNative.NativeReducerClass],
+      field. scan_mode [LalinStencil.StencilScanMode],
+    },
+    NativeKernelMicroOpEffectPartitionShape { field. partition_semantics [LalinStencil.StencilPartitionSemantics], },
+    NativeKernelMicroOpEffectScatterReduceShape { field. reducer_class [LalinNative.NativeReducerClass], },
+    NativeKernelMicroOpEffectFoldShape { field. reducer_class [LalinNative.NativeReducerClass], },
+    NativeKernelMicroOpEffectCallShape { field. call_class [LalinNative.NativeCallClass], },
+    NativeKernelMicroOpResultVoidShape,
+    NativeKernelMicroOpResultValueShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeKernelMicroOpResultFindShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeKernelMicroOpResultReductionShape { field. reducer_class [LalinNative.NativeReducerClass], },
+    NativeKernelMicroOpResultClosedFormShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeKernelMicroOpResultOriginalControlShape,
+  },
+
+  product. NativeCompleteKernelCapability {
+    interned,
+    field. micro_ops [many [LalinNative.NativeKernelMicroOpShape]],
+  },
+
+  sum. NativeStencilMicroOpShape {
+    NativeStencilMicroOpProducerEnterShape,
+    NativeStencilMicroOpProducerAxisStepShape { field. order_class [LalinStencil.StencilProducerOrder], },
+    NativeStencilMicroOpProducerAxisExitShape,
+    NativeStencilMicroOpProducerWindowOffsetShape,
+    NativeStencilMicroOpProducerTileStepShape,
+    NativeStencilMicroOpAccessBaseShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeStencilMicroOpAccessContiguousShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeStencilMicroOpAccessIndexedShape {
+      field. value_class [LalinNative.NativeCompleteValueClass],
+      field. index_class [LalinNative.NativeCompleteIndexClass],
+    },
+    NativeStencilMicroOpAccessAffineInitShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeStencilMicroOpAccessAffineTermShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeStencilMicroOpAccessFieldOffsetShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeStencilMicroOpAccessSoAComponentShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeStencilMicroOpAccessDescriptorFieldShape {
+      field. value_class [LalinNative.NativeCompleteValueClass],
+      field. descriptor_field_class [LalinNative.NativeDescriptorFieldClass],
+    },
+    NativeStencilMicroOpPointInputShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeStencilMicroOpPointWindowInputShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeStencilMicroOpPointConstShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeStencilMicroOpPointUnaryShape {
+      field. op [LalinStencil.StencilUnaryOp],
+      field. value_class [LalinNative.NativeCompleteValueClass],
+    },
+    NativeStencilMicroOpPointBinaryShape {
+      field. op [LalinStencil.StencilBinaryOp],
+      field. value_class [LalinNative.NativeCompleteValueClass],
+    },
+    NativeStencilMicroOpPointCastShape {
+      field. op [LalinCore.MachineCastOp],
+      field. from_class [LalinNative.NativeCompleteValueClass],
+      field. to_class [LalinNative.NativeCompleteValueClass],
+    },
+    NativeStencilMicroOpPointPredicateShape {
+      field. predicate_class [LalinNative.NativePredicateClass],
+      field. value_class [LalinNative.NativeCompleteValueClass],
+    },
+    NativeStencilMicroOpPointCompareShape {
+      field. cmp [LalinCore.CmpOp],
+      field. value_class [LalinNative.NativeCompleteValueClass],
+    },
+    NativeStencilMicroOpPointSelectShape {
+      field. predicate_class [LalinNative.NativePredicateClass],
+      field. value_class [LalinNative.NativeCompleteValueClass],
+    },
+    NativeStencilMicroOpBodyEnterShape,
+    NativeStencilMicroOpBodyPointShape { field. value_class [LalinNative.NativeCompleteValueClass], },
+    NativeStencilMicroOpBodyExitShape,
+    NativeStencilMicroOpSinkStoreShape { field. store_semantics_class [LalinNative.NativeStencilStoreSemanticsClass], },
+    NativeStencilMicroOpSinkReduceShape {
+      field. reducer_class [LalinNative.NativeReducerClass],
+      field. reduce_scope_class [LalinNative.NativeStencilReduceScopeClass],
+    },
+    NativeStencilMicroOpSinkScanShape {
+      field. reducer_class [LalinNative.NativeReducerClass],
+      field. scan_mode [LalinStencil.StencilScanMode],
+    },
+    NativeStencilMicroOpSinkScatterReduceShape {
+      field. reducer_class [LalinNative.NativeReducerClass],
+      field. scatter_reduce_conflict_class [LalinNative.NativeStencilScatterReduceConflictClass],
+    },
+    NativeStencilMicroOpScheduleScalarShape,
+    NativeStencilMicroOpScheduleAutoVectorShape { field. vector_capability_class [LalinNative.NativeVectorCapabilityClass], },
+    NativeStencilMicroOpScheduleUnrolledShape { field. unroll_capability_class [LalinNative.NativeUnrollCapabilityClass], },
+    NativeStencilMicroOpScheduleVectorShape { field. vector_capability_class [LalinNative.NativeVectorCapabilityClass], },
+  },
+
+  product. NativeCompleteStencilCapability {
+    interned,
+    field. micro_ops [many [LalinNative.NativeStencilMicroOpShape]],
+  },
+
+  product. NativeCompleteBankCapability {
+    interned,
+    field. id [LalinNative.NativeCompleteBankCapabilityId],
+    field. target [LalinNative.NativeTarget],
+    field. scalars [many [LalinNative.NativeMachineScalarRep]],
+    field. value_classes [many [LalinNative.NativeCompleteValueClass]],
+    field. scalar_or_bytes_classes [many [LalinNative.NativeCompleteScalarBytesClass]],
+    field. scalar_or_pointer_classes [many [LalinNative.NativeCompleteScalarPointerClass]],
+    field. index_classes [many [LalinNative.NativeCompleteIndexClass]],
+    field. location_classes [many [LalinNative.NativeLogicalLocationClass]],
+    field. runtime [LalinNative.NativeCompleteRuntimeCapability],
+    field. frame [LalinNative.NativeCompleteFrameCapability],
+    field. constant_pool [LalinNative.NativeCompleteConstantPoolCapability],
+    field. atomic [LalinNative.NativeCompleteAtomicCapability],
+    field. code [LalinNative.NativeCompleteCodeCapability],
+    field. abi [LalinNative.NativeCompleteAbiCapability],
+    field. kernel [LalinNative.NativeCompleteKernelCapability],
+    field. stencil [LalinNative.NativeCompleteStencilCapability],
   },
 
   sum. NativePatchFormula {
@@ -1126,14 +1785,14 @@ return schema. LalinNative {
     field. subject [LalinNative.NativeCompileSubject],
     field. target [LalinNative.NativeTarget],
     field. runtime [LalinNative.NativeRuntime],
-    field. bank [LalinNative.NativeTemplateBank],
+    field. bank [LalinNative.NativeLoadedBank],
   },
 
   product. NativePlanInput {
     interned,
     field. target [LalinNative.NativeTarget],
     field. runtime [LalinNative.NativeRuntime],
-    field. bank [LalinNative.NativeTemplateBank],
+    field. bank [LalinNative.NativeLoadedBank],
   },
 
   product. NativeCompileResult {
@@ -1156,8 +1815,10 @@ return schema. LalinNative {
     NativeExtractContinuationFragment {
       field. successors [many [LalinNative.NativeContinuationSymbol]],
     },
+    NativeExtractFallthroughFragment,
     NativeExtractTerminalContinuation,
   },
+
 
   product. NativeTemplateSource {
     interned,
@@ -1447,43 +2108,78 @@ return schema. LalinNative {
 
   sum. NativeTemplateBankBuildResult {
     NativeTemplateBankBuilt {
-      field. bank [LalinNative.NativeTemplateBank],
+      field. artifact [LalinNative.NativeBankArtifact],
     },
     NativeTemplateBankBuildRejected {
       field. rejects [many [LalinNative.NativeTemplateBuildReject]],
     },
   },
 
-  product. NativeTemplateBank {
+  product. NativeBankArtifact {
     interned,
     field. id [LalinNative.NativeBankId],
     field. target [LalinNative.NativeTarget],
     field. manifest [LalinNative.NativeTemplateSourceManifest],
-    field. entries [many [LalinNative.NativeTemplateBankEntry]],
+    field. template_count [number],
+    field. api_symbol [str],
+    field. selector_symbol [str],
+    field. installer_symbol [str],
   },
 
-  product. NativeTemplateBankEntry {
+  product. NativeBankLoadRequest {
     interned,
-    field. family [LalinNative.NativeTemplateFamily],
-    S.field("compiled", LalinNative.NativeCompiledTemplate),
+    field. artifact [LalinNative.NativeBankArtifact],
+    field. shared_object_path [optional [str]],
   },
 
-  product. NativeTemplateSelectionInput {
+  sum. NativeBankLoadResult {
+    NativeBankLoaded {
+      field. bank [LalinNative.NativeLoadedBank],
+    },
+    NativeBankLoadRejected {
+      field. rejects [many [LalinNative.NativeBankReject]],
+    },
+  },
+
+  product. NativeLoadedBank {
+    interned,
+    field. artifact [LalinNative.NativeBankArtifact],
+    field. handle_address [number],
+  },
+
+  product. NativeTemplateSelectorKey {
     interned,
     field. target [LalinNative.NativeTarget],
     field. family [LalinNative.NativeTemplateFamily],
   },
 
+  product. NativeTemplateHandle {
+    interned,
+    field. bank [LalinNative.NativeBankId],
+    field. ordinal [number],
+    field. family [LalinNative.NativeTemplateFamily],
+    field. text_size [number],
+    field. text_alignment [number],
+    field. constant_pool_size [number],
+    field. constant_pool_alignment [number],
+  },
+
+  product. NativeTemplateSelectionInput {
+    interned,
+    field. bank [LalinNative.NativeLoadedBank],
+    field. key [LalinNative.NativeTemplateSelectorKey],
+  },
+
   sum. NativeTemplateSelectionResult {
     NativeTemplateSelected {
-      field. entry [LalinNative.NativeTemplateBankEntry],
+      field. handle [LalinNative.NativeTemplateHandle],
     },
     NativeTemplateSelectionRejected {
       field. rejects [many [LalinNative.NativeTemplateSelectionReject]],
     },
     NativeTemplateSelectionAmbiguous {
-      field. family [LalinNative.NativeTemplateFamily],
-      field. entries [many [LalinNative.NativeTemplateBankEntry]],
+      field. key [LalinNative.NativeTemplateSelectorKey],
+      field. handles [many [LalinNative.NativeTemplateHandle]],
     },
   },
 
@@ -1501,40 +2197,147 @@ return schema. LalinNative {
     },
   },
 
-  product. NativeEmbeddedTemplate {
+  product. NativeBankInstallRequest {
     interned,
-    field. family [LalinNative.NativeTemplateFamily],
-    field. extraction [LalinNative.NativeTemplateExtraction],
-    field. signature [LalinNative.NativeStencilSignature],
-    field. text [LalinNative.NativeTextSection],
-    field. symbols [many [LalinNative.NativeSymbol]],
-    field. relocations [many [LalinNative.NativeRelocation]],
-    field. holes [many [LalinNative.NativeHoleLayout]],
-    field. hole_ordinals [many [LalinNative.NativeHoleOrdinal]],
-    field. relocation_declarations [many [LalinNative.NativeTemplateRelocationKind]],
-    field. constant_pool_layout [LalinNative.NativeConstantPoolLayout],
+    field. bank [LalinNative.NativeLoadedBank],
+    field. plan [LalinNative.NativeBankInstallPlan],
+    field. allocator [LalinNative.NativeExecutableAllocator],
   },
 
-  product. NativeEmbeddedTemplateBank {
+  product. NativeBankInstallPlanSelectionInput {
     interned,
-    field. id [LalinNative.NativeBankId],
     field. target [LalinNative.NativeTarget],
-    field. manifest [LalinNative.NativeTemplateSourceManifest],
-    field. entries [many [LalinNative.NativeEmbeddedTemplate]],
+    field. runtime [LalinNative.NativeRuntime],
   },
 
-  product. NativeEmbeddedBankImportRequest {
+  product. NativeBankPatchProjectionInput {
     interned,
-    field. embedded [LalinNative.NativeEmbeddedTemplateBank],
+    field. target [LalinNative.NativeTarget],
+    field. runtime [LalinNative.NativeRuntime],
+    field. module_addresses [LalinNative.NativeModuleAddressPlan],
   },
 
-  sum. NativeEmbeddedBankImportResult {
-    NativeEmbeddedBankImported {
-      field. bank [LalinNative.NativeTemplateBank],
+  product. NativeBankInstallPlan {
+    interned,
+    field. target [LalinNative.NativeTarget],
+    field. protocol [LalinNative.NativeCallProtocol],
+    field. frame_layout [LalinNative.NativeFrameLayout],
+    field. nodes [many [LalinNative.NativeBankInstallNode]],
+    field. control_edges [many [LalinNative.NativeBankInstallControlEdge]],
+    field. runtime_symbols [many [LalinNative.NativeBankRuntimeSymbolAddress]],
+    field. module_addresses [many [LalinNative.NativeBankModuleAddress]],
+    field. entry [LalinNative.NativeTemplateNodeId],
+    field. exits [many [LalinNative.NativeTemplateNodeId]],
+  },
+
+  product. NativeBankInstallNode {
+    interned,
+    field. id [LalinNative.NativeTemplateNodeId],
+    field. instance [LalinNative.NativeTemplateInstanceId],
+    field. key [LalinNative.NativeTemplateSelectorKey],
+    field. bindings [many [LalinNative.NativeBankInstallBinding]],
+  },
+
+  product. NativeBankInstallBinding {
+    interned,
+    field. node [LalinNative.NativeTemplateNodeId],
+    field. instance [LalinNative.NativeTemplateInstanceId],
+    field. target [LalinNative.NativePatchBindingTarget],
+    field. coordinate [LalinNative.NativeBankPatchCoordinate],
+  },
+
+  sum. NativeBankInstallControlEdge {
+    NativeBankFallthroughEdge {
+      field. from [LalinNative.NativeTemplateNodeId],
+      field. to [LalinNative.NativeTemplateNodeId],
+      field. symbol [LalinNative.NativeContinuationSymbol],
     },
-    NativeEmbeddedBankRejected {
-      field. rejects [many [LalinNative.NativeTemplateBuildReject]],
+    NativeBankConditionalBranchEdge {
+      field. from [LalinNative.NativeTemplateNodeId],
+      field. then_to [LalinNative.NativeTemplateNodeId],
+      field. then_symbol [LalinNative.NativeContinuationSymbol],
+      field. else_to [LalinNative.NativeTemplateNodeId],
+      field. else_symbol [LalinNative.NativeContinuationSymbol],
     },
+    NativeBankLoopBackedgeEdge {
+      field. from [LalinNative.NativeTemplateNodeId],
+      field. to [LalinNative.NativeTemplateNodeId],
+      field. symbol [LalinNative.NativeContinuationSymbol],
+    },
+    NativeBankExitEdge {
+      field. from [LalinNative.NativeTemplateNodeId],
+      field. symbol [LalinNative.NativeContinuationSymbol],
+    },
+    NativeBankContinuationEdge {
+      field. from [LalinNative.NativeTemplateNodeId],
+      field. to [LalinNative.NativeTemplateNodeId],
+      field. symbol [LalinNative.NativeContinuationSymbol],
+    },
+    NativeBankRuntimeCallReturnEdge {
+      field. from [LalinNative.NativeTemplateNodeId],
+      field. to [LalinNative.NativeTemplateNodeId],
+      field. runtime_symbol [LalinNative.NativeRuntimeSymbolId],
+      field. return_symbol [LalinNative.NativeContinuationSymbol],
+    },
+  },
+
+  product. NativeBankRuntimeSymbolAddress {
+    interned,
+    field. symbol [LalinNative.NativeRuntimeSymbolId],
+    field. address [number],
+  },
+
+  sum. NativeBankModuleAddress {
+    NativeBankCodeDataAddress {
+      field. data [LalinCode.CodeDataId],
+      field. address [number],
+    },
+    NativeBankCodeGlobalAddress {
+      field. global [LalinCode.CodeGlobalId],
+      field. address [number],
+    },
+    NativeBankCodeFuncAddress {
+      field. func [LalinCode.CodeFuncId],
+      field. address [number],
+    },
+    NativeBankCodeExternAddress {
+      field. extern [LalinCode.CodeExternId],
+      field. address [number],
+    },
+  },
+
+  sum. NativeBankPatchCoordinate {
+    NativeBankPatchImmediateI32 { field. value [number], },
+    NativeBankPatchImmediateI64 { field. value [number], },
+    NativeBankPatchPointer64 { field. address [number], },
+    NativeBankPatchFieldOffset { field. field_name [str], offset [number], },
+    NativeBankPatchComponentIndex { field. field_name [str], component_index [number], },
+    NativeBankPatchStride { field. stride [number], },
+    NativeBankPatchWindowOffset { field. axis_index [number], offset [number], },
+    NativeBankPatchBranchTarget { field. node [LalinNative.NativeTemplateNodeId], },
+    NativeBankPatchCallTarget { field. symbol [LalinNative.NativeRuntimeSymbolId], },
+    NativeBankPatchModuleAddress { field. address [LalinNative.NativeBankModuleAddress], },
+    NativeBankPatchFrameOffset { field. offset [number], },
+    NativeBankPatchFrameSize { field. size [number], },
+    NativeBankPatchScalarBytes {
+      field. bytes [LalinNative.NativeTemplateBytes],
+      field. ty [optional [LalinCode.CodeType]],
+    },
+    NativeBankPatchConstantPoolEntry {
+      field. entry [LalinNative.NativeConstantPoolEntryId],
+      field. bytes [LalinNative.NativeTemplateBytes],
+      field. ty [optional [LalinCode.CodeType]],
+    },
+  },
+
+  sum. NativeBankReject {
+    NativeBankRejectLoadFailed { field. reason [str], },
+    NativeBankRejectMissingSymbol { field. symbol [str], },
+    NativeBankRejectTargetMismatch {
+      field. expected [LalinNative.NativeTarget],
+      field. actual [LalinNative.NativeTarget],
+    },
+    NativeBankRejectInvalidHandle { field. reason [str], },
   },
 
   product. NativeTemplateFamily {
@@ -1552,6 +2355,9 @@ return schema. LalinNative {
     NativeRoleCodeTerm,
     NativeRoleCodePlace,
     NativeRoleCodeConst,
+    NativeRoleAbiMicroOp,
+    NativeRoleKernelMicroOp,
+    NativeRoleStencilMicroOp,
     NativeRoleKernelDomain,
     NativeRoleKernelLane,
     NativeRoleKernelExpr,
@@ -1578,6 +2384,12 @@ return schema. LalinNative {
     NativeAxisCodeConst { field. axis [LalinNative.NativeCodeConstAxis], },
     NativeAxisCodeType { field. ty [LalinCode.CodeType], },
     NativeAxisCodeSig { field. sig [LalinCode.CodeSig], },
+    NativeAxisCodeMicroOp { field. shape [LalinNative.NativeCodeMicroOpShape], },
+    NativeAxisFastCodeExpr { field. shape [LalinNative.NativeCodeExprRegionShape], },
+    NativeAxisFastPublicAbi { field. shape [LalinNative.NativeFastPublicAbiShape], },
+    NativeAxisAbiMicroOp { field. shape [LalinNative.NativeAbiMicroOpShape], },
+    NativeAxisKernelMicroOp { field. shape [LalinNative.NativeKernelMicroOpShape], },
+    NativeAxisStencilMicroOp { field. shape [LalinNative.NativeStencilMicroOpShape], },
     NativeAxisKernel { field. axis [LalinNative.NativeKernelAxis], },
     NativeAxisStencilProducer { field. axis [LalinNative.NativeStencilProducerAxis], },
     NativeAxisStencilAccess { field. axis [LalinNative.NativeStencilAccessAxis], },
@@ -2583,7 +3395,7 @@ return schema. LalinNative {
     interned,
     field. id [LalinNative.NativeTemplateNodeId],
     field. instance [LalinNative.NativeTemplateInstanceId],
-    field. entry [LalinNative.NativeTemplateBankEntry],
+    field. family [LalinNative.NativeTemplateFamily],
     field. inputs [many [LalinNative.NativeValuePlacement]],
     field. outputs [many [LalinNative.NativeValuePlacement]],
     field. bindings [many [LalinNative.NativePatchBinding]],
@@ -2713,6 +3525,7 @@ return schema. LalinNative {
   sum. NativePatchBindingTarget {
     NativePatchBindingHoleId { field. hole [LalinNative.NativePatchHoleId], },
     NativePatchBindingHoleOrdinal { field. ordinal [LalinNative.NativeHoleOrdinalId], },
+    NativePatchBindingHoleOrdinalIndex { field. ordinal [number], },
   },
 
   product. NativePatchBinding {
@@ -2854,6 +3667,16 @@ return schema. LalinNative {
       field. reason [str],
     },
     NativeInstallRejectAllocation { field. reason [str], },
+    NativeInstallRejectBankRejected {
+      field. node [optional [LalinNative.NativeTemplateNodeId]],
+      field. hole [optional [LalinNative.NativePatchHoleId]],
+      field. reason [str],
+    },
+    NativeInstallRejectFallthroughLayout {
+      field. from [LalinNative.NativeTemplateNodeId],
+      field. to [LalinNative.NativeTemplateNodeId],
+      field. reason [str],
+    },
   },
 
   product. NativeExecutableCallInput {

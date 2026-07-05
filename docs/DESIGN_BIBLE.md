@@ -23,7 +23,7 @@ Book VI   THE CANON         anti-patterns, red flags, review checklists, doctrin
 
 Read Book I even if you know Lalin — it fixes the vocabulary everything else uses. Books II and III can be read in either order. Book IV is the procedure you will actually run on real problems; Book V shows the procedure running; Book VI is what you pin to the wall.
 
-A note on stance. This book takes positions. It says unions are not a design primitive, that inheritance dissolves into protocols, that most diagrams rot because they were never checked. These positions are argued, not asserted — but they are positions, and the book is more useful if you argue back while reading.
+A note on stance. This book takes positions. It says semantic unions are not the center of design, that inheritance dissolves into objects with owned protocols, that most diagrams rot because they were never checked. These positions are argued, not asserted — but they are positions, and the book is more useful if you argue back while reading.
 
 ---
 ---
@@ -84,13 +84,75 @@ every path must terminate explicitly — there is no fallthrough
 
 When both structures are typed, design changes character. The design is no longer a diagram beside the code, a spec above the code, or a convention around the code. **The design is the declaration graph itself** — the type forest plus the region tree — and the compiler checks the two against each other continuously. That is the thesis of this entire book, and everything else is consequences.
 
-There is a practical consequence. Because Lalin is built on exactly two structures — products and sums — the authoring surface falls directly out of the host language. Lua arrays are products. Lua record tables are fill maps and continuation bindings. `[]` is the type slot. `head. name` is the declaration target. The DSL is not a separate language with its own parser; it is Lua table shapes recognized as Lalin semantics. The design discipline became the syntax.
+This is also Lalin's object-oriented programming claim. An object is not a class
+with inheritance; it is a self-contained owner of data shape and typed control
+protocols. Standard languages do not type CFG edges directly, and ordinary
+functions are single-exit. Protocol-rich behavior therefore spills control into
+data: return unions, `Result` objects, status codes, callback registries,
+visitors, and dispatcher functions. The result is artificial ceremony types plus
+extra runtime calls/branches. Lalin keeps the control graph typed where it
+belongs: as regions owned by the object.
+
+A store example shows the difference. In a single-exit language, safe access is
+usually encoded as a result object:
+
+```text
+Store.borrow(ref) -> Borrowed(record) | Stale | Missing
+```
+
+Then every caller switches on that value. In Lalin the store object owns the
+protocol instead:
+
+```lln
+region Store.borrow(self [readonly [ptr [Store]]], ref [named("Store.Ref")];
+  borrowed(record [lease("self", ptr [Record])]),
+  stale,
+  missing
+)
+  entry start()
+    jump missing
+  end
+end
+```
+
+No artificial `BorrowResult` type is needed. The successful edge carries the
+lease, and the invalidating methods on `Store` are checked against that lease
+origin. This is the object model and the memory model closing over the same
+owner.
+
+There is a practical consequence. Lalin now has two matching ways to express the same discipline:
+
+```text
+Pure Lua pattern
+  ASDL products/unions + Lua methods
+  → bootstrap compiler semantics, metaprogramming, schema projection, tooling
+
+Pure Lalin mirror
+  structs / unique structs / unions
+  + qualified functions as methods
+  + qualified regions as protocols
+  + qualified handles as durable references
+  → preferred for fast monomorphic semantic systems
+```
+
+The Lua pattern is how the compiler bootstraps and how factories construct
+families. At the host boundary, this includes the same type meta-property
+mechanism used by parsed structs: a type value can lazily answer questions such
+as layout, method lookup, missing method synthesis, casts, application, regions,
+and handles, then produce ordinary Lalin declarations or fragments. This is
+staged protocol synthesis, not runtime dynamic dispatch.
+
+The Lalin mirror is the object model users should reach for when the semantic
+system itself needs to run fast: a struct names the product, a `unique` struct
+names an entity with identity, a qualified function owns behavior, a qualified
+region owns control/access, and a qualified handle names durable identity. The
+design discipline became the object surface.
 
 This includes memory. A region signature is not merely a control interface; it is the place where access facts become visible. A continuation can grant a lease, deny access, prove a buffer shape, or expose that a handle was stale. The declaration already tells the caller what may be touched and what must be handled before any body is read.
 
 ---
 
-## Chapter 1.5: The VM stack view
+## Chapter 1.5: The object-machine stack view
 
 The two-structure thesis is the foundation: every program has a type forest and
 a control graph. But there is a second practical lens that makes large systems
@@ -100,7 +162,7 @@ snap into focus:
 All serious programs become stacks of virtual machines.
 ```
 
-Not one giant VM with one universal bytecode. A stack of small machines:
+Not one giant runtime and not one universal bytecode. A stack of small object-machines:
 
 ```text
 source VM
@@ -111,31 +173,32 @@ semantic VM
     consumes typed IR
     produces lowered IR
 
-runtime VM
-    consumes lowered bytecode/ops
+runtime object-machine
+    consumes lowered operations, streams, or explicit images
     produces buffers, commands, reports, events, or machine code
 ```
 
 This is not an argument for slow interpreters. It is an argument for making the
-instruction language of each layer explicit. A VM is simply a machine with:
+object vocabulary and instruction language of each layer explicit. A machine is
+simply an object with:
 
 ```text
 an instruction language
 a cursor, stream, or program counter
-an environment/store product
-typed transitions
+an environment/store product or unique struct
+typed transitions or qualified methods
 diagnostics
 ownership rules
-an output language or materialized buffer
+an output language, materialized buffer, or next object world
 ```
 
-Once this is visible, many "API design" problems become compiler problems with
-better answers. A UI toolkit is not a bag of widgets; it is a compiler from
-authored UI bytecode to layout, render, hit-test, and event bytecode. A parser is
-a VM from bytes to syntax products. A renderer is a VM from view ops to backend
-commands. A Lua bridge is a VM boundary between dynamic host values and semantic
-handles. A compiler is a stack of VMs whose stages consume and produce typed IR
-languages.
+Once this is visible, many "API design" problems become object/compiler
+problems with better answers. A UI toolkit is not a bag of widgets; it is a
+stack of typed objects and protocols from authored structure to layout, render,
+hit-test, and events. A parser is a machine from bytes to syntax products. A
+renderer is a machine from view ops to backend commands. A Lua bridge is a
+boundary object between dynamic host values and semantic handles. A compiler is
+a stack of object-machines whose stages consume and produce typed IR languages.
 
 The design question changes from:
 
@@ -146,8 +209,8 @@ What objects and methods should this subsystem expose?
 to:
 
 ```text
-What bytecode does this layer consume?
-What bytecode, stream, report, or buffer does it produce?
+What object/world/instruction language does this layer consume?
+What object/world/stream/report/buffer does it produce?
 What validates the input language?
 Who owns the bytes?
 Can the input be borrowed?
@@ -158,29 +221,35 @@ What diagnostics can this VM emit?
 Can this stage run without the authoring language?
 ```
 
-This lens is why PVM works: it made compiler phases into lazy machines over
-LalinSchema-projected products. It is why LLPVM works: it makes that machine
-boundary concrete as borrowed bytecode images, native handles, tapes, buffers,
-recordings, and C ABI seals. It is why MLUI should remain a rich compiler while
-still emitting a dense borrowed image for the native UI VM.
+This lens is the object mirror of the ASDL compiler pattern. In pure Lua, a
+stage is an ASDL product/union vocabulary plus methods on the schema classes. In
+pure Lalin, the same stage is structs, unique structs, unions, qualified
+functions, qualified regions, and qualified handles. Use Lua when you are
+bootstrapping, staging, or generating families. Prefer the Lalin mirror when the
+stage itself should run as compiled native code.
 
-The VM-stack view does not replace the dual tree. It sharpens it:
+The object-machine stack view does not replace the dual tree. It sharpens it:
 
 ```text
 TYPE FOREST    names the instruction languages, stores, handles, buffers
 CONTROL GRAPH  names the VM transitions, phase exits, validation outcomes
-BYTECODE       is the portable product at a machine boundary
+OBJECT WORLD   is the typed state at a semantic boundary
+BOUNDARY IMAGE  is used only when a layer genuinely needs a portable dense artifact
 ```
 
 Design law:
 
 ```text
 When a subsystem has repeated execution, retained state, diagnostics,
-incremental invalidation, or a performance boundary, identify its VM and
-instruction language before designing public APIs.
+incremental invalidation, ownership authority, or a performance boundary,
+make the machine an object: a struct or unique struct with owned methods,
+regions, handles, worlds, and instruction language.
 ```
 
-Do not start with wrappers around objects. Find the VM stack first.
+Do not start with wrappers around objects. Name the object-machine stack first:
+the entities, their protocols, the ownership boundaries, and the worlds they
+transform. One object per machine is the clean default; split it only when there
+are truly separate ownership or protocol authorities.
 
 Worlds are domain states, not phase plumbing. A phase consumes one world and
 produces one world. If a phase appears to need several tapes, facts, stores,
@@ -226,9 +295,9 @@ A world should change exactly when the next reusable product must change.
 No sooner. No later.
 ```
 
-This is why caching is not an optimization pasted onto LLPVM after the design.
-Caching is the instrument that reveals the design. The best world shape is the
-shape that maximizes correct reuse while keeping invalidation explainable.
+This is why caching is not an optimization pasted on after the design. Caching
+is the instrument that reveals the design. The best world shape is the shape
+that maximizes correct reuse while keeping invalidation explainable.
 
 For every proposed world, ask:
 
@@ -275,16 +344,16 @@ styled_ui =
 ```
 
 The outer phase cache can reuse `styled_ui -> measured_ui`. Inside the phase,
-per-node lanes can reuse individual style or measure products. This is the
-Lalin/PVM trick generalized: choose coarse worlds at semantic frontiers, and
-carry finer identities inside them where partial reuse matters.
+per-node lanes can reuse individual style or measure products. This is the Lalin object trick generalized: choose coarse worlds at semantic
+frontiers, and carry finer identities inside them with unique structs, handles,
+or canonical products where partial reuse matters.
 
 Worlds are too coarse when unrelated edits invalidate expensive downstream
 products. Worlds are too fine when a phase has to pretend it consumes several
 things. The right world is the product that a phase can consume alone and still
 produce a cacheable result whose invalidation rule fits in one sentence.
 
-For MLUI, the names are not decoration; they are cache claims:
+For a UI system, the names are not decoration; they are cache claims:
 
 ```text
 authored_ui     changes when authored structure changes
@@ -302,33 +371,32 @@ handled_frame   changes when raw input has been applied
 If those invalidation sentences are wrong, the worlds are wrong. Fix the world
 shape before fixing any body.
 
-### LLPVM as the canonical operational form
+### Dense boundary images are optional, not the object model
 
-LLPVM is not an exception to the method and not just an optimization project. It
-is the concrete low-level form of this chapter:
+The canonical operational form is the object-machine itself:
 
 ```text
-Bible concept              LLPVM realization
+Bible concept              Lalin object-machine realization
 ---------------------------------------------------------------
-type forest                Language, Type table, World, Value, Stream, Buffer, Phase
-control graph              native regions over streams and stores
-instruction language       LLPV bytecode records
-machine boundary           borrowed immutable image
-environment/store product  LlVm
-durable identity           Ll*Ref handles
+type forest                structs, unique structs, unions, handles, stores
+control graph              qualified regions over object worlds
+instruction language       typed products/commands when a layer needs them
+machine boundary           object world, store, stream, or explicit image
+environment/store product  named store or unique machine struct
+durable identity           qualified handles and unique structs
 temporary access           resolver regions and leases
-phase boundary             LlPhase + LlPhaseKey
-incremental state          Recording + CacheEntry
-materialized output        LlBuffer
-diagnostics                LlDiagnostic / llpvm_status at ABI seals
-portable artifact          C blob / header; WebAssembly is downstream C compilation
+phase boundary             world product + phase method/region
+incremental state          cache products with keys, epochs, and lanes
+materialized output        buffer, report, command stream, or native artifact
+diagnostics                structured products and named failure continuations
+portable artifact          only where a dense borrowed image is the real boundary
 ```
 
-When the Bible says "find the VM stack", LLPVM is the standard answer for the
-layer that must become portable, incremental, and native. A higher-level system
-may still have its own rich compiler-shaped frontend, but if it needs a stable
-runtime boundary, the boundary should look like LLPVM: dense instruction image
-in, typed native machine, handles/streams/buffers/reports out.
+A dense byte image is a boundary product, not an architecture default. Use it
+when the layer genuinely needs portability, sharing, serialization, or a compact
+ABI seal. Otherwise keep the design as compiled Lalin objects with owned
+protocols. The fast path is the Lalin mirror: monomorphic structs, unique
+entities, methods, regions, and handles lowered to native code.
 
 ---
 
@@ -544,7 +612,33 @@ end
 
 Every value is an ordinary Lua value — types, constants, names — passed directly. No textual splice, no parser. The factory produces a complete, monomorphic, checked Lalin declaration. Factories are not an implementation convenience; they are the design representation of a *family* of machines, and Book II will show that they quietly resolve one of Ousterhout's hardest trade-offs.
 
-### 3.6 LuaBridge — the dynamic host boundary
+### 3.6 The Lalin mirror — objects for speed
+
+The Lua pattern has a compiled mirror. If the semantic system is hot, long-lived,
+or authored by users as part of their own language, write the same architecture
+in Lalin:
+
+```text
+ASDL product        -> struct
+ASDL unique product -> unique struct
+ASDL sum            -> union or encoded product + consumer region
+Lua method          -> qualified fn Struct.method
+Lua protocol helper -> qualified region Struct.protocol
+Lua side identity   -> qualified handle Struct.Ref or unique struct identity
+```
+
+A plain struct is a value. A `unique` struct is an entity. The qualified
+function is the method form. The qualified region is the protocol/access form.
+The qualified handle is the durable reference form. This is Lalin's OOP: objects
+are not classes with inheritance; objects are typed products/entities that own
+protocol vocabulary.
+
+Use Lua to generate families and bridge genericity. Use Lalin to run the
+resulting monomorphic semantic objects fast. The two forms should be isomorphic
+enough that a compiler phase can start life as ASDL+Lua methods and later move
+into Lalin structs+methods without changing the design vocabulary.
+
+### 3.7 LuaBridge — the dynamic host boundary
 
 Lua plays two roles in Lalin, and confusing them is a design bug.
 
@@ -573,8 +667,28 @@ The doctrine is simple:
 
 ```text
 Raw Lua C API calls are allowed.
-Raw Lua C API calls are not the design.
-LuaBridge regions are the design.
+Raw Lua C API calls are the substrate.
+Raw Lua C API calls are not the object model.
+LuaBridge objects and regions are the design.
+```
+
+This is an important advantage of Lalin's current backend shape: the Lua C API
+is just C. Lalin can call `lua_gettop`, `lua_settop`, `lua_pcall`,
+`luaL_ref`, `luaL_unref`, and friends through ordinary extern declarations and
+runtime-symbol linking. No special "Lua backend" is required to reach the host
+runtime. But direct extern calls expose exactly the wrong interface to ordinary
+programs: stack indices, integer statuses, registry integers, borrowed string
+pointers, and ambient error state.
+
+The object layer on top is therefore not redundant. It is the same move as
+`Store.borrow`: wrap a raw capability in an object that owns the durable handles,
+the temporary leases, and the typed control protocol.
+
+```text
+LuaState      owns lua_State* authority and stack discipline
+LuaStackMark  names a restorable stack boundary
+LuaRef        durable registry handle
+LuaBridge     regions convert status codes/errors into typed exits
 ```
 
 LuaJIT owns Lua object memory. Lalin owns registry-reference obligations.
@@ -622,6 +736,30 @@ registry reference. If a bridge protocol accepts an owned ref and fails before
 proving discharge, the failure exit carries `ref: owned LuaRef` back to the
 caller. Error handling cannot erase cleanup authority.
 
+The raw extern layer can be tiny and mechanical:
+
+```text
+extern lua_gettop(L)        -> i32
+extern lua_settop(L, idx)   -> void
+extern lua_pcall(L, nargs, nresults, errfunc) -> i32
+extern luaL_ref(L, t)       -> i32
+extern luaL_unref(L, t, ref)-> void
+```
+
+The object API absorbs the real design:
+
+```text
+region LuaState.pcall(self, nargs, nresults;
+  ok(results),
+  error(message_ref [owned LuaRef])
+)
+
+region LuaRegistry.release(self, ref [owned LuaRef];
+  done,
+  invalid(ref [owned LuaRef])
+)
+```
+
 This is not extra ceremony. It is Lalin applying its own law at the LuaJIT
 border:
 
@@ -638,10 +776,10 @@ So the host may remain poetic, but the runtime bridge must be explicit. Lua is
 where genericity lives; LuaBridge is where LuaJIT's dynamic runtime facts stop
 being ambient and become Lalin facts.
 
-### 3.7 Unified LalinSchema — one shape language for data and control
+### 3.8 One shape language for data, objects, and control
 
-This is the unifying point: Lalin is **LalinSchema-projected products and sums
-generalized from data into control**.
+This is the unifying point: Lalin is **products and sums generalized from data
+into objects and control**, with a Lua ASDL pattern and a compiled Lalin mirror.
 
 Classic algebraic data modeling names products and sums of stored data. Lalin keeps that, then
 uses the same product/sum vocabulary at executable boundaries:
@@ -730,7 +868,7 @@ when the name is a real shared concept (`ParseInput`, `ParseExit`, `DrawIter`,
 reduce duplication and reveal architecture, not hide a one-off signature behind
 an alias.
 
-### 3.7 The algebra, on one card
+### 3.9 The algebra, on one card
 
 ```text
 Product      = data that exists together; comma-separated fields
@@ -1056,13 +1194,13 @@ The master mapping table, before we take them one at a time:
 | UML | Lalin
 |---|---
 | Class (attributes) | `struct` — a product
-| Class (methods) | regions/functions taking `ptr(Self)` as the first input
+| Class (methods) | qualified `fn Self.method` / `region Self.protocol`, taking `ptr(Self)` when access is needed
 | Association (1) | declared handle type (`PostId`) when stable; otherwise local `ptr(T)`/`lease ptr(T)`
 | Association (1..*) | `view(T)`, `lease view(T)`, or `{ data: ptr(T), len: index }` product
 | Composition ◆ | embedded field / store-owned record + stated lifetime
 | Aggregation ◇ | handle or borrowed lease; raw `ptr` only inside the boundary that granted it
-| Interface / abstract class | a **protocol** (consumer region signature), or a Lua-shared signature
-| Inheritance / subclassing | encoded kind + one consumer region per operation, or a factory family
+| Interface / abstract class | a **protocol** owned by an object, or a Lua-shared/Lalin-shared signature
+| Inheritance / subclassing | unique/encoded entity + one consumer region per operation, or a factory family
 | Enumeration | encoding byte, documented at its single consumer region
 | Sequence lifeline | a region
 | Sequence message → | `emit`
@@ -1383,7 +1521,7 @@ The remaining diagram types map quickly once Books I–III's instincts are in pl
 
 **Use case diagrams** are the outcome harvest of Book IV's Step 1, drawn as ovals. Each use case → a root region or sealed entry function; each actor → an ABI boundary (a seal); «include» → an emit; «extend» → an added continuation on the base case's protocol (an extension point with a name and a payload — which is more than UML ever made of it). The diagram's real value is the prompt it encodes: *for each oval, list every way it can end* — and that list is a protocol draft.
 
-**Component and package diagrams** → Lua module structure. A component's "provided interface" is the table of factories and sealed functions a `.mlua` module returns from `require`; its "required interface" is the externs and signatures it takes as factory parameters. **Deployment diagrams** → build-time platform selection: `if ffi.os == "Windows" then require("thread.windows").make() else require("thread.pthread").make() end`, with both branches generating machines that share the *same conceptual protocols* — platform varies, design doesn't. **ER diagrams** → store products with handles: entity → record in a store; relation → handle field (`post_id: PostId`); cardinality → handle vs. view/lease granted by a resolver region; and every "type/kind/status" column gets the Chapter 4 interrogation before it is allowed to exist.
+**Component and package diagrams** → Lua/Lalin module structure. A component's "provided interface" is the table of factories, structs, unique structs, qualified protocols, and sealed functions its module exports; its "required interface" is the externs, stores, protocols, and factory parameters it consumes. **Deployment diagrams** → build-time platform selection: `if ffi.os == "Windows" then require("thread.windows").make() else require("thread.pthread").make() end`, with both branches generating machines that share the *same conceptual protocols* — platform varies, design doesn't. **ER diagrams** → store products with handles: entity → record in a store or unique struct; relation → handle field (`post_id: PostId`) or qualified resolver; cardinality → handle vs. view/lease granted by a resolver region; and every "type/kind/status" column gets the Chapter 4 interrogation before it is allowed to exist.
 
 ---
 
@@ -1485,16 +1623,14 @@ consume alone, cache against, and transform into the next semantic state. To
 declare a world is to declare a cache identity and an invalidation contract.
 
 If the forest is an instruction language rather than a one-off kernel data
-model, switch lenses: author it in the PVM style. In hosted/compiler work that
-may be a LalinSchema projection context. In portable native runtime work, the standard-library
-answer is LLPVM: define languages as Lua type tables with named constructors,
-project them into worlds, build streams and phases, then emit a borrowed
-bytecode image. The image still contains ABI records, but ABI is the encoded
-boundary product, not the public authoring shape. Free-form Lalin remains the
-language for native type declarations; LLPVM consumes those Lalin type values
-while providing the canonical operation-language, world, stream, and phase
-surface for typed VM stacks. Each phase consumes one semantic world and
-produces one semantic world; if the phase needs target facts, resource epochs,
+model, switch lenses but keep the center in objects. In compiler/bootstrap work,
+the pure Lua form may be an ASDL projection context with methods on schema
+classes. In fast runtime work, prefer the pure Lalin mirror: structs, unique
+structs, qualified methods, qualified regions, qualified handles, and explicit
+world products. Dense images, tapes, or bytecode formats are side-project
+boundary artifacts for serialization, embedding, or portability; they are not
+the center of the design. Each phase consumes one semantic world and produces
+one semantic world; if the phase needs target facts, resource epochs,
 environment facts, or model state, those facts belong in the consumed world.
 
 For every repeated or incremental subsystem, write the world line before region
@@ -1548,7 +1684,7 @@ What survives across operations — stores, pools, registries, connection state,
 
 ### Step 11 — Find the families
 
-Where do N signatures differ in one type, one constant, one platform call? Each repetition axis is a factory parameter. Design the *family* signature for the class of uses (somewhat general-purpose); emit only the instances actually used (no speculative matrices); never let one instance's quirk into the family's parameters. Push genuine variation to build time; pull awkward cases down into the regions; let only per-call facts survive in input products. If the system is interactive or incremental, also layer it as a compiler: LalinSchema-authored source values, typed event values, pure apply, memoized phases at reuse frontiers, one executing loop. Memoize phase products, not arbitrary functions: the boundary should be where knowledge becomes reusable and where invalidation can be named in one sentence.
+Where do N signatures differ in one type, one constant, one platform call? Each repetition axis is a factory parameter. Design the *family* signature for the class of uses (somewhat general-purpose); emit only the instances actually used (no speculative matrices); never let one instance's quirk into the family's parameters. Push genuine variation to build time; pull awkward cases down into the regions; let only per-call facts survive in input products. If the system is interactive or incremental, also layer it as a compiler: typed source objects, typed event values, pure apply methods/regions, memoized phases at reuse frontiers, one executing loop. Memoize phase products, not arbitrary functions: the boundary should be where knowledge becomes reusable and where invalidation can be named in one sentence.
 
 ### Step 12 — Review, then transcribe
 
@@ -1919,6 +2055,19 @@ An operation that may move, free, compact, clear, or reuse storage cannot run
 while leases from that same store are live.
 ```
 
+The object rule makes this local:
+
+```text
+one machine/store object = owner + resolver authority + invalidation boundary
+```
+
+A store or machine object owns the bytes, the handle namespace, the generation or
+epoch facts, the resolver regions that grant leases, and the mutation/destruction
+regions that invalidate leases. If ownership facts are spread across helper
+modules, side tables, global allocators, or generic context bags, the design has
+lost its owner. Move the facts back onto the machine object or split the machine
+into two real owners.
+
 ### The design method
 
 Classify the lifetime shape before writing pointer fields:
@@ -1996,7 +2145,7 @@ but the reason should be visible in the design header.
 
 `domain` is the identity namespace: the store, pool, registry, or table that can
 validate the handle. `target` is the logical product a successful resolver may
-grant access to. These facts are explicit LalinSchema-projected typed values, not comments and not parser
+grant access to. These facts are explicit typed values, not comments and not parser
 sugar:
 
 ```text
@@ -2166,42 +2315,41 @@ region/function says what can happen, what access it invalidates, and whether an
 10. **Invalidation is named.** Resource close, arena reset, publish, retire, destroy, compact, and generation bump are region/effect facts, not destructor folklore.
 11. **Kernels are seals.** Hot code receives already-borrowed leases/views/contracts and does not discover ownership.
 12. **Foreign runtimes get bridges.** LuaJIT stack slots, registry refs, borrowed strings, protected calls, and userdata proxies cross through LuaBridge protocols, not ad hoc raw externs.
-13. **Repeated systems are VMs.** If a subsystem has repeated execution, retained state, diagnostics, incremental invalidation, or a performance boundary, name its instruction language and VM stack before designing public APIs. Each phase should transform one semantic world into the next.
+13. **Repeated systems are object-machines.** If a subsystem has repeated execution, retained state, diagnostics, incremental invalidation, or a performance boundary, name its entities, methods, protocols, worlds, and instruction language before designing public APIs. Each phase should transform one semantic world into the next.
 14. **Worlds are reuse frontiers.** Choose world boundaries where a product becomes reusable and invalidation can be stated exactly. False invalidation means the world is too broad or too noisy; stale reuse means it is missing facts.
-15. **Bytecode is a boundary product.** Dense borrowed images, tapes, command buffers, and IR rows are first-class products; wrapper APIs are authoring conveniences around them, not the architecture.
+15. **Dense images are side boundary products.** Bytecode, tapes, command buffers, and IR rows are first-class products only when serialization, embedding, portability, or ABI shape genuinely demands them. They are not the center of ordinary Lalin design.
 
 ---
 
 ## Chapter 23: The doctrine
 
 ```text
- 1. Facts are products.              11. One encoding, one owning consumer.
- 2. Choices are protocols.           12. Delete continuations by strengthening products.
- 3. Regions join the two.            13. Pull cases down; push variation to build time.
- 4. Blocks are state products.       14. Tags are encodings; unions are not design.
- 5. Jumps are total constructions.   15. Diagrams are sketches; declarations are the design.
- 6. Every path exits by name.        16. Lua generates families; machines stay monomorphic.
- 7. Emits compose; fills are total.  17. Memory ownership is ordinary products/protocols.
- 8. Emit for splicing, call for       18. Memory failure is a protocol, not a nullable pointer.
-    frames; seal at ABI.              19. Handles may escape; leases may not.
- 9. The protocol belongs to          20. Stores own bytes; regions grant access facts.
+ 1. Facts are products.              12. Delete continuations by strengthening products.
+ 2. Entities are unique structs      13. Pull cases down; push variation to build time.
+    or handles.                      14. Tags are encodings; unions are not design.
+ 3. Choices are protocols.           15. Diagrams are sketches; declarations are the design.
+ 4. Regions join products and        16. Lua generates families; Lalin runs monomorphic objects.
+    protocols.                       17. Memory ownership is ordinary products/protocols.
+ 5. Blocks are state products.       18. Memory failure is a protocol, not a nullable pointer.
+ 6. Jumps are total constructions.   19. Handles may escape; leases may not.
+ 7. Every path exits by name.        20. Stores own bytes; regions grant access facts.
+ 8. Emits compose; fills are total.  21. Foreign runtime facts cross through typed bridges.
+ 9. Emit for splicing, call for      22. Serious systems are object-machine stacks.
+    frames; seal at ABI.             23. Worlds are reuse frontiers.
+10. The protocol belongs to          24. Dense bytecode/images are side boundary products.
     the consumer.
-10. Deep region: small signature,    21. Foreign runtime facts cross through typed bridges.
-    large machine.
-                                      22. Serious systems are stacks of VMs.
-                                      23. Worlds are reuse frontiers.
-                                      24. Bytecode is a boundary product.
+11. One encoding, one owning consumer.
 ```
 
 And the eight sentences that compress the books behind them:
 
-> **Choice is control. Data is product.** *(the algebra)*
-> **Find the VM stack; each layer consumes and produces an instruction language.** *(the operational lens)*
+> **Choice is control. Data is product. Entity is unique identity.** *(the algebra)*
+> **Find the object-machine stack; each layer consumes and produces typed worlds.** *(the operational lens)*
 > **Choose worlds at reuse frontiers; cache correctness reveals the right shape.** *(incrementality)*
 > **Depth is a small protocol in front of a large machine.** *(Ousterhout, translated)*
 > **A region is a statechart whose final states are its signature.** *(UML, completed)*
 > **Stores own bytes; handles name durable identity; regions grant leases; protocols name failure.** *(memory)*
-> **Lua generates families; LuaBridge owns the LuaJIT boundary.** *(host discipline)*
-> **Design the two trees; the compiler checks them against each other; then implementation is transcription.** *(the method)*
+> **Lua generates families; Lalin runs the fast monomorphic object mirror.** *(host discipline)*
+> **Design the products, entities, and protocols; the compiler checks them against each other; then implementation is transcription.** *(the method)*
 
-The architecture is not a diagram beside the system, a document above it, or a convention around it. The architecture is the product graph plus the protocol graph — and the implementation is the same graph, lowered to native code. That is the Lalin method.
+The architecture is not a diagram beside the system, a document above it, or a convention around it. The architecture is the product/entity graph plus the protocol graph — and the implementation is the same graph, lowered to native code. That is the Lalin method.

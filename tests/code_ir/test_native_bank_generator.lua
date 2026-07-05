@@ -29,6 +29,7 @@ local dir = "target/test_artifacts/test_native_bank_generator"
 local c_path = dir .. "/bank.c"
 local h_path = dir .. "/bank.h"
 local lua_path = dir .. "/bank.lua"
+local so_path = dir .. "/bank.so"
 local manifest_path = dir .. "/manifest.lua"
 
 assert(command_ok("rm -rf " .. shell_quote(dir)))
@@ -123,34 +124,121 @@ local cmd = table.concat({
     "2>",
     shell_quote(dir .. "/generator.log"),
 }, " ")
-assert(command_ok(cmd), "expected native bank generator to build a typed embedded bank")
-assert(command_ok("gcc -c " .. shell_quote(c_path) .. " -o " .. shell_quote(dir .. "/bank.o")), "generated C bridge should compile")
+assert(command_ok(cmd), "expected native bank generator to build a C-owned bank artifact")
+assert(command_ok("gcc -c " .. shell_quote(c_path) .. " -o " .. shell_quote(dir .. "/bank.o")), "generated C bank should compile")
+assert(command_ok("gcc -shared -fPIC " .. shell_quote(c_path) .. " -o " .. shell_quote(so_path)), "generated C bank should link as a shared object")
 
 local log = read_file(dir .. "/generator.log")
 local header = read_file(h_path)
 local source = read_file(c_path)
 local lua_source = read_file(lua_path)
 
-assert(log:find("embedded native template bank native%-generator%-bank with 1 templates"), "expected native bank generator log")
-assert(header:find("LalinNativeEmbeddedTemplateBank", 1, true), "expected native embedded bank C type")
-assert(source:find("lalin_native_template_entries", 1, true), "expected native template entries in C source")
+assert(log:find("C%-owned native template bank native%-generator%-bank with 1 templates"), "expected native bank generator log")
+assert(header:find("LalinNativeBankArtifact", 1, true), "expected native bank artifact C type")
+assert(header:find("lalin_native_bank_install", 1, true), "expected installer API declaration")
+assert(source:find("lalin_native_templates", 1, true), "expected native template table in C source")
+assert(source:find("lalin_native_bank_install", 1, true), "expected generated C installer")
 assert(source:find("native.generator.trivial", 1, true), "expected native family id in C source")
-assert(not source:find("lalin_install_embedded_native_bank", 1, true), "generator must not emit runtime install hooks")
 assert(not source:find("LJMC", 1, true), "generator must not emit LuaJIT MC bank data")
 assert(not source:find("lalin_mc_template_entries", 1, true), "generator must not emit old MC template manifests")
-assert(lua_source:find("NativeEmbeddedTemplateBank", 1, true), "generated Lua bridge should construct NativeEmbeddedTemplateBank")
-assert(lua_source:find("NativeTemplateBytes", 1, true), "generated Lua bridge should carry template bytes")
+assert(lua_source:find("NativeBankArtifact", 1, true), "generated Lua bridge should construct NativeBankArtifact")
+assert(not lua_source:find("NativeEmbeddedTemplateBank", 1, true), "generated Lua bridge must not construct NativeEmbeddedTemplateBank")
+assert(not lua_source:find("NativeTemplateBytes", 1, true), "generated Lua bridge must not carry template bytes")
 
 local T = asdl.context()
 Schema(T)
 require("lalin.native_mc")(T)
 local N = T.LalinNative
-local embedded = dofile(lua_path)(T)
-assert(#embedded.entries == 1, "generated embedded bank should contain one template")
-local imported = N.NativeEmbeddedBankImportRequest(embedded):import_native_bank()
-assert(asdl.isa(imported, N.NativeEmbeddedBankImported), tostring(imported))
-local selected = imported.bank:select_native_template(N.NativeTemplateSelectionInput(embedded.target, embedded.entries[1].family))
-assert(asdl.isa(selected, N.NativeTemplateSelected), tostring(selected))
+local artifact = dofile(lua_path)(T)
+assert(asdl.isa(artifact, N.NativeBankArtifact), tostring(artifact))
+assert(artifact.template_count == 1, "generated artifact should describe one C-owned template")
+assert(artifact.installer_symbol == "lalin_native_bank_install", "artifact should record generated installer symbol")
+local loaded_result = artifact:load_native_bank(so_path)
+assert(asdl.isa(loaded_result, N.NativeBankLoaded), tostring(loaded_result))
+local loaded_bank = loaded_result.bank
+local trivial_family = artifact.manifest.groups[1].entries[1].family
+local selector_key = N.NativeTemplateSelectorKey(artifact.target, trivial_family)
+local selected_trivial = loaded_bank:select_native_template(N.NativeTemplateSelectionInput(loaded_bank, selector_key))
+assert(asdl.isa(selected_trivial, N.NativeTemplateSelected), tostring(selected_trivial))
+local trivial_node = N.NativeTemplateNodeId("native.generator.trivial.node")
+local trivial_graph = N.NativeTemplateGraph(
+    artifact.target,
+    N.NativeCallReturnI32,
+    N.NativeFrameLayout({}, 0, 1),
+    { N.NativeTemplateNode(trivial_node, N.NativeTemplateInstanceId("native.generator.trivial.instance"), trivial_family, {}, {}, {}) },
+    {},
+    {},
+    N.NativeModuleAddressPlan({}, {}, {}, {}, {}, {}),
+    trivial_node,
+    { trivial_node }
+)
+local trivial_plan = trivial_graph:select_native_bank_install_plan(N.NativeBankInstallPlanSelectionInput(artifact.target, N.NativeRuntime({})))
+local trivial_install = N.NativeBankInstallRequest(loaded_bank, trivial_plan, N.NativeExecutableAllocatorMmap):install_native()
+assert(asdl.isa(trivial_install, N.NativeInstallSucceeded), tostring(trivial_install))
+local trivial_call = trivial_install.executable.protocol:call_native_executable(N.NativeExecutableCallInput(trivial_install.executable, {}))
+assert(asdl.isa(trivial_call, N.NativeCallReturnedI32) and trivial_call.value == 7, "C-owned generated bank should select, install, and execute through its C API")
+
+local complete_manifest = dir .. "/complete_micro_manifest.lua"
+local complete_c = dir .. "/complete_micro_bank.c"
+local complete_h = dir .. "/complete_micro_bank.h"
+local complete_lua = dir .. "/complete_micro_bank.lua"
+local complete_log = dir .. "/complete_micro_generator.log"
+write_file(complete_manifest, [[
+package.path = './?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;' .. package.path
+return function(T)
+  local N = T.LalinNative
+  local Core = T.LalinCore
+  local Stencil = T.LalinStencil
+  local Support = require('lalin.native_template_support')(T)
+  local Sources = require('lalin.native_template_sources')(T)
+  local target = Support.host_target()
+  local i32 = Support.scalar_i32()
+  local ptr = Support.scalar_pointer(target.pointer_bits)
+  local value = Support.complete_value_scalar_class(i32)
+  local scalar_class = Support.complete_scalar_pointer_scalar_class(i32)
+  local reducer = N.NativeReducerClass(T.LalinValue.ReductionAdd, value)
+  local cap = N.NativeCompleteBankCapability(
+    Support.complete_bank_capability_id('generator.micro'), target,
+    { i32, ptr }, { value }, { Support.complete_scalar_bytes_scalar_class(i32) }, { scalar_class }, { Support.complete_index_class(target.pointer_bits) }, {},
+    Support.complete_runtime_capability({}, {}, {}), Support.complete_frame_capability(ptr, {}, {}), Support.complete_constant_pool_capability({}), Support.complete_atomic_capability(N.NativeAtomicNoCodegen, {}, {}, {}),
+    Support.complete_code_capability({ N.NativeCodeMicroOpScalarCopyShape(i32) }),
+    Support.complete_abi_capability({ N.NativeAbiMicroOpReturnScalarShape(scalar_class) }),
+    Support.complete_kernel_capability({ N.NativeKernelMicroOpExprBinaryShape(Core.BinAdd, value) }),
+    Support.complete_stencil_capability({ N.NativeStencilMicroOpPointBinaryShape(Stencil.StencilBinaryAdd, value), N.NativeStencilMicroOpSinkReduceShape(reducer, N.NativeStencilReduceScopeDomainClass) })
+  )
+  return Sources.bank_request_for_complete_capability(cap, N.NativeBankId('native-generator-complete-micro-bank'))
+end
+]])
+assert(command_ok(table.concat({
+    "luajit tools/gen_lalin_mc_bank.lua",
+    shell_quote(complete_c), shell_quote(complete_h), shell_quote(complete_lua), shell_quote(complete_manifest),
+    "2>", shell_quote(complete_log),
+}, " ")), "complete micro-op bank generator should build")
+assert(command_ok("gcc -c " .. shell_quote(complete_c) .. " -o " .. shell_quote(dir .. "/complete_micro_bank.o")), "complete micro-op generated C bridge should compile")
+local complete_artifact = dofile(complete_lua)(T)
+assert(asdl.isa(complete_artifact, N.NativeBankArtifact), tostring(complete_artifact))
+assert(complete_artifact.template_count == 5, "complete micro-op bank should describe one C-owned template per requested micro-op")
+local complete_entries = {}
+for _, group in ipairs(complete_artifact.manifest.groups or {}) do
+    for _, entry in ipairs(group.entries or {}) do complete_entries[#complete_entries + 1] = entry end
+end
+assert(#complete_entries == 5, "complete micro-op manifest should retain one entry per requested micro-op")
+for _, entry in ipairs(complete_entries) do
+    local saw_closed_axis = false
+    for _, axis in ipairs(entry.family.axes) do
+        assert(not asdl.isa(axis, N.NativeAxisCodeType), "complete generated bank must not use CodeType axes")
+        assert(not asdl.isa(axis, N.NativeAxisCodeSig), "complete generated bank must not use CodeSig axes")
+        assert(not asdl.isa(axis, N.NativeAxisKernel), "complete generated bank must not use exact Kernel axes")
+        assert(not asdl.isa(axis, N.NativeAxisStencilProducer), "complete generated bank must not use exact Stencil producer axes")
+        assert(not asdl.isa(axis, N.NativeAxisStencilAccess), "complete generated bank must not use exact Stencil access axes")
+        assert(not asdl.isa(axis, N.NativeAxisStencilPoint), "complete generated bank must not use exact Stencil point axes")
+        assert(not asdl.isa(axis, N.NativeAxisStencilBody), "complete generated bank must not use exact Stencil body axes")
+        assert(not asdl.isa(axis, N.NativeAxisStencilSink), "complete generated bank must not use exact Stencil sink axes")
+        assert(not asdl.isa(axis, N.NativeAxisStencilSchedule), "complete generated bank must not use exact Stencil schedule axes")
+        saw_closed_axis = saw_closed_axis or asdl.isa(axis, N.NativeAxisCodeMicroOp) or asdl.isa(axis, N.NativeAxisAbiMicroOp) or asdl.isa(axis, N.NativeAxisKernelMicroOp) or asdl.isa(axis, N.NativeAxisStencilMicroOp)
+    end
+    assert(saw_closed_axis, entry.family.id.text .. " should carry a closed complete-bank micro-op axis")
+end
 
 -- Extern-symbol hole ordinals are recovered from object relocations by the
 -- internal parser.  READELF is deliberately poisoned to prove it is not the
@@ -173,23 +261,13 @@ local ok, hole_bank_c, _hole_h, hole_bank_lua = run_generator("hole_ordinal", {
 })
 assert(ok, "extern-symbol hole ordinal source should build without readelf")
 local hole_lua_source = read_file(hole_bank_lua)
-assert(hole_lua_source:find("NativeRelocationHoleOrdinal", 1, true), "Lua bridge should reconstruct NativeRelocationHoleOrdinal")
-assert(hole_lua_source:find("NativeHoleLayout", 1, true), "Lua bridge should reconstruct concrete NativeHoleLayout offsets")
+local hole_c_source = read_file(hole_bank_c)
+assert(hole_lua_source:find("NativeBankArtifact", 1, true), "Lua bridge should reconstruct only NativeBankArtifact")
+assert(not hole_lua_source:find("NativeEmbeddedTemplateBank", 1, true), "Lua bridge must not reconstruct embedded templates")
+assert(hole_c_source:find("LALIN_NATIVE_RELOC_HOLE_ORDINAL", 1, true), "C bank should retain hole ordinal relocation metadata")
+assert(hole_c_source:find("LALIN_NATIVE_PATCH_HOLE_IMM32", 1, true), "C bank should retain concrete hole layout metadata")
 assert(not hole_lua_source:find("0x11111111", 1, true), "generated Lua must not mention marker holes")
-assert(not read_file(hole_bank_c):find("0x11111111", 1, true), "generated C bridge must not mention marker holes")
-
-local hole_embedded = dofile(hole_bank_lua)(T)
-local hole_entry = hole_embedded.entries[1]
-assert(#hole_entry.holes == 1, "hole ordinal relocation should produce one concrete hole layout")
-assert(hole_entry.holes[1].offset >= 0, "hole layout offset should be resolved from object relocation")
-local saw_hole_relocation = false
-for _, relocation in ipairs(hole_entry.relocations or {}) do
-    if asdl.isa(relocation, N.NativeRelocationHoleOrdinal) then
-        saw_hole_relocation = true
-        assert(relocation.ordinal == hole_entry.hole_ordinals[1], "hole relocation should carry the declared ordinal")
-    end
-end
-assert(saw_hole_relocation, "embedded template should retain typed hole ordinal relocation")
+assert(not hole_c_source:find("0x11111111", 1, true), "generated C bridge must not mention marker holes")
 
 local function expect_reject(name, opts, reject_name)
     local failed_ok, _c, _h, _lua, case_log = run_generator(name, opts)
@@ -206,7 +284,7 @@ expect_reject("missing_hole_ordinal", {
     declared_relocation_kinds_expr = "{ N.NativeTemplateRelocationHoleOrdinal }",
 }, "NativeBuildRejectMissingHole")
 
-local multi_ok, _multi_c, _multi_h, multi_lua = run_generator("multi_hole_occurrence", {
+local multi_ok, multi_c, _multi_h, _multi_lua = run_generator("multi_hole_occurrence", {
     family_suffix = "multi_hole_occurrence",
     c_text = [[
 #include <stdint.h>
@@ -222,8 +300,9 @@ int lalin_native_generator_case(void) {
     declared_relocation_kinds_expr = "{ N.NativeTemplateRelocationHoleOrdinal }",
 })
 assert(multi_ok, "multiple physical relocations to one logical hole ordinal should be valid")
-local multi_entry = dofile(multi_lua)(T).entries[1]
-assert(#multi_entry.holes >= 2, "multiple hole ordinal relocation occurrences should produce multiple patch sites")
+local multi_c_source = read_file(multi_c)
+local _, multi_hole_occurrences = multi_c_source:gsub("LALIN_NATIVE_PATCH_HOLE_IMM32", "")
+assert(multi_hole_occurrences >= 2, "multiple hole ordinal relocation occurrences should produce multiple C patch sites")
 
 local cp_ok, _cp_c, _cp_h, cp_lua = run_generator("object_constant_pool", {
     family_suffix = "object_constant_pool",
@@ -238,12 +317,11 @@ int lalin_native_generator_case(void) {
 })
 assert(cp_ok, "readonly object constants should be extracted into NativeConstantPoolLayout")
 local cp_lua_source = read_file(cp_lua)
-assert(cp_lua_source:find("NativeRelocationConstantPool", 1, true), "Lua bridge should reconstruct constant-pool relocations")
-assert(cp_lua_source:find("NativeConstantPoolEntry", 1, true), "Lua bridge should reconstruct object-derived constant-pool entries")
-local cp_entry = dofile(cp_lua)(T).entries[1]
-assert(#cp_entry.constant_pool_layout.entries >= 1, "object .rodata should become constant-pool layout entries")
-assert(asdl.isa(cp_entry.relocations[1], N.NativeRelocationConstantPool), "text relocation to .rodata should become NativeRelocationConstantPool")
-assert(cp_entry.relocations[1].formula == N.NativePatchPcRel32, "x64 PC-relative .rodata relocation should carry PcRel32 formula")
+local cp_c_source = read_file(_cp_c)
+assert(cp_lua_source:find("NativeBankArtifact", 1, true), "Lua bridge should reconstruct only NativeBankArtifact")
+assert(cp_c_source:find("LALIN_NATIVE_RELOC_CONSTANT_POOL", 1, true), "C bank should retain constant-pool relocation metadata")
+assert(cp_c_source:find("LALIN_NATIVE_PATCH_FORMULA_PCREL32", 1, true), "C bank should retain constant-pool relocation formula")
+assert(cp_c_source:find("LalinNativeConstantPoolEntry", 1, true), "C bank should retain object-derived constant-pool entries")
 
 expect_reject("duplicate_hole_ordinal_declaration", {
     family_suffix = "duplicate_hole_ordinal_declaration",

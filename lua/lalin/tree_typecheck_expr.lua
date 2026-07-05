@@ -167,6 +167,10 @@ return function(T)
         return Tr.TypeValueRefResult(self, void_ty(), { Tr.TypeIssueUnresolvedPath(self.path) })
     end
 
+    function Tr.Expr:typecheck_tree_expr(_input)
+        error("tree_typecheck: missing typecheck_tree_expr leaf method", 2)
+    end
+
     function Tr.ExprLit:typecheck_tree_expr()
         local ty = self.value:typecheck_tree_literal()
         return Tr.TypeExprResult(Tr.ExprLit(Tr.ExprTyped(ty), self.value), ty, {})
@@ -364,6 +368,51 @@ return function(T)
             issues[#issues + 1] = Tr.TypeIssueExpected("load addr", Ty.TPtr(self.ty), addr.ty)
         end
         return Tr.TypeExprResult(Tr.ExprLoad(Tr.ExprTyped(self.ty), self.ty, addr.expr), self.ty, issues)
+    end
+
+    function Tr.ExprAtomicLoad:typecheck_tree_expr(input)
+        local addr = self.addr:typecheck_tree_expr_expected(Tr.TypeExpectedExprInput(input.scope, Ty.TPtr(self.ty)))
+        local issues = {}
+        append_all(issues, addr.issues)
+        if not type_eq(Ty.TPtr(self.ty), addr.ty) then
+            issues[#issues + 1] = Tr.TypeIssueExpected("atomic load addr", Ty.TPtr(self.ty), addr.ty)
+        end
+        return Tr.TypeExprResult(Tr.ExprAtomicLoad(Tr.ExprTyped(self.ty), self.ty, addr.expr, self.ordering), self.ty, issues)
+    end
+
+    function Tr.ExprAtomicRmw:typecheck_tree_expr(input)
+        local addr = self.addr:typecheck_tree_expr_expected(Tr.TypeExpectedExprInput(input.scope, Ty.TPtr(self.ty)))
+        local value = self.value:typecheck_tree_expr_expected(Tr.TypeExpectedExprInput(input.scope, self.ty))
+        local issues = {}
+        append_all(issues, addr.issues)
+        append_all(issues, value.issues)
+        if not type_eq(Ty.TPtr(self.ty), addr.ty) then
+            issues[#issues + 1] = Tr.TypeIssueExpected("atomic rmw addr", Ty.TPtr(self.ty), addr.ty)
+        end
+        if not type_eq(self.ty, value.ty) then
+            issues[#issues + 1] = Tr.TypeIssueExpected("atomic rmw value", self.ty, value.ty)
+        end
+        return Tr.TypeExprResult(Tr.ExprAtomicRmw(Tr.ExprTyped(self.ty), self.op, self.ty, addr.expr, value.expr, self.ordering), self.ty, issues)
+    end
+
+    function Tr.ExprAtomicCas:typecheck_tree_expr(input)
+        local addr = self.addr:typecheck_tree_expr_expected(Tr.TypeExpectedExprInput(input.scope, Ty.TPtr(self.ty)))
+        local expected = self.expected:typecheck_tree_expr_expected(Tr.TypeExpectedExprInput(input.scope, self.ty))
+        local replacement = self.replacement:typecheck_tree_expr_expected(Tr.TypeExpectedExprInput(input.scope, self.ty))
+        local issues = {}
+        append_all(issues, addr.issues)
+        append_all(issues, expected.issues)
+        append_all(issues, replacement.issues)
+        if not type_eq(Ty.TPtr(self.ty), addr.ty) then
+            issues[#issues + 1] = Tr.TypeIssueExpected("atomic cas addr", Ty.TPtr(self.ty), addr.ty)
+        end
+        if not type_eq(self.ty, expected.ty) then
+            issues[#issues + 1] = Tr.TypeIssueExpected("atomic cas expected", self.ty, expected.ty)
+        end
+        if not type_eq(self.ty, replacement.ty) then
+            issues[#issues + 1] = Tr.TypeIssueExpected("atomic cas replacement", self.ty, replacement.ty)
+        end
+        return Tr.TypeExprResult(Tr.ExprAtomicCas(Tr.ExprTyped(self.ty), self.ty, addr.expr, expected.expr, replacement.expr, self.ordering), self.ty, issues)
     end
 
     function Tr.ExprLen:typecheck_tree_expr(input)

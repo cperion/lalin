@@ -9,6 +9,8 @@ local asdl = require("lalin.asdl")
 local llbl = require("llbl")
 local ErrorSpan = require("lalin.error.span")
 local SourceAnalysis = require("lalin.source_analysis")
+local Exotype = require("lalin.exotype")
+local StorePolicy = require("lalin.store")
 
 local M = {}
 local role_region_head = llbl.role_region
@@ -98,6 +100,7 @@ local build_source_context
 local function concrete_type(v)
     if llbl.is(v, "HostEval") then v = llbl.host_eval.value(v) end
     if is_member(Ty.Type, v) then return v end
+    if Exotype.is(v) then return Ty.TNamed(Ty.TypeRefPath(path(Exotype.typename(v)))) end
     if is(v, Decl) and v.type_name then return Ty.TNamed(Ty.TypeRefPath(path(v.type_name))) end
     local name = symbol_text(v, "type name")
     if name then return Ty.TNamed(Ty.TypeRefPath(path(name))) end
@@ -2364,6 +2367,9 @@ local function make_env(opts)
         lshift = M.shl,
     }
     env.product, env.stmts, env.decls, env.exprs, env.conts, env.variants, env.spread, env._ = M.product, M.stmts, M.decls, M.exprs, M.conts, M.variants, M.spread, M._
+    env.exotype = Exotype
+    env.arena_store = StorePolicy.arena_store
+    env.store = StorePolicy
     env.process, env.process_opts = llbl.process, llbl.process_opts
     env.here, env.at_origin, env.with_origin = llbl.here, llbl.at, llbl.with_origin
     env.eq, env.ne, env.lt, env.le, env.gt, env.ge = M.eq, M.ne, M.lt, M.le, M.gt, M.ge

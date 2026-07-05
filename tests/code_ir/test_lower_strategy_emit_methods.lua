@@ -5,7 +5,7 @@ local Schema = require("lalin.schema")
 
 local T = asdl.context()
 Schema(T)
-require("lalin.lower_to_back")(T)
+require("lalin.lower_to_c")(T)
 
 local Code = T.LalinCode
 local Flow = T.LalinFlow

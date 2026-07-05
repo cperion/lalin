@@ -561,28 +561,23 @@ local code_sig_protocol = N.NativeCallCodeSig(abi_function)
 local stencil_abi_protocol = N.NativeCallStencilAbi(abi_function)
 assert(code_sig_protocol.projection == abi_function, "NativeCallCodeSig should carry a NativeAbiFunctionProjection")
 assert(stencil_abi_protocol.projection == abi_function, "NativeCallStencilAbi should carry a NativeAbiFunctionProjection")
-local embedded = N.NativeEmbeddedTemplateBank(
+local bank_artifact = N.NativeBankArtifact(
     N.NativeBankId("schema-native-bank"),
     target,
     manifest,
-    {
-        N.NativeEmbeddedTemplate(
-            family,
-            N.NativeExtractStandaloneCallable,
-            signature,
-            N.NativeTextSection(N.NativeTemplateBytes(string.char(0xC3), 1), 1),
-            { N.NativeSymbol("schema_native_entry", 0, 1) },
-            {},
-            {},
-            { hole_ordinal },
-            { N.NativeTemplateRelocationHoleOrdinal, N.NativeTemplateRelocationConstantPool },
-            constant_pool_layout
-        ),
-    }
+    1,
+    "lalin_native_bank_artifact",
+    "lalin_native_bank_select",
+    "lalin_native_bank_install"
 )
-local imported = N.NativeEmbeddedBankImportRequest(embedded):import_native_bank()
-assert(asdl.isa(imported, N.NativeEmbeddedBankImported), tostring(imported))
-assert(#imported.bank.entries == 1, "embedded native bank should import as NativeTemplateBank")
+local loaded_bank = N.NativeLoadedBank(bank_artifact, 1)
+local selector_key = N.NativeTemplateSelectorKey(target, family)
+local selector_input = N.NativeTemplateSelectionInput(loaded_bank, selector_key)
+local template_handle = N.NativeTemplateHandle(bank_artifact.id, 0, family, 1, 1, constant_pool_layout.size, constant_pool_layout.alignment)
+local selected_template = N.NativeTemplateSelected(template_handle)
+assert(selector_input.bank == loaded_bank, "NativeTemplateSelectionInput should target a C-owned NativeLoadedBank")
+assert(selected_template.handle.bank == bank_artifact.id, "NativeTemplateSelected should carry a C bank template handle")
+assert(bank_artifact.installer_symbol == "lalin_native_bank_install", "NativeBankArtifact should name the C installer API")
 
 local node_id = N.NativeTemplateNodeId("schema-native-node")
 local node_instance = N.NativeTemplateInstanceId("schema-native-node-instance")
@@ -667,7 +662,7 @@ local graph = N.NativeTemplateGraph(
     target,
     N.NativeCallReturnScalar(scalar_i32),
     frame_layout,
-    { N.NativeTemplateNode(node_id, node_instance, imported.bank.entries[1], { value_placement }, { value_placement }, { patch_binding, ordinal_patch_binding }) },
+    { N.NativeTemplateNode(node_id, node_instance, family, { value_placement }, { value_placement }, { patch_binding, ordinal_patch_binding }) },
     { N.NativeFallthroughEdge(node_id, node_id, first_symbol) },
     { N.NativeRegisterValueEdge(value_id, node_id, node_id, scalar_representation, register) },
     address_plan,
@@ -676,6 +671,7 @@ local graph = N.NativeTemplateGraph(
 )
 assert(graph.protocol.scalar == scalar_i32, "NativeTemplateGraph should carry graph-level call protocol")
 assert(graph.nodes[1].instance == node_instance, "NativeTemplateNode should carry node-local instance identity")
+assert(graph.nodes[1].family == family, "NativeTemplateNode should carry selector family data, not a passive bank entry")
 assert(graph.nodes[1].bindings[1].node == node_id, "NativePatchBinding should carry node scope")
 assert(graph.nodes[1].bindings[1].instance == node_instance, "NativePatchBinding should carry template-instance scope")
 assert(graph.nodes[1].bindings[2].target.ordinal == hole_ordinal.id, "NativePatchBinding should support hole-ordinal targets")

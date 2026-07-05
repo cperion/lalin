@@ -30,6 +30,37 @@ local function parse_qualified_name(lex, label)
   return name, qualifier
 end
 
+-- Parse a function/region name. In addition to dot-qualified declarations,
+-- this accepts Lua-style method definitions:
+--   A.B.name   → qualifier={"A","B"}, name="name", implicit_self=false
+--   A.B:name   → qualifier={"A","B"}, name="name", implicit_self=true
+local function parse_callable_name(lex, label)
+  local first = lex:expect_name(label or "name")
+  local parts = { first.value }
+  while lex:peek().value == "." do
+    lex:next()
+    parts[#parts + 1] = lex:expect_name(label or "qualified name part").value
+  end
+  if lex:peek().value == ":" then
+    lex:next()
+    local method = lex:expect_name(label or "method name").value
+    return method, parts, true
+  end
+  local name = table.remove(parts)
+  return name, (#parts > 0 and parts or nil), false
+end
+
+local function implicit_self_field(lex, start, qualifier)
+  if qualifier == nil or #qualifier == 0 then
+    lex:error_at(start, "implicit self method declaration requires an owning struct path")
+  end
+  local owner = table.concat(qualifier, ".")
+  local source = "ptr [" .. owner .. "]"
+  local origin = Ast.origin(lex, start, start, "parsed:implicit_self")
+  local ty = Ast.host_eval(source, Ast.extract_refs(source), origin, "type")
+  return Ast.node("Field", { name = "self", type = ty, anonymous = false, implicit = true }, origin)
+end
+
 function Decl.parse_host_eval(lex, ctx, role)
   local raw, open, close = lex:consume_balanced_from_open("[", "]")
   local refs = Ast.extract_refs(raw)
@@ -41,17 +72,48 @@ function Decl.parse_decl_stream(lex, ctx)
   return Decl.parse_host_eval(lex, ctx, (ctx and ctx.expected_role) or "decls")
 end
 
+function Decl.parse_meta_assign(lex, ctx, entry_start)
+  local start = entry_start or lex:peek()
+  local lhs = { lex:expect_name("meta assignment target").value }
+  while lex:next_if(".") do
+    lhs[#lhs + 1] = lex:expect_name("meta assignment target part").value
+  end
+  if #lhs < 2 then
+    lex:error_at(start, "meta assignment target must be a field path such as `Type.metamethods.__methodmissing`")
+  end
+  lex:expect("=")
+  local value
+  if lex:peek().value == "[" then
+    value = Decl.parse_host_eval(lex, ctx, "meta")
+  else
+    local first = lex:expect_name("meta assignment value").value
+    local path = { first }
+    while lex:next_if(".") do
+      path[#path + 1] = lex:expect_name("meta assignment value part").value
+    end
+    value = Ast.node("MetaRef", { path = path }, Ast.origin(lex, start, lex.last, "parsed:meta_ref"))
+  end
+  return Ast.node("DeclMetaAssign", { target = lhs, value = value }, Ast.origin(lex, start, lex.last, "parsed:meta_assign"))
+end
+
 function Decl.parse_fn(lex, ctx, entry_start)
   local start = entry_start or ctx.entry_token
   local name = nil
   local qualifier = nil
-  if lex:peek().kind == "name" and (lex:peek(1).value == "(" or lex:peek(1).value == ".") then
-    name, qualifier = parse_qualified_name(lex, "function name")
+  local implicit_self = false
+  if lex:peek().kind == "name" and (lex:peek(1).value == "(" or lex:peek(1).value == "." or lex:peek(1).value == ":") then
+    name, qualifier, implicit_self = parse_callable_name(lex, "function name")
   end
   if name == nil and lex:peek().value ~= "(" then
     lex:error_at(lex:peek(), "expected function name or parameter list")
   end
   local params = Type.parse_params(lex, ctx)
+  if implicit_self then
+    if params[1] and params[1].name == "self" then
+      lex:error_at(start, "colon method declarations inject `self`; use dot syntax for an explicit receiver type")
+    end
+    table.insert(params, 1, implicit_self_field(lex, start, qualifier))
+  end
   local result = nil
   if lex:peek().value == "[" then result = Type.parse(lex, ctx) end
   optional_do(lex)
@@ -60,6 +122,7 @@ function Decl.parse_fn(lex, ctx, entry_start)
   return Ast.node("DeclFunc", {
     name = name,
     qualifier = qualifier,
+    implicit_self = implicit_self,
     params = params,
     result = result,
     body = body,
@@ -73,6 +136,53 @@ function Decl.parse_struct(lex, ctx, entry_start)
   local fields = Type.parse_field_block(lex, ctx, "end")
   lex:expect("end")
   return Ast.node("DeclStruct", { name = name.value, fields = fields }, Ast.origin(lex, start, lex.last, "parsed:decl"))
+end
+
+local function parse_extern_symbol_value(lex)
+  local t = lex:peek()
+  if t.kind == "string" then
+    lex:next()
+    local loader = loadstring or load
+    local fn, err = loader("return " .. tostring(t.raw or t.value), lex and lex.name or "=(lalin extern symbol)")
+    if not fn then lex:error_at(t, "invalid extern symbol string: " .. tostring(err)) end
+    local ok, value = pcall(fn)
+    if not ok or type(value) ~= "string" then lex:error_at(t, "invalid extern symbol string") end
+    return value
+  elseif t.kind == "name" then
+    lex:next()
+    return t.value
+  end
+  lex:error_at(t, "expected extern symbol string or name")
+end
+
+function Decl.parse_extern(lex, ctx, entry_start)
+  local start = entry_start or ctx.entry_token
+  local name, qualifier = parse_qualified_name(lex, "extern name")
+  local params = Type.parse_params(lex, ctx)
+  local result = nil
+  if lex:peek().value == "[" then result = Type.parse(lex, ctx) end
+  local symbol = nil
+
+  optional_do(lex)
+  lex:skip_separators()
+  while not lex:at_eof() and lex:peek().value ~= "end" do
+    local key = lex:expect_name("extern fact").value
+    if key == "symbol" then
+      lex:next_if("=")
+      symbol = parse_extern_symbol_value(lex)
+    else
+      lex:error_at(lex.last, "expected extern fact `symbol`")
+    end
+    lex:skip_separators()
+  end
+  lex:expect("end")
+  return Ast.node("DeclExtern", {
+    name = name,
+    qualifier = qualifier,
+    params = params,
+    result = result,
+    symbol = symbol,
+  }, Ast.origin(lex, start, lex.last, "parsed:decl"))
 end
 
 function Decl.parse_union(lex, ctx, entry_start)
@@ -201,7 +311,7 @@ end
 
 function Decl.parse_region(lex, ctx, entry_start)
   local start = entry_start or ctx.entry_token
-  local name, qualifier = parse_qualified_name(lex, "region name")
+  local name, qualifier, implicit_self = parse_callable_name(lex, "region name")
 
   -- Parse signature: (data_params ; continuation_params)
   -- Data params before `;` form the input product.
@@ -253,6 +363,13 @@ function Decl.parse_region(lex, ctx, entry_start)
     end
   end
 
+  if implicit_self then
+    if inputs[1] and inputs[1].name == "self" then
+      lex:error_at(start, "colon region declarations inject `self`; use dot syntax for an explicit receiver type")
+    end
+    table.insert(inputs, 1, implicit_self_field(lex, start, qualifier))
+  end
+
   local blocks = {}
   while not lex:at_eof() and lex:peek().value ~= "end" do
     if lex:peek().value ~= "entry" and lex:peek().value ~= "block" then
@@ -264,6 +381,7 @@ function Decl.parse_region(lex, ctx, entry_start)
   return Ast.node("DeclRegion", {
     name = name,
     qualifier = qualifier,
+    implicit_self = implicit_self,
     inputs = inputs,
     exits = exits,
     blocks = blocks,

@@ -13,7 +13,6 @@ local SCHEMA_MODULES = {
     "c",
     "luajit",
     "luatrace",
-    "c_ast",
     "link",
     "type",
     "bind",
@@ -36,7 +35,6 @@ local SCHEMA_MODULES = {
     "parse",
     "host",
     "source",
-    "mlua",
 }
 
 local function append(dst, src)

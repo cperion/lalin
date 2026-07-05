@@ -134,31 +134,10 @@ assert(#lowering.kernel_inputs >= 1, "kernel lowering input should carry kernel 
 local effect_only_call = call:native_kernel_call_target_entry()
 assert(asdl.isa(effect_only_call.capability, Native.NativeKernelCallEffectOnlyTarget), "CallSummary should produce typed call target entries")
 
-local function fake_kernel_entry(shape, index)
-    local family = Support.family(
-        Support.kernel_family_id(shape:native_kernel_op_source_token()),
-        shape:native_kernel_template_role(),
-        {
-            Support.axis_target(target),
-            Support.axis_kernel(Native.NativeKernelSourceShapeAxis(shape)),
-        },
-        Support.protocol_void_none()
-    )
-    local compiled = Native.NativeCompiledTemplate(
-        Native.NativeTemplateId("native.kernel.fake." .. tostring(index)),
-        family,
-        target,
-        Native.NativeExtractTerminalContinuation,
-        Support.spill_all_stencil_signature(Support.scalar_bool8(), {}, {}),
-        Native.NativeTextSection(Native.NativeTemplateBytes("\195", 1), 1),
-        {},
-        {},
-        {},
-        {},
-        {},
-        Native.NativeConstantPoolLayout({}, 0, 1)
-    )
-    return Native.NativeTemplateBankEntry(family, compiled)
+local function fake_loaded_bank(id)
+    local manifest = Native.NativeTemplateSourceManifest(Native.NativeTemplateManifestId(id .. ".manifest"), Native.NativeTemplateSupportDomainId(id .. ".support"), {}, 0)
+    local artifact = Native.NativeBankArtifact(Native.NativeBankId(id), target, manifest, 0, "lalin_native_bank_artifact", "lalin_native_bank_select", "lalin_native_bank_install")
+    return Native.NativeLoadedBank(artifact, 1)
 end
 
 local graph_shapes = {
@@ -172,14 +151,7 @@ local graph_shapes = {
     Native.NativeKernelProofOpShape(Native.NativeKernelProofFlowShape),
     Native.NativeKernelResultOpShape(result_shape),
 }
-local graph_entries = {}
-for i, shape in ipairs(graph_shapes) do graph_entries[#graph_entries + 1] = fake_kernel_entry(shape, i) end
-local graph_bank = Native.NativeTemplateBank(
-    Native.NativeBankId("native.kernel.contracts.fake.bank"),
-    target,
-    Native.NativeTemplateSourceManifest(Native.NativeTemplateManifestId("native.kernel.contracts.fake.manifest"), Native.NativeTemplateSupportDomainId("native.kernel.contracts.fake.support"), {}, #graph_entries),
-    graph_entries
-)
+local graph_bank = fake_loaded_bank("native.kernel.contracts.fake.bank")
 local graph = plan:plan_native_copy(Native.NativePlanInput(target, Support.empty_runtime(), graph_bank), lowering)
 assert(asdl.isa(graph, Native.NativeTemplateGraph), "KernelPlanned should lower to a NativeTemplateGraph")
 assert(graph.frame_layout == lowering.frame.frame, "kernel graph should use the NativeKernelLoweringInput frame layout")

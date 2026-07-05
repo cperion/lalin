@@ -10,10 +10,14 @@ LALIN_NATIVE_BANK_C = $(LALIN_BIN_DIR)/lalin_native_template_bank.c
 LALIN_NATIVE_BANK_H = $(LALIN_BIN_DIR)/lalin_native_template_bank.h
 LALIN_NATIVE_BANK_LUA = $(LALIN_BIN_DIR)/lalin_native_template_bank.lua
 LALIN_NATIVE_BANK_MANIFEST = tools/lalin_empty_native_bank_manifest.lua
+LALIN_COMPLETE_NATIVE_BANK_C = $(LALIN_BIN_DIR)/lalin_complete_native_template_bank.c
+LALIN_COMPLETE_NATIVE_BANK_H = $(LALIN_BIN_DIR)/lalin_complete_native_template_bank.h
+LALIN_COMPLETE_NATIVE_BANK_LUA = $(LALIN_BIN_DIR)/lalin_complete_native_template_bank.lua
+LALIN_COMPLETE_NATIVE_BANK_MANIFEST = tools/lalin_complete_native_bank_manifest.lua
 LALIN_BIN_OBJ_DIR = $(LALIN_BIN_DIR)/obj
 MAXPROCS ?= $(shell n=$$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1); if [ "$$n" -gt 0 ] 2>/dev/null; then echo "$$n"; else echo 1; fi)
 
-.PHONY: all luajit lalin-bin clean bench libtcc
+.PHONY: all luajit lalin-bin native-complete-bank clean bench libtcc
 
 all: luajit
 luajit: $(LUAJIT)/libluajit.a
@@ -30,7 +34,12 @@ $(LALIN_BC_BANK_C) $(LALIN_BC_BANK_H) &: $(shell find lua -name '*.lua' | sort) 
 $(LALIN_NATIVE_BANK_C) $(LALIN_NATIVE_BANK_H) $(LALIN_NATIVE_BANK_LUA) &: $(shell find lua -name '*.lua' | sort) tools/gen_lalin_mc_bank.lua $(LALIN_NATIVE_BANK_MANIFEST)
 	luajit tools/gen_lalin_mc_bank.lua $(LALIN_NATIVE_BANK_C) $(LALIN_NATIVE_BANK_H) $(LALIN_NATIVE_BANK_LUA) $(LALIN_NATIVE_BANK_MANIFEST)
 
-$(LALIN_BIN): src/lalin.c $(LALIN_BC_BANK_C) $(LALIN_BC_BANK_H) $(LALIN_NATIVE_BANK_C) $(LALIN_NATIVE_BANK_H) $(LUAJIT)/libluajit.a
+native-complete-bank: $(LALIN_COMPLETE_NATIVE_BANK_C) $(LALIN_COMPLETE_NATIVE_BANK_H) $(LALIN_COMPLETE_NATIVE_BANK_LUA)
+
+$(LALIN_COMPLETE_NATIVE_BANK_C) $(LALIN_COMPLETE_NATIVE_BANK_H) $(LALIN_COMPLETE_NATIVE_BANK_LUA) &: $(shell find lua -name '*.lua' | sort) tools/gen_lalin_mc_bank.lua $(LALIN_COMPLETE_NATIVE_BANK_MANIFEST)
+	LALIN_NATIVE_BANK_ID=lalin.native.complete.host luajit tools/gen_lalin_mc_bank.lua $(LALIN_COMPLETE_NATIVE_BANK_C) $(LALIN_COMPLETE_NATIVE_BANK_H) $(LALIN_COMPLETE_NATIVE_BANK_LUA) $(LALIN_COMPLETE_NATIVE_BANK_MANIFEST)
+
+$(LALIN_BIN): src/lalin.c $(LALIN_BC_BANK_C) $(LALIN_BC_BANK_H) $(LALIN_NATIVE_BANK_C) $(LALIN_NATIVE_BANK_H) $(LALIN_NATIVE_BANK_LUA) $(LUAJIT)/libluajit.a
 	@mkdir -p $(LALIN_BIN_OBJ_DIR)
 	@set -e; \
 	maxprocs="$(MAXPROCS)"; \

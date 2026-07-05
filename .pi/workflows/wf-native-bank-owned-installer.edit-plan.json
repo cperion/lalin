@@ -1,0 +1,131 @@
+{
+	"version": 1,
+	"workflowId": "wf-native-bank-owned-installer",
+	"planId": "main",
+	"revision": 18,
+	"nextId": 8,
+	"createdAt": "2026-07-05T15:23:36.494Z",
+	"updatedAt": "2026-07-05T17:15:41.272Z",
+	"tasks": [
+		{
+			"id": "T001",
+			"title": "Replace passive embedded bank schema with C-owned bank artifact vocabulary",
+			"detail": "Hard-yank NativeEmbeddedTemplateBank/NativeEmbeddedBankImportRequest as runtime model and add precise ASDL for C-owned native bank artifact: descriptor/loaded handle, selector key/selected handle, install graph/plan node by family/key, C installer input/result/rejects. The semantic bank is an executable C artifact that owns bytes, metadata, selector, layout, copy, relocation, patching, and allocation; Lua-side ASDL carries only typed install intent and result handles.",
+			"file": "lua/lalin/schema/native.lua",
+			"after": [],
+			"status": "done",
+			"order": 1,
+			"claimedBy": "agent-WR76GP",
+			"evidence": "Changed `lua/lalin/schema/native.lua`: removed runtime `NativeTemplateBank`, `NativeTemplateBankEntry`, `NativeEmbeddedTemplate`, `NativeEmbeddedTemplateBank`, and embedded-bank import result/request vocabulary; replaced them with C-owned `NativeBankArtifact`, load/result/rejects, `NativeLoadedBank`, `NativeTemplateSelectorKey`, `NativeTemplateHandle`, and `NativeBankInstallRequest`. Updated `NativeCompileRequest`/`NativePlanInput` to require `NativeLoadedBank`, and changed `NativeTemplateNode` to carry `NativeTemplateFamily` instead of a Lua-selected bank entry. Verified the schema context loads with `Schema(T)`.",
+			"notes": [],
+			"createdAt": "2026-07-05T15:23:36.495Z",
+			"updatedAt": "2026-07-05T15:27:35.343Z"
+		},
+		{
+			"id": "T002",
+			"title": "Generate C-owned bank selector and installer API",
+			"detail": "Change generated C/H from raw debug metadata plus Lua ASDL bridge into the authoritative bank artifact. Emit compact template metadata, sorted selector table, select API, layout/install API, patch coordinate structs, runtime symbol structs, executable result structs. Keep offline build validation. Remove generated Lua embedded-bank runtime bridge as an accepted path. The missing ASDL boundary is now modeled by `NativeBankInstallPlan`, `NativeBankInstallNode`, `NativeBankInstallBinding`, `NativeBankInstallControlEdge`, runtime/module-address projections, and `NativeBankPatchCoordinate`; use that vocabulary for the generated C install ABI.",
+			"file": "tools/gen_lalin_mc_bank.lua",
+			"after": [
+				"T001"
+			],
+			"status": "done",
+			"order": 2,
+			"claimedBy": "agent-62GCCA",
+			"evidence": "Implemented real generated C installer in `tools/gen_lalin_mc_bank.lua`: `NativeBankArtifact.installer_symbol` is `lalin_native_bank_install`; generated H/C now define install request/control-edge/runtime-symbol/module-address/patch-coordinate ABI structs and emit `lalin_native_bank_install` that selects templates, lays out code and constant pools, copies bytes, resolves local/continuation/runtime/constant-pool/hole-ordinal relocations, applies hole bindings, and returns `LalinNativeInstallResult`. Updated `tests/code_ir/test_native_bank_generator.lua` for C-owned artifact expectations and guarded stale passive-bank method attachment in `lua/lalin/native.lua` so complete-bank source generation loads after the hard-yank. Checks run: schema load smoke; empty bank generation + C compile; non-empty bank generation + C compile + selector/install C smoke + Lua `NativeBankArtifact` load; hole binding install smoke; constant-pool relocation install smoke; `luajit tests/code_ir/test_native_bank_generator.lua`.",
+			"notes": [
+				"Unblocked by schema addition in `lua/lalin/schema/native.lua`: added explicit NativeBankInstallPlan C ABI projection vocabulary instead of a generic graph/runtime bag."
+			],
+			"createdAt": "2026-07-05T15:23:36.495Z",
+			"updatedAt": "2026-07-05T15:53:41.845Z"
+		},
+		{
+			"id": "T003",
+			"title": "Replace Lua bank import/selection/install runtime with C bank calls",
+			"detail": "Hard-yank NativeEmbeddedBankImportRequest import, Lua linear template selection, Lua copy plan layout, Lua relocation application, and Lua mmap patch installer. Add methods on new ASDL bank descriptor/handle and install request that call the generated C bank selector/installer via FFI and return typed NativeInstallResult/NativeExecutable.",
+			"file": "lua/lalin/native_mc.lua",
+			"after": [
+				"T001",
+				"T002"
+			],
+			"status": "done",
+			"order": 3,
+			"claimedBy": "agent-5HTGW0",
+			"evidence": "Changed `lua/lalin/native_mc.lua` from passive embedded-bank import/Lua selection/Lua copy-patch installer methods to C-owned bank FFI runtime methods: `NativeBankLoadRequest:load_native_bank`, `NativeLoadedBank:select_native_template`, `NativeTemplateGraph:select_native_bank_install_plan`, and `NativeBankInstallRequest:install_native` call the generated C bank artifact/selector/installer and return typed ASDL results. Changed `lua/lalin/native.lua` compile flow to install via `NativeBankInstallRequest` instead of `NativeCopyPlan:install_native`. Amended `lua/lalin/schema/native.lua` with `NativeBankInstallPlanSelectionInput`, removed unobservable extraction/signature from `NativeTemplateHandle`, and added `NativeInstallRejectBankRejected` for generated C bank reject payloads that only expose node/hole/reason. Checks run: schema/native_mc load smoke passed; `luajit tests/code_ir/test_native_bank_generator.lua` passed; generated C bank compiled to shared object and Lua loaded/selected/installed/executed trivial template (returned 7); generated C hole-binding bank compiled to shared object and Lua installed/executed patched template (returned 77). Also ran `luajit tests/schema/test_schema_native.lua`; it fails at the stale removed passive embedded-bank constructor test, which is covered by later test hard-yank task T006.",
+			"notes": [],
+			"createdAt": "2026-07-05T15:23:36.495Z",
+			"updatedAt": "2026-07-05T16:14:03.273Z"
+		},
+		{
+			"id": "T004",
+			"title": "Change native graph builders to emit bank-owned install nodes",
+			"detail": "Update Code/Kernel/Stencil native planning to stop selecting NativeTemplateBankEntry in Lua. Nodes carry typed template family/selector key plus patch bindings; C bank selects concrete templates during install. Apply same change in native_kernel_methods.lua and native_stencil_methods.lua.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T001",
+				"T003"
+			],
+			"status": "done",
+			"order": 4,
+			"claimedBy": "agent-Q5NMTP",
+			"evidence": "Changed lua/lalin/native_code_methods.lua, lua/lalin/native_kernel_methods.lua, and lua/lalin/native_stencil_methods.lua so graph builders no longer call plan.bank:select_native_template / NativeTemplateSelectionInput and no longer materialize NativeTemplateBankEntry/compiled hole ordinals in Lua. NativeTemplateNode constructors now carry NativeTemplateFamily values; patch bindings target typed NativePatchBindingHoleId values and are projected to NativeBankInstallNode selector keys by native_mc. Verification: module load smoke for native/native_mc/native_code_methods/native_kernel_methods/native_stencil_methods passed; luajit tests/code_ir/test_native_bank_generator.lua passed; custom CodeFunc plan_native_copy smoke produced 5 graph nodes and asserted every node.family is a NativeTemplateFamily and graph:select_native_bank_install_plan preserves the family selector key. Also grep verified no plan.bank/select_native_template/NativeTemplateSelectionInput usage remains in the three graph-builder files. Existing test_native_code_graph_scalar.lua and test_native_kernel_contracts.lua were attempted but currently fail before graph-builder execution in stale native_backend.lua references to removed NativeEmbeddedBankImported, which is T005/T006 scope.",
+			"notes": [],
+			"createdAt": "2026-07-05T15:23:36.495Z",
+			"updatedAt": "2026-07-05T16:20:16.828Z"
+		},
+		{
+			"id": "T005",
+			"title": "Update backend API and binary embedding boundary",
+			"detail": "Change compile_native options to require a C-owned bank descriptor/loaded handle, not NativeTemplateBank or NativeEmbeddedTemplateBank. Update src/lalin.c/Makefile generated bank linkage so embedded binary exposes the C-owned bank API as the runtime path, not debug registry metadata.",
+			"file": "lua/lalin/native_backend.lua",
+			"after": [
+				"T001",
+				"T002",
+				"T003"
+			],
+			"status": "done",
+			"order": 5,
+			"claimedBy": "agent-AQ2TT2",
+			"evidence": "Updated lua/lalin/native_backend.lua to require/load C-owned NativeBankArtifact or NativeLoadedBank values, remove passive NativeEmbeddedTemplateBank import helpers, validate descriptor manifest/cardinality/symbols, and compile through NativeCompileRequest with a loaded C bank. Updated lua/lalin/init.lua native option validation to reject NativeEmbeddedTemplateBank/MC/residual paths and accept NativeBankArtifact/NativeLoadedBank descriptors with optional shared-object paths. Updated src/lalin.c to stop publishing native bank debug registry metadata and instead link the exported lalin_native_bank_* C API. Updated Makefile so lalin-bin depends on the generated NativeBankArtifact Lua descriptor. Updated tests/code_ir/test_lalin_binary.lua to build/load the generated C-owned bank shared object and use NativeBackend.require_native_bank. Verification run: luajit tests/code_ir/test_native_bank_generator.lua; custom T005 backend smoke generated host_scalar_i32 bank, built libbank.so, loaded NativeBankArtifact via Backend.require_native_bank, compiled/executed i32 add returning 42; make lalin-bin; target/lalin FFI.C lalin_native_bank_artifact registry smoke; luajit tests/code_ir/test_lalin_binary.lua; luajit tests/code_ir/test_luajit_backend_non_native.lua.",
+			"notes": [],
+			"createdAt": "2026-07-05T15:23:36.495Z",
+			"updatedAt": "2026-07-05T16:28:26.886Z"
+		},
+		{
+			"id": "T006",
+			"title": "Hard-yank obsolete tests and add C-owned bank tests",
+			"detail": "Remove assertions/tests that require generated Lua embedded bank bridges, Lua-side import, linear selection, or Lua install. Add tests that compile generated C bank, load the C API, select templates by generated key, install a graph with bindings/continuations/constant pool/runtime relocations, and execute the resulting artifact. Update schema/native/template/code graph tests accordingly.",
+			"file": "tests/code_ir/test_native_bank_generator.lua",
+			"after": [
+				"T001",
+				"T002",
+				"T003",
+				"T004",
+				"T005"
+			],
+			"status": "done",
+			"order": 6,
+			"claimedBy": "agent-W9CRGY",
+			"evidence": "Hard-yanked stale passive-bank tests and added/updated C-owned bank coverage. Changed tests/code_ir/test_native_bank_generator.lua to link/load generated C bank shared object, select by NativeTemplateSelectorKey, install through NativeBankInstallRequest, and execute. Rewrote tests/code_ir/test_native_mc_import.lua as C-owned runtime coverage for selector handles, imm32 binding install/rejects, constant-pool relocation execution, and supplied/missing runtime symbol relocation. Updated tests/code_ir/test_native_c_continuation_branch.lua to install continuation graphs through the C bank installer. Updated tests/code_ir/test_native_template_sources.lua, test_native_code_control.lua, test_native_code_graph_scalar.lua, test_native_kernel_contracts.lua, test_native_kernel_stencil.lua, test_native_stencil_contracts.lua, test_native_value_representation.lua, and tests/schema/test_schema_native.lua to use NativeBankArtifact/NativeLoadedBank, family selector nodes, and NativeBankInstallPlan paths instead of NativeEmbeddedTemplateBank/NativeTemplateBankEntry/Lua copy plans. Added typed NativeBankPatchProjectionInput in lua/lalin/schema/native.lua and NativeCodeAddressRuntimeSymbol -> NativeBankPatchCallTarget projection in lua/lalin/native_mc.lua so extern runtime call patches project to the C install ABI without a Lua installer fallback; removed stale guarded NativeTemplateBank selection shim in lua/lalin/native.lua. Verification passed: luajit tests/run.lua code_ir (50 passed, 1 slow skipped), luajit tests/run.lua schema (11 passed), LALIN_RUN_SLOW=1 luajit tests/code_ir/test_lalin_binary.lua.",
+			"notes": [],
+			"createdAt": "2026-07-05T15:23:36.495Z",
+			"updatedAt": "2026-07-05T16:51:54.619Z"
+		},
+		{
+			"id": "T007",
+			"title": "Regenerate complete bank and run full verification",
+			"detail": "Run make native-complete-bank with the new generated C-owned artifact, compile/link generated C bridge, verify no Lua ASDL bank is produced/used as runtime path, run native compile smoke with C-owned installer, then run schema and code_ir suites.",
+			"file": "target/lalin_binary/lalin_complete_native_template_bank.c",
+			"after": [
+				"T006"
+			],
+			"status": "done",
+			"order": 7,
+			"claimedBy": "agent-D1YNJY",
+			"evidence": "Regenerated complete C-owned native bank with `make -B native-complete-bank` (11357 templates) at target/lalin_binary/lalin_complete_native_template_bank.{c,h,lua}; compiled/linked generated C bridge with `cc -O2 -fPIC -shared -Itarget/lalin_binary target/lalin_binary/lalin_complete_native_template_bank.c -o target/lalin_binary/lalin_complete_native_template_bank.so`; verified generated Lua descriptor contains NativeBankArtifact only and no NativeEmbeddedTemplateBank/NativeTemplateBankEntry/NativeTemplateBytes, with compact manifest total_count/template_count 11357; ran native compile smoke through C-owned installer (`luajit target/lalin_binary/complete_bank_native_smoke.lua`) returning 123; ran `luajit tests/run.lua schema` (11 passed), `luajit tests/run.lua code_ir` (50 passed, 1 slow skipped), and `LALIN_RUN_SLOW=1 luajit tests/code_ir/test_lalin_binary.lua` (passed).",
+			"notes": [],
+			"createdAt": "2026-07-05T15:23:36.495Z",
+			"updatedAt": "2026-07-05T17:15:41.272Z"
+		}
+	]
+}

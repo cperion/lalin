@@ -24,11 +24,13 @@ local function bind_context(T)
         return ffi
     end
 
-    -- This module constructs ASDL support-domain and manifest facts for
-    -- NativeTemplateSource construction. Support domains declare finite stencil
-    -- generator/metavar dimensions; unbounded program values remain patch
-    -- coordinates, ABI projections, frame slots, constant-pool entries, or graph
-    -- edges, never register-fragment bank axes.
+    -- This module constructs ASDL native template support facts. Complete banks
+    -- are described by NativeCompleteBankCapability and closed micro-op classes.
+    -- NativeTemplateSupportDomain remains a subset/test helper for explicit
+    -- source slices; it is not the complete-bank coverage root. Unbounded
+    -- program values remain patch coordinates, ABI/lowering projections, frame
+    -- slots, constant-pool entries, runtime values, or graph edges, never bank
+    -- axes.
 
     function api.i8() return Code.CodeTyInt(8, Code.CodeSigned) end
     function api.u8() return Code.CodeTyInt(8, Code.CodeUnsigned) end
@@ -378,6 +380,12 @@ local function bind_context(T)
     function api.axis_code_term(axis) return Native.NativeAxisCodeTerm(require_value(axis, "NativeCodeTermAxis")) end
     function api.axis_code_const(axis) return Native.NativeAxisCodeConst(require_value(axis, "NativeCodeConstAxis")) end
     function api.axis_code_type(ty) return Native.NativeAxisCodeType(require_value(ty, "CodeType")) end
+    function api.axis_code_micro_op(shape) return Native.NativeAxisCodeMicroOp(require_value(shape, "NativeCodeMicroOpShape")) end
+    function api.axis_fast_code_expr(shape) return Native.NativeAxisFastCodeExpr(require_value(shape, "NativeCodeExprRegionShape")) end
+    function api.axis_fast_public_abi(shape) return Native.NativeAxisFastPublicAbi(require_value(shape, "NativeFastPublicAbiShape")) end
+    function api.axis_abi_micro_op(shape) return Native.NativeAxisAbiMicroOp(require_value(shape, "NativeAbiMicroOpShape")) end
+    function api.axis_kernel_micro_op(shape) return Native.NativeAxisKernelMicroOp(require_value(shape, "NativeKernelMicroOpShape")) end
+    function api.axis_stencil_micro_op(shape) return Native.NativeAxisStencilMicroOp(require_value(shape, "NativeStencilMicroOpShape")) end
     function api.axis_kernel(axis) return Native.NativeAxisKernel(require_value(axis, "NativeKernelAxis")) end
     function api.axis_stencil_producer(axis) return Native.NativeAxisStencilProducer(require_value(axis, "NativeStencilProducerAxis")) end
     function api.axis_stencil_access(axis) return Native.NativeAxisStencilAccess(require_value(axis, "NativeStencilAccessAxis")) end
@@ -943,12 +951,24 @@ local function bind_context(T)
         return api.family_id("native.code.const." .. require_value(name, "code constant family name"))
     end
 
+    function api.abi_micro_op_family_id(name)
+        return api.family_id("native.abi." .. require_value(name, "ABI micro-op family name"))
+    end
+
     function api.stencil_family_id(name)
         return api.family_id("native.stencil." .. require_value(name, "stencil family name"))
     end
 
     function api.kernel_family_id(name)
         return api.family_id("native.kernel." .. require_value(name, "kernel family name"))
+    end
+
+    function api.kernel_micro_op_family_id(name)
+        return api.family_id("native.kernel.micro." .. require_value(name, "kernel micro-op family name"))
+    end
+
+    function api.stencil_micro_op_family_id(name)
+        return api.family_id("native.stencil.micro." .. require_value(name, "stencil micro-op family name"))
     end
 
     function api.family(id, role, axes, protocol)
@@ -1123,6 +1143,44 @@ local function bind_context(T)
         )
     end
 
+    function api.code_micro_op_frame_family(name, target, scalar, shape, role)
+        return api.family(
+            (role == Native.NativeRoleCodeFunc and api.code_func_family_id(name))
+                or (role == Native.NativeRoleCodeTerm and api.code_term_family_id(name))
+                or api.code_inst_family_id(name),
+            role or Native.NativeRoleCodeInst,
+            api.frame_family_axes_for_scalar(target, scalar, { api.axis_code_micro_op(require_value(shape, "NativeCodeMicroOpShape")) }),
+            api.protocol_void_none()
+        )
+    end
+
+    function api.abi_micro_op_frame_family(name, target, scalar, shape)
+        return api.family(
+            api.abi_micro_op_family_id(name),
+            Native.NativeRoleAbiMicroOp,
+            api.frame_family_axes_for_scalar(target, scalar, { api.axis_abi_micro_op(require_value(shape, "NativeAbiMicroOpShape")) }),
+            api.protocol_void_none()
+        )
+    end
+
+    function api.kernel_micro_op_frame_family(name, target, scalar, shape)
+        return api.family(
+            api.kernel_micro_op_family_id(name),
+            Native.NativeRoleKernelMicroOp,
+            api.frame_family_axes_for_scalar(target, scalar, { api.axis_kernel_micro_op(require_value(shape, "NativeKernelMicroOpShape")) }),
+            api.protocol_void_none()
+        )
+    end
+
+    function api.stencil_micro_op_frame_family(name, target, scalar, shape)
+        return api.family(
+            api.stencil_micro_op_family_id(name),
+            Native.NativeRoleStencilMicroOp,
+            api.frame_family_axes_for_scalar(target, scalar, { api.axis_stencil_micro_op(require_value(shape, "NativeStencilMicroOpShape")) }),
+            api.protocol_void_none()
+        )
+    end
+
     function api.code_func_frame_family(name, target, param_scalar, result_scalar)
         return api.family(
             api.code_func_family_id(name),
@@ -1206,6 +1264,551 @@ local function bind_context(T)
             api.scalar_index(pointer_bits), api.scalar_pointer(pointer_bits),
             api.scalar_f32(), api.scalar_f64(),
         }
+    end
+
+    function api.complete_bank_capability_id(text)
+        return Native.NativeCompleteBankCapabilityId("native.complete.capability." .. require_value(text, "complete-bank capability id text"))
+    end
+
+    function api.complete_capability_manifest_domain_id(capability)
+        capability = require_value(capability, "NativeCompleteBankCapability")
+        return Native.NativeTemplateSupportDomainId("native.template.complete." .. capability.id.text)
+    end
+
+    function api.complete_bank_id(capability)
+        capability = require_value(capability, "NativeCompleteBankCapability")
+        return Native.NativeBankId("native.template.complete.bank." .. capability.id.text)
+    end
+
+    function api.complete_value_void_class() return Native.NativeCompleteValueVoidClass end
+    function api.complete_value_scalar_class(scalar) return Native.NativeCompleteValueScalarClass(require_value(scalar, "NativeMachineScalarRep")) end
+    function api.complete_value_pointer_class(pointer_scalar) return Native.NativeCompleteValuePointerClass(require_value(pointer_scalar, "pointer NativeMachineScalarRep")) end
+    function api.complete_value_bytes_class() return Native.NativeCompleteValueBytesClass end
+    function api.complete_scalar_bytes_scalar_class(scalar) return Native.NativeCompleteScalarBytesScalarClass(require_value(scalar, "NativeMachineScalarRep")) end
+    function api.complete_scalar_bytes_pointer_class(pointer_scalar) return Native.NativeCompleteScalarBytesPointerClass(require_value(pointer_scalar, "pointer NativeMachineScalarRep")) end
+    function api.complete_scalar_bytes_bytes_class() return Native.NativeCompleteScalarBytesBytesClass end
+    function api.complete_scalar_pointer_scalar_class(scalar) return Native.NativeCompleteScalarPointerScalarClass(require_value(scalar, "NativeMachineScalarRep")) end
+    function api.complete_scalar_pointer_pointer_class(pointer_scalar) return Native.NativeCompleteScalarPointerPointerClass(require_value(pointer_scalar, "pointer NativeMachineScalarRep")) end
+    function api.complete_index_class(pointer_width) return Native.NativeCompleteIndexClass(require_value(pointer_width, "target pointer width")) end
+
+    function api.logical_location_continuation_arg_class() return Native.NativeLogicalContinuationArgumentClass end
+    function api.logical_location_frame_slot_class() return Native.NativeLogicalFrameSlotClass end
+    function api.logical_location_constant_pool_class() return Native.NativeLogicalConstantPoolClass end
+    function api.logical_location_immediate_class() return Native.NativeLogicalImmediateClass end
+    function api.logical_location_stack_slot_class() return Native.NativeLogicalStackSlotClass end
+    function api.logical_location_runtime_param_class() return Native.NativeLogicalRuntimeParamClass end
+    function api.logical_location_patch_coordinate_class() return Native.NativeLogicalPatchCoordinateClass end
+    function api.logical_location_accumulator_class() return Native.NativeLogicalAccumulatorClass end
+
+    function api.complete_value_classes(scalars, pointer_scalar)
+        local out = { api.complete_value_void_class(), api.complete_value_bytes_class() }
+        for _, scalar in ipairs(scalars or {}) do out[#out + 1] = api.complete_value_scalar_class(scalar) end
+        if pointer_scalar ~= nil then out[#out + 1] = api.complete_value_pointer_class(pointer_scalar) end
+        return out
+    end
+
+    function api.complete_scalar_bytes_classes(scalars, pointer_scalar)
+        local out = { api.complete_scalar_bytes_bytes_class() }
+        for _, scalar in ipairs(scalars or {}) do out[#out + 1] = api.complete_scalar_bytes_scalar_class(scalar) end
+        if pointer_scalar ~= nil then out[#out + 1] = api.complete_scalar_bytes_pointer_class(pointer_scalar) end
+        return out
+    end
+
+    function api.complete_scalar_pointer_classes(scalars, pointer_scalar)
+        local out = {}
+        for _, scalar in ipairs(scalars or {}) do out[#out + 1] = api.complete_scalar_pointer_scalar_class(scalar) end
+        if pointer_scalar ~= nil then out[#out + 1] = api.complete_scalar_pointer_pointer_class(pointer_scalar) end
+        return out
+    end
+
+    function api.complete_logical_location_classes()
+        return {
+            api.logical_location_continuation_arg_class(),
+            api.logical_location_frame_slot_class(),
+            api.logical_location_constant_pool_class(),
+            api.logical_location_immediate_class(),
+            api.logical_location_stack_slot_class(),
+            api.logical_location_runtime_param_class(),
+            api.logical_location_patch_coordinate_class(),
+            api.logical_location_accumulator_class(),
+        }
+    end
+
+    function api.complete_frame_capability(frame_pointer_scalar, value_classes, location_classes)
+        return Native.NativeCompleteFrameCapability(
+            require_value(frame_pointer_scalar, "frame pointer scalar"),
+            value_classes or {},
+            location_classes or {}
+        )
+    end
+
+    function api.constant_pool_scalar_value_class(scalar) return Native.NativeConstantPoolScalarValueClass(require_value(scalar, "NativeMachineScalarRep")) end
+    function api.constant_pool_pointer_value_class(pointer_scalar) return Native.NativeConstantPoolPointerValueClass(require_value(pointer_scalar, "pointer NativeMachineScalarRep")) end
+    function api.constant_pool_bytes_value_class() return Native.NativeConstantPoolBytesValueClass end
+
+    function api.complete_constant_pool_capability(value_classes)
+        return Native.NativeCompleteConstantPoolCapability(value_classes or {})
+    end
+
+    function api.call_direct_class() return Native.NativeCallDirectClass end
+    function api.call_extern_class() return Native.NativeCallExternClass end
+    function api.call_indirect_class() return Native.NativeCallIndirectClass end
+    function api.call_closure_class() return Native.NativeCallClosureClass end
+    function api.complete_call_classes()
+        return { api.call_direct_class(), api.call_extern_class(), api.call_indirect_class(), api.call_closure_class() }
+    end
+
+    function api.complete_runtime_capability(value_classes, call_classes, location_classes)
+        return Native.NativeCompleteRuntimeCapability(value_classes or {}, call_classes or {}, location_classes or {})
+    end
+
+    function api.complete_atomic_capability(codegen, orderings, rmw_ops, value_classes)
+        return Native.NativeCompleteAtomicCapability(
+            codegen or api.atomic_gcc_builtins_support(),
+            orderings or {},
+            rmw_ops or {},
+            value_classes or {}
+        )
+    end
+
+    function api.complete_predicate_classes(value_classes)
+        local out = { Native.NativePredicateNonZeroClass, Native.NativePredicateLogicalClass }
+        for _, value_class in ipairs(value_classes or {}) do
+            out[#out + 1] = Native.NativePredicateRangeClass(value_class)
+            out[#out + 1] = Native.NativePredicateFloatClass(value_class)
+            for _, cmp in ipairs({ T.LalinCore.CmpEq, T.LalinCore.CmpNe, T.LalinCore.CmpLt, T.LalinCore.CmpLe, T.LalinCore.CmpGt, T.LalinCore.CmpGe }) do
+                out[#out + 1] = Native.NativePredicateCompareConstClass(cmp, value_class)
+            end
+        end
+        return out
+    end
+
+    local function complete_reductions_for_value_class(value_class)
+        if not asdl.isa(value_class, Native.NativeCompleteValueScalarClass) then return {} end
+        if asdl.isa(value_class.scalar, Native.NativeScalarFloat) then
+            return { T.LalinValue.ReductionAdd, T.LalinValue.ReductionMul, T.LalinValue.ReductionMin, T.LalinValue.ReductionMax }
+        end
+        return { T.LalinValue.ReductionAdd, T.LalinValue.ReductionMul, T.LalinValue.ReductionMin, T.LalinValue.ReductionMax, T.LalinValue.ReductionAnd, T.LalinValue.ReductionOr, T.LalinValue.ReductionXor }
+    end
+
+    function api.complete_reducer_classes(value_classes)
+        local out = {}
+        for _, value_class in ipairs(value_classes or {}) do
+            for _, reduction in ipairs(complete_reductions_for_value_class(value_class)) do
+                out[#out + 1] = Native.NativeReducerClass(reduction, value_class)
+            end
+        end
+        return out
+    end
+
+    function api.complete_descriptor_field_classes()
+        return {
+            Native.NativeDescriptorDataField,
+            Native.NativeDescriptorLengthField,
+            Native.NativeDescriptorStrideField,
+            Native.NativeDescriptorBaseField,
+            Native.NativeDescriptorUserField(Native.NativeDescriptorUserElementSizeField),
+            Native.NativeDescriptorUserField(Native.NativeDescriptorUserCapacityField),
+            Native.NativeDescriptorUserField(Native.NativeDescriptorUserAlignmentField),
+            Native.NativeDescriptorUserField(Native.NativeDescriptorUserLengthField),
+        }
+    end
+
+    function api.complete_vector_capability_classes()
+        return { Native.NativeVectorDisabled, Native.NativeVectorNative, Native.NativeVectorSSE2, Native.NativeVectorAVX2, Native.NativeVectorAVX512F }
+    end
+
+    function api.complete_unroll_capability_classes(factors)
+        local out = { Native.NativeUnrollScalar }
+        for _, factor in ipairs(factors or {}) do out[#out + 1] = Native.NativeUnrollFixed(require_value(factor, "target unroll factor")) end
+        return out
+    end
+
+    function api.complete_stencil_store_semantics_classes()
+        return {
+            Native.NativeStencilStoreElementwiseClass,
+            Native.NativeStencilStoreCopyClass(T.LalinStencil.StencilCopyNoOverlap),
+            Native.NativeStencilStoreCopyClass(T.LalinStencil.StencilCopyMayOverlapForward),
+            Native.NativeStencilStoreCopyClass(T.LalinStencil.StencilCopyMayOverlapBackward),
+            Native.NativeStencilStoreCopyClass(T.LalinStencil.StencilCopyMemMove),
+            Native.NativeStencilStoreScatterClass(T.LalinStencil.StencilScatterUniqueIndices),
+            Native.NativeStencilStoreScatterClass(T.LalinStencil.StencilScatterLastWriteWins),
+            Native.NativeStencilStoreScatterClass(T.LalinStencil.StencilScatterConflictUndefined),
+            Native.NativeStencilStorePartitionClass(T.LalinStencil.StencilPartitionStable),
+            Native.NativeStencilStorePartitionClass(T.LalinStencil.StencilPartitionUnstable),
+        }
+    end
+
+    function api.complete_stencil_reduce_scope_classes()
+        return { Native.NativeStencilReduceScopeDomainClass, Native.NativeStencilReduceScopeAxesClass, Native.NativeStencilReduceScopeWindowClass }
+    end
+
+    function api.complete_stencil_scatter_reduce_conflict_classes(orderings)
+        local out = { Native.NativeStencilScatterReduceSequentialClass, Native.NativeStencilScatterReduceUniqueIndicesClass, Native.NativeStencilScatterReducePrivatizedClass }
+        for _, ordering in ipairs(orderings or {}) do out[#out + 1] = Native.NativeStencilScatterReduceAtomicClass(ordering) end
+        return out
+    end
+
+    function api.complete_code_capability(micro_ops) return Native.NativeCompleteCodeCapability(micro_ops or {}) end
+    function api.complete_abi_capability(micro_ops, public_adapters) return Native.NativeCompleteAbiCapability(micro_ops or {}, public_adapters or {}) end
+    function api.complete_kernel_capability(micro_ops) return Native.NativeCompleteKernelCapability(micro_ops or {}) end
+    function api.complete_stencil_capability(micro_ops) return Native.NativeCompleteStencilCapability(micro_ops or {}) end
+
+    local function append_scalar_code_micro_ops(out, scalar)
+        out[#out + 1] = Native.NativeCodeMicroOpScalarLoadShape(scalar)
+        out[#out + 1] = Native.NativeCodeMicroOpScalarStoreShape(scalar)
+        out[#out + 1] = Native.NativeCodeMicroOpScalarCopyShape(scalar)
+        out[#out + 1] = Native.NativeCodeMicroOpConstShape(scalar)
+        out[#out + 1] = Native.NativeCodeMicroOpSelectShape(scalar)
+        out[#out + 1] = Native.NativeCodeMicroOpReturnScalarShape(scalar)
+        if asdl.isa(scalar, Native.NativeScalarBool8) then
+            out[#out + 1] = Native.NativeCodeMicroOpUnaryShape(T.LalinCore.UnaryNot, scalar)
+            out[#out + 1] = Native.NativeCodeMicroOpCompareShape(T.LalinCore.CmpEq, scalar)
+            out[#out + 1] = Native.NativeCodeMicroOpCompareShape(T.LalinCore.CmpNe, scalar)
+        elseif asdl.isa(scalar, Native.NativeScalarFloat) then
+            out[#out + 1] = Native.NativeCodeMicroOpUnaryShape(T.LalinCore.UnaryNeg, scalar)
+            for _, op in ipairs({ T.LalinCore.BinAdd, T.LalinCore.BinSub, T.LalinCore.BinMul, T.LalinCore.BinDiv }) do out[#out + 1] = Native.NativeCodeMicroOpBinaryShape(op, scalar) end
+            for _, cmp in ipairs({ T.LalinCore.CmpEq, T.LalinCore.CmpNe, T.LalinCore.CmpLt, T.LalinCore.CmpLe, T.LalinCore.CmpGt, T.LalinCore.CmpGe }) do out[#out + 1] = Native.NativeCodeMicroOpCompareShape(cmp, scalar) end
+        else
+            for _, op in ipairs({ T.LalinCore.UnaryNeg, T.LalinCore.UnaryBitNot }) do out[#out + 1] = Native.NativeCodeMicroOpUnaryShape(op, scalar) end
+            for _, op in ipairs({ T.LalinCore.BinAdd, T.LalinCore.BinSub, T.LalinCore.BinMul, T.LalinCore.BinDiv, T.LalinCore.BinRem, T.LalinCore.BinBitAnd, T.LalinCore.BinBitOr, T.LalinCore.BinBitXor, T.LalinCore.BinShl, T.LalinCore.BinLShr, T.LalinCore.BinAShr }) do out[#out + 1] = Native.NativeCodeMicroOpBinaryShape(op, scalar) end
+            for _, cmp in ipairs({ T.LalinCore.CmpEq, T.LalinCore.CmpNe, T.LalinCore.CmpLt, T.LalinCore.CmpLe, T.LalinCore.CmpGt, T.LalinCore.CmpGe }) do out[#out + 1] = Native.NativeCodeMicroOpCompareShape(cmp, scalar) end
+        end
+    end
+
+    function api.complete_code_micro_ops(scalars, scalar_bytes_classes)
+        local out = {
+            Native.NativeCodeMicroOpFrameEntryShape,
+            Native.NativeCodeMicroOpBytesCopyShape,
+            Native.NativeCodeMicroOpBytesMoveShape,
+            Native.NativeCodeMicroOpAddressBaseShape,
+            Native.NativeCodeMicroOpAddressFieldShape,
+            Native.NativeCodeMicroOpAddressIndexShape,
+            Native.NativeCodeMicroOpAddressOffsetShape,
+            Native.NativeCodeMicroOpDescriptorFieldShape,
+            Native.NativeCodeMicroOpAggregateStepShape,
+            Native.NativeCodeMicroOpArrayStepShape,
+            Native.NativeCodeMicroOpVariantTagShape,
+            Native.NativeCodeMicroOpVariantPayloadShape,
+            Native.NativeCodeMicroOpJumpShape,
+            Native.NativeCodeMicroOpBranchShape,
+            Native.NativeCodeMicroOpSwitchStepShape,
+            Native.NativeCodeMicroOpTrapShape,
+            Native.NativeCodeMicroOpUnreachableShape,
+            Native.NativeCodeMicroOpReturnVoidShape,
+            Native.NativeCodeMicroOpReturnSretShape,
+            Native.NativeCodeMicroOpCallDirectShape,
+            Native.NativeCodeMicroOpCallExternShape,
+            Native.NativeCodeMicroOpCallIndirectShape,
+            Native.NativeCodeMicroOpCallClosureShape,
+        }
+        for _, scalar in ipairs(scalars or {}) do append_scalar_code_micro_ops(out, scalar) end
+        for _, from_scalar in ipairs(scalars or {}) do
+            for _, to_scalar in ipairs(scalars or {}) do
+                if from_scalar == to_scalar then
+                    out[#out + 1] = Native.NativeCodeMicroOpCastShape(T.LalinCore.MachineCastIdentity, from_scalar, to_scalar)
+                elseif not asdl.isa(from_scalar, Native.NativeScalarBool8) and not asdl.isa(to_scalar, Native.NativeScalarBool8) then
+                    if asdl.isa(from_scalar, Native.NativeScalarFloat) and asdl.isa(to_scalar, Native.NativeScalarFloat) then
+                        out[#out + 1] = Native.NativeCodeMicroOpCastShape(from_scalar.bits < to_scalar.bits and T.LalinCore.MachineCastFpromote or T.LalinCore.MachineCastFdemote, from_scalar, to_scalar)
+                    elseif asdl.isa(from_scalar, Native.NativeScalarFloat) then
+                        out[#out + 1] = Native.NativeCodeMicroOpCastShape(T.LalinCore.MachineCastFToS, from_scalar, to_scalar)
+                    elseif asdl.isa(to_scalar, Native.NativeScalarFloat) then
+                        out[#out + 1] = Native.NativeCodeMicroOpCastShape(T.LalinCore.MachineCastSToF, from_scalar, to_scalar)
+                    elseif from_scalar.bits and to_scalar.bits then
+                        local op = T.LalinCore.MachineCastBitcast
+                        if from_scalar.bits > to_scalar.bits then op = T.LalinCore.MachineCastIreduce
+                        elseif from_scalar.bits < to_scalar.bits then op = T.LalinCore.MachineCastSextend end
+                        out[#out + 1] = Native.NativeCodeMicroOpCastShape(op, from_scalar, to_scalar)
+                    end
+                end
+            end
+        end
+        for _, value_class in ipairs(scalar_bytes_classes or {}) do
+            out[#out + 1] = Native.NativeCodeMicroOpLoadShape(value_class)
+            out[#out + 1] = Native.NativeCodeMicroOpStoreShape(value_class)
+        end
+        return out
+    end
+
+    function api.complete_abi_micro_ops(value_classes, scalar_pointer_classes)
+        local out = {
+            Native.NativeAbiMicroOpParamByRefShape,
+            Native.NativeAbiMicroOpResultSretShape,
+            Native.NativeAbiMicroOpResultVoidShape,
+            Native.NativeAbiMicroOpCallDirectShape,
+            Native.NativeAbiMicroOpCallExternShape,
+            Native.NativeAbiMicroOpCallIndirectShape,
+            Native.NativeAbiMicroOpCallClosureShape,
+            Native.NativeAbiMicroOpReturnVoidShape,
+            Native.NativeAbiMicroOpReturnSretShape,
+        }
+        for _, value_class in ipairs(value_classes or {}) do out[#out + 1] = Native.NativeAbiMicroOpParamStackShape(value_class) end
+        for _, value_class in ipairs(scalar_pointer_classes or {}) do
+            out[#out + 1] = Native.NativeAbiMicroOpParamRegisterShape(value_class)
+            out[#out + 1] = Native.NativeAbiMicroOpResultRegisterShape(value_class)
+            out[#out + 1] = Native.NativeAbiMicroOpReturnScalarShape(value_class)
+        end
+        return out
+    end
+
+    function api.complete_kernel_micro_ops(scalars, value_classes, reducers, call_classes)
+        local out = {
+            Native.NativeKernelMicroOpBytesCopyShape,
+            Native.NativeKernelMicroOpBytesMoveShape,
+            Native.NativeKernelMicroOpLaneAddressBaseShape,
+            Native.NativeKernelMicroOpLaneAddressAddIndexShape,
+            Native.NativeKernelMicroOpLaneAddressAddStrideShape,
+            Native.NativeKernelMicroOpLaneAddressAddOffsetShape,
+            Native.NativeKernelMicroOpPredicateNonZeroShape,
+            Native.NativeKernelMicroOpPredicateLogicalInitShape,
+            Native.NativeKernelMicroOpPredicateLogicalTermShape,
+            Native.NativeKernelMicroOpPredicateLogicalFinishShape,
+            Native.NativeKernelMicroOpLoopEnterShape,
+            Native.NativeKernelMicroOpLoopStepShape,
+            Native.NativeKernelMicroOpLoopExitShape,
+            Native.NativeKernelMicroOpBodyEnterShape,
+            Native.NativeKernelMicroOpBodyNextShape,
+            Native.NativeKernelMicroOpBodyExitShape,
+            Native.NativeKernelMicroOpEffectStoreShape,
+            Native.NativeKernelMicroOpEffectCopyShape,
+            Native.NativeKernelMicroOpResultVoidShape,
+            Native.NativeKernelMicroOpResultOriginalControlShape,
+        }
+        for _, scalar in ipairs(scalars or {}) do
+            out[#out + 1] = Native.NativeKernelMicroOpScalarLoadShape(scalar)
+            out[#out + 1] = Native.NativeKernelMicroOpScalarStoreShape(scalar)
+            if asdl.isa(scalar, Native.NativeScalarPointer) then
+                out[#out + 1] = Native.NativeKernelMicroOpPointerLoadShape(scalar)
+                out[#out + 1] = Native.NativeKernelMicroOpPointerStoreShape(scalar)
+            end
+        end
+        for _, value_class in ipairs(value_classes or {}) do
+            out[#out + 1] = Native.NativeKernelMicroOpExprConstShape(value_class)
+            out[#out + 1] = Native.NativeKernelMicroOpExprCodeValueShape(value_class)
+            out[#out + 1] = Native.NativeKernelMicroOpExprKernelValueShape(value_class)
+            out[#out + 1] = Native.NativeKernelMicroOpExprLaneLoadShape(value_class)
+            out[#out + 1] = Native.NativeKernelMicroOpExprSelectShape(value_class)
+            out[#out + 1] = Native.NativeKernelMicroOpResultValueShape(value_class)
+            out[#out + 1] = Native.NativeKernelMicroOpResultFindShape(value_class)
+            out[#out + 1] = Native.NativeKernelMicroOpResultClosedFormShape(value_class)
+            if asdl.isa(value_class, Native.NativeCompleteValueScalarClass) or asdl.isa(value_class, Native.NativeCompleteValuePointerClass) then
+                out[#out + 1] = Native.NativeKernelMicroOpAffineInitShape(value_class)
+                out[#out + 1] = Native.NativeKernelMicroOpAffineAddTermShape(value_class)
+                out[#out + 1] = Native.NativeKernelMicroOpAffineFinishShape(value_class)
+                out[#out + 1] = Native.NativeKernelMicroOpPredicateRangeShape(value_class)
+                out[#out + 1] = Native.NativeKernelMicroOpPredicateFloatClassShape(value_class)
+                local scalar = asdl.isa(value_class, Native.NativeCompleteValueScalarClass) and value_class.scalar or value_class.pointer_scalar
+                if asdl.isa(scalar, Native.NativeScalarBool8) then
+                    out[#out + 1] = Native.NativeKernelMicroOpExprUnaryShape(T.LalinCore.UnaryNot, value_class)
+                    for _, cmp in ipairs({ T.LalinCore.CmpEq, T.LalinCore.CmpNe }) do
+                        out[#out + 1] = Native.NativeKernelMicroOpExprCompareShape(cmp, value_class)
+                        out[#out + 1] = Native.NativeKernelMicroOpPredicateCompareConstShape(cmp, value_class)
+                    end
+                elseif asdl.isa(scalar, Native.NativeScalarFloat) then
+                    out[#out + 1] = Native.NativeKernelMicroOpExprUnaryShape(T.LalinCore.UnaryNeg, value_class)
+                    for _, op in ipairs({ T.LalinCore.BinAdd, T.LalinCore.BinSub, T.LalinCore.BinMul, T.LalinCore.BinDiv }) do out[#out + 1] = Native.NativeKernelMicroOpExprBinaryShape(op, value_class) end
+                    for _, cmp in ipairs({ T.LalinCore.CmpEq, T.LalinCore.CmpNe, T.LalinCore.CmpLt, T.LalinCore.CmpLe, T.LalinCore.CmpGt, T.LalinCore.CmpGe }) do
+                        out[#out + 1] = Native.NativeKernelMicroOpExprCompareShape(cmp, value_class)
+                        out[#out + 1] = Native.NativeKernelMicroOpPredicateCompareConstShape(cmp, value_class)
+                    end
+                else
+                    for _, op in ipairs({ T.LalinCore.UnaryNeg, T.LalinCore.UnaryBitNot }) do out[#out + 1] = Native.NativeKernelMicroOpExprUnaryShape(op, value_class) end
+                    for _, op in ipairs({ T.LalinCore.BinAdd, T.LalinCore.BinSub, T.LalinCore.BinMul, T.LalinCore.BinDiv, T.LalinCore.BinRem, T.LalinCore.BinBitAnd, T.LalinCore.BinBitOr, T.LalinCore.BinBitXor, T.LalinCore.BinShl, T.LalinCore.BinLShr, T.LalinCore.BinAShr }) do out[#out + 1] = Native.NativeKernelMicroOpExprBinaryShape(op, value_class) end
+                    for _, cmp in ipairs({ T.LalinCore.CmpEq, T.LalinCore.CmpNe, T.LalinCore.CmpLt, T.LalinCore.CmpLe, T.LalinCore.CmpGt, T.LalinCore.CmpGe }) do
+                        out[#out + 1] = Native.NativeKernelMicroOpExprCompareShape(cmp, value_class)
+                        out[#out + 1] = Native.NativeKernelMicroOpPredicateCompareConstShape(cmp, value_class)
+                    end
+                end
+            end
+        end
+        for _, from_class in ipairs(value_classes or {}) do
+            for _, to_class in ipairs(value_classes or {}) do
+                if (asdl.isa(from_class, Native.NativeCompleteValueScalarClass) or asdl.isa(from_class, Native.NativeCompleteValuePointerClass))
+                    and (asdl.isa(to_class, Native.NativeCompleteValueScalarClass) or asdl.isa(to_class, Native.NativeCompleteValuePointerClass)) then
+                    local from_scalar = asdl.isa(from_class, Native.NativeCompleteValueScalarClass) and from_class.scalar or from_class.pointer_scalar
+                    local to_scalar = asdl.isa(to_class, Native.NativeCompleteValueScalarClass) and to_class.scalar or to_class.pointer_scalar
+                    if from_scalar == to_scalar then
+                        out[#out + 1] = Native.NativeKernelMicroOpExprCastShape(T.LalinCore.MachineCastIdentity, from_class, to_class)
+                    elseif not asdl.isa(from_scalar, Native.NativeScalarBool8) and not asdl.isa(to_scalar, Native.NativeScalarBool8) then
+                        if asdl.isa(from_scalar, Native.NativeScalarFloat) and asdl.isa(to_scalar, Native.NativeScalarFloat) then
+                            out[#out + 1] = Native.NativeKernelMicroOpExprCastShape(from_scalar.bits < to_scalar.bits and T.LalinCore.MachineCastFpromote or T.LalinCore.MachineCastFdemote, from_class, to_class)
+                        elseif asdl.isa(from_scalar, Native.NativeScalarFloat) then
+                            out[#out + 1] = Native.NativeKernelMicroOpExprCastShape(T.LalinCore.MachineCastFToS, from_class, to_class)
+                        elseif asdl.isa(to_scalar, Native.NativeScalarFloat) then
+                            out[#out + 1] = Native.NativeKernelMicroOpExprCastShape(T.LalinCore.MachineCastSToF, from_class, to_class)
+                        elseif from_scalar.bits and to_scalar.bits then
+                            local op = T.LalinCore.MachineCastBitcast
+                            if from_scalar.bits > to_scalar.bits then op = T.LalinCore.MachineCastIreduce
+                            elseif from_scalar.bits < to_scalar.bits then op = T.LalinCore.MachineCastSextend end
+                            out[#out + 1] = Native.NativeKernelMicroOpExprCastShape(op, from_class, to_class)
+                        end
+                    end
+                end
+            end
+        end
+        for _, reducer in ipairs(reducers or {}) do
+            out[#out + 1] = Native.NativeKernelMicroOpEffectScanShape(reducer, T.LalinStencil.StencilScanInclusive)
+            out[#out + 1] = Native.NativeKernelMicroOpEffectScanShape(reducer, T.LalinStencil.StencilScanExclusive)
+            out[#out + 1] = Native.NativeKernelMicroOpEffectScatterReduceShape(reducer)
+            out[#out + 1] = Native.NativeKernelMicroOpEffectFoldShape(reducer)
+            out[#out + 1] = Native.NativeKernelMicroOpResultReductionShape(reducer)
+        end
+        for _, semantics in ipairs({ T.LalinStencil.StencilPartitionStable, T.LalinStencil.StencilPartitionUnstable }) do out[#out + 1] = Native.NativeKernelMicroOpEffectPartitionShape(semantics) end
+        for _, call_class in ipairs(call_classes or {}) do out[#out + 1] = Native.NativeKernelMicroOpEffectCallShape(call_class) end
+        return out
+    end
+
+    function api.complete_stencil_micro_ops(value_classes, index_classes, predicates, reducers, descriptor_fields, store_semantics, reduce_scopes, scatter_reduce_conflicts, vector_capabilities, unroll_capabilities)
+        local out = {
+            Native.NativeStencilMicroOpProducerEnterShape,
+            Native.NativeStencilMicroOpProducerAxisExitShape,
+            Native.NativeStencilMicroOpProducerWindowOffsetShape,
+            Native.NativeStencilMicroOpProducerTileStepShape,
+            Native.NativeStencilMicroOpBodyEnterShape,
+            Native.NativeStencilMicroOpBodyExitShape,
+            Native.NativeStencilMicroOpScheduleScalarShape,
+        }
+        for _, order in ipairs({ T.LalinStencil.StencilProducerForward, T.LalinStencil.StencilProducerBackward }) do out[#out + 1] = Native.NativeStencilMicroOpProducerAxisStepShape(order) end
+        for _, value_class in ipairs(value_classes or {}) do
+            out[#out + 1] = Native.NativeStencilMicroOpAccessBaseShape(value_class)
+            out[#out + 1] = Native.NativeStencilMicroOpAccessContiguousShape(value_class)
+            out[#out + 1] = Native.NativeStencilMicroOpAccessAffineInitShape(value_class)
+            out[#out + 1] = Native.NativeStencilMicroOpAccessAffineTermShape(value_class)
+            out[#out + 1] = Native.NativeStencilMicroOpAccessFieldOffsetShape(value_class)
+            out[#out + 1] = Native.NativeStencilMicroOpAccessSoAComponentShape(value_class)
+            out[#out + 1] = Native.NativeStencilMicroOpPointInputShape(value_class)
+            out[#out + 1] = Native.NativeStencilMicroOpPointWindowInputShape(value_class)
+            out[#out + 1] = Native.NativeStencilMicroOpPointConstShape(value_class)
+            out[#out + 1] = Native.NativeStencilMicroOpBodyPointShape(value_class)
+            for _, index_class in ipairs(index_classes or {}) do out[#out + 1] = Native.NativeStencilMicroOpAccessIndexedShape(value_class, index_class) end
+            for _, descriptor_field in ipairs(descriptor_fields or {}) do out[#out + 1] = Native.NativeStencilMicroOpAccessDescriptorFieldShape(value_class, descriptor_field) end
+            if asdl.isa(value_class, Native.NativeCompleteValueScalarClass) or asdl.isa(value_class, Native.NativeCompleteValuePointerClass) then
+                local scalar = asdl.isa(value_class, Native.NativeCompleteValueScalarClass) and value_class.scalar or value_class.pointer_scalar
+                out[#out + 1] = Native.NativeStencilMicroOpPointUnaryShape(T.LalinStencil.StencilUnaryIdentity, value_class)
+                if asdl.isa(scalar, Native.NativeScalarBool8) then
+                    out[#out + 1] = Native.NativeStencilMicroOpPointUnaryShape(T.LalinStencil.StencilUnaryBoolNot, value_class)
+                    for _, cmp in ipairs({ T.LalinCore.CmpEq, T.LalinCore.CmpNe }) do out[#out + 1] = Native.NativeStencilMicroOpPointCompareShape(cmp, value_class) end
+                elseif asdl.isa(scalar, Native.NativeScalarFloat) then
+                    out[#out + 1] = Native.NativeStencilMicroOpPointUnaryShape(T.LalinStencil.StencilUnaryNeg, value_class)
+                    for _, op in ipairs({ T.LalinStencil.StencilBinaryAdd, T.LalinStencil.StencilBinarySub, T.LalinStencil.StencilBinaryMul, T.LalinStencil.StencilBinaryDiv, T.LalinStencil.StencilBinaryMin, T.LalinStencil.StencilBinaryMax }) do out[#out + 1] = Native.NativeStencilMicroOpPointBinaryShape(op, value_class) end
+                    for _, cmp in ipairs({ T.LalinCore.CmpEq, T.LalinCore.CmpNe, T.LalinCore.CmpLt, T.LalinCore.CmpLe, T.LalinCore.CmpGt, T.LalinCore.CmpGe }) do out[#out + 1] = Native.NativeStencilMicroOpPointCompareShape(cmp, value_class) end
+                else
+                    for _, op in ipairs({ T.LalinStencil.StencilUnaryNeg, T.LalinStencil.StencilUnaryBitNot }) do out[#out + 1] = Native.NativeStencilMicroOpPointUnaryShape(op, value_class) end
+                    for _, op in ipairs({ T.LalinStencil.StencilBinaryAdd, T.LalinStencil.StencilBinarySub, T.LalinStencil.StencilBinaryMul, T.LalinStencil.StencilBinaryDiv, T.LalinStencil.StencilBinaryMod, T.LalinStencil.StencilBinaryAnd, T.LalinStencil.StencilBinaryOr, T.LalinStencil.StencilBinaryXor, T.LalinStencil.StencilBinaryShl, T.LalinStencil.StencilBinaryLShr, T.LalinStencil.StencilBinaryAShr, T.LalinStencil.StencilBinaryMin, T.LalinStencil.StencilBinaryMax }) do out[#out + 1] = Native.NativeStencilMicroOpPointBinaryShape(op, value_class) end
+                    for _, cmp in ipairs({ T.LalinCore.CmpEq, T.LalinCore.CmpNe, T.LalinCore.CmpLt, T.LalinCore.CmpLe, T.LalinCore.CmpGt, T.LalinCore.CmpGe }) do out[#out + 1] = Native.NativeStencilMicroOpPointCompareShape(cmp, value_class) end
+                end
+            end
+        end
+        for _, from_class in ipairs(value_classes or {}) do
+            for _, to_class in ipairs(value_classes or {}) do
+                if (asdl.isa(from_class, Native.NativeCompleteValueScalarClass) or asdl.isa(from_class, Native.NativeCompleteValuePointerClass))
+                    and (asdl.isa(to_class, Native.NativeCompleteValueScalarClass) or asdl.isa(to_class, Native.NativeCompleteValuePointerClass)) then
+                    local from_scalar = asdl.isa(from_class, Native.NativeCompleteValueScalarClass) and from_class.scalar or from_class.pointer_scalar
+                    local to_scalar = asdl.isa(to_class, Native.NativeCompleteValueScalarClass) and to_class.scalar or to_class.pointer_scalar
+                    if from_scalar == to_scalar then out[#out + 1] = Native.NativeStencilMicroOpPointCastShape(T.LalinCore.MachineCastIdentity, from_class, to_class)
+                    elseif not asdl.isa(from_scalar, Native.NativeScalarBool8) and not asdl.isa(to_scalar, Native.NativeScalarBool8) then
+                        if asdl.isa(from_scalar, Native.NativeScalarFloat) and asdl.isa(to_scalar, Native.NativeScalarFloat) then out[#out + 1] = Native.NativeStencilMicroOpPointCastShape(from_scalar.bits < to_scalar.bits and T.LalinCore.MachineCastFpromote or T.LalinCore.MachineCastFdemote, from_class, to_class)
+                        elseif asdl.isa(from_scalar, Native.NativeScalarFloat) then out[#out + 1] = Native.NativeStencilMicroOpPointCastShape(T.LalinCore.MachineCastFToS, from_class, to_class)
+                        elseif asdl.isa(to_scalar, Native.NativeScalarFloat) then out[#out + 1] = Native.NativeStencilMicroOpPointCastShape(T.LalinCore.MachineCastSToF, from_class, to_class)
+                        elseif from_scalar.bits and to_scalar.bits then
+                            local op = T.LalinCore.MachineCastBitcast
+                            if from_scalar.bits > to_scalar.bits then op = T.LalinCore.MachineCastIreduce elseif from_scalar.bits < to_scalar.bits then op = T.LalinCore.MachineCastSextend end
+                            out[#out + 1] = Native.NativeStencilMicroOpPointCastShape(op, from_class, to_class)
+                        end
+                    end
+                end
+            end
+        end
+        for _, predicate in ipairs(predicates or {}) do
+            for _, value_class in ipairs(value_classes or {}) do
+                out[#out + 1] = Native.NativeStencilMicroOpPointPredicateShape(predicate, value_class)
+                out[#out + 1] = Native.NativeStencilMicroOpPointSelectShape(predicate, value_class)
+            end
+        end
+        for _, semantics in ipairs(store_semantics or {}) do out[#out + 1] = Native.NativeStencilMicroOpSinkStoreShape(semantics) end
+        for _, reducer in ipairs(reducers or {}) do
+            out[#out + 1] = Native.NativeStencilMicroOpSinkScanShape(reducer, T.LalinStencil.StencilScanInclusive)
+            out[#out + 1] = Native.NativeStencilMicroOpSinkScanShape(reducer, T.LalinStencil.StencilScanExclusive)
+            for _, scope in ipairs(reduce_scopes or {}) do out[#out + 1] = Native.NativeStencilMicroOpSinkReduceShape(reducer, scope) end
+            for _, conflict in ipairs(scatter_reduce_conflicts or {}) do out[#out + 1] = Native.NativeStencilMicroOpSinkScatterReduceShape(reducer, conflict) end
+        end
+        for _, vector in ipairs(vector_capabilities or {}) do
+            out[#out + 1] = Native.NativeStencilMicroOpScheduleAutoVectorShape(vector)
+            out[#out + 1] = Native.NativeStencilMicroOpScheduleVectorShape(vector)
+        end
+        for _, unroll in ipairs(unroll_capabilities or {}) do out[#out + 1] = Native.NativeStencilMicroOpScheduleUnrolledShape(unroll) end
+        return out
+    end
+
+    function api.complete_bank_capability(id, target, scalars, value_classes, scalar_or_bytes_classes, scalar_or_pointer_classes, index_classes, location_classes, runtime, frame, constant_pool, atomic, code, abi, kernel, stencil)
+        return Native.NativeCompleteBankCapability(
+            require_value(id, "NativeCompleteBankCapabilityId"),
+            require_value(target, "NativeTarget"),
+            scalars or {},
+            value_classes or {},
+            scalar_or_bytes_classes or {},
+            scalar_or_pointer_classes or {},
+            index_classes or {},
+            location_classes or {},
+            require_value(runtime, "NativeCompleteRuntimeCapability"),
+            require_value(frame, "NativeCompleteFrameCapability"),
+            require_value(constant_pool, "NativeCompleteConstantPoolCapability"),
+            require_value(atomic, "NativeCompleteAtomicCapability"),
+            require_value(code, "NativeCompleteCodeCapability"),
+            require_value(abi, "NativeCompleteAbiCapability"),
+            require_value(kernel, "NativeCompleteKernelCapability"),
+            require_value(stencil, "NativeCompleteStencilCapability")
+        )
+    end
+
+    function api.complete_bank_capability_for_target(id, target, scalars)
+        target = require_value(target, "NativeTarget")
+        scalars = scalars or {
+            api.scalar_bool8(),
+            api.scalar_i8(), api.scalar_u8(), api.scalar_i16(), api.scalar_u16(),
+            api.scalar_i32(), api.scalar_u32(), api.scalar_i64(), api.scalar_u64(),
+            api.scalar_index(target.pointer_bits), api.scalar_pointer(target.pointer_bits),
+            api.scalar_f32(), api.scalar_f64(),
+        }
+        local pointer_scalar = api.scalar_pointer(target.pointer_bits)
+        local value_classes = api.complete_value_classes(scalars, pointer_scalar)
+        local scalar_bytes_classes = api.complete_scalar_bytes_classes(scalars, pointer_scalar)
+        local scalar_pointer_classes = api.complete_scalar_pointer_classes(scalars, pointer_scalar)
+        local index_classes = { api.complete_index_class(target.pointer_bits) }
+        local location_classes = api.complete_logical_location_classes()
+        local call_classes = api.complete_call_classes()
+        local orderings = { T.LalinCore.AtomicSeqCst }
+        local rmw_ops = { T.LalinCore.AtomicRmwAdd, T.LalinCore.AtomicRmwSub, T.LalinCore.AtomicRmwAnd, T.LalinCore.AtomicRmwOr, T.LalinCore.AtomicRmwXor, T.LalinCore.AtomicRmwXchg }
+        local reducers = api.complete_reducer_classes(value_classes)
+        local predicates = api.complete_predicate_classes(value_classes)
+        local descriptor_fields = api.complete_descriptor_field_classes()
+        local vector_capabilities = api.complete_vector_capability_classes()
+        local unroll_capabilities = api.complete_unroll_capability_classes({ 1, 2, 4, 8 })
+        local store_semantics = api.complete_stencil_store_semantics_classes()
+        local reduce_scopes = api.complete_stencil_reduce_scope_classes()
+        local scatter_conflicts = api.complete_stencil_scatter_reduce_conflict_classes(orderings)
+        return api.complete_bank_capability(
+            id,
+            target,
+            scalars,
+            value_classes,
+            scalar_bytes_classes,
+            scalar_pointer_classes,
+            index_classes,
+            location_classes,
+            api.complete_runtime_capability(value_classes, call_classes, location_classes),
+            api.complete_frame_capability(pointer_scalar, value_classes, location_classes),
+            api.complete_constant_pool_capability({ api.constant_pool_bytes_value_class(), api.constant_pool_pointer_value_class(pointer_scalar) }),
+            api.complete_atomic_capability(api.atomic_gcc_builtins_support(), orderings, rmw_ops, scalar_pointer_classes),
+            api.complete_code_capability(api.complete_code_micro_ops(scalars, scalar_bytes_classes)),
+            api.complete_abi_capability(api.complete_abi_micro_ops(value_classes, scalar_pointer_classes), api.default_scalar_public_abi_adapters(target, scalars)),
+            api.complete_kernel_capability(api.complete_kernel_micro_ops(scalars, value_classes, reducers, call_classes)),
+            api.complete_stencil_capability(api.complete_stencil_micro_ops(value_classes, index_classes, predicates, reducers, descriptor_fields, store_semantics, reduce_scopes, scatter_conflicts, vector_capabilities, unroll_capabilities))
+        )
+    end
+
+    function api.host_complete_bank_capability()
+        return api.complete_bank_capability_for_target(api.complete_bank_capability_id("host"), api.host_target())
     end
 
     function api.scalar_i32_slice_types()

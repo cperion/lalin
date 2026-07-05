@@ -429,7 +429,11 @@ local function bind_context(T)
 
     local function append_hole_externs(lines, holes)
         for _, hole in ipairs(holes or {}) do
-            lines[#lines + 1] = "extern const uint8_t " .. hole.symbol .. ";"
+            if asdl.isa(hole.hole, Native.NativePatchCallRel32) then
+                lines[#lines + 1] = "extern void " .. hole.symbol .. "(uint8_t *frame);"
+            else
+                lines[#lines + 1] = "extern const uint8_t " .. hole.symbol .. ";"
+            end
         end
     end
 
@@ -1032,6 +1036,1377 @@ local function bind_context(T)
         local manifest_entry = manifest_entry_for_source_facts(id_text, family, chunk_class, signature, extraction, holes or {}, continuation_ordinals or {}, extra_relocation_kinds or {})
         return api.append_source(out, api.c_source_from_manifest_entry(manifest_entry, entry_symbol, concat_lines(lines), holes or {}))
     end
+
+    function Core.UnaryOp:native_float_c_expr(_scalar, _value)
+        internal_error("unsupported float unary op in native fast region source builder")
+    end
+
+    function Core.UnaryNeg:native_float_c_expr(_scalar, value)
+        return "(-" .. value .. ")", "neg"
+    end
+
+    function Native.NativeMachineScalarRep:native_fast_unary_c_expr(op, value)
+        return op:native_integer_c_expr(self, value)
+    end
+
+    function Native.NativeScalarFloat:native_fast_unary_c_expr(op, value)
+        return op:native_float_c_expr(self, value)
+    end
+
+    function Native.NativeMachineScalarRep:native_fast_binary_c_expr(op, lhs, rhs)
+        return op:native_integer_c_expr(self, lhs, rhs)
+    end
+
+    function Native.NativeScalarFloat:native_fast_binary_c_expr(op, lhs, rhs)
+        return op:native_float_c_expr(self, lhs, rhs)
+    end
+
+    function Native.NativeMachineScalarRep:native_fast_mul_add_imm_c_expr(lhs, rhs, imm)
+        local mul = self:native_fast_binary_c_expr(Core.BinMul, lhs, rhs)
+        return self:native_fast_binary_c_expr(Core.BinAdd, mul, imm)
+    end
+
+    function Native.NativeCodeExprAtomShape:native_fast_atom_token()
+        internal_error("unsupported native fast expression atom token")
+    end
+
+    function Native.NativeExprInput:native_fast_atom_token()
+        return "input" .. tostring(self.ordinal) .. "." .. self.scalar:native_scalar_token()
+    end
+
+    function Native.NativeExprImmediate:native_fast_atom_token()
+        return "imm." .. self.scalar:native_scalar_token()
+    end
+
+    function Native.NativeExprConstPool:native_fast_atom_token()
+        return "pool." .. self.scalar:native_scalar_token()
+    end
+
+    function Native.NativeCodeExprAtomShape:native_fast_atom_scalar()
+        internal_error("unsupported native fast expression atom scalar")
+    end
+
+    function Native.NativeExprInput:native_fast_atom_scalar() return self.scalar end
+    function Native.NativeExprImmediate:native_fast_atom_scalar() return self.scalar end
+    function Native.NativeExprConstPool:native_fast_atom_scalar() return self.scalar end
+
+    function Native.NativeCodeExprAtomShape:append_native_fast_atom_holes(_holes, _id_base)
+        internal_error("unsupported native fast expression atom holes")
+    end
+
+    function Native.NativeExprInput:append_native_fast_atom_holes(holes, id_base)
+        local hole = frame_offset_hole(id_base .. ".input" .. tostring(self.ordinal))
+        holes[#holes + 1] = hole
+        return { hole }
+    end
+
+    function Native.NativeExprImmediate:append_native_fast_atom_holes(holes, id_base)
+        local hole = scalar_immediate_hole(id_base .. ".imm", self.scalar)
+        holes[#holes + 1] = hole
+        return { hole }
+    end
+
+    function Native.NativeExprConstPool:append_native_fast_atom_holes(holes, id_base)
+        local hole = ptr64_hole(id_base .. ".pool")
+        holes[#holes + 1] = hole
+        return { hole }
+    end
+
+    function Native.NativeCodeExprAtomShape:append_native_fast_atom_operand(_operands, _operand_index)
+        internal_error("unsupported native fast expression atom operand")
+    end
+
+    function Native.NativeExprInput:append_native_fast_atom_operand(operands, operand_index)
+        operands[#operands + 1] = Support.stencil_operand(operand_index, self.scalar, Support.location_class_frame_slot())
+    end
+
+    function Native.NativeExprImmediate:append_native_fast_atom_operand(operands, operand_index)
+        operands[#operands + 1] = Support.stencil_operand(operand_index, self.scalar, Support.location_class_immediate())
+    end
+
+    function Native.NativeExprConstPool:append_native_fast_atom_operand(operands, operand_index)
+        operands[#operands + 1] = Support.stencil_operand(operand_index, self.scalar, Support.location_class_constant_pool())
+    end
+
+    function Native.NativeCodeExprAtomShape:native_fast_atom_c_expr(_holes)
+        internal_error("unsupported native fast expression atom C expression")
+    end
+
+    function Native.NativeExprInput:native_fast_atom_c_expr(holes)
+        return frame_load(self.scalar:native_c_scalar_type(), hole_address_expr(holes[1]))
+    end
+
+    function Native.NativeExprImmediate:native_fast_atom_c_expr(holes)
+        return "(" .. self.scalar:native_c_scalar_type() .. ")" .. hole_address_expr(holes[1])
+    end
+
+    function Native.NativeExprConstPool:native_fast_atom_c_expr(holes)
+        return "*(" .. self.scalar:native_c_scalar_type() .. " *)(void *)(uintptr_t)" .. hole_address_expr(holes[1])
+    end
+
+    function Native.NativeCodeExprRegionShape:native_fast_expr_token()
+        internal_error("unsupported native fast Code expression region token")
+    end
+
+    function Native.NativeExprReturnAtom:native_fast_expr_token()
+        return "return_atom." .. self.result:native_scalar_token() .. "." .. self.atom:native_fast_atom_token()
+    end
+
+    function Native.NativeExprReturnUnary:native_fast_expr_token()
+        return "return_unary." .. self.result:native_scalar_token() .. "." .. self.op:native_unary_family_name() .. "." .. self.src:native_fast_atom_token()
+    end
+
+    function Native.NativeExprReturnBinary:native_fast_expr_token()
+        return "return_binary." .. self.result:native_scalar_token() .. "." .. self.op:native_binary_family_name() .. "." .. self.lhs:native_fast_atom_token() .. "." .. self.rhs:native_fast_atom_token()
+    end
+
+    function Native.NativeExprReturnBinaryImmRhs:native_fast_expr_token()
+        return "return_binary_imm_rhs." .. self.result:native_scalar_token() .. "." .. self.op:native_binary_family_name() .. "." .. self.lhs:native_fast_atom_token()
+    end
+
+    function Native.NativeExprReturnMulAddImm:native_fast_expr_token()
+        return "return_mul_add_imm." .. self.result:native_scalar_token() .. "." .. self.mul_lhs:native_fast_atom_token() .. "." .. self.mul_rhs:native_fast_atom_token()
+    end
+
+    function Native.NativeCodeExprRegionShape:native_fast_expr_result_scalar()
+        internal_error("unsupported native fast Code expression result scalar")
+    end
+
+    function Native.NativeExprReturnAtom:native_fast_expr_result_scalar() return self.result end
+    function Native.NativeExprReturnUnary:native_fast_expr_result_scalar() return self.result end
+    function Native.NativeExprReturnBinary:native_fast_expr_result_scalar() return self.result end
+    function Native.NativeExprReturnBinaryImmRhs:native_fast_expr_result_scalar() return self.result end
+    function Native.NativeExprReturnMulAddImm:native_fast_expr_result_scalar() return self.result end
+
+    local function fast_code_expr_family(input, shape, token)
+        return Native.NativeTemplateFamily(
+            Native.NativeTemplateFamilyId("native.fast.code.expr." .. token),
+            Native.NativeRoleCodeTerm,
+            {
+                Support.axis_target(input.target),
+                Support.axis_machine_scalar(shape:native_fast_expr_result_scalar()),
+                Support.axis_fast_code_expr(shape),
+            },
+            Support.protocol_void_none()
+        )
+    end
+
+    local function append_fast_expr_atom(operands, holes, id_base, atom, operand_index)
+        atom:append_native_fast_atom_operand(operands, operand_index)
+        return atom:append_native_fast_atom_holes(holes, id_base)
+    end
+
+    local function append_fast_code_expr_source(out, input, shape, expr_builder)
+        local token = shape:native_fast_expr_token()
+        local result_scalar = shape:native_fast_expr_result_scalar()
+        local holes = {}
+        local operands = {}
+        local atom_holes = expr_builder(operands, holes, "native.hole.fast.code.expr." .. token)
+        local result_hole = frame_offset_hole("native.hole.fast.code.expr." .. token .. ".result")
+        holes[#holes + 1] = result_hole
+        operands[#operands + 1] = Support.stencil_operand(#operands, result_scalar, Support.location_class_frame_slot())
+        local signature = Support.spill_all_stencil_signature(result_scalar, operands, {})
+        local family = fast_code_expr_family(input, shape, token)
+        local entry = "lalin_native_fast_code_expr_" .. symbol_fragment(token)
+        local c_type = result_scalar:native_c_scalar_type()
+        local lines = c_prelude()
+        append_hole_externs(lines, holes)
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        lines[#lines + 1] = "    " .. c_type .. " result = " .. shape:native_fast_expr_c_expr(atom_holes) .. ";"
+        lines[#lines + 1] = frame_store(c_type, hole_address_expr(result_hole), "result")
+        lines[#lines + 1] = "}"
+        append_manifest_source(out, "fast.code.expr." .. token, family, Native.NativeChunkSupertemplate, signature, Native.NativeExtractFallthroughFragment, entry, lines, holes, {})
+    end
+
+    function Native.NativeCodeExprRegionShape:native_fast_expr_c_expr(_atom_holes)
+        internal_error("unsupported native fast Code expression C expression")
+    end
+
+    function Native.NativeExprReturnAtom:append_native_template_sources(out, input)
+        append_fast_code_expr_source(out, input, self, function(operands, holes, id_base)
+            return { atom = append_fast_expr_atom(operands, holes, id_base .. ".atom", self.atom, 0) }
+        end)
+    end
+
+    function Native.NativeExprReturnAtom:native_fast_expr_c_expr(atom_holes)
+        return self.atom:native_fast_atom_c_expr(atom_holes.atom)
+    end
+
+    function Native.NativeExprReturnUnary:append_native_template_sources(out, input)
+        append_fast_code_expr_source(out, input, self, function(operands, holes, id_base)
+            return { src = append_fast_expr_atom(operands, holes, id_base .. ".src", self.src, 0) }
+        end)
+    end
+
+    function Native.NativeExprReturnUnary:native_fast_expr_c_expr(atom_holes)
+        local src = self.src:native_fast_atom_c_expr(atom_holes.src)
+        return self.result:native_fast_unary_c_expr(self.op, src)
+    end
+
+    function Native.NativeExprReturnBinary:append_native_template_sources(out, input)
+        append_fast_code_expr_source(out, input, self, function(operands, holes, id_base)
+            return {
+                lhs = append_fast_expr_atom(operands, holes, id_base .. ".lhs", self.lhs, 0),
+                rhs = append_fast_expr_atom(operands, holes, id_base .. ".rhs", self.rhs, 1),
+            }
+        end)
+    end
+
+    function Native.NativeExprReturnBinary:native_fast_expr_c_expr(atom_holes)
+        local lhs = self.lhs:native_fast_atom_c_expr(atom_holes.lhs)
+        local rhs = self.rhs:native_fast_atom_c_expr(atom_holes.rhs)
+        return self.result:native_fast_binary_c_expr(self.op, lhs, rhs)
+    end
+
+    function Native.NativeExprReturnBinaryImmRhs:append_native_template_sources(out, input)
+        append_fast_code_expr_source(out, input, self, function(operands, holes, id_base)
+            local imm = Native.NativeExprImmediate(self.result)
+            return {
+                lhs = append_fast_expr_atom(operands, holes, id_base .. ".lhs", self.lhs, 0),
+                rhs = append_fast_expr_atom(operands, holes, id_base .. ".rhs", imm, 1),
+            }
+        end)
+    end
+
+    function Native.NativeExprReturnBinaryImmRhs:native_fast_expr_c_expr(atom_holes)
+        local lhs = self.lhs:native_fast_atom_c_expr(atom_holes.lhs)
+        local rhs = Native.NativeExprImmediate(self.result):native_fast_atom_c_expr(atom_holes.rhs)
+        return self.result:native_fast_binary_c_expr(self.op, lhs, rhs)
+    end
+
+    function Native.NativeExprReturnMulAddImm:append_native_template_sources(out, input)
+        append_fast_code_expr_source(out, input, self, function(operands, holes, id_base)
+            local imm = Native.NativeExprImmediate(self.result)
+            return {
+                lhs = append_fast_expr_atom(operands, holes, id_base .. ".mul_lhs", self.mul_lhs, 0),
+                rhs = append_fast_expr_atom(operands, holes, id_base .. ".mul_rhs", self.mul_rhs, 1),
+                imm = append_fast_expr_atom(operands, holes, id_base .. ".imm", imm, 2),
+            }
+        end)
+    end
+
+    function Native.NativeExprReturnMulAddImm:native_fast_expr_c_expr(atom_holes)
+        local lhs = self.mul_lhs:native_fast_atom_c_expr(atom_holes.lhs)
+        local rhs = self.mul_rhs:native_fast_atom_c_expr(atom_holes.rhs)
+        local imm = Native.NativeExprImmediate(self.result):native_fast_atom_c_expr(atom_holes.imm)
+        return self.result:native_fast_mul_add_imm_c_expr(lhs, rhs, imm)
+    end
+
+    function Native.NativeAbiProjection:native_fast_public_result_scalar(target)
+        return Support.scalar_pointer(target.pointer_bits)
+    end
+
+    function Native.NativeAbiProjection:native_fast_public_call_protocol(target)
+        return Support.native_call_return_scalar(self:native_fast_public_result_scalar(target))
+    end
+
+    function Native.NativeAbiVoidResult:native_fast_public_result_scalar(_target) return Support.scalar_bool8() end
+    function Native.NativeAbiVoidResult:native_fast_public_call_protocol(_target) return Support.native_call_void() end
+    function Native.NativeAbiScalarValue:native_fast_public_result_scalar(_target) return self.scalar end
+    function Native.NativeAbiPointerValue:native_fast_public_result_scalar(_target) return self.scalar end
+    function Native.NativeAbiByRefValue:native_fast_public_result_scalar(target) return Support.scalar_pointer(target.pointer_bits) end
+
+    function Native.NativeAbiProjection:append_native_fast_public_result_holes(_holes, _id_base)
+        internal_error("unsupported native fast public ABI result hole")
+    end
+
+    function Native.NativeAbiVoidResult:append_native_fast_public_result_holes(_holes, _id_base)
+        return {}
+    end
+
+    function Native.NativeAbiScalarValue:append_native_fast_public_result_holes(holes, id_base)
+        local hole = scalar_immediate_hole(id_base .. ".result", self.scalar)
+        holes[#holes + 1] = hole
+        return { hole }
+    end
+
+    function Native.NativeAbiPointerValue:append_native_fast_public_result_holes(holes, id_base)
+        local hole = ptr64_hole(id_base .. ".result")
+        holes[#holes + 1] = hole
+        return { hole }
+    end
+
+    function Native.NativeAbiByRefValue:append_native_fast_public_result_holes(holes, id_base)
+        local hole = ptr64_hole(id_base .. ".result")
+        holes[#holes + 1] = hole
+        return { hole }
+    end
+
+    function Native.NativeAbiProjection:native_fast_public_result_expr(_target, _holes)
+        internal_error("unsupported native fast public ABI result expression")
+    end
+
+    function Native.NativeAbiScalarValue:native_fast_public_result_expr(_target, holes)
+        return "(" .. self:native_c_boundary_type() .. ")" .. hole_address_expr(holes[1])
+    end
+
+    function Native.NativeAbiPointerValue:native_fast_public_result_expr(_target, holes)
+        return "(void *)(uintptr_t)" .. hole_address_expr(holes[1])
+    end
+
+    function Native.NativeAbiByRefValue:native_fast_public_result_expr(_target, holes)
+        return "(void *)(uintptr_t)" .. hole_address_expr(holes[1])
+    end
+
+    function Native.NativeAbiProjection:append_native_fast_public_return_lines(_lines, _target, _holes)
+        internal_error("unsupported native fast public ABI return")
+    end
+
+    function Native.NativeAbiVoidResult:append_native_fast_public_return_lines(lines, _target, _holes)
+        lines[#lines + 1] = "    return;"
+    end
+
+    function Native.NativeAbiScalarValue:append_native_fast_public_return_lines(lines, target, holes)
+        lines[#lines + 1] = "    return " .. self:native_fast_public_result_expr(target, holes) .. ";"
+    end
+
+    function Native.NativeAbiPointerValue:append_native_fast_public_return_lines(lines, target, holes)
+        lines[#lines + 1] = "    return " .. self:native_fast_public_result_expr(target, holes) .. ";"
+    end
+
+    function Native.NativeAbiByRefValue:append_native_fast_public_return_lines(lines, target, holes)
+        lines[#lines + 1] = "    return " .. self:native_fast_public_result_expr(target, holes) .. ";"
+    end
+
+    function Native.NativeFastPublicAbiShape:native_fast_public_abi_token(_target)
+        internal_error("unsupported native fast public ABI shape token")
+    end
+
+    function Native.NativeFastAbi0:native_fast_public_abi_token(target)
+        return "abi0.r" .. self.result:native_projection_token(target)
+    end
+
+    function Native.NativeFastAbi1:native_fast_public_abi_token(target)
+        return "abi1.p" .. self.p0:native_projection_token(target) .. ".r" .. self.result:native_projection_token(target)
+    end
+
+    function Native.NativeFastAbi2:native_fast_public_abi_token(target)
+        return "abi2.p" .. self.p0:native_projection_token(target) .. "_" .. self.p1:native_projection_token(target) .. ".r" .. self.result:native_projection_token(target)
+    end
+
+    function Native.NativeFastAbi3:native_fast_public_abi_token(target)
+        return "abi3.p" .. self.p0:native_projection_token(target) .. "_" .. self.p1:native_projection_token(target) .. "_" .. self.p2:native_projection_token(target) .. ".r" .. self.result:native_projection_token(target)
+    end
+
+    function Native.NativeFastPublicAbiShape:native_fast_public_params()
+        internal_error("unsupported native fast public ABI params")
+    end
+
+    function Native.NativeFastAbi0:native_fast_public_params() return {} end
+    function Native.NativeFastAbi1:native_fast_public_params() return { self.p0 } end
+    function Native.NativeFastAbi2:native_fast_public_params() return { self.p0, self.p1 } end
+    function Native.NativeFastAbi3:native_fast_public_params() return { self.p0, self.p1, self.p2 } end
+
+    function Native.NativeFastPublicAbiShape:native_fast_public_result()
+        internal_error("unsupported native fast public ABI result")
+    end
+
+    function Native.NativeFastAbi0:native_fast_public_result() return self.result end
+    function Native.NativeFastAbi1:native_fast_public_result() return self.result end
+    function Native.NativeFastAbi2:native_fast_public_result() return self.result end
+    function Native.NativeFastAbi3:native_fast_public_result() return self.result end
+
+    local function fast_public_abi_family(input, shape, token, result, result_scalar)
+        return Native.NativeTemplateFamily(
+            Native.NativeTemplateFamilyId("native.fast.public_abi." .. token),
+            Native.NativeRoleCodeFunc,
+            {
+                Support.axis_target(input.target),
+                Support.axis_machine_scalar(result_scalar),
+                Support.axis_fast_public_abi(shape),
+            },
+            Support.protocol(result:native_fast_public_call_protocol(input.target), Support.register_none())
+        )
+    end
+
+    function Native.NativeFastPublicAbiShape:append_native_template_sources(out, input)
+        local target = input.target
+        local token = self:native_fast_public_abi_token(target)
+        local result = self:native_fast_public_result()
+        local result_scalar = result:native_fast_public_result_scalar(target)
+        local holes = {}
+        local result_holes = result:append_native_fast_public_result_holes(holes, "native.hole.fast.public_abi." .. token)
+        local family = fast_public_abi_family(input, self, token, result, result_scalar)
+        local signature = Support.spill_all_stencil_signature(result_scalar, {}, {})
+        local entry = "lalin_native_fast_public_abi_" .. symbol_fragment(token)
+        local public_params = self:native_fast_public_params()
+        local params = {}
+        for i, param in ipairs(public_params) do
+            params[#params + 1] = param:native_c_boundary_type() .. " p" .. tostring(i - 1)
+        end
+        if #params == 0 then params[#params + 1] = "void" end
+        local lines = c_prelude()
+        self:native_fast_public_result():append_native_c_declarations(lines, {})
+        for _, param in ipairs(public_params) do param:append_native_c_declarations(lines, {}) end
+        append_hole_externs(lines, holes)
+        lines[#lines + 1] = result:native_c_boundary_type() .. " " .. entry .. "(" .. table.concat(params, ", ") .. ") {"
+        for i = 1, #public_params do lines[#lines + 1] = "    (void)p" .. tostring(i - 1) .. ";" end
+        result:append_native_fast_public_return_lines(lines, target, result_holes)
+        lines[#lines + 1] = "}"
+        append_manifest_source(out, "fast.public_abi." .. token, family, Native.NativeChunkPublicAbiAdapter, signature, Native.NativeExtractStandaloneCallable, entry, lines, holes, {})
+    end
+
+    function Native.NativeFastRegionCapability:append_native_template_sources(out, input)
+        for _, shape in ipairs(self.public_abi_shapes or {}) do shape:append_native_template_sources(out, input) end
+        for _, shape in ipairs(self.code_expr_shapes or {}) do shape:append_native_template_sources(out, input) end
+    end
+
+    local function append_hole_relocation_markers(lines, holes)
+        for _, hole in ipairs(holes or {}) do
+            if not asdl.isa(hole.hole, Native.NativePatchCallRel32) then
+                local directive = hole.width == 8 and ".quad" or ".long"
+                lines[#lines + 1] = "    __asm__ volatile(\"jmp 1f\\n " .. directive .. " " .. hole.symbol .. "\\n1:\");"
+            end
+        end
+    end
+
+    local function complete_target(input)
+        return require_value(input.target, "complete-bank target")
+    end
+
+    local function complete_pointer_scalar(input)
+        return Support.scalar_pointer(complete_target(input).pointer_bits)
+    end
+
+    function Native.NativeCompleteValueClass:native_complete_value_token()
+        internal_error("unsupported complete value class token")
+    end
+    function Native.NativeCompleteValueVoidClass:native_complete_value_token() return "void" end
+    function Native.NativeCompleteValueScalarClass:native_complete_value_token() return self.scalar:native_scalar_token() end
+    function Native.NativeCompleteValuePointerClass:native_complete_value_token() return "ptr." .. self.pointer_scalar:native_scalar_token() end
+    function Native.NativeCompleteValueBytesClass:native_complete_value_token() return "bytes" end
+
+    function Native.NativeCompleteValueClass:native_complete_value_scalar(input)
+        return complete_pointer_scalar(input)
+    end
+    function Native.NativeCompleteValueScalarClass:native_complete_value_scalar(_input) return self.scalar end
+    function Native.NativeCompleteValuePointerClass:native_complete_value_scalar(_input) return self.pointer_scalar end
+
+    function Native.NativeCompleteScalarBytesClass:native_complete_scalar_bytes_token()
+        internal_error("unsupported complete scalar/bytes class token")
+    end
+    function Native.NativeCompleteScalarBytesScalarClass:native_complete_scalar_bytes_token() return self.scalar:native_scalar_token() end
+    function Native.NativeCompleteScalarBytesPointerClass:native_complete_scalar_bytes_token() return "ptr." .. self.pointer_scalar:native_scalar_token() end
+    function Native.NativeCompleteScalarBytesBytesClass:native_complete_scalar_bytes_token() return "bytes" end
+    function Native.NativeCompleteScalarBytesClass:native_complete_scalar_bytes_scalar(input)
+        return complete_pointer_scalar(input)
+    end
+    function Native.NativeCompleteScalarBytesScalarClass:native_complete_scalar_bytes_scalar(_input) return self.scalar end
+    function Native.NativeCompleteScalarBytesPointerClass:native_complete_scalar_bytes_scalar(_input) return self.pointer_scalar end
+
+    function Native.NativeCompleteScalarPointerClass:native_complete_scalar_pointer_token()
+        internal_error("unsupported complete scalar/pointer class token")
+    end
+    function Native.NativeCompleteScalarPointerScalarClass:native_complete_scalar_pointer_token() return self.scalar:native_scalar_token() end
+    function Native.NativeCompleteScalarPointerPointerClass:native_complete_scalar_pointer_token() return "ptr." .. self.pointer_scalar:native_scalar_token() end
+    function Native.NativeCompleteScalarPointerClass:native_complete_scalar_pointer_scalar(input)
+        return complete_pointer_scalar(input)
+    end
+    function Native.NativeCompleteScalarPointerScalarClass:native_complete_scalar_pointer_scalar(_input) return self.scalar end
+    function Native.NativeCompleteScalarPointerPointerClass:native_complete_scalar_pointer_scalar(_input) return self.pointer_scalar end
+
+    function Native.NativeCodeMicroOpShape:native_code_micro_op_token()
+        internal_error("unsupported Code complete-bank micro-op token")
+    end
+    function Native.NativeCodeMicroOpFrameEntryShape:native_code_micro_op_token() return "frame_entry" end
+    function Native.NativeCodeMicroOpScalarLoadShape:native_code_micro_op_token() return "scalar_load." .. self.scalar:native_scalar_token() end
+    function Native.NativeCodeMicroOpScalarStoreShape:native_code_micro_op_token() return "scalar_store." .. self.scalar:native_scalar_token() end
+    function Native.NativeCodeMicroOpScalarCopyShape:native_code_micro_op_token() return "scalar_copy." .. self.scalar:native_scalar_token() end
+    function Native.NativeCodeMicroOpBytesCopyShape:native_code_micro_op_token() return "bytes_copy" end
+    function Native.NativeCodeMicroOpBytesMoveShape:native_code_micro_op_token() return "bytes_move" end
+    function Native.NativeCodeMicroOpConstShape:native_code_micro_op_token() return "const." .. self.scalar:native_scalar_token() end
+    function Native.NativeCodeMicroOpUnaryShape:native_code_micro_op_token() return "unary." .. self.op:native_unary_family_name() .. "." .. self.scalar:native_scalar_token() end
+    function Native.NativeCodeMicroOpBinaryShape:native_code_micro_op_token() return "binary." .. self.op:native_binary_family_name() .. "." .. self.scalar:native_scalar_token() end
+    function Native.NativeCodeMicroOpCompareShape:native_code_micro_op_token() return "compare." .. self.cmp:native_compare_family_name() .. "." .. self.scalar:native_scalar_token() end
+    function Native.NativeCodeMicroOpCastShape:native_code_micro_op_token() return "cast." .. self.op:native_cast_family_name() .. "." .. self.from_scalar:native_scalar_token() .. ".to." .. self.to_scalar:native_scalar_token() end
+    function Native.NativeCodeMicroOpSelectShape:native_code_micro_op_token() return "select." .. self.scalar:native_scalar_token() end
+    function Native.NativeCodeMicroOpAddressBaseShape:native_code_micro_op_token() return "address_base" end
+    function Native.NativeCodeMicroOpAddressFieldShape:native_code_micro_op_token() return "address_field" end
+    function Native.NativeCodeMicroOpAddressIndexShape:native_code_micro_op_token() return "address_index" end
+    function Native.NativeCodeMicroOpAddressOffsetShape:native_code_micro_op_token() return "address_offset" end
+    function Native.NativeCodeMicroOpLoadShape:native_code_micro_op_token() return "load." .. self.value_class:native_complete_scalar_bytes_token() end
+    function Native.NativeCodeMicroOpStoreShape:native_code_micro_op_token() return "store." .. self.value_class:native_complete_scalar_bytes_token() end
+    function Native.NativeCodeMicroOpDescriptorFieldShape:native_code_micro_op_token() return "descriptor_field" end
+    function Native.NativeCodeMicroOpAggregateStepShape:native_code_micro_op_token() return "aggregate_step" end
+    function Native.NativeCodeMicroOpArrayStepShape:native_code_micro_op_token() return "array_step" end
+    function Native.NativeCodeMicroOpVariantTagShape:native_code_micro_op_token() return "variant_tag" end
+    function Native.NativeCodeMicroOpVariantPayloadShape:native_code_micro_op_token() return "variant_payload" end
+    function Native.NativeCodeMicroOpJumpShape:native_code_micro_op_token() return "jump" end
+    function Native.NativeCodeMicroOpBranchShape:native_code_micro_op_token() return "branch" end
+    function Native.NativeCodeMicroOpSwitchStepShape:native_code_micro_op_token() return "switch_step" end
+    function Native.NativeCodeMicroOpTrapShape:native_code_micro_op_token() return "trap" end
+    function Native.NativeCodeMicroOpUnreachableShape:native_code_micro_op_token() return "unreachable" end
+    function Native.NativeCodeMicroOpReturnVoidShape:native_code_micro_op_token() return "return_void" end
+    function Native.NativeCodeMicroOpReturnScalarShape:native_code_micro_op_token() return "return_scalar." .. self.scalar:native_scalar_token() end
+    function Native.NativeCodeMicroOpReturnSretShape:native_code_micro_op_token() return "return_sret" end
+    function Native.NativeCodeMicroOpCallDirectShape:native_code_micro_op_token() return "call_direct" end
+    function Native.NativeCodeMicroOpCallExternShape:native_code_micro_op_token() return "call_extern" end
+    function Native.NativeCodeMicroOpCallIndirectShape:native_code_micro_op_token() return "call_indirect" end
+    function Native.NativeCodeMicroOpCallClosureShape:native_code_micro_op_token() return "call_closure" end
+
+    local function append_complete_code_source(out, input, shape, chunk_class, scalar, role, holes, body_lines, continuation_ordinals, extraction, signature, extra_relocation_kinds)
+        local token = shape:native_code_micro_op_token()
+        local family = Support.code_micro_op_frame_family(token, complete_target(input), scalar, shape, role)
+        local entry = "lalin_native_code_micro_" .. symbol_fragment(token)
+        local lines = c_prelude()
+        append_hole_externs(lines, holes or {})
+        for _, line in ipairs(body_lines or {}) do lines[#lines + 1] = line end
+        append_manifest_source(
+            out,
+            "code.micro." .. token,
+            family,
+            chunk_class,
+            signature or scalar_frame_signature(scalar, #(holes or {}), continuation_ordinals or {}),
+            extraction or Native.NativeExtractContinuationFragment({ Support.next_continuation_symbol() }),
+            entry,
+            lines,
+            holes or {},
+            continuation_ordinals or { Support.next_continuation_ordinal() },
+            extra_relocation_kinds or {}
+        )
+    end
+
+    local function append_complete_next_fragment(out, input, shape, chunk_class, scalar, holes, body, extra_relocation_kinds)
+        local next_symbol = Support.next_continuation_symbol()
+        local lines = { continuation_extern(next_symbol), "void lalin_native_code_micro_" .. symbol_fragment(shape:native_code_micro_op_token()) .. "(uint8_t *frame) {" }
+        append_hole_relocation_markers(lines, holes or {})
+        for _, line in ipairs(body or {}) do lines[#lines + 1] = line end
+        lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
+        lines[#lines + 1] = "}"
+        append_complete_code_source(out, input, shape, chunk_class, scalar, Native.NativeRoleCodeInst, holes or {}, lines, { Support.next_continuation_ordinal() }, nil, nil, extra_relocation_kinds or {})
+    end
+
+    function Native.NativeCodeMicroOpShape:append_native_template_sources(_out, _input)
+        internal_error("unsupported Code complete-bank micro-op source builder")
+    end
+
+    function Native.NativeCodeMicroOpFrameEntryShape:append_native_template_sources(out, input)
+        local scalar = complete_pointer_scalar(input)
+        local first = Support.first_continuation_symbol()
+        local first_ordinal = Support.first_continuation_ordinal()
+        local first_signature = Support.stencil_continuation_signature(first_ordinal, {})
+        local signature = Support.spill_all_stencil_signature(scalar, {}, { first_signature })
+        local lines = { continuation_extern(first, first_signature), "void lalin_native_code_micro_frame_entry(uint8_t *frame) {", "    " .. first.name .. "(frame);", "}" }
+        append_complete_code_source(out, input, self, Native.NativeChunkFrameEntry, scalar, Native.NativeRoleCodeFunc, {}, lines, { first_ordinal }, Native.NativeExtractEntryCallable(Native.NativePatchFrameSize(FRAME_BYTES), first), signature)
+    end
+
+    function Native.NativeCodeMicroOpScalarLoadShape:append_native_template_sources(out, input)
+        local c_type, token = self.scalar:native_c_scalar_type(), self.scalar:native_scalar_token()
+        local holes = { frame_offset_hole("native.hole.code.micro.scalar_load." .. token .. ".addr"), frame_offset_hole("native.hole.code.micro.scalar_load." .. token .. ".dst") }
+        append_complete_next_fragment(out, input, self, Native.NativeChunkAddressMemoryOp, self.scalar, holes, {
+            "    uintptr_t addr = " .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";",
+            frame_store(c_type, hole_address_expr(holes[2]), "*(" .. c_type .. " *)(void *)addr"),
+        })
+    end
+
+    function Native.NativeCodeMicroOpScalarStoreShape:append_native_template_sources(out, input)
+        local c_type, token = self.scalar:native_c_scalar_type(), self.scalar:native_scalar_token()
+        local holes = { frame_offset_hole("native.hole.code.micro.scalar_store." .. token .. ".addr"), frame_offset_hole("native.hole.code.micro.scalar_store." .. token .. ".src") }
+        append_complete_next_fragment(out, input, self, Native.NativeChunkAddressMemoryOp, self.scalar, holes, {
+            "    uintptr_t addr = " .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";",
+            "    *(" .. c_type .. " *)(void *)addr = " .. frame_load(c_type, hole_address_expr(holes[2])) .. ";",
+        })
+    end
+
+    function Native.NativeCodeMicroOpScalarCopyShape:append_native_template_sources(out, input)
+        local c_type, token = self.scalar:native_c_scalar_type(), self.scalar:native_scalar_token()
+        local holes = { frame_offset_hole("native.hole.code.micro.scalar_copy." .. token .. ".src"), frame_offset_hole("native.hole.code.micro.scalar_copy." .. token .. ".dst") }
+        append_complete_next_fragment(out, input, self, Native.NativeChunkEdgeCopy, self.scalar, holes, {
+            "    " .. c_type .. " value = " .. frame_load(c_type, hole_address_expr(holes[1])) .. ";",
+            frame_store(c_type, hole_address_expr(holes[2]), "value"),
+        })
+    end
+
+    local function complete_byte_copy_body(holes, move)
+        local body = {
+            "    uint8_t *dst = (uint8_t *)(uintptr_t)" .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";",
+            "    const uint8_t *src = (const uint8_t *)(uintptr_t)" .. frame_load("uintptr_t", hole_address_expr(holes[2])) .. ";",
+            "    uint32_t n = (uint32_t)" .. hole_address_expr(holes[3]) .. ";",
+        }
+        if move then
+            body[#body + 1] = "    if (dst > src) { while (n != 0) { n = n - 1; dst[n] = src[n]; } }"
+            body[#body + 1] = "    else { for (uint32_t i = 0; i < n; i = i + 1) dst[i] = src[i]; }"
+        else
+            body[#body + 1] = "    for (uint32_t i = 0; i < n; i = i + 1) dst[i] = src[i];"
+        end
+        return body
+    end
+
+    local function append_complete_bytes_copy(out, input, shape, move)
+        local scalar = complete_pointer_scalar(input)
+        local token = move and "bytes_move" or "bytes_copy"
+        local holes = { frame_offset_hole("native.hole.code.micro." .. token .. ".dst"), frame_offset_hole("native.hole.code.micro." .. token .. ".src"), imm32_hole("native.hole.code.micro." .. token .. ".size") }
+        append_complete_next_fragment(out, input, shape, move and Native.NativeChunkParallelCopy or Native.NativeChunkEdgeCopy, scalar, holes, complete_byte_copy_body(holes, move))
+    end
+    function Native.NativeCodeMicroOpBytesCopyShape:append_native_template_sources(out, input) append_complete_bytes_copy(out, input, self, false) end
+    function Native.NativeCodeMicroOpBytesMoveShape:append_native_template_sources(out, input) append_complete_bytes_copy(out, input, self, true) end
+
+    function Native.NativeCodeMicroOpConstShape:append_native_template_sources(out, input)
+        local token, c_type = self.scalar:native_scalar_token(), self.scalar:native_c_scalar_type()
+        local holes = { frame_offset_hole("native.hole.code.micro.const." .. token .. ".dst"), scalar_immediate_hole("native.hole.code.micro.const." .. token, self.scalar) }
+        append_complete_next_fragment(out, input, self, Native.NativeChunkConstantLoad, self.scalar, holes, { frame_store(c_type, hole_address_expr(holes[1]), "(" .. c_type .. ")" .. hole_address_expr(holes[2])) })
+    end
+
+    function Native.NativeCodeMicroOpUnaryShape:append_native_template_sources(out, input)
+        local c_type, token, name = self.scalar:native_c_scalar_type(), self.scalar:native_scalar_token(), self.op:native_unary_family_name()
+        local result_type = name == "not" and "uint8_t" or c_type
+        local holes = { frame_offset_hole("native.hole.code.micro.unary." .. token .. "." .. name .. ".src"), frame_offset_hole("native.hole.code.micro.unary." .. token .. "." .. name .. ".dst") }
+        local src = frame_load(c_type, hole_address_expr(holes[1]))
+        local is_float = asdl.isa(self.scalar, Native.NativeScalarFloat)
+        local expr = is_float and "(-src)" or self.op:native_integer_c_expr(self.scalar, "src")
+        local extra_relocations = is_float and { Native.NativeTemplateRelocationConstantPool } or {}
+        append_complete_next_fragment(out, input, self, Native.NativeChunkUnaryOp, self.scalar, holes, { "    " .. c_type .. " src = " .. src .. ";", frame_store(result_type, hole_address_expr(holes[2]), expr) }, extra_relocations)
+    end
+
+    function Native.NativeCodeMicroOpBinaryShape:append_native_template_sources(out, input)
+        local c_type, token, name = self.scalar:native_c_scalar_type(), self.scalar:native_scalar_token(), self.op:native_binary_family_name()
+        local holes = { frame_offset_hole("native.hole.code.micro.binary." .. token .. "." .. name .. ".lhs"), frame_offset_hole("native.hole.code.micro.binary." .. token .. "." .. name .. ".rhs"), frame_offset_hole("native.hole.code.micro.binary." .. token .. "." .. name .. ".dst") }
+        local expr = asdl.isa(self.scalar, Native.NativeScalarFloat) and self.op:native_float_c_expr(self.scalar, "lhs", "rhs") or self.op:native_integer_c_expr(self.scalar, "lhs", "rhs")
+        append_complete_next_fragment(out, input, self, Native.NativeChunkBinaryOp, self.scalar, holes, {
+            "    " .. c_type .. " lhs = " .. frame_load(c_type, hole_address_expr(holes[1])) .. ";",
+            "    " .. c_type .. " rhs = " .. frame_load(c_type, hole_address_expr(holes[2])) .. ";",
+            frame_store(c_type, hole_address_expr(holes[3]), expr),
+        })
+    end
+
+    function Native.NativeCodeMicroOpCompareShape:append_native_template_sources(out, input)
+        local c_type, token, name = self.scalar:native_c_scalar_type(), self.scalar:native_scalar_token(), self.cmp:native_compare_family_name()
+        local holes = { frame_offset_hole("native.hole.code.micro.compare." .. token .. "." .. name .. ".lhs"), frame_offset_hole("native.hole.code.micro.compare." .. token .. "." .. name .. ".rhs"), frame_offset_hole("native.hole.code.micro.compare." .. token .. ".dst") }
+        append_complete_next_fragment(out, input, self, Native.NativeChunkCompareOp, self.scalar, holes, {
+            "    " .. c_type .. " lhs = " .. frame_load(c_type, hole_address_expr(holes[1])) .. ";",
+            "    " .. c_type .. " rhs = " .. frame_load(c_type, hole_address_expr(holes[2])) .. ";",
+            frame_store("uint8_t", hole_address_expr(holes[3]), self.cmp:native_c_compare_expr(self.scalar, "lhs", "rhs")),
+        })
+    end
+
+    function Native.NativeCodeMicroOpCastShape:append_native_template_sources(out, input)
+        local from_token, to_token, name = self.from_scalar:native_scalar_token(), self.to_scalar:native_scalar_token(), self.op:native_cast_family_name()
+        local holes = { frame_offset_hole("native.hole.code.micro.cast." .. name .. "." .. from_token .. ".src"), frame_offset_hole("native.hole.code.micro.cast." .. name .. "." .. from_token .. ".to." .. to_token .. ".dst") }
+        local lines = { "    " .. self.from_scalar:native_c_scalar_type() .. " source_value = " .. frame_load(self.from_scalar:native_c_scalar_type(), hole_address_expr(holes[1])) .. ";" }
+        self.op:append_native_cast_c_lines(lines, self.from_scalar, self.to_scalar, "source_value", "cast_value")
+        lines[#lines + 1] = frame_store(self.to_scalar:native_c_scalar_type(), hole_address_expr(holes[2]), "cast_value")
+        append_complete_next_fragment(out, input, self, Native.NativeChunkCastOp, self.to_scalar, holes, lines, self.op:native_cast_extra_relocation_kinds())
+    end
+
+    function Native.NativeCodeMicroOpSelectShape:append_native_template_sources(out, input)
+        local c_type, token = self.scalar:native_c_scalar_type(), self.scalar:native_scalar_token()
+        local holes = { frame_offset_hole("native.hole.code.micro.select." .. token .. ".cond"), frame_offset_hole("native.hole.code.micro.select." .. token .. ".true"), frame_offset_hole("native.hole.code.micro.select." .. token .. ".false"), frame_offset_hole("native.hole.code.micro.select." .. token .. ".dst") }
+        append_complete_next_fragment(out, input, self, Native.NativeChunkSelectOp, self.scalar, holes, {
+            "    uint8_t cond = " .. frame_load("uint8_t", hole_address_expr(holes[1])) .. ";",
+            "    " .. c_type .. " true_value = " .. frame_load(c_type, hole_address_expr(holes[2])) .. ";",
+            "    " .. c_type .. " false_value = " .. frame_load(c_type, hole_address_expr(holes[3])) .. ";",
+            frame_store(c_type, hole_address_expr(holes[4]), "cond ? true_value : false_value"),
+        })
+    end
+
+    local function append_complete_address_binary(out, input, shape, suffix, expr)
+        local scalar = complete_pointer_scalar(input)
+        local holes = { frame_offset_hole("native.hole.code.micro." .. suffix .. ".base"), frame_offset_hole("native.hole.code.micro." .. suffix .. ".index"), imm32_hole("native.hole.code.micro." .. suffix .. ".payload"), frame_offset_hole("native.hole.code.micro." .. suffix .. ".dst") }
+        append_complete_next_fragment(out, input, shape, Native.NativeChunkAddressMemoryOp, scalar, holes, {
+            "    uintptr_t base = " .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";",
+            "    uintptr_t index = " .. frame_load("uintptr_t", hole_address_expr(holes[2])) .. ";",
+            frame_store("uintptr_t", hole_address_expr(holes[4]), expr("base", "index", hole_address_expr(holes[3]))),
+        })
+    end
+    function Native.NativeCodeMicroOpAddressBaseShape:append_native_template_sources(out, input)
+        local scalar = complete_pointer_scalar(input)
+        local holes = { ptr64_hole("native.hole.code.micro.address_base.symbol"), frame_offset_hole("native.hole.code.micro.address_base.dst") }
+        append_complete_next_fragment(out, input, self, Native.NativeChunkAddressMemoryOp, scalar, holes, { frame_store("uintptr_t", hole_address_expr(holes[2]), hole_address_expr(holes[1])) })
+    end
+    function Native.NativeCodeMicroOpAddressFieldShape:append_native_template_sources(out, input) append_complete_address_binary(out, input, self, "address_field", function(base, _index, payload) return base .. " + (uintptr_t)" .. payload end) end
+    function Native.NativeCodeMicroOpAddressIndexShape:append_native_template_sources(out, input) append_complete_address_binary(out, input, self, "address_index", function(base, index, payload) return base .. " + (" .. index .. " * (uintptr_t)" .. payload .. ")" end) end
+    function Native.NativeCodeMicroOpAddressOffsetShape:append_native_template_sources(out, input) append_complete_address_binary(out, input, self, "address_offset", function(base, index, payload) return base .. " + " .. index .. " + (uintptr_t)" .. payload end) end
+    function Native.NativeCodeMicroOpDescriptorFieldShape:append_native_template_sources(out, input) append_complete_address_binary(out, input, self, "descriptor_field", function(base, _index, payload) return base .. " + (uintptr_t)" .. payload end) end
+    function Native.NativeCodeMicroOpAggregateStepShape:append_native_template_sources(out, input) append_complete_address_binary(out, input, self, "aggregate_step", function(base, _index, payload) return base .. " + (uintptr_t)" .. payload end) end
+    function Native.NativeCodeMicroOpArrayStepShape:append_native_template_sources(out, input) append_complete_address_binary(out, input, self, "array_step", function(base, index, payload) return base .. " + (" .. index .. " * (uintptr_t)" .. payload .. ")" end) end
+    function Native.NativeCodeMicroOpVariantTagShape:append_native_template_sources(out, input) append_complete_address_binary(out, input, self, "variant_tag", function(base, _index, payload) return base .. " + (uintptr_t)" .. payload end) end
+    function Native.NativeCodeMicroOpVariantPayloadShape:append_native_template_sources(out, input) append_complete_address_binary(out, input, self, "variant_payload", function(base, _index, payload) return base .. " + (uintptr_t)" .. payload end) end
+
+    function Native.NativeCodeMicroOpLoadShape:append_native_template_sources(out, input)
+        local scalar = self.value_class:native_complete_scalar_bytes_scalar(input)
+        local c_type, token = scalar:native_c_scalar_type(), self.value_class:native_complete_scalar_bytes_token()
+        local holes = { frame_offset_hole("native.hole.code.micro.load." .. token .. ".addr"), frame_offset_hole("native.hole.code.micro.load." .. token .. ".dst") }
+        append_complete_next_fragment(out, input, self, Native.NativeChunkAddressMemoryOp, scalar, holes, {
+            "    uintptr_t addr = " .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";",
+            frame_store(c_type, hole_address_expr(holes[2]), "*(" .. c_type .. " *)(void *)addr"),
+        })
+    end
+    function Native.NativeCodeMicroOpStoreShape:append_native_template_sources(out, input)
+        local scalar = self.value_class:native_complete_scalar_bytes_scalar(input)
+        local c_type, token = scalar:native_c_scalar_type(), self.value_class:native_complete_scalar_bytes_token()
+        local holes = { frame_offset_hole("native.hole.code.micro.store." .. token .. ".addr"), frame_offset_hole("native.hole.code.micro.store." .. token .. ".src") }
+        append_complete_next_fragment(out, input, self, Native.NativeChunkAddressMemoryOp, scalar, holes, {
+            "    uintptr_t addr = " .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";",
+            "    *(" .. c_type .. " *)(void *)addr = " .. frame_load(c_type, hole_address_expr(holes[2])) .. ";",
+        })
+    end
+
+    function Native.NativeCodeMicroOpJumpShape:append_native_template_sources(out, input)
+        append_complete_next_fragment(out, input, self, Native.NativeChunkControlOp, complete_pointer_scalar(input), {}, {})
+    end
+    function Native.NativeCodeMicroOpBranchShape:append_native_template_sources(out, input)
+        local scalar = complete_pointer_scalar(input)
+        local then_symbol, else_symbol = Support.then_continuation_symbol(), Support.else_continuation_symbol()
+        local then_ordinal, else_ordinal = Support.then_continuation_ordinal(), Support.else_continuation_ordinal()
+        local holes = { frame_offset_hole("native.hole.code.micro.branch.cond") }
+        local lines = { continuation_extern(then_symbol), continuation_extern(else_symbol), "void lalin_native_code_micro_branch(uint8_t *frame) {", "    uint8_t cond = " .. frame_load("uint8_t", hole_address_expr(holes[1])) .. ";", "    if (cond != 0) { " .. then_symbol.name .. "(frame); } else { " .. else_symbol.name .. "(frame); }", "}" }
+        append_complete_code_source(out, input, self, Native.NativeChunkControlOp, scalar, Native.NativeRoleCodeTerm, holes, lines, { then_ordinal, else_ordinal }, Native.NativeExtractContinuationFragment({ then_symbol, else_symbol }), scalar_frame_signature(scalar, 1, { then_ordinal, else_ordinal }))
+    end
+    function Native.NativeCodeMicroOpSwitchStepShape:append_native_template_sources(out, input)
+        local scalar = complete_pointer_scalar(input)
+        local then_symbol, else_symbol = Support.then_continuation_symbol(), Support.else_continuation_symbol()
+        local then_ordinal, else_ordinal = Support.then_continuation_ordinal(), Support.else_continuation_ordinal()
+        local holes = { frame_offset_hole("native.hole.code.micro.switch_step.key"), imm32_hole("native.hole.code.micro.switch_step.case") }
+        local lines = { continuation_extern(then_symbol), continuation_extern(else_symbol), "void lalin_native_code_micro_switch_step(uint8_t *frame) {", "    uintptr_t key = " .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";", "    if (key == (uintptr_t)" .. hole_address_expr(holes[2]) .. ") { " .. then_symbol.name .. "(frame); } else { " .. else_symbol.name .. "(frame); }", "}" }
+        append_complete_code_source(out, input, self, Native.NativeChunkControlOp, scalar, Native.NativeRoleCodeTerm, holes, lines, { then_ordinal, else_ordinal }, Native.NativeExtractContinuationFragment({ then_symbol, else_symbol }), scalar_frame_signature(scalar, 2, { then_ordinal, else_ordinal }))
+    end
+    function Native.NativeCodeMicroOpTrapShape:append_native_template_sources(out, input)
+        append_complete_code_source(out, input, self, Native.NativeChunkControlOp, complete_pointer_scalar(input), Native.NativeRoleCodeTerm, {}, { "void lalin_native_code_micro_trap(uint8_t *frame) {", "    (void)frame;", "    __builtin_trap();", "}" }, {}, Native.NativeExtractTerminalContinuation, scalar_frame_signature(complete_pointer_scalar(input), 0, {}))
+    end
+    function Native.NativeCodeMicroOpUnreachableShape:append_native_template_sources(out, input)
+        append_complete_code_source(out, input, self, Native.NativeChunkControlOp, complete_pointer_scalar(input), Native.NativeRoleCodeTerm, {}, { "void lalin_native_code_micro_unreachable(uint8_t *frame) {", "    (void)frame;", "    __builtin_unreachable();", "}" }, {}, Native.NativeExtractTerminalContinuation, scalar_frame_signature(complete_pointer_scalar(input), 0, {}))
+    end
+    function Native.NativeCodeMicroOpReturnVoidShape:append_native_template_sources(out, input)
+        append_complete_code_source(out, input, self, Native.NativeChunkTerminalContinuation, complete_pointer_scalar(input), Native.NativeRoleCodeTerm, {}, { "void lalin_native_code_micro_return_void(uint8_t *frame) {", "    (void)frame;", "    return;", "}" }, {}, Native.NativeExtractTerminalContinuation, scalar_frame_signature(complete_pointer_scalar(input), 0, {}))
+    end
+    function Native.NativeCodeMicroOpReturnScalarShape:append_native_template_sources(out, input)
+        append_complete_code_source(out, input, self, Native.NativeChunkTerminalContinuation, self.scalar, Native.NativeRoleCodeTerm, {}, { "void lalin_native_code_micro_" .. symbol_fragment(self:native_code_micro_op_token()) .. "(uint8_t *frame) {", "    (void)frame;", "    return;", "}" }, {}, Native.NativeExtractTerminalContinuation, scalar_frame_signature(self.scalar, 0, {}))
+    end
+    function Native.NativeCodeMicroOpReturnSretShape:append_native_template_sources(out, input)
+        append_complete_code_source(out, input, self, Native.NativeChunkTerminalContinuation, complete_pointer_scalar(input), Native.NativeRoleCodeTerm, {}, { "void lalin_native_code_micro_return_sret(uint8_t *frame) {", "    (void)frame;", "    return;", "}" }, {}, Native.NativeExtractTerminalContinuation, scalar_frame_signature(complete_pointer_scalar(input), 0, {}))
+    end
+
+    local function append_complete_call(out, input, shape, suffix, indirect, closure)
+        local scalar = complete_pointer_scalar(input)
+        local holes = {}
+        if indirect or closure then holes[#holes + 1] = frame_offset_hole("native.hole.code.micro.call_" .. suffix .. ".fn") else holes[#holes + 1] = call_rel32_hole("native.hole.code.micro.call_" .. suffix .. ".target") end
+        if closure then holes[#holes + 1] = frame_offset_hole("native.hole.code.micro.call_closure.env") end
+        local next_symbol = Support.next_continuation_symbol()
+        local lines = { continuation_extern(next_symbol), "typedef void (*lalin_native_graph_call_t)(uint8_t *frame);", "void lalin_native_code_micro_call_" .. suffix .. "(uint8_t *frame) {" }
+        append_hole_relocation_markers(lines, holes)
+        if indirect or closure then
+            lines[#lines + 1] = "    lalin_native_graph_call_t fn = (lalin_native_graph_call_t)(uintptr_t)" .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";"
+            if closure then lines[#lines + 1] = "    (void)" .. frame_load("uintptr_t", hole_address_expr(holes[2])) .. ";" end
+            lines[#lines + 1] = "    fn(frame);"
+        else
+            lines[#lines + 1] = "    extern void " .. holes[1].symbol .. "(uint8_t *frame);"
+            lines[#lines + 1] = "    " .. holes[1].symbol .. "(frame);"
+        end
+        lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
+        lines[#lines + 1] = "}"
+        append_complete_code_source(out, input, shape, Native.NativeChunkCallOp, scalar, Native.NativeRoleCodeInst, holes, lines, { Support.next_continuation_ordinal() })
+    end
+    function Native.NativeCodeMicroOpCallDirectShape:append_native_template_sources(out, input) append_complete_call(out, input, self, "direct", false, false) end
+    function Native.NativeCodeMicroOpCallExternShape:append_native_template_sources(out, input) append_complete_call(out, input, self, "extern", false, false) end
+    function Native.NativeCodeMicroOpCallIndirectShape:append_native_template_sources(out, input) append_complete_call(out, input, self, "indirect", true, false) end
+    function Native.NativeCodeMicroOpCallClosureShape:append_native_template_sources(out, input) append_complete_call(out, input, self, "closure", true, true) end
+
+    function Native.NativeAbiMicroOpShape:native_abi_micro_op_token()
+        internal_error("unsupported ABI complete-bank micro-op token")
+    end
+    function Native.NativeAbiMicroOpParamRegisterShape:native_abi_micro_op_token() return "param_register." .. self.value_class:native_complete_scalar_pointer_token() end
+    function Native.NativeAbiMicroOpParamStackShape:native_abi_micro_op_token() return "param_stack." .. self.value_class:native_complete_value_token() end
+    function Native.NativeAbiMicroOpParamByRefShape:native_abi_micro_op_token() return "param_byref" end
+    function Native.NativeAbiMicroOpResultRegisterShape:native_abi_micro_op_token() return "result_register." .. self.value_class:native_complete_scalar_pointer_token() end
+    function Native.NativeAbiMicroOpResultSretShape:native_abi_micro_op_token() return "result_sret" end
+    function Native.NativeAbiMicroOpResultVoidShape:native_abi_micro_op_token() return "result_void" end
+    function Native.NativeAbiMicroOpCallDirectShape:native_abi_micro_op_token() return "call_direct" end
+    function Native.NativeAbiMicroOpCallExternShape:native_abi_micro_op_token() return "call_extern" end
+    function Native.NativeAbiMicroOpCallIndirectShape:native_abi_micro_op_token() return "call_indirect" end
+    function Native.NativeAbiMicroOpCallClosureShape:native_abi_micro_op_token() return "call_closure" end
+    function Native.NativeAbiMicroOpReturnVoidShape:native_abi_micro_op_token() return "return_void" end
+    function Native.NativeAbiMicroOpReturnScalarShape:native_abi_micro_op_token() return "return_scalar." .. self.value_class:native_complete_scalar_pointer_token() end
+    function Native.NativeAbiMicroOpReturnSretShape:native_abi_micro_op_token() return "return_sret" end
+
+    local function append_complete_abi_source(out, input, shape, scalar, holes, body, terminal)
+        local token = shape:native_abi_micro_op_token()
+        local family = Support.abi_micro_op_frame_family(token, complete_target(input), scalar, shape)
+        local entry = "lalin_native_abi_micro_" .. symbol_fragment(token)
+        local next_symbol = Support.next_continuation_symbol()
+        local lines = c_prelude()
+        append_hole_externs(lines, holes or {})
+        if not terminal then lines[#lines + 1] = continuation_extern(next_symbol) end
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        append_hole_relocation_markers(lines, holes or {})
+        for _, line in ipairs(body or {}) do lines[#lines + 1] = line end
+        if not terminal then lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);" end
+        lines[#lines + 1] = "}"
+        append_manifest_source(out, "abi.micro." .. token, family, Native.NativeChunkPublicAbiAdapter, scalar_frame_signature(scalar, #(holes or {}), terminal and {} or { Support.next_continuation_ordinal() }), terminal and Native.NativeExtractTerminalContinuation or Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, holes or {}, terminal and {} or { Support.next_continuation_ordinal() })
+    end
+
+    function Native.NativeAbiMicroOpShape:append_native_template_sources(_out, _input)
+        internal_error("unsupported ABI complete-bank micro-op source builder")
+    end
+    function Native.NativeAbiMicroOpParamRegisterShape:append_native_template_sources(out, input)
+        local scalar = self.value_class:native_complete_scalar_pointer_scalar(input)
+        local token = self:native_abi_micro_op_token()
+        local hole = frame_offset_hole("native.hole.abi.micro." .. token .. ".dst")
+        local next_symbol = Support.next_continuation_symbol()
+        local next_ordinal = Support.next_continuation_ordinal()
+        local signature = Support.spill_all_stencil_signature(
+            scalar,
+            { Support.stencil_operand(0, scalar, Support.location_class_continuation_arg()), Support.stencil_operand(1, scalar, Support.location_class_frame_slot()) },
+            { Support.stencil_continuation_signature(next_ordinal, {}) }
+        )
+        local family = Support.abi_micro_op_frame_family(token, complete_target(input), scalar, self)
+        local lines = c_prelude()
+        append_hole_externs(lines, { hole })
+        lines[#lines + 1] = continuation_extern(next_symbol)
+        lines[#lines + 1] = "void lalin_native_abi_micro_" .. symbol_fragment(token) .. "(uint8_t *frame, " .. scalar:native_c_scalar_type() .. " arg0) {"
+        lines[#lines + 1] = frame_store(scalar:native_c_scalar_type(), hole_address_expr(hole), "arg0")
+        lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
+        lines[#lines + 1] = "}"
+        append_manifest_source(out, "abi.micro." .. token, family, Native.NativeChunkPublicAbiAdapter, signature, Native.NativeExtractContinuationFragment({ next_symbol }), "lalin_native_abi_micro_" .. symbol_fragment(token), lines, { hole }, { next_ordinal })
+    end
+    function Native.NativeAbiMicroOpParamStackShape:append_native_template_sources(out, input)
+        local scalar = self.value_class:native_complete_value_scalar(input)
+        local holes = { frame_offset_hole("native.hole.abi.micro." .. self:native_abi_micro_op_token() .. ".dst"), frame_offset_hole("native.hole.abi.micro." .. self:native_abi_micro_op_token() .. ".src") }
+        append_complete_abi_source(out, input, self, scalar, holes, { frame_store(scalar:native_c_scalar_type(), hole_address_expr(holes[1]), frame_load(scalar:native_c_scalar_type(), hole_address_expr(holes[2]))) })
+    end
+    function Native.NativeAbiMicroOpParamByRefShape:append_native_template_sources(out, input)
+        local scalar = complete_pointer_scalar(input)
+        local holes = { frame_offset_hole("native.hole.abi.micro.param_byref.dst"), frame_offset_hole("native.hole.abi.micro.param_byref.src") }
+        append_complete_abi_source(out, input, self, scalar, holes, { frame_store(scalar:native_c_scalar_type(), hole_address_expr(holes[1]), frame_load(scalar:native_c_scalar_type(), hole_address_expr(holes[2]))) })
+    end
+    function Native.NativeAbiMicroOpResultRegisterShape:append_native_template_sources(out, input)
+        local scalar = self.value_class:native_complete_scalar_pointer_scalar(input)
+        local holes = { frame_offset_hole("native.hole.abi.micro." .. self:native_abi_micro_op_token() .. ".src") }
+        append_complete_abi_source(out, input, self, scalar, holes, { "    volatile " .. scalar:native_c_scalar_type() .. " value = " .. frame_load(scalar:native_c_scalar_type(), hole_address_expr(holes[1])) .. ";", "    (void)value;" })
+    end
+    function Native.NativeAbiMicroOpResultSretShape:append_native_template_sources(out, input)
+        append_complete_abi_source(out, input, self, complete_pointer_scalar(input), {}, { "    (void)frame;" })
+    end
+    function Native.NativeAbiMicroOpResultVoidShape:append_native_template_sources(out, input)
+        append_complete_abi_source(out, input, self, complete_pointer_scalar(input), {}, { "    (void)frame;" })
+    end
+    local function append_complete_abi_call(out, input, shape, suffix, indirect, closure)
+        local scalar = complete_pointer_scalar(input)
+        local token = shape:native_abi_micro_op_token()
+        local holes = {}
+        if indirect or closure then holes[#holes + 1] = frame_offset_hole("native.hole.abi.micro." .. token .. ".fn") else holes[#holes + 1] = call_rel32_hole("native.hole.abi.micro." .. token .. ".target") end
+        if closure then holes[#holes + 1] = frame_offset_hole("native.hole.abi.micro." .. token .. ".env") end
+        local next_symbol = Support.next_continuation_symbol()
+        local lines = { "typedef void (*lalin_native_abi_call_t)(uint8_t *frame);" }
+        if indirect or closure then
+            lines[#lines + 1] = "    lalin_native_abi_call_t fn = (lalin_native_abi_call_t)(uintptr_t)" .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";"
+            if closure then lines[#lines + 1] = "    (void)" .. frame_load("uintptr_t", hole_address_expr(holes[2])) .. ";" end
+            lines[#lines + 1] = "    fn(frame);"
+        else
+            lines[#lines + 1] = "    extern void " .. holes[1].symbol .. "(uint8_t *frame);"
+            lines[#lines + 1] = "    " .. holes[1].symbol .. "(frame);"
+        end
+        append_complete_abi_source(out, input, shape, scalar, holes, lines)
+    end
+    function Native.NativeAbiMicroOpCallDirectShape:append_native_template_sources(out, input) append_complete_abi_call(out, input, self, "direct", false, false) end
+    function Native.NativeAbiMicroOpCallExternShape:append_native_template_sources(out, input) append_complete_abi_call(out, input, self, "extern", false, false) end
+    function Native.NativeAbiMicroOpCallIndirectShape:append_native_template_sources(out, input) append_complete_abi_call(out, input, self, "indirect", true, false) end
+    function Native.NativeAbiMicroOpCallClosureShape:append_native_template_sources(out, input) append_complete_abi_call(out, input, self, "closure", true, true) end
+    function Native.NativeAbiMicroOpReturnVoidShape:append_native_template_sources(out, input)
+        append_complete_abi_source(out, input, self, complete_pointer_scalar(input), {}, { "    (void)frame;", "    return;" }, true)
+    end
+    function Native.NativeAbiMicroOpReturnScalarShape:append_native_template_sources(out, input)
+        local scalar = self.value_class:native_complete_scalar_pointer_scalar(input)
+        local token = self:native_abi_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.abi.micro." .. token .. ".src") }
+        local family = Support.abi_micro_op_frame_family(token, complete_target(input), scalar, self)
+        local entry = "lalin_native_abi_micro_" .. symbol_fragment(token)
+        local lines = c_prelude()
+        append_hole_externs(lines, holes)
+        lines[#lines + 1] = scalar:native_c_scalar_type() .. " " .. entry .. "(uint8_t *frame) {"
+        lines[#lines + 1] = "    return " .. frame_load(scalar:native_c_scalar_type(), hole_address_expr(holes[1])) .. ";"
+        lines[#lines + 1] = "}"
+        append_manifest_source(out, "abi.micro." .. token, family, Native.NativeChunkPublicAbiAdapter, scalar_frame_signature(scalar, 1, {}), Native.NativeExtractTerminalContinuation, entry, lines, holes, {})
+    end
+    function Native.NativeAbiMicroOpReturnSretShape:append_native_template_sources(out, input)
+        append_complete_abi_source(out, input, self, complete_pointer_scalar(input), {}, { "    (void)frame;", "    return;" }, true)
+    end
+
+    function Native.NativeReducerClass:native_complete_reducer_token()
+        return self.reduction:native_kernel_reduction_token() .. "." .. self.value_class:native_complete_value_token()
+    end
+
+    function Native.NativeCallClass:native_complete_call_token()
+        internal_error("unsupported complete call class token")
+    end
+    function Native.NativeCallDirectClass:native_complete_call_token() return "direct" end
+    function Native.NativeCallExternClass:native_complete_call_token() return "extern" end
+    function Native.NativeCallIndirectClass:native_complete_call_token() return "indirect" end
+    function Native.NativeCallClosureClass:native_complete_call_token() return "closure" end
+
+    function Native.NativeKernelMicroOpShape:native_kernel_micro_op_token()
+        internal_error("unsupported Kernel complete-bank micro-op token")
+    end
+    function Native.NativeKernelMicroOpScalarLoadShape:native_kernel_micro_op_token() return "scalar_load." .. self.scalar:native_scalar_token() end
+    function Native.NativeKernelMicroOpScalarStoreShape:native_kernel_micro_op_token() return "scalar_store." .. self.scalar:native_scalar_token() end
+    function Native.NativeKernelMicroOpPointerLoadShape:native_kernel_micro_op_token() return "pointer_load." .. self.pointer_scalar:native_scalar_token() end
+    function Native.NativeKernelMicroOpPointerStoreShape:native_kernel_micro_op_token() return "pointer_store." .. self.pointer_scalar:native_scalar_token() end
+    function Native.NativeKernelMicroOpBytesCopyShape:native_kernel_micro_op_token() return "bytes_copy" end
+    function Native.NativeKernelMicroOpBytesMoveShape:native_kernel_micro_op_token() return "bytes_move" end
+    function Native.NativeKernelMicroOpLaneAddressBaseShape:native_kernel_micro_op_token() return "lane_address_base" end
+    function Native.NativeKernelMicroOpLaneAddressAddIndexShape:native_kernel_micro_op_token() return "lane_address_add_index" end
+    function Native.NativeKernelMicroOpLaneAddressAddStrideShape:native_kernel_micro_op_token() return "lane_address_add_stride" end
+    function Native.NativeKernelMicroOpLaneAddressAddOffsetShape:native_kernel_micro_op_token() return "lane_address_add_offset" end
+    function Native.NativeKernelMicroOpExprConstShape:native_kernel_micro_op_token() return "expr_const." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpExprCodeValueShape:native_kernel_micro_op_token() return "expr_code_value." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpExprKernelValueShape:native_kernel_micro_op_token() return "expr_kernel_value." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpExprLaneLoadShape:native_kernel_micro_op_token() return "expr_lane_load." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpExprUnaryShape:native_kernel_micro_op_token() return "expr_unary." .. self.op:native_unary_family_name() .. "." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpExprBinaryShape:native_kernel_micro_op_token() return "expr_binary." .. self.op:native_binary_family_name() .. "." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpExprCastShape:native_kernel_micro_op_token() return "expr_cast." .. self.op:native_cast_family_name() .. "." .. self.from_class:native_complete_value_token() .. ".to." .. self.to_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpExprCompareShape:native_kernel_micro_op_token() return "expr_compare." .. self.cmp:native_compare_family_name() .. "." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpExprSelectShape:native_kernel_micro_op_token() return "expr_select." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpAffineInitShape:native_kernel_micro_op_token() return "affine_init." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpAffineAddTermShape:native_kernel_micro_op_token() return "affine_add_term." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpAffineFinishShape:native_kernel_micro_op_token() return "affine_finish." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpPredicateNonZeroShape:native_kernel_micro_op_token() return "predicate_nonzero" end
+    function Native.NativeKernelMicroOpPredicateCompareConstShape:native_kernel_micro_op_token() return "predicate_compare_const." .. self.cmp:native_compare_family_name() .. "." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpPredicateRangeShape:native_kernel_micro_op_token() return "predicate_range." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpPredicateLogicalInitShape:native_kernel_micro_op_token() return "predicate_logical_init" end
+    function Native.NativeKernelMicroOpPredicateLogicalTermShape:native_kernel_micro_op_token() return "predicate_logical_term" end
+    function Native.NativeKernelMicroOpPredicateLogicalFinishShape:native_kernel_micro_op_token() return "predicate_logical_finish" end
+    function Native.NativeKernelMicroOpPredicateFloatClassShape:native_kernel_micro_op_token() return "predicate_float_class." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpLoopEnterShape:native_kernel_micro_op_token() return "loop_enter" end
+    function Native.NativeKernelMicroOpLoopStepShape:native_kernel_micro_op_token() return "loop_step" end
+    function Native.NativeKernelMicroOpLoopExitShape:native_kernel_micro_op_token() return "loop_exit" end
+    function Native.NativeKernelMicroOpBodyEnterShape:native_kernel_micro_op_token() return "body_enter" end
+    function Native.NativeKernelMicroOpBodyNextShape:native_kernel_micro_op_token() return "body_next" end
+    function Native.NativeKernelMicroOpBodyExitShape:native_kernel_micro_op_token() return "body_exit" end
+    function Native.NativeKernelMicroOpEffectStoreShape:native_kernel_micro_op_token() return "effect_store" end
+    function Native.NativeKernelMicroOpEffectCopyShape:native_kernel_micro_op_token() return "effect_copy" end
+    function Native.NativeKernelMicroOpEffectScanShape:native_kernel_micro_op_token() return "effect_scan." .. self.scan_mode:native_kernel_scan_token() .. "." .. self.reducer_class:native_complete_reducer_token() end
+    function Native.NativeKernelMicroOpEffectPartitionShape:native_kernel_micro_op_token() return "effect_partition." .. self.partition_semantics:native_kernel_partition_token() end
+    function Native.NativeKernelMicroOpEffectScatterReduceShape:native_kernel_micro_op_token() return "effect_scatter_reduce." .. self.reducer_class:native_complete_reducer_token() end
+    function Native.NativeKernelMicroOpEffectFoldShape:native_kernel_micro_op_token() return "effect_fold." .. self.reducer_class:native_complete_reducer_token() end
+    function Native.NativeKernelMicroOpEffectCallShape:native_kernel_micro_op_token() return "effect_call." .. self.call_class:native_complete_call_token() end
+    function Native.NativeKernelMicroOpResultVoidShape:native_kernel_micro_op_token() return "result_void" end
+    function Native.NativeKernelMicroOpResultValueShape:native_kernel_micro_op_token() return "result_value." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpResultFindShape:native_kernel_micro_op_token() return "result_find." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpResultReductionShape:native_kernel_micro_op_token() return "result_reduction." .. self.reducer_class:native_complete_reducer_token() end
+    function Native.NativeKernelMicroOpResultClosedFormShape:native_kernel_micro_op_token() return "result_closed_form." .. self.value_class:native_complete_value_token() end
+    function Native.NativeKernelMicroOpResultOriginalControlShape:native_kernel_micro_op_token() return "result_original_control" end
+
+    local function append_complete_kernel_source(out, input, shape, scalar, holes, body, chunk_class, extra_relocation_kinds)
+        local token = shape:native_kernel_micro_op_token()
+        local family = Support.kernel_micro_op_frame_family(token, complete_target(input), scalar, shape)
+        local entry = "lalin_native_kernel_micro_" .. symbol_fragment(token)
+        local next_symbol = Support.next_continuation_symbol()
+        local lines = c_prelude()
+        append_hole_externs(lines, holes or {})
+        lines[#lines + 1] = continuation_extern(next_symbol)
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        append_hole_relocation_markers(lines, holes)
+        for _, line in ipairs(body or {}) do lines[#lines + 1] = line end
+        lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
+        lines[#lines + 1] = "}"
+        append_manifest_source(out, "kernel.micro." .. token, family, chunk_class or Native.NativeChunkKernelOp, scalar_frame_signature(scalar, #(holes or {}), { Support.next_continuation_ordinal() }), Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, holes or {}, { Support.next_continuation_ordinal() }, extra_relocation_kinds or {})
+    end
+
+    function Native.NativeKernelMicroOpShape:append_native_template_sources(_out, _input)
+        internal_error("unsupported Kernel complete-bank micro-op source builder")
+    end
+
+    local function append_kernel_scalar_load(out, input, shape, scalar, suffix)
+        local c_type = scalar:native_c_scalar_type()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. suffix .. ".addr"), frame_offset_hole("native.hole.kernel.micro." .. suffix .. ".dst") }
+        append_complete_kernel_source(out, input, shape, scalar, holes, { "    uintptr_t addr = " .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";", frame_store(c_type, hole_address_expr(holes[2]), "*(" .. c_type .. " *)(void *)addr") })
+    end
+    local function append_kernel_scalar_store(out, input, shape, scalar, suffix)
+        local c_type = scalar:native_c_scalar_type()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. suffix .. ".addr"), frame_offset_hole("native.hole.kernel.micro." .. suffix .. ".src") }
+        append_complete_kernel_source(out, input, shape, scalar, holes, { "    uintptr_t addr = " .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";", "    *(" .. c_type .. " *)(void *)addr = " .. frame_load(c_type, hole_address_expr(holes[2])) .. ";" })
+    end
+    function Native.NativeKernelMicroOpScalarLoadShape:append_native_template_sources(out, input) append_kernel_scalar_load(out, input, self, self.scalar, self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpScalarStoreShape:append_native_template_sources(out, input) append_kernel_scalar_store(out, input, self, self.scalar, self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpPointerLoadShape:append_native_template_sources(out, input) append_kernel_scalar_load(out, input, self, self.pointer_scalar, self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpPointerStoreShape:append_native_template_sources(out, input) append_kernel_scalar_store(out, input, self, self.pointer_scalar, self:native_kernel_micro_op_token()) end
+    local function append_kernel_bytes_copy(out, input, shape, move)
+        local scalar = complete_pointer_scalar(input)
+        local token = shape:native_kernel_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".dst"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".src"), imm32_hole("native.hole.kernel.micro." .. token .. ".size") }
+        append_complete_kernel_source(out, input, shape, scalar, holes, complete_byte_copy_body(holes, move))
+    end
+    function Native.NativeKernelMicroOpBytesCopyShape:append_native_template_sources(out, input) append_kernel_bytes_copy(out, input, self, false) end
+    function Native.NativeKernelMicroOpBytesMoveShape:append_native_template_sources(out, input) append_kernel_bytes_copy(out, input, self, true) end
+
+    local function append_kernel_address(out, input, shape, expr)
+        local scalar = complete_pointer_scalar(input)
+        local token = shape:native_kernel_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".base"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".index"), imm32_hole("native.hole.kernel.micro." .. token .. ".payload"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".dst") }
+        append_complete_kernel_source(out, input, shape, scalar, holes, { "    uintptr_t base = " .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";", "    uintptr_t index = " .. frame_load("uintptr_t", hole_address_expr(holes[2])) .. ";", frame_store("uintptr_t", hole_address_expr(holes[4]), expr("base", "index", hole_address_expr(holes[3]))) })
+    end
+    function Native.NativeKernelMicroOpLaneAddressBaseShape:append_native_template_sources(out, input) append_kernel_address(out, input, self, function(base, _index, payload) return base .. " + (uintptr_t)" .. payload end) end
+    function Native.NativeKernelMicroOpLaneAddressAddIndexShape:append_native_template_sources(out, input) append_kernel_address(out, input, self, function(base, index, payload) return base .. " + (" .. index .. " * (uintptr_t)" .. payload .. ")" end) end
+    function Native.NativeKernelMicroOpLaneAddressAddStrideShape:append_native_template_sources(out, input) append_kernel_address(out, input, self, function(base, index, payload) return base .. " + " .. index .. " + (uintptr_t)" .. payload end) end
+    function Native.NativeKernelMicroOpLaneAddressAddOffsetShape:append_native_template_sources(out, input) append_kernel_address(out, input, self, function(base, _index, payload) return base .. " + (uintptr_t)" .. payload end) end
+
+    local function append_kernel_value_copy(out, input, shape, value_class, suffix)
+        local scalar = value_class:native_complete_value_scalar(input)
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. suffix .. ".src"), frame_offset_hole("native.hole.kernel.micro." .. suffix .. ".dst") }
+        append_complete_kernel_source(out, input, shape, scalar, holes, { frame_store(scalar:native_c_scalar_type(), hole_address_expr(holes[2]), frame_load(scalar:native_c_scalar_type(), hole_address_expr(holes[1]))) })
+    end
+    function Native.NativeKernelMicroOpExprConstShape:append_native_template_sources(out, input)
+        local scalar = self.value_class:native_complete_value_scalar(input)
+        local token = self:native_kernel_micro_op_token()
+        local holes = { scalar_immediate_hole("native.hole.kernel.micro." .. token, scalar), frame_offset_hole("native.hole.kernel.micro." .. token .. ".dst") }
+        append_complete_kernel_source(out, input, self, scalar, holes, { frame_store(scalar:native_c_scalar_type(), hole_address_expr(holes[2]), "(" .. scalar:native_c_scalar_type() .. ")" .. hole_address_expr(holes[1])) })
+    end
+    function Native.NativeKernelMicroOpExprCodeValueShape:append_native_template_sources(out, input) append_kernel_value_copy(out, input, self, self.value_class, self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpExprKernelValueShape:append_native_template_sources(out, input) append_kernel_value_copy(out, input, self, self.value_class, self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpExprLaneLoadShape:append_native_template_sources(out, input) append_kernel_scalar_load(out, input, self, self.value_class:native_complete_value_scalar(input), self:native_kernel_micro_op_token()) end
+
+    function Native.NativeKernelMicroOpExprUnaryShape:append_native_template_sources(out, input)
+        local scalar, name, token = self.value_class:native_complete_value_scalar(input), self.op:native_unary_family_name(), self:native_kernel_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".src"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".dst") }
+        local result_type = name == "not" and "uint8_t" or scalar:native_c_scalar_type()
+        local is_float = asdl.isa(scalar, Native.NativeScalarFloat)
+        local expr = is_float and "(-src)" or self.op:native_integer_c_expr(scalar, "src")
+        local extra_relocations = is_float and { Native.NativeTemplateRelocationConstantPool } or {}
+        append_complete_kernel_source(out, input, self, scalar, holes, { "    " .. scalar:native_c_scalar_type() .. " src = " .. frame_load(scalar:native_c_scalar_type(), hole_address_expr(holes[1])) .. ";", frame_store(result_type, hole_address_expr(holes[2]), expr) }, nil, extra_relocations)
+    end
+    function Native.NativeKernelMicroOpExprBinaryShape:append_native_template_sources(out, input)
+        local scalar, token = self.value_class:native_complete_value_scalar(input), self:native_kernel_micro_op_token()
+        local c_type = scalar:native_c_scalar_type()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".lhs"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".rhs"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".dst") }
+        local expr = asdl.isa(scalar, Native.NativeScalarFloat) and self.op:native_float_c_expr(scalar, "lhs", "rhs") or self.op:native_integer_c_expr(scalar, "lhs", "rhs")
+        append_complete_kernel_source(out, input, self, scalar, holes, { "    " .. c_type .. " lhs = " .. frame_load(c_type, hole_address_expr(holes[1])) .. ";", "    " .. c_type .. " rhs = " .. frame_load(c_type, hole_address_expr(holes[2])) .. ";", frame_store(c_type, hole_address_expr(holes[3]), expr) })
+    end
+    function Native.NativeKernelMicroOpExprCastShape:append_native_template_sources(out, input)
+        local from_scalar, to_scalar, token = self.from_class:native_complete_value_scalar(input), self.to_class:native_complete_value_scalar(input), self:native_kernel_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".src"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".dst") }
+        local lines = { "    " .. from_scalar:native_c_scalar_type() .. " source_value = " .. frame_load(from_scalar:native_c_scalar_type(), hole_address_expr(holes[1])) .. ";" }
+        self.op:append_native_cast_c_lines(lines, from_scalar, to_scalar, "source_value", "cast_value")
+        lines[#lines + 1] = frame_store(to_scalar:native_c_scalar_type(), hole_address_expr(holes[2]), "cast_value")
+        append_complete_kernel_source(out, input, self, to_scalar, holes, lines, nil, self.op:native_cast_extra_relocation_kinds())
+    end
+    function Native.NativeKernelMicroOpExprCompareShape:append_native_template_sources(out, input)
+        local scalar, token = self.value_class:native_complete_value_scalar(input), self:native_kernel_micro_op_token()
+        local c_type = scalar:native_c_scalar_type()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".lhs"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".rhs"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".dst") }
+        append_complete_kernel_source(out, input, self, scalar, holes, { "    " .. c_type .. " lhs = " .. frame_load(c_type, hole_address_expr(holes[1])) .. ";", "    " .. c_type .. " rhs = " .. frame_load(c_type, hole_address_expr(holes[2])) .. ";", frame_store("uint8_t", hole_address_expr(holes[3]), self.cmp:native_c_compare_expr(scalar, "lhs", "rhs")) })
+    end
+    function Native.NativeKernelMicroOpExprSelectShape:append_native_template_sources(out, input)
+        local scalar, token = self.value_class:native_complete_value_scalar(input), self:native_kernel_micro_op_token()
+        local c_type = scalar:native_c_scalar_type()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".cond"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".true"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".false"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".dst") }
+        append_complete_kernel_source(out, input, self, scalar, holes, { "    uint8_t cond = " .. frame_load("uint8_t", hole_address_expr(holes[1])) .. ";", "    " .. c_type .. " t = " .. frame_load(c_type, hole_address_expr(holes[2])) .. ";", "    " .. c_type .. " f = " .. frame_load(c_type, hole_address_expr(holes[3])) .. ";", frame_store(c_type, hole_address_expr(holes[4]), "cond ? t : f") })
+    end
+
+    function Native.NativeKernelMicroOpAffineInitShape:append_native_template_sources(out, input) append_kernel_value_copy(out, input, self, self.value_class, self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpAffineAddTermShape:append_native_template_sources(out, input)
+        local scalar, token = self.value_class:native_complete_value_scalar(input), self:native_kernel_micro_op_token()
+        local c_type = scalar:native_c_scalar_type()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".acc"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".term"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".dst") }
+        local expr = asdl.isa(scalar, Native.NativeScalarFloat) and Core.BinAdd:native_float_c_expr(scalar, "acc", "term") or Core.BinAdd:native_integer_c_expr(scalar, "acc", "term")
+        append_complete_kernel_source(out, input, self, scalar, holes, { "    " .. c_type .. " acc = " .. frame_load(c_type, hole_address_expr(holes[1])) .. ";", "    " .. c_type .. " term = " .. frame_load(c_type, hole_address_expr(holes[2])) .. ";", frame_store(c_type, hole_address_expr(holes[3]), expr) })
+    end
+    function Native.NativeKernelMicroOpAffineFinishShape:append_native_template_sources(out, input) append_kernel_value_copy(out, input, self, self.value_class, self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpPredicateNonZeroShape:append_native_template_sources(out, input) append_kernel_value_copy(out, input, self, Support.complete_value_scalar_class(Support.scalar_bool8()), self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpPredicateCompareConstShape:append_native_template_sources(out, input)
+        local scalar, token = self.value_class:native_complete_value_scalar(input), self:native_kernel_micro_op_token()
+        local c_type = scalar:native_c_scalar_type()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".src"), scalar_immediate_hole("native.hole.kernel.micro." .. token .. ".const", scalar), frame_offset_hole("native.hole.kernel.micro." .. token .. ".dst") }
+        append_complete_kernel_source(out, input, self, scalar, holes, { "    " .. c_type .. " src = " .. frame_load(c_type, hole_address_expr(holes[1])) .. ";", "    " .. c_type .. " k = (" .. c_type .. ")" .. hole_address_expr(holes[2]) .. ";", frame_store("uint8_t", hole_address_expr(holes[3]), self.cmp:native_c_compare_expr(scalar, "src", "k")) })
+    end
+    function Native.NativeKernelMicroOpPredicateRangeShape:append_native_template_sources(out, input) append_kernel_value_copy(out, input, self, self.value_class, self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpPredicateLogicalInitShape:append_native_template_sources(out, input) append_kernel_value_copy(out, input, self, Support.complete_value_scalar_class(Support.scalar_bool8()), self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpPredicateLogicalTermShape:append_native_template_sources(out, input)
+        local scalar, token = Support.scalar_bool8(), self:native_kernel_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".acc"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".term"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".dst") }
+        append_complete_kernel_source(out, input, self, scalar, holes, { "    uint8_t acc = " .. frame_load("uint8_t", hole_address_expr(holes[1])) .. ";", "    uint8_t term = " .. frame_load("uint8_t", hole_address_expr(holes[2])) .. ";", frame_store("uint8_t", hole_address_expr(holes[3]), "(uint8_t)(acc && term)") })
+    end
+    function Native.NativeKernelMicroOpPredicateLogicalFinishShape:append_native_template_sources(out, input) append_kernel_value_copy(out, input, self, Support.complete_value_scalar_class(Support.scalar_bool8()), self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpPredicateFloatClassShape:append_native_template_sources(out, input) append_kernel_value_copy(out, input, self, Support.complete_value_scalar_class(Support.scalar_bool8()), self:native_kernel_micro_op_token()) end
+
+    local function append_kernel_control(out, input, shape)
+        append_complete_kernel_source(out, input, shape, complete_pointer_scalar(input), {}, { "    __asm__ volatile(\"\" ::: \"memory\");" })
+    end
+    function Native.NativeKernelMicroOpLoopEnterShape:append_native_template_sources(out, input) append_kernel_control(out, input, self) end
+    function Native.NativeKernelMicroOpLoopStepShape:append_native_template_sources(out, input) append_kernel_control(out, input, self) end
+    function Native.NativeKernelMicroOpLoopExitShape:append_native_template_sources(out, input) append_kernel_control(out, input, self) end
+    function Native.NativeKernelMicroOpBodyEnterShape:append_native_template_sources(out, input) append_kernel_control(out, input, self) end
+    function Native.NativeKernelMicroOpBodyNextShape:append_native_template_sources(out, input) append_kernel_control(out, input, self) end
+    function Native.NativeKernelMicroOpBodyExitShape:append_native_template_sources(out, input) append_kernel_control(out, input, self) end
+
+    function Native.NativeKernelMicroOpEffectStoreShape:append_native_template_sources(out, input) append_kernel_scalar_store(out, input, self, complete_pointer_scalar(input), self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpEffectCopyShape:append_native_template_sources(out, input) append_kernel_bytes_copy(out, input, self, false) end
+    function Native.NativeKernelMicroOpEffectScanShape:append_native_template_sources(out, input)
+        local scalar = self.reducer_class.value_class:native_complete_value_scalar(input)
+        local token = self:native_kernel_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".state"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".value"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".dst") }
+        local c_type = scalar:native_c_scalar_type()
+        append_complete_kernel_source(out, input, self, scalar, holes, { "    " .. c_type .. " old_value = " .. frame_load(c_type, hole_address_expr(holes[1])) .. ";", "    " .. c_type .. " next_value = " .. self.reducer_class.reduction:native_kernel_reduce_expr(scalar, "old_value", frame_load(c_type, hole_address_expr(holes[2]))) .. ";", frame_store(c_type, hole_address_expr(holes[1]), "next_value"), frame_store(c_type, hole_address_expr(holes[3]), self.scan_mode == T.LalinStencil.StencilScanExclusive and "old_value" or "next_value") })
+    end
+    function Native.NativeKernelMicroOpEffectPartitionShape:append_native_template_sources(out, input) append_kernel_control(out, input, self) end
+    function Native.NativeKernelMicroOpEffectScatterReduceShape:append_native_template_sources(out, input)
+        local scalar = self.reducer_class.value_class:native_complete_value_scalar(input)
+        local token = self:native_kernel_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".address"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".value") }
+        local c_type = scalar:native_c_scalar_type()
+        append_complete_kernel_source(out, input, self, scalar, holes, { "    " .. c_type .. " *dst = (" .. c_type .. " *)(void *)(uintptr_t)" .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";", "    " .. c_type .. " old_value = *dst;", "    *dst = " .. self.reducer_class.reduction:native_kernel_reduce_expr(scalar, "old_value", frame_load(c_type, hole_address_expr(holes[2]))) .. ";" })
+    end
+    function Native.NativeKernelMicroOpEffectFoldShape:append_native_template_sources(out, input)
+        local scalar = self.reducer_class.value_class:native_complete_value_scalar(input)
+        local token = self:native_kernel_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".state"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".value") }
+        append_complete_kernel_source(out, input, self, scalar, holes, { "    " .. scalar:native_c_scalar_type() .. " old_value = " .. frame_load(scalar:native_c_scalar_type(), hole_address_expr(holes[1])) .. ";", frame_store(scalar:native_c_scalar_type(), hole_address_expr(holes[1]), self.reducer_class.reduction:native_kernel_reduce_expr(scalar, "old_value", frame_load(scalar:native_c_scalar_type(), hole_address_expr(holes[2])))) })
+    end
+    function Native.NativeKernelMicroOpEffectCallShape:append_native_template_sources(out, input)
+        local scalar = complete_pointer_scalar(input)
+        local token = self:native_kernel_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".fn") }
+        if asdl.isa(self.call_class, Native.NativeCallClosureClass) then holes[#holes + 1] = frame_offset_hole("native.hole.kernel.micro." .. token .. ".env") end
+        local lines = { "    typedef void (*lalin_native_kernel_call_t)(uint8_t *frame);", "    lalin_native_kernel_call_t fn = (lalin_native_kernel_call_t)(uintptr_t)" .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";" }
+        if holes[2] ~= nil then lines[#lines + 1] = "    (void)" .. frame_load("uintptr_t", hole_address_expr(holes[2])) .. ";" end
+        lines[#lines + 1] = "    fn(frame);"
+        append_complete_kernel_source(out, input, self, scalar, holes, lines)
+    end
+
+    function Native.NativeKernelMicroOpResultVoidShape:append_native_template_sources(out, input) append_kernel_control(out, input, self) end
+    function Native.NativeKernelMicroOpResultValueShape:append_native_template_sources(out, input) append_kernel_value_copy(out, input, self, self.value_class, self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpResultFindShape:append_native_template_sources(out, input) append_kernel_value_copy(out, input, self, self.value_class, self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpResultReductionShape:append_native_template_sources(out, input)
+        local scalar = self.reducer_class.value_class:native_complete_value_scalar(input)
+        local token = self:native_kernel_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.kernel.micro." .. token .. ".state"), frame_offset_hole("native.hole.kernel.micro." .. token .. ".dst") }
+        append_complete_kernel_source(out, input, self, scalar, holes, { frame_store(scalar:native_c_scalar_type(), hole_address_expr(holes[2]), frame_load(scalar:native_c_scalar_type(), hole_address_expr(holes[1]))) })
+    end
+    function Native.NativeKernelMicroOpResultClosedFormShape:append_native_template_sources(out, input) append_kernel_value_copy(out, input, self, self.value_class, self:native_kernel_micro_op_token()) end
+    function Native.NativeKernelMicroOpResultOriginalControlShape:append_native_template_sources(out, input) append_kernel_control(out, input, self) end
+
+    function Native.NativePredicateClass:native_complete_predicate_token()
+        internal_error("unsupported complete predicate class token")
+    end
+    function Native.NativePredicateNonZeroClass:native_complete_predicate_token() return "nonzero" end
+    function Native.NativePredicateCompareConstClass:native_complete_predicate_token() return "compare_const." .. self.cmp:native_compare_family_name() .. "." .. self.value_class:native_complete_value_token() end
+    function Native.NativePredicateRangeClass:native_complete_predicate_token() return "range." .. self.value_class:native_complete_value_token() end
+    function Native.NativePredicateLogicalClass:native_complete_predicate_token() return "logical" end
+    function Native.NativePredicateFloatClass:native_complete_predicate_token() return "float_class." .. self.value_class:native_complete_value_token() end
+
+    function Native.NativeDescriptorUserFieldKind:native_complete_descriptor_user_field_token()
+        internal_error("unsupported descriptor user field kind token")
+    end
+    function Native.NativeDescriptorUserElementSizeField:native_complete_descriptor_user_field_token() return "element_size" end
+    function Native.NativeDescriptorUserCapacityField:native_complete_descriptor_user_field_token() return "capacity" end
+    function Native.NativeDescriptorUserAlignmentField:native_complete_descriptor_user_field_token() return "alignment" end
+    function Native.NativeDescriptorUserLengthField:native_complete_descriptor_user_field_token() return "user_length" end
+
+    function Native.NativeDescriptorFieldClass:native_complete_descriptor_field_token()
+        internal_error("unsupported descriptor field class token")
+    end
+    function Native.NativeDescriptorDataField:native_complete_descriptor_field_token() return "data" end
+    function Native.NativeDescriptorLengthField:native_complete_descriptor_field_token() return "length" end
+    function Native.NativeDescriptorStrideField:native_complete_descriptor_field_token() return "stride" end
+    function Native.NativeDescriptorBaseField:native_complete_descriptor_field_token() return "base" end
+    function Native.NativeDescriptorUserField:native_complete_descriptor_field_token() return "user." .. self.kind:native_complete_descriptor_user_field_token() end
+
+    function Native.NativeStencilStoreSemanticsClass:native_complete_store_token()
+        internal_error("unsupported stencil store semantics class token")
+    end
+    function Native.NativeStencilStoreElementwiseClass:native_complete_store_token() return "elementwise" end
+    function Native.NativeStencilStoreCopyClass:native_complete_store_token() return "copy." .. self.copy_semantics:native_kernel_copy_token() end
+    function Native.NativeStencilStoreScatterClass:native_complete_store_token() return "scatter." .. self.conflict_semantics:native_stencil_scatter_conflict_token() end
+    function Native.NativeStencilStorePartitionClass:native_complete_store_token() return "partition." .. self.partition_semantics:native_kernel_partition_token() end
+
+    function Native.NativeStencilReduceScopeClass:native_complete_reduce_scope_token()
+        internal_error("unsupported stencil reduce scope class token")
+    end
+    function Native.NativeStencilReduceScopeDomainClass:native_complete_reduce_scope_token() return "domain" end
+    function Native.NativeStencilReduceScopeAxesClass:native_complete_reduce_scope_token() return "axes" end
+    function Native.NativeStencilReduceScopeWindowClass:native_complete_reduce_scope_token() return "window" end
+
+    function Native.NativeStencilScatterReduceConflictClass:native_complete_scatter_reduce_conflict_token()
+        internal_error("unsupported stencil scatter-reduce conflict class token")
+    end
+    function Native.NativeStencilScatterReduceSequentialClass:native_complete_scatter_reduce_conflict_token() return "sequential" end
+    function Native.NativeStencilScatterReduceUniqueIndicesClass:native_complete_scatter_reduce_conflict_token() return "unique" end
+    function Native.NativeStencilScatterReduceAtomicClass:native_complete_scatter_reduce_conflict_token() return "atomic." .. self.ordering:native_atomic_order_token() end
+    function Native.NativeStencilScatterReducePrivatizedClass:native_complete_scatter_reduce_conflict_token() return "privatized" end
+
+    function Native.NativeVectorCapabilityClass:native_complete_vector_token()
+        internal_error("unsupported vector capability token")
+    end
+    function Native.NativeVectorDisabled:native_complete_vector_token() return "disabled" end
+    function Native.NativeVectorNative:native_complete_vector_token() return "native" end
+    function Native.NativeVectorSSE2:native_complete_vector_token() return "sse2" end
+    function Native.NativeVectorAVX2:native_complete_vector_token() return "avx2" end
+    function Native.NativeVectorAVX512F:native_complete_vector_token() return "avx512f" end
+
+    function Native.NativeUnrollCapabilityClass:native_complete_unroll_token()
+        internal_error("unsupported unroll capability token")
+    end
+    function Native.NativeUnrollScalar:native_complete_unroll_token() return "scalar" end
+    function Native.NativeUnrollFixed:native_complete_unroll_token() return "fixed" .. tostring(self.factor) end
+
+    function Native.NativeStencilMicroOpShape:native_stencil_micro_op_token()
+        internal_error("unsupported Stencil complete-bank micro-op token")
+    end
+    function Native.NativeStencilMicroOpProducerEnterShape:native_stencil_micro_op_token() return "producer_enter" end
+    function Native.NativeStencilMicroOpProducerAxisStepShape:native_stencil_micro_op_token() return "producer_axis_step." .. self.order_class:native_stencil_order_token() end
+    function Native.NativeStencilMicroOpProducerAxisExitShape:native_stencil_micro_op_token() return "producer_axis_exit" end
+    function Native.NativeStencilMicroOpProducerWindowOffsetShape:native_stencil_micro_op_token() return "producer_window_offset" end
+    function Native.NativeStencilMicroOpProducerTileStepShape:native_stencil_micro_op_token() return "producer_tile_step" end
+    function Native.NativeStencilMicroOpAccessBaseShape:native_stencil_micro_op_token() return "access_base." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpAccessContiguousShape:native_stencil_micro_op_token() return "access_contiguous." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpAccessIndexedShape:native_stencil_micro_op_token() return "access_indexed." .. self.value_class:native_complete_value_token() .. ".index" .. tostring(self.index_class.pointer_width) end
+    function Native.NativeStencilMicroOpAccessAffineInitShape:native_stencil_micro_op_token() return "access_affine_init." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpAccessAffineTermShape:native_stencil_micro_op_token() return "access_affine_term." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpAccessFieldOffsetShape:native_stencil_micro_op_token() return "access_field_offset." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpAccessSoAComponentShape:native_stencil_micro_op_token() return "access_soa_component." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpAccessDescriptorFieldShape:native_stencil_micro_op_token() return "access_descriptor_field." .. self.descriptor_field_class:native_complete_descriptor_field_token() .. "." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpPointInputShape:native_stencil_micro_op_token() return "point_input." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpPointWindowInputShape:native_stencil_micro_op_token() return "point_window_input." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpPointConstShape:native_stencil_micro_op_token() return "point_const." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpPointUnaryShape:native_stencil_micro_op_token() return "point_unary." .. self.op:native_stencil_unary_token() .. "." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpPointBinaryShape:native_stencil_micro_op_token() return "point_binary." .. self.op:native_stencil_binary_token() .. "." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpPointCastShape:native_stencil_micro_op_token() return "point_cast." .. self.op:native_cast_family_name() .. "." .. self.from_class:native_complete_value_token() .. ".to." .. self.to_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpPointPredicateShape:native_stencil_micro_op_token() return "point_predicate." .. self.predicate_class:native_complete_predicate_token() .. "." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpPointCompareShape:native_stencil_micro_op_token() return "point_compare." .. self.cmp:native_compare_family_name() .. "." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpPointSelectShape:native_stencil_micro_op_token() return "point_select." .. self.predicate_class:native_complete_predicate_token() .. "." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpBodyEnterShape:native_stencil_micro_op_token() return "body_enter" end
+    function Native.NativeStencilMicroOpBodyPointShape:native_stencil_micro_op_token() return "body_point." .. self.value_class:native_complete_value_token() end
+    function Native.NativeStencilMicroOpBodyExitShape:native_stencil_micro_op_token() return "body_exit" end
+    function Native.NativeStencilMicroOpSinkStoreShape:native_stencil_micro_op_token() return "sink_store." .. self.store_semantics_class:native_complete_store_token() end
+    function Native.NativeStencilMicroOpSinkReduceShape:native_stencil_micro_op_token() return "sink_reduce." .. self.reducer_class:native_complete_reducer_token() .. "." .. self.reduce_scope_class:native_complete_reduce_scope_token() end
+    function Native.NativeStencilMicroOpSinkScanShape:native_stencil_micro_op_token() return "sink_scan." .. self.scan_mode:native_kernel_scan_token() .. "." .. self.reducer_class:native_complete_reducer_token() end
+    function Native.NativeStencilMicroOpSinkScatterReduceShape:native_stencil_micro_op_token() return "sink_scatter_reduce." .. self.reducer_class:native_complete_reducer_token() .. "." .. self.scatter_reduce_conflict_class:native_complete_scatter_reduce_conflict_token() end
+    function Native.NativeStencilMicroOpScheduleScalarShape:native_stencil_micro_op_token() return "schedule_scalar" end
+    function Native.NativeStencilMicroOpScheduleAutoVectorShape:native_stencil_micro_op_token() return "schedule_autovector." .. self.vector_capability_class:native_complete_vector_token() end
+    function Native.NativeStencilMicroOpScheduleUnrolledShape:native_stencil_micro_op_token() return "schedule_unrolled." .. self.unroll_capability_class:native_complete_unroll_token() end
+    function Native.NativeStencilMicroOpScheduleVectorShape:native_stencil_micro_op_token() return "schedule_vector." .. self.vector_capability_class:native_complete_vector_token() end
+
+    local function append_complete_stencil_source(out, input, shape, scalar, holes, body, extra_relocation_kinds)
+        local token = shape:native_stencil_micro_op_token()
+        local family = Support.stencil_micro_op_frame_family(token, complete_target(input), scalar, shape)
+        local entry = "lalin_native_stencil_micro_" .. symbol_fragment(token)
+        local next_symbol = Support.next_continuation_symbol()
+        local lines = c_prelude()
+        append_hole_externs(lines, holes or {})
+        lines[#lines + 1] = continuation_extern(next_symbol)
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        append_hole_relocation_markers(lines, holes)
+        for _, line in ipairs(body or {}) do lines[#lines + 1] = line end
+        lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
+        lines[#lines + 1] = "}"
+        append_manifest_source(out, "stencil.micro." .. token, family, Native.NativeChunkStencilOp, scalar_frame_signature(scalar, #(holes or {}), { Support.next_continuation_ordinal() }), Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, holes or {}, { Support.next_continuation_ordinal() }, extra_relocation_kinds or {})
+    end
+
+    function Native.NativeStencilMicroOpShape:append_native_template_sources(_out, _input)
+        internal_error("unsupported Stencil complete-bank micro-op source builder")
+    end
+
+    local function append_stencil_control(out, input, shape)
+        append_complete_stencil_source(out, input, shape, complete_pointer_scalar(input), {}, { "    __asm__ volatile(\"\" ::: \"memory\");" })
+    end
+    function Native.NativeStencilMicroOpProducerEnterShape:append_native_template_sources(out, input) append_stencil_control(out, input, self) end
+    function Native.NativeStencilMicroOpProducerAxisStepShape:append_native_template_sources(out, input) append_stencil_control(out, input, self) end
+    function Native.NativeStencilMicroOpProducerAxisExitShape:append_native_template_sources(out, input) append_stencil_control(out, input, self) end
+    function Native.NativeStencilMicroOpProducerWindowOffsetShape:append_native_template_sources(out, input) append_stencil_control(out, input, self) end
+    function Native.NativeStencilMicroOpProducerTileStepShape:append_native_template_sources(out, input) append_stencil_control(out, input, self) end
+
+    local function append_stencil_address(out, input, shape, value_class, expr)
+        local scalar = complete_pointer_scalar(input)
+        local token = shape:native_stencil_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.stencil.micro." .. token .. ".base"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".index"), imm32_hole("native.hole.stencil.micro." .. token .. ".payload"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".dst") }
+        append_complete_stencil_source(out, input, shape, scalar, holes, { "    uintptr_t base = " .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";", "    uintptr_t index = " .. frame_load("uintptr_t", hole_address_expr(holes[2])) .. ";", "    (void)sizeof(" .. value_class:native_complete_value_scalar(input):native_c_scalar_type() .. ");", frame_store("uintptr_t", hole_address_expr(holes[4]), expr("base", "index", hole_address_expr(holes[3]))) })
+    end
+    function Native.NativeStencilMicroOpAccessBaseShape:append_native_template_sources(out, input) append_stencil_address(out, input, self, self.value_class, function(base, _index, payload) return base .. " + (uintptr_t)" .. payload end) end
+    function Native.NativeStencilMicroOpAccessContiguousShape:append_native_template_sources(out, input) append_stencil_address(out, input, self, self.value_class, function(base, index, payload) return base .. " + (" .. index .. " * (uintptr_t)" .. payload .. ")" end) end
+    function Native.NativeStencilMicroOpAccessIndexedShape:append_native_template_sources(out, input) append_stencil_address(out, input, self, self.value_class, function(base, index, payload) return base .. " + " .. index .. " + (uintptr_t)" .. payload end) end
+    function Native.NativeStencilMicroOpAccessAffineInitShape:append_native_template_sources(out, input) append_stencil_address(out, input, self, self.value_class, function(base, _index, payload) return base .. " + (uintptr_t)" .. payload end) end
+    function Native.NativeStencilMicroOpAccessAffineTermShape:append_native_template_sources(out, input) append_stencil_address(out, input, self, self.value_class, function(base, index, payload) return base .. " + (" .. index .. " * (uintptr_t)" .. payload .. ")" end) end
+    function Native.NativeStencilMicroOpAccessFieldOffsetShape:append_native_template_sources(out, input) append_stencil_address(out, input, self, self.value_class, function(base, _index, payload) return base .. " + (uintptr_t)" .. payload end) end
+    function Native.NativeStencilMicroOpAccessSoAComponentShape:append_native_template_sources(out, input) append_stencil_address(out, input, self, self.value_class, function(base, _index, payload) return base .. " + (uintptr_t)" .. payload end) end
+    function Native.NativeStencilMicroOpAccessDescriptorFieldShape:append_native_template_sources(out, input) append_stencil_address(out, input, self, self.value_class, function(base, _index, payload) return base .. " + (uintptr_t)" .. payload end) end
+
+    local function append_stencil_value_copy(out, input, shape, value_class)
+        local scalar = value_class:native_complete_value_scalar(input)
+        local token = shape:native_stencil_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.stencil.micro." .. token .. ".src"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".dst") }
+        append_complete_stencil_source(out, input, shape, scalar, holes, { frame_store(scalar:native_c_scalar_type(), hole_address_expr(holes[2]), frame_load(scalar:native_c_scalar_type(), hole_address_expr(holes[1]))) })
+    end
+    function Native.NativeStencilMicroOpPointInputShape:append_native_template_sources(out, input) append_stencil_value_copy(out, input, self, self.value_class) end
+    function Native.NativeStencilMicroOpPointWindowInputShape:append_native_template_sources(out, input) append_stencil_value_copy(out, input, self, self.value_class) end
+    function Native.NativeStencilMicroOpPointConstShape:append_native_template_sources(out, input)
+        local scalar = self.value_class:native_complete_value_scalar(input)
+        local token = self:native_stencil_micro_op_token()
+        local holes = { scalar_immediate_hole("native.hole.stencil.micro." .. token, scalar), frame_offset_hole("native.hole.stencil.micro." .. token .. ".dst") }
+        append_complete_stencil_source(out, input, self, scalar, holes, { frame_store(scalar:native_c_scalar_type(), hole_address_expr(holes[2]), "(" .. scalar:native_c_scalar_type() .. ")" .. hole_address_expr(holes[1])) })
+    end
+    function Native.NativeStencilMicroOpPointUnaryShape:append_native_template_sources(out, input)
+        local scalar, token = self.value_class:native_complete_value_scalar(input), self:native_stencil_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.stencil.micro." .. token .. ".src"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".dst") }
+        local extra_relocations = asdl.isa(scalar, Native.NativeScalarFloat) and { Native.NativeTemplateRelocationConstantPool } or {}
+        append_complete_stencil_source(out, input, self, scalar, holes, { "    " .. scalar:native_c_scalar_type() .. " src = " .. frame_load(scalar:native_c_scalar_type(), hole_address_expr(holes[1])) .. ";", frame_store(scalar:native_c_scalar_type(), hole_address_expr(holes[2]), self.op:native_stencil_unary_expr(scalar, "src")) }, extra_relocations)
+    end
+    function Native.NativeStencilMicroOpPointBinaryShape:append_native_template_sources(out, input)
+        local scalar, token = self.value_class:native_complete_value_scalar(input), self:native_stencil_micro_op_token()
+        local c_type = scalar:native_c_scalar_type()
+        local holes = { frame_offset_hole("native.hole.stencil.micro." .. token .. ".lhs"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".rhs"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".dst") }
+        append_complete_stencil_source(out, input, self, scalar, holes, { "    " .. c_type .. " lhs = " .. frame_load(c_type, hole_address_expr(holes[1])) .. ";", "    " .. c_type .. " rhs = " .. frame_load(c_type, hole_address_expr(holes[2])) .. ";", frame_store(c_type, hole_address_expr(holes[3]), self.op:native_stencil_binary_expr(scalar, "lhs", "rhs")) })
+    end
+    function Native.NativeStencilMicroOpPointCastShape:append_native_template_sources(out, input)
+        local from_scalar, to_scalar, token = self.from_class:native_complete_value_scalar(input), self.to_class:native_complete_value_scalar(input), self:native_stencil_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.stencil.micro." .. token .. ".src"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".dst") }
+        local lines = { "    " .. from_scalar:native_c_scalar_type() .. " source_value = " .. frame_load(from_scalar:native_c_scalar_type(), hole_address_expr(holes[1])) .. ";" }
+        self.op:append_native_cast_c_lines(lines, from_scalar, to_scalar, "source_value", "cast_value")
+        lines[#lines + 1] = frame_store(to_scalar:native_c_scalar_type(), hole_address_expr(holes[2]), "cast_value")
+        append_complete_stencil_source(out, input, self, to_scalar, holes, lines, self.op:native_cast_extra_relocation_kinds())
+    end
+    function Native.NativeStencilMicroOpPointPredicateShape:append_native_template_sources(out, input) append_stencil_value_copy(out, input, self, Support.complete_value_scalar_class(Support.scalar_bool8())) end
+    function Native.NativeStencilMicroOpPointCompareShape:append_native_template_sources(out, input)
+        local scalar, token = self.value_class:native_complete_value_scalar(input), self:native_stencil_micro_op_token()
+        local c_type = scalar:native_c_scalar_type()
+        local holes = { frame_offset_hole("native.hole.stencil.micro." .. token .. ".lhs"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".rhs"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".dst") }
+        append_complete_stencil_source(out, input, self, scalar, holes, { "    " .. c_type .. " lhs = " .. frame_load(c_type, hole_address_expr(holes[1])) .. ";", "    " .. c_type .. " rhs = " .. frame_load(c_type, hole_address_expr(holes[2])) .. ";", frame_store("uint8_t", hole_address_expr(holes[3]), self.cmp:native_c_compare_expr(scalar, "lhs", "rhs")) })
+    end
+    function Native.NativeStencilMicroOpPointSelectShape:append_native_template_sources(out, input)
+        local scalar, token = self.value_class:native_complete_value_scalar(input), self:native_stencil_micro_op_token()
+        local c_type = scalar:native_c_scalar_type()
+        local holes = { frame_offset_hole("native.hole.stencil.micro." .. token .. ".pred"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".true"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".false"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".dst") }
+        append_complete_stencil_source(out, input, self, scalar, holes, { "    uint8_t pred = " .. frame_load("uint8_t", hole_address_expr(holes[1])) .. ";", "    " .. c_type .. " t = " .. frame_load(c_type, hole_address_expr(holes[2])) .. ";", "    " .. c_type .. " f = " .. frame_load(c_type, hole_address_expr(holes[3])) .. ";", frame_store(c_type, hole_address_expr(holes[4]), "pred ? t : f") })
+    end
+
+    function Native.NativeStencilMicroOpBodyEnterShape:append_native_template_sources(out, input) append_stencil_control(out, input, self) end
+    function Native.NativeStencilMicroOpBodyPointShape:append_native_template_sources(out, input) append_stencil_value_copy(out, input, self, self.value_class) end
+    function Native.NativeStencilMicroOpBodyExitShape:append_native_template_sources(out, input) append_stencil_control(out, input, self) end
+
+    function Native.NativeStencilMicroOpSinkStoreShape:append_native_template_sources(out, input)
+        local scalar = complete_pointer_scalar(input)
+        local token = self:native_stencil_micro_op_token()
+        local holes = { frame_offset_hole("native.hole.stencil.micro." .. token .. ".addr"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".value"), imm32_hole("native.hole.stencil.micro." .. token .. ".size") }
+        append_complete_stencil_source(out, input, self, scalar, holes, {
+            "    uint8_t *dst = (uint8_t *)(uintptr_t)" .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";",
+            "    uint8_t *src = frame + " .. hole_address_expr(holes[2]) .. ";",
+            "    uint32_t n = (uint32_t)" .. hole_address_expr(holes[3]) .. ";",
+            "    for (uint32_t i = 0; i < n; ++i) { dst[i] = src[i]; }",
+        })
+    end
+    function Native.NativeStencilMicroOpSinkReduceShape:append_native_template_sources(out, input)
+        local scalar = self.reducer_class.value_class:native_complete_value_scalar(input)
+        local token = self:native_stencil_micro_op_token()
+        local c_type = scalar:native_c_scalar_type()
+        local holes = { frame_offset_hole("native.hole.stencil.micro." .. token .. ".state"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".value") }
+        append_complete_stencil_source(out, input, self, scalar, holes, { "    " .. c_type .. " old_value = " .. frame_load(c_type, hole_address_expr(holes[1])) .. ";", frame_store(c_type, hole_address_expr(holes[1]), self.reducer_class.reduction:native_kernel_reduce_expr(scalar, "old_value", frame_load(c_type, hole_address_expr(holes[2])))) })
+    end
+    function Native.NativeStencilMicroOpSinkScanShape:append_native_template_sources(out, input)
+        local scalar = self.reducer_class.value_class:native_complete_value_scalar(input)
+        local token = self:native_stencil_micro_op_token()
+        local c_type = scalar:native_c_scalar_type()
+        local holes = { frame_offset_hole("native.hole.stencil.micro." .. token .. ".state"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".value"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".dst") }
+        append_complete_stencil_source(out, input, self, scalar, holes, { "    " .. c_type .. " old_value = " .. frame_load(c_type, hole_address_expr(holes[1])) .. ";", "    " .. c_type .. " next_value = " .. self.reducer_class.reduction:native_kernel_reduce_expr(scalar, "old_value", frame_load(c_type, hole_address_expr(holes[2]))) .. ";", frame_store(c_type, hole_address_expr(holes[1]), "next_value"), frame_store(c_type, hole_address_expr(holes[3]), self.scan_mode == Stencil.StencilScanExclusive and "old_value" or "next_value") })
+    end
+    function Native.NativeStencilMicroOpSinkScatterReduceShape:append_native_template_sources(out, input)
+        local scalar = self.reducer_class.value_class:native_complete_value_scalar(input)
+        local token = self:native_stencil_micro_op_token()
+        local c_type = scalar:native_c_scalar_type()
+        local holes = { frame_offset_hole("native.hole.stencil.micro." .. token .. ".addr"), frame_offset_hole("native.hole.stencil.micro." .. token .. ".value") }
+        append_complete_stencil_source(out, input, self, scalar, holes, { "    " .. c_type .. " *dst = (" .. c_type .. " *)(void *)(uintptr_t)" .. frame_load("uintptr_t", hole_address_expr(holes[1])) .. ";", "    " .. c_type .. " old_value = *dst;", "    *dst = " .. self.reducer_class.reduction:native_kernel_reduce_expr(scalar, "old_value", frame_load(c_type, hole_address_expr(holes[2]))) .. ";" })
+    end
+
+    function Native.NativeStencilMicroOpScheduleScalarShape:append_native_template_sources(out, input) append_stencil_control(out, input, self) end
+    function Native.NativeStencilMicroOpScheduleAutoVectorShape:append_native_template_sources(out, input) append_stencil_control(out, input, self) end
+    function Native.NativeStencilMicroOpScheduleUnrolledShape:append_native_template_sources(out, input) append_stencil_control(out, input, self) end
+    function Native.NativeStencilMicroOpScheduleVectorShape:append_native_template_sources(out, input) append_stencil_control(out, input, self) end
 
     local function append_frame_entry_source(out, input, scalar)
         local token = scalar:native_scalar_token()
@@ -4669,7 +6044,7 @@ local function bind_context(T)
         return out
     end
 
-    local function manifest_from_sources(domain, sources)
+    local function manifest_groups_from_sources(sources)
         local groups = {}
         local by_generator = {}
         local order = {}
@@ -4687,10 +6062,51 @@ local function bind_context(T)
             local bucket = by_generator[key]
             groups[#groups + 1] = Support.template_manifest_group(bucket.generator, bucket.entries)
         end
+        return groups
+    end
+
+    local function manifest_from_sources(domain, sources)
         return Support.template_source_manifest(
             Support.template_manifest_id(domain.id.text),
             domain,
-            groups
+            manifest_groups_from_sources(sources)
+        )
+    end
+
+    local function complete_manifest_from_sources(capability, sources)
+        return Support.template_source_manifest(
+            Support.template_manifest_id(capability.id.text),
+            Support.complete_capability_manifest_domain_id(capability),
+            manifest_groups_from_sources(sources)
+        )
+    end
+
+    local function fast_region_manifest_from_sources(bank_id, sources)
+        return Support.template_source_manifest(
+            Support.template_manifest_id(bank_id.text .. ".fast-region"),
+            Native.NativeTemplateSupportDomainId(bank_id.text .. ".fast-region.support"),
+            manifest_groups_from_sources(sources)
+        )
+    end
+
+    function Native.NativeFastRegionCapability:native_template_sources_for_target(target)
+        local input = Native.NativeFastRegionTemplateSourceInput(require_x64_sysv_target(target), self)
+        local out = {}
+        self:append_native_template_sources(out, input)
+        return out
+    end
+
+    function Native.NativeFastRegionCapability:native_template_bank_request(target, runtime, bank_id)
+        bank_id = bank_id or Native.NativeBankId("native.fast-region.bank")
+        local sources = self:native_template_sources_for_target(target)
+        local manifest = fast_region_manifest_from_sources(bank_id, sources)
+        api.assert_manifest_matches_sources(manifest, sources)
+        return api.bank_request_from_sources(
+            bank_id,
+            require_x64_sysv_target(target),
+            require_value(runtime, "NativeRuntime"),
+            manifest,
+            sources
         )
     end
 
@@ -4725,6 +6141,73 @@ local function bind_context(T)
         )
     end
 
+    local function build_sources_for_complete_capability(capability)
+        require_x64_sysv_target(capability.target)
+        local out = {}
+        if #(capability.abi.public_adapters or {}) > 0 then
+            local domain = Support.support_domain(
+                Support.complete_capability_manifest_domain_id(capability),
+                capability.target,
+                Support.empty_runtime(),
+                capability.scalars,
+                capability.abi.public_adapters
+            )
+            for _, source in ipairs(build_sources_for_domain(domain)) do out[#out + 1] = source end
+        end
+        capability.code:append_native_template_sources(out, capability)
+        capability.abi:append_native_template_sources(out, capability)
+        capability.kernel:append_native_template_sources(out, capability)
+        capability.stencil:append_native_template_sources(out, capability)
+        return out
+    end
+
+    local complete_manifest_source_cache = setmetatable({}, { __mode = "k" })
+
+    function Native.NativeCompleteCodeCapability:append_native_template_sources(out, input)
+        for _, micro_op in ipairs(self.micro_ops or {}) do micro_op:append_native_template_sources(out, input) end
+    end
+
+    function Native.NativeCompleteAbiCapability:append_native_template_sources(out, input)
+        for _, micro_op in ipairs(self.micro_ops or {}) do micro_op:append_native_template_sources(out, input) end
+    end
+
+    function Native.NativeCompleteKernelCapability:append_native_template_sources(out, input)
+        for _, micro_op in ipairs(self.micro_ops or {}) do micro_op:append_native_template_sources(out, input) end
+    end
+
+    function Native.NativeCompleteStencilCapability:append_native_template_sources(out, input)
+        for _, micro_op in ipairs(self.micro_ops or {}) do micro_op:append_native_template_sources(out, input) end
+    end
+
+    function Native.NativeCompleteBankCapability:native_template_manifest()
+        local sources = build_sources_for_complete_capability(self)
+        local manifest = complete_manifest_from_sources(self, sources)
+        complete_manifest_source_cache[self] = { manifest = manifest, sources = sources }
+        return manifest
+    end
+
+    function Native.NativeCompleteBankCapability:native_template_sources()
+        local manifest = self:native_template_manifest()
+        local cached = complete_manifest_source_cache[self]
+        local sources = cached and cached.sources or build_sources_for_complete_capability(self)
+        api.assert_manifest_matches_sources(manifest, sources)
+        return sources
+    end
+
+    function Native.NativeCompleteBankCapability:native_template_bank_request(bank_id)
+        local manifest = self:native_template_manifest()
+        local cached = complete_manifest_source_cache[self]
+        local sources = cached and cached.sources or build_sources_for_complete_capability(self)
+        api.assert_manifest_matches_sources(manifest, sources)
+        return api.bank_request_from_sources(
+            bank_id or Support.complete_bank_id(self),
+            self.target,
+            Support.empty_runtime(),
+            manifest,
+            sources
+        )
+    end
+
     function Native.NativeScalarSupport:append_native_template_sources(out, input)
         return self.scalar:append_native_template_sources(
             out,
@@ -4734,6 +6217,18 @@ local function bind_context(T)
 
     function api.bank_request_for_support_domain(domain, bank_id)
         return domain:native_template_bank_request(bank_id)
+    end
+
+    function api.bank_request_for_complete_capability(capability, bank_id)
+        return capability:native_template_bank_request(bank_id)
+    end
+
+    function api.bank_request_for_fast_region_capability(capability, target, runtime, bank_id)
+        return capability:native_template_bank_request(target, runtime, bank_id)
+    end
+
+    function api.host_complete_bank_request()
+        return api.bank_request_for_complete_capability(Support.host_complete_bank_capability())
     end
 
     function api.host_scalar_bank_request()

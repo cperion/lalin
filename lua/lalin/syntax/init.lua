@@ -345,6 +345,13 @@ function LalinSyntax.to_module(parsed_decls, name, T)
         and Tr.FuncLocalContract(fname, params, result_ty, contracts, body)
         or Tr.FuncLocal(fname, params, result_ty, body)
       return Tr.ItemFunc(func_spec)
+    elseif parsed.tag == "DeclExtern" then
+      local ename = qualified_compiler_name(parsed)
+      local params = {}
+      for i, p in ipairs(to_tree.product_fields(parsed.params or {})) do
+        params[i] = T.LalinType.Param(p.name, parsed_type(p.type))
+      end
+      return Tr.ItemExtern(Tr.ExternFunc(ename, parsed.symbol or ename, params, parsed_type(parsed.result)))
     elseif parsed.tag == "DeclStruct" then
       local fields = {}
       for i, f in ipairs(to_tree.product_fields(parsed.fields or {})) do

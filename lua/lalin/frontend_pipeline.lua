@@ -64,9 +64,7 @@ local function bind_context(T)
     local KernelValidate = require("lalin.kernel_validate")(T)
     local CodeLowerPlan = require("lalin.code_lower_plan")(T)
     local CodeType = require("lalin.code_type")(T)
-    local LowerToBack = require("lalin.lower_to_back")(T)
     local LowerToC = require("lalin.lower_to_c")(T)
-    local Validate = require("lalin.back_validate")(T)
     local CValidate = require("lalin.c_validate")(T)
     local BackTarget = require("lalin.back_target_model")(T)
     local CompilerAbi = require("lalin.compiler_abi")(T)
@@ -115,48 +113,6 @@ local function bind_context(T)
         local code_report = CodeValidate.validate(code_module, collector)
         progress(process_ctx, "code_validate", { report = code_report, target = is_c and "c" or "back" })
         return T.LalinCompiler.CodeResult(code_module, code_contracts, layout_env)
-    end
-
-    local function code_result_to_back(code_result, opts)
-        opts = opts or {}
-        local process_ctx = opts.process_ctx
-        local target_model = opts.target_model or opts.back_target_model or BackTarget.default_native()
-        local target = opts.target or BackTarget.host_target(target_model)
-        local analysis_ctx = opts.analysis_ctx or {}
-        local collector = opts.collector or Errors.ThrowingCollector(
-            Errors.SpanResolvers.RESOLVERS,
-            analysis_ctx,
-            Errors.Catalog,
-            Errors.Terminal.render
-        )
-        CompilerAbi.assert_valid_code_result(code_result, { collector = collector })
-        local code_module, code_contracts = code_result.module, code_result.contracts
-        local graph = CodeGraph.graph(code_module)
-        progress(process_ctx, "code_graph", { graph = graph })
-        local flow_facts = CodeFlowFacts.facts(code_module, graph)
-        local flow_semantics = CodeFlowFacts.semantic_facts(code_module, graph, flow_facts)
-        progress(process_ctx, "flow_facts", { facts = flow_facts, semantics = flow_semantics })
-        local value_facts = CodeValueFacts.facts(code_module, graph, flow_facts)
-        progress(process_ctx, "value_facts", { facts = value_facts })
-        local mem_semantics = CodeMemFacts.semantic_facts(code_module, graph, flow_facts, value_facts, code_contracts)
-        local mem_facts = CodeMemFacts.facts(code_module, graph, flow_facts, value_facts, code_contracts)
-        progress(process_ctx, "memory_facts", { facts = mem_facts, semantics = mem_semantics })
-        local effect_facts = CodeEffectFacts.facts(code_module, graph, mem_semantics, code_contracts)
-        progress(process_ctx, "effect_facts", { facts = effect_facts })
-        local kernel_plan = CodeKernelPlan.plan(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts)
-        progress(process_ctx, "kernel_plan", { plan = kernel_plan })
-        local schedule_plan = CodeSchedulePlan.plan(code_module, kernel_plan, flow_facts, value_facts, mem_semantics, effect_facts, target_model)
-        progress(process_ctx, "schedule_plan", { plan = schedule_plan })
-        local lower_plan = CodeLowerPlan.plan(code_module, graph, kernel_plan, schedule_plan, T.LalinLower.LowerTargetBack)
-        progress(process_ctx, "lower_plan", { plan = lower_plan, target = "back" })
-        local kernel_report = KernelValidate.validate(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan, { collector = collector })
-        progress(process_ctx, "kernel_validate", { report = kernel_report })
-        local program = LowerToBack.module(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan, { layout_env = code_result.layout_env, target = target })
-        if program == nil then error((opts.site or "frontend") .. " lowering failed: code_to_back produced nil program", 2) end
-        progress(process_ctx, "lower_to_back", { program = program })
-        local back_report = Validate.validate(program, collector)
-        progress(process_ctx, "back_validate", { report = back_report })
-        return { program = program, back_report = back_report }
     end
 
     local function code_result_to_c(code_result, opts)
@@ -276,26 +232,6 @@ local function bind_context(T)
     end
     local checked_to_code_process = llbl.process. lalin_checked_to_code { "checked", "opts" } (checked_to_code_process_body)
 
-    local function code_to_back_process_body(ctx, code_result, opts)
-        opts = opts or {}
-        local events = {}
-        local run_opts = {}
-        for k, v in pairs(opts) do run_opts[k] = v end
-        run_opts.process_ctx = process_event_sink(ctx, events)
-        events[#events + 1] = ctx:make_event("start", { target = "back", site = run_opts.site or "frontend" })
-        local ok, result = pcall(code_result_to_back, code_result, run_opts)
-        if not ok then
-            local ev = ctx:diagnostic_event { severity = "error", code = "E_LALIN_CODE_TO_BACK", message = tostring(result), target = "back" }
-            ev.target = "back"
-            events[#events + 1] = ev
-            return llbl.gps.raw(llbl.gps.from.array(events))
-        end
-        events[#events + 1] = ctx:make_event("done", { target = "back", result = result })
-        events[#events + 1] = ctx:make_event("result", { result = result })
-        return llbl.gps.raw(llbl.gps.from.array(events))
-    end
-    local code_to_back_process = llbl.process. lalin_code_to_back { "code_result", "opts" } (code_to_back_process_body)
-
     local function code_to_c_process_body(ctx, code_result, opts)
         opts = opts or {}
         local events = {}
@@ -320,11 +256,9 @@ local function bind_context(T)
     return {
         typecheck_module = typecheck_module,
         checked_to_code_result = checked_to_code_result,
-        code_result_to_back = code_result_to_back,
         code_result_to_c = code_result_to_c,
         typecheck_module_process = typecheck_module_process,
         checked_to_code_process = checked_to_code_process,
-        code_to_back_process = code_to_back_process,
         code_to_c_process = code_to_c_process,
         assert_no_c_phase_unreachable = assert_no_c_phase_unreachable,
     }

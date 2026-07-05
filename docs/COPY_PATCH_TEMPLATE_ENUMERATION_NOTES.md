@@ -3,9 +3,11 @@
 This note records the historical research pass for redesigning the Lalin native
 bank from first principles. It is not the binding implementation contract;
 `docs/RESIDUAL_NATIVE_ARCHITECTURE.md` is. The current native backend is the
-residualless C-stencil copy-patch architecture: support domains produce manifests
-and C stencil sources, the offline generator builds verified native template
-banks, and runtime compilation only copies, patches, and installs bank entries.
+residualless C-stencil copy-patch architecture. A complete language bank is
+produced from the closed micro-op capability vocabulary defined in
+`docs/RESIDUAL_NATIVE_ARCHITECTURE.md`; subset support domains are only tests or
+target subsets. The offline generator builds verified native template banks, and
+runtime compilation only copies, patches, and installs bank entries.
 
 ## Sources Read
 
@@ -88,14 +90,19 @@ explosion. The same warning applies directly to patch-template coordinates:
 only values that materially change instruction selection should become family
 axes; values merely inserted into existing instruction operands should be holes.
 
-Implication for Lalin: distinguish three classes explicitly:
+Implication for Lalin: distinguish classes explicitly:
 
-- Identity axes: values that define the semantic loop/template family.
+- Complete-bank axes: closed machine/control micro-op families only.
+- Graph repetition: repeated terms, lanes, effects, producer axes, parameters,
+  results, and body members.
 - Patch coordinates: values inserted into holes of an already selected template.
-- Runtime parameters: ordinary ABI values passed to the copied code.
+- Runtime/frame parameters: ordinary ABI values and frame slots passed to copied
+  code.
+- Lowering facets: program-specific type/layout/proof facts used while binding
+  graph nodes.
 
-Do not promote patch coordinates into family axes unless doing so buys a real
-instruction shape.
+Do not promote patch coordinates, counts, names, signatures, sizes, ranks,
+strides, scales, offsets, or compiler flag strings into family axes.
 
 ## Futhark Lessons
 
@@ -131,7 +138,7 @@ The semantic flow is:
 ```text
 Lalin loop/source semantics
   -> Code/Kernel/Stencil ASDL facts
-  -> finite source-shape projections and NativeTemplateSourceManifest
+  -> complete-bank closed micro-op families and NativeTemplateSourceManifest
   -> verified NativeTemplateBank entries built offline
   -> NativeTemplateGraph selection at runtime
   -> copy code and constant-pool bytes
@@ -180,94 +187,74 @@ Bad root domains:
 - budget-limited enumeration as architecture;
 - synthetic stage names that do not correspond to ASDL semantics.
 
-## Native Kernel Source-Shape Contract
+## Native Kernel and Stencil Complete-Bank Contract
 
-Kernel lowering has two distinct ASDL layers and they must not be collapsed.
+Kernel and Stencil lowering use two ASDL layers that must not be collapsed.
 
-**Semantic/native projections** are program-specific. They may mention concrete
-`KernelBody`, `KernelLane`, `ValueExpr`, `ReductionFact`, `StencilPredicate`,
-`CallSummary`, frame roles, and value ids. These facts are for lowering and patch
-binding.
+**Semantic/native projections** are program-specific. They carry concrete
+semantic values, frame roles, storage layouts, runtime value ids, descriptors,
+proofs, and patch bindings. These facts are for lowering and binding only.
 
-**Source-shape projections** are bank-specific and finite. They must not mention
-program identities or exact kernel bodies. They describe only the instruction or
-control shape needed to choose reusable `NativeChunkKernelOp` templates: loop
-shape, lane address shape, value storage shape, expression operator shape,
-predicate/reducer/call shape, effect shape, result shape, and body summary
-counts. Program values become frame roles, ABI params, holes, or patch
-coordinates.
+**Complete-bank micro-op shapes** are bank-specific and finite. They describe one
+primitive instruction/control/address/ABI family at a time. They do not summarize
+whole bodies, whole expressions, ranks, term counts, field names, or schedules.
 
 The required flow is:
 
 ```text
-Kernel semantic leaf
-  -> NativeKernel*Projection        -- program-specific lowering facts
-  -> NativeKernel*SourceShape       -- finite bank/source family facts
-  -> NativeKernelSourceShapeAxis    -- template selection
-  -> holes/frame roles/patches      -- program-specific binding
+semantic leaf
+  -> Native*Projection / Native*LoweringInput    -- program-specific facts
+  -> primitive NativeTemplateGraph nodes         -- graph repetition for counts
+  -> closed micro-op source family axes          -- complete-bank selection
+  -> holes/frame/runtime/constant-pool bindings  -- program-specific payloads
 ```
 
-It is invalid for a `NativeChunkKernelOp` family axis to carry a concrete
-`KernelBody`, `KernelLane`, `ValueExpr`, `ReductionFact`, `StencilPredicate`, or
-`CallSummary`. If a source builder seems to need one of those values to select a
-family, add the missing finite source-shape ASDL leaf and keep the concrete value
-as a patch/frame fact.
-
-## Native Stencil Source-Shape Contract
-
-Stencil native lowering follows the same two-layer rule as Kernel lowering.
-Concrete `StencilDescriptor`, `StencilProducer`, `StencilAccess`,
-`StencilPointExpr`, `StencilBody`, `StencilSink`, `StencilSchedule`, and
-`StencilInstance` values are semantic/native projections: they can own frame
-roles, storage layouts, runtime value ids, descriptors, and patch bindings. Bank
-selection does not key on those program-specific values.
-
-Finite source-shape ASDL now names the reusable stencil template vocabulary:
-`NativeStencilProducerSourceShape`, `NativeStencilAccessSourceShape`,
-`NativeStencilPointSourceShape`, `NativeStencilBodySourceShape`,
-`NativeStencilSinkSourceShape`, and `NativeStencilScheduleSourceShape`, with
-`NativeStencilSourceSupport` carried by `NativeTemplateSupportDomain`. Template
-axes use `NativeStencil*SourceShapeAxis` leaves so `NativeChunkStencilOp` source
-builders enumerate shapes supplied by support, not concrete stencil bodies or
-access identities.
-
-Program-specific stencil facts bind later through lowering inputs, frame roles,
-holes, patch coordinates, ABI/runtime parameters, and descriptor/object facts.
-Dynamic bounds, bases, lengths, strides, point-expression values, sink state, and
-schedule control are values to bind, not axes to enumerate.
+It is invalid for a `NativeChunkKernelOp` or `NativeChunkStencilOp` family axis
+to carry a concrete semantic node, program identity, full type, full signature,
+field name, raw byte size/alignment, rank, count, stride, scale, step, or
+compiler flag string. Those facts are represented as graph repetition, holes,
+frame/runtime values, constant-pool entries, or named lowering facets.
 
 ## Axis Classification
 
-Family axes should be fixed only when they alter instruction shape or control
-shape:
+Family axes are fixed only when they are closed machine/control classes that
+alter instruction shape, object shape, control shape, or ABI micro-op shape:
 
-- producer leaf/rank/order/tile/window shape;
-- operation leaf and type;
-- sink leaf and reduction/scan/scatter semantics;
-- layout constructor shape when address-generation differs;
-- schedule strategy when generated code differs;
-- ABI/register protocol shape;
-- target ISA/endianness/calling convention.
+- target architecture/ABI/endianness/pointer-width class;
+- machine scalar/value class;
+- concrete closed operation leaf such as arithmetic, cast, compare, reduction,
+  store, scan, scatter, call, branch, return;
+- closed logical location class;
+- closed successor/extraction class;
+- closed vector/unroll/schedule capability leaf.
 
-Patch coordinates should be holes:
+Patch coordinates are holes or patch formulas:
 
 - scalar constants;
-- field offsets;
-- SoA component indices;
-- affine offsets/terms when emitted as immediates;
+- byte sizes and alignments;
+- field and component offsets;
+- affine offsets, coefficients, terms, strides, scales, and steps;
 - window offsets;
-- strides only for explicit stride-hole templates;
-- branch/call targets;
-- stack/frame offsets if used by a stencil protocol.
+- branch/call/continuation targets;
+- stack/frame offsets and frame size.
 
-Runtime parameters should remain ABI parameters:
+Runtime/frame parameters remain values:
 
 - base pointers;
 - dynamic lengths;
 - dynamic starts/stops;
-- dynamic view strides already modeled by descriptors;
+- dynamic descriptor fields and view strides;
 - external init values;
-- values that the loop naturally consumes per call.
+- user scalar values consumed by the loop or call.
+
+Counts are graph repetition:
+
+- producer axes;
+- window offsets;
+- affine/logical terms;
+- lanes/effects/bindings/body members;
+- ABI parameters/results;
+- expression tree depth.
 
 ## Supertemplate Policy
 
@@ -292,37 +279,36 @@ Bad supertemplate candidates:
   address projection;
 - variants that differ only by values that can be holes.
 
-## Current ASDL Consequences
+## ASDL Consequences
 
-The implemented native schema models template compilation and runtime copy-patch
-facts directly:
+The native schema models template compilation and runtime copy-patch facts
+directly:
 
-- `NativeTemplateSupportDomain` carries scalar, ABI adapter, Code, Kernel,
-  Stencil, atomics, frame-limit, and constant-pool support.
+- a complete-bank capability product enumerates closed target/scalar/control/
+  location classes;
 - `NativeTemplateSourceManifest` closes bank cardinality before sources are
-  emitted.
-- `NativeStencilGenerator`, metavars, configurations, signatures, hole ordinals,
-  continuation ordinals, and relocation declarations describe reusable template
-  identity.
+  emitted;
+- stencil generators, configurations, signatures, hole ordinals, continuation
+  ordinals, and relocation declarations describe reusable template identity;
 - `NativeTemplateGraph`, node/instance identities, frame/value/control plans,
   edge-copy plans, and node-scoped patch bindings describe program-specific
-  runtime copying.
+  runtime copying;
 - `NativeStorageLayout`, `NativeValueRepresentation`, `NativeCodeTypeLayoutPlan`,
   `NativeModuleAddressPlan`, `NativeKernelLoweringInput`, and
   `NativeStencilLoweringInput` carry semantic lowering facts without side tables.
 
-Methods live on concrete ASDL leaves. Stencil and Kernel lowering first derive
-program-specific projections and then finite source-shape axes such as
-`NativeKernelSourceSupport` / `NativeStencilSourceSupport`; generated bank
-families do not key on concrete program bodies. No selector tables, kind strings,
-cell records, side maps, or placeholder support values are part of the current
+Methods live on concrete ASDL leaves. Stencil and Kernel lowering derive
+program-specific projections, then emit primitive graph nodes whose families are
+closed micro-op axes. Generated bank families do not key on concrete program
+bodies. No selector tables, kind strings, cell records, side maps, subset
+support lists, or placeholder support values are part of the complete-bank
 architecture.
 
 ## Superseded Enumeration Warning
 
 Older experiments measured large template streams from broad cross-products.
 Those measurements remain useful only as warnings. The current direction is
-manifest-first support-domain enumeration plus graph composition, selected
-source-shape families, and supertemplates only when a semantic owner provides a
-precise ASDL projection.
+manifest-first complete capability enumeration plus graph composition, closed
+micro-op source families, and supertemplates only when a semantic owner provides
+a precise ASDL projection.
 

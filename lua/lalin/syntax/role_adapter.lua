@@ -8,6 +8,7 @@
 
 local llbl = require("llbl")
 local asdl = require("lalin.asdl")
+local Exotype = require("lalin.exotype")
 
 local function bind(T, callbacks)
   assert(T and T.LalinCore and T.LalinTree and T.LalinType and T.LalinBind,
@@ -96,6 +97,9 @@ local function bind(T, callbacks)
     local projected = TypeValue.type(value)
     if projected ~= nil then return projected end
     if asdl.classof(value) then return value end
+    if Exotype.is(value) then
+      return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(Exotype.typename(value)) })))
+    end
 
     if type(value) == "table" and value.tag then
       if (value.tag == "DeclStruct" or value.tag == "DeclUnion") and value.name ~= nil then
@@ -210,6 +214,7 @@ local function bind(T, callbacks)
     if type(value) == "table" and value.tag == "DeclDocument" then
       value = value.decls or value.body or {}
     end
+    if Exotype.is(value) then value = Exotype.decls(value, ctx and ctx.exotype or nil) end
     if llbl.is(value, "Fragment") then value = value.items or {} end
     if is_parsed_decl(value) then return { value } end
     if type(value) ~= "table" then role_error("decls", "declaration list expected table/fragment", value, host) end

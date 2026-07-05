@@ -1158,7 +1158,7 @@ return schema. LalinTree {
     field. name [str],
     tag [number],
     payload [LalinType.Type],
-    fields [many [LalinTree.FieldInit]],
+    fields [many [LalinType.FieldDecl]],
   },
   product. TreeCodeVariantEntry {
     interned,
@@ -1446,87 +1446,5 @@ return schema. LalinTree {
   product. TreeCodeContractResult {
     interned,
     fact [LalinCode.CodeFuncContractFact],
-  },
-  sum. TreeBackLocal {
-    TreeBackScalarLocal {
-      variant_unique,
-      binding [LalinBind.Binding],
-      field. value [LalinBack.BackValId],
-      field. ty [LalinBack.BackScalar],
-    },
-    TreeBackStackLocal {
-      variant_unique,
-      binding [LalinBind.Binding],
-      slot [LalinBack.BackStackSlotId],
-      field. ty [LalinBack.BackScalar],
-    },
-    TreeBackViewLocal {
-      variant_unique,
-      binding [LalinBind.Binding],
-      data [LalinBack.BackValId],
-      len [LalinBack.BackValId],
-    },
-    TreeBackStridedViewLocal {
-      variant_unique,
-      binding [LalinBind.Binding],
-      data [LalinBack.BackValId],
-      len [LalinBack.BackValId],
-      stride [LalinBack.BackValId],
-    },
-  },
-  sum. TreeBackReturn {
-    TreeBackReturnScalar,
-    TreeBackReturnView { variant_unique, out [LalinBack.BackValId], },
-  },
-  product. TreeBackEnv {
-    interned,
-    locals [many [LalinTree.TreeBackLocal]],
-    next_value [number],
-    next_block [number],
-    ret [LalinTree.TreeBackReturn],
-  },
-  sum. TreeBackExprResult {
-    TreeBackExprValue {
-      variant_unique,
-      env [LalinTree.TreeBackEnv],
-      cmds [many [LalinBack.Cmd]],
-      field. value [LalinBack.BackValId],
-      field. ty [LalinBack.BackScalar],
-    },
-    TreeBackExprView {
-      variant_unique,
-      env [LalinTree.TreeBackEnv],
-      cmds [many [LalinBack.Cmd]],
-      data [LalinBack.BackValId],
-      len [LalinBack.BackValId],
-    },
-    TreeBackExprStridedView {
-      variant_unique,
-      env [LalinTree.TreeBackEnv],
-      cmds [many [LalinBack.Cmd]],
-      data [LalinBack.BackValId],
-      len [LalinBack.BackValId],
-      stride [LalinBack.BackValId],
-    },
-    TreeBackExprUnsupported {
-      variant_unique,
-      env [LalinTree.TreeBackEnv],
-      cmds [many [LalinBack.Cmd]],
-      reason [str],
-    },
-  },
-  sum. TreeBackStmtResult {
-    TreeBackStmtResult {
-      variant_unique,
-      env [LalinTree.TreeBackEnv],
-      cmds [many [LalinBack.Cmd]],
-      flow [LalinBack.BackFlow],
-    },
-  },
-  sum. TreeBackFuncResult {
-    TreeBackFuncResult { variant_unique, cmds [many [LalinBack.Cmd]], },
-  },
-  sum. TreeBackItemResult {
-    TreeBackItemResult { variant_unique, cmds [many [LalinBack.Cmd]], },
   },
 }

@@ -5,7 +5,6 @@ return schema. LalinSource {
   product. DocUri { interned, text [str], },
   product. DocVersion { interned, field. value [number], },
   sum. LanguageId {
-    LangMlua,
     LangLalin,
     LangLua,
     LangUnknown { variant_unique, field. name [str], },
@@ -44,8 +43,6 @@ return schema. LalinSource {
   sum. AnchorRole {
     AnchorDocument,
     AnchorLuaOpaque,
-    AnchorHostedIsland,
-    AnchorIslandBody,
     AnchorKeyword,
     AnchorScalarType,
     AnchorStructName,

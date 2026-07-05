@@ -72,7 +72,16 @@ function Ast.walk(x, fn, parent, key)
   if replaced ~= nil then x = replaced end
   if llbl.is(x, "HostEval") then return x end
   for k, v in pairs(x) do
-    if k ~= "origin" and type(v) == "table" then
+    if k ~= "origin"
+      and k ~= "__lalin_decl"
+      and k ~= "__lalin_exotype_owner"
+      and k ~= "methods"
+      and k ~= "regions"
+      and k ~= "handles"
+      and k ~= "metamethods"
+      and k ~= "_property_cache"
+      and k ~= "entries"
+      and type(v) == "table" then
       if is_array(v) then
         for i = 1, #v do v[i] = Ast.walk(v[i], fn, x, k) end
       elseif v.tag or llbl.is(v, "HostEval") then

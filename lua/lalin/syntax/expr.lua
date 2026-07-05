@@ -51,8 +51,7 @@ local function parse_expr_list(lex, ctx, close)
   return items
 end
 
-local function parse_record(lex, ctx)
-  local start = lex:expect("{")
+local function parse_record_after_open(lex, ctx, start)
   local fields = {}
   if not lex:next_if("}") then
     repeat
@@ -69,6 +68,11 @@ local function parse_record(lex, ctx)
     lex:expect("}")
   end
   return Ast.node("Record", { fields = fields }, Ast.origin(lex, start, lex.last, "parsed:record"))
+end
+
+local function parse_record(lex, ctx)
+  local start = lex:expect("{")
+  return parse_record_after_open(lex, ctx, start)
 end
 
 local function atom(lex, ctx)
@@ -154,9 +158,14 @@ parser = Pratt.new {
       local name = lex:expect_name("method name")
       lex:expect("(")
       local args = parse_expr_list(lex, ctx, ")")
-      table.insert(args, 1, left)
-      local callee = Ast.node("Name", { name = name.value }, Ast.origin(lex, name, name, "parsed:name"))
-      return Ast.node("Call", { callee = callee, args = args }, Ast.origin(lex, op, lex.last, "parsed:call"))
+      return Ast.node("MethodCall", { receiver = left, name = name.value, args = args }, Ast.origin(lex, op, lex.last, "parsed:method_call"))
+    end },
+    ["{"] = { bp = 100, emit = function(op, left, lex, ctx)
+      if left.origin and op.line and left.origin.end_line and op.line > left.origin.end_line then
+        lex:error_at(op, "struct constructor braces must stay on the same line as the struct name")
+      end
+      local record = parse_record_after_open(lex, ctx, op)
+      return Ast.node("StructCtor", { callee = left, fields = record.fields or {} }, Ast.origin(lex, left.origin or op, lex.last, "parsed:struct_ctor"))
     end },
   },
   infix = {

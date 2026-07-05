@@ -23,6 +23,7 @@ Schema(T)
 require("lalin.native_mc")(T)
 local Native = T.LalinNative
 local Code = T.LalinCode
+local NativeBackend = require("lalin.native_backend")(T)
 local Support = require("lalin.native_template_support")(T)
 
 local dir = "target/test_artifacts/test_native_c_continuation_branch"
@@ -130,6 +131,7 @@ mf:close()
 local c_path = dir .. "/bank.c"
 local h_path = dir .. "/bank.h"
 local lua_path = dir .. "/bank.lua"
+local so_path = dir .. "/bank.so"
 local cmd = table.concat({
     "luajit tools/gen_lalin_mc_bank.lua",
     shell_quote(c_path),
@@ -140,15 +142,17 @@ local cmd = table.concat({
     "2>", shell_quote(dir .. "/generator.log"),
 }, " ")
 assert(command_ok(cmd), "native branch continuation bank should build")
+assert(command_ok("gcc -shared -fPIC " .. shell_quote(c_path) .. " -o " .. shell_quote(so_path)), "native branch C-owned bank should link as a shared object")
 
-local embedded = dofile(lua_path)(T)
-local imported = Native.NativeEmbeddedBankImportRequest(embedded):import_native_bank()
-assert(asdl.isa(imported, Native.NativeEmbeddedBankImported), tostring(imported))
-local bank = imported.bank
+local artifact = dofile(lua_path)(T)
+assert(asdl.isa(artifact, Native.NativeBankArtifact), tostring(artifact))
+local bank = NativeBackend.require_native_bank(artifact, Support.host_target(), artifact.manifest, so_path)
 
-local function entry(family_id)
-    for _, candidate in ipairs(bank.entries) do
-        if candidate.family.id.text == family_id then return candidate end
+local function family(family_id)
+    for _, group in ipairs(artifact.manifest.groups or {}) do
+        for _, candidate in ipairs(group.entries or {}) do
+            if candidate.family.id.text == family_id then return candidate.family end
+        end
     end
     error("missing family " .. family_id)
 end
@@ -169,11 +173,11 @@ local graph = Native.NativeTemplateGraph(
         Native.NativeFrameSlot(Native.NativeFrameSlotId("branch.frame.result"), Native.NativeScalarValueRepresentation(Support.scalar_i32()), 4, 4, 4),
     }, 32, 16),
     {
-        Native.NativeTemplateNode(entry_node_id, instance_for(entry_node_id), entry("native.test.branch.entry"), {}, {}, {}),
-        Native.NativeTemplateNode(branch_node_id, instance_for(branch_node_id), entry("native.test.branch.branch"), {}, {}, {}),
-        Native.NativeTemplateNode(true_node_id, instance_for(true_node_id), entry("native.test.branch.true"), {}, {}, {}),
-        Native.NativeTemplateNode(false_node_id, instance_for(false_node_id), entry("native.test.branch.false"), {}, {}, {}),
-        Native.NativeTemplateNode(terminal_node_id, instance_for(terminal_node_id), entry("native.test.branch.terminal"), {}, {}, {}),
+        Native.NativeTemplateNode(entry_node_id, instance_for(entry_node_id), family("native.test.branch.entry"), {}, {}, {}),
+        Native.NativeTemplateNode(branch_node_id, instance_for(branch_node_id), family("native.test.branch.branch"), {}, {}, {}),
+        Native.NativeTemplateNode(true_node_id, instance_for(true_node_id), family("native.test.branch.true"), {}, {}, {}),
+        Native.NativeTemplateNode(false_node_id, instance_for(false_node_id), family("native.test.branch.false"), {}, {}, {}),
+        Native.NativeTemplateNode(terminal_node_id, instance_for(terminal_node_id), family("native.test.branch.terminal"), {}, {}, {}),
     },
     {
         Native.NativeContinuationEdge(entry_node_id, branch_node_id, Support.first_continuation_symbol()),
@@ -187,8 +191,8 @@ local graph = Native.NativeTemplateGraph(
     entry_node_id,
     { terminal_node_id }
 )
-local plan = graph:select_native_copy_plan(Native.NativeCopyPlanSelectionInput(Support.host_target(), Support.empty_runtime()))
-local install = plan:install_native(Native.NativeInstallInput(Support.host_target(), Support.empty_runtime(), Native.NativeExecutableAllocatorMmap))
+local plan = graph:select_native_bank_install_plan(Native.NativeBankInstallPlanSelectionInput(Support.host_target(), Support.empty_runtime()))
+local install = Native.NativeBankInstallRequest(bank, plan, Native.NativeExecutableAllocatorMmap):install_native()
 assert(asdl.isa(install, Native.NativeInstallSucceeded), tostring(install))
 local true_call = graph.protocol:call_native_executable(Native.NativeExecutableCallInput(install.executable, { Native.NativeCallArgI32(1), Native.NativeCallArgI32(0) }))
 assert(asdl.isa(true_call, Native.NativeCallReturnedI32) and true_call.value == 1, "then continuation should be patched and executed")

@@ -75,6 +75,7 @@ mf:close()
 local c_path = dir .. "/bank.c"
 local h_path = dir .. "/bank.h"
 local lua_path = dir .. "/bank.lua"
+local so_path = dir .. "/bank.so"
 local cmd = table.concat({
     "luajit tools/gen_lalin_mc_bank.lua",
     shell_quote(c_path),
@@ -85,11 +86,13 @@ local cmd = table.concat({
     "2>", shell_quote(dir .. "/generator.log"),
 }, " ")
 assert(command_ok(cmd), "native control bank generator should build focused Code control support")
+assert(command_ok("gcc -shared -fPIC " .. shell_quote(c_path) .. " -o " .. shell_quote(so_path)), "native control C-owned bank should link as a shared object")
 
 local target = NativeBackend.host_target()
 local runtime = NativeBackend.empty_runtime()
-local embedded = dofile(lua_path)(T)
-local bank = NativeBackend.require_imported_bank(embedded)
+local artifact = dofile(lua_path)(T)
+assert(asdl.isa(artifact, Native.NativeBankArtifact), tostring(artifact))
+local bank = NativeBackend.require_native_bank(artifact, target, nil, so_path)
 local origin = Code.CodeOriginUnknown
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local bool8 = Code.CodeTyBool8
@@ -131,18 +134,13 @@ local function plan_module_graph(module, signature)
 end
 
 local function compile_call(f, signature, args)
-    local graph = f:plan_native_copy(Native.NativePlanInput(target, runtime, bank), nil, signature)
-    local copy_plan = graph:select_native_copy_plan(Native.NativeCopyPlanSelectionInput(target, runtime))
-    local install = copy_plan:install_native(Native.NativeInstallInput(target, runtime, Native.NativeExecutableAllocatorMmap))
-    if not asdl.isa(install, Native.NativeInstallSucceeded) then
-        error("install rejected for " .. f.name .. ": " .. tostring(install), 2)
-    end
-    local executable = install.executable
+    local result = NativeBackend.compile_code_func(f, signature, target, runtime, bank)
+    local executable = result.executable
     return executable.protocol:call_native_executable(Native.NativeExecutableCallInput(executable, args or {}))
 end
 
 local function family_has(node, text)
-    return node.entry.family.id.text:find(text, 1, true) ~= nil
+    return node.family.id.text:find(text, 1, true) ~= nil
 end
 
 local function count_nodes(graph, text)
@@ -335,10 +333,10 @@ local extern_runtime = Native.NativeRuntime({
 })
 local extern_graph = extern_module:plan_native_copy(Native.NativePlanInput(target, extern_runtime, bank))
 assert(count_nodes(extern_graph, "call.extern") == 1, "extern CodeInstCall should select an extern call stencil")
-local extern_copy_plan = extern_graph:select_native_copy_plan(Native.NativeCopyPlanSelectionInput(target, extern_runtime))
-local extern_install = extern_copy_plan:install_native(Native.NativeInstallInput(target, extern_runtime, Native.NativeExecutableAllocatorMmap))
-assert(asdl.isa(extern_install, Native.NativeInstallRejected), "extern calls without supplied runtime addresses should reject at install")
-assert(asdl.isa(extern_install.rejects[1], Native.NativeInstallRejectWrongCoordinate), "extern call rejection should be a typed wrong-coordinate reject, not fallback")
+local extern_install_plan = extern_graph:select_native_bank_install_plan(Native.NativeBankInstallPlanSelectionInput(target, extern_runtime))
+local extern_install = Native.NativeBankInstallRequest(bank, extern_install_plan, Native.NativeExecutableAllocatorMmap):install_native()
+assert(asdl.isa(extern_install, Native.NativeInstallRejected), "extern calls without supplied runtime addresses should reject at C bank install")
+assert(asdl.isa(extern_install.rejects[1], Native.NativeInstallRejectBankRejected), "extern call rejection should be a typed C-bank reject, not a Lua installer fallback")
 
 local fn_value = Code.CodeValueId("native.control.call.indirect.fn")
 local indirect_arg = Code.CodeValueId("native.control.call.indirect.arg")

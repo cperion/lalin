@@ -108,13 +108,6 @@ The runtime boundary is borrowed and explicit:
 Do not hide bytecode validity in callbacks or side tables. Validation facts must
 be visible to the task/run model.
 
-## Relationship To PVM
-
-The older PVM machinery remains an implementation substrate for schema values,
-interning, phase triplets, and cache boundaries. LLPVM is the public low-level
-VM language. New docs and public APIs should describe LLPVM and LLBL region/GPS
-machinery, not a separate public PVM doctrine.
-
 ## Tests
 
 Useful checks:

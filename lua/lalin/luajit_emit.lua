@@ -993,6 +993,31 @@ local function bind_context(T)
         return op.artifact.symbol.text .. "(" .. table.concat(args, ", ") .. ")"
     end
 
+    local function c_emit_machine_func(ctx, func, sig)
+        local params = {}
+        for i = 1, #func.params do params[i] = c_param_decl(func.params[i]) end
+        local out = { c_result_type(sig) .. " " .. c_func_name(func.name) .. "(" .. (#params > 0 and table.concat(params, ", ") or "void") .. ") {" }
+        local machines = machine_map(func)
+        local m = machines[func.body.machine.text]
+        if m == nil then error("luajit_emit: C machine function missing machine " .. tostring(func.body.machine.text), 3) end
+        local term_cls = asdl.classof(func.body.terminal)
+        local op_cls = asdl.classof(m.op)
+        if term_cls == LJ.LJTerminalFirst and func.body.terminal.default == nil then
+            if op_cls == LJ.LJMachineStencilEffect then
+                line(out, 1, c_stencil_call_expr(ctx, m.op) .. ";")
+                line(out, 1, "return;")
+                out[#out + 1] = "}"
+                return table.concat(out, "\n")
+            end
+            if op_cls == LJ.LJMachineStencilCall then
+                line(out, 1, "return " .. c_stencil_call_expr(ctx, m.op) .. ";")
+                out[#out + 1] = "}"
+                return table.concat(out, "\n")
+            end
+        end
+        unsupported(func.body, "C machine function body")
+    end
+
     local function c_emit_blocks_func(ctx, func, sig)
         local block_by_id, order = build_block_map(func.body.blocks)
         local entry = block_by_id[func.body.entry.text]
@@ -1049,7 +1074,7 @@ local function bind_context(T)
             return c_emit_blocks_func(ctx, func, sig)
         end
         if body_cls == LJ.LJBodyMachine then
-            unsupported(func.body, "C machine function body")
+            return c_emit_machine_func(ctx, func, sig)
         end
         unsupported(func.body, "C function body")
     end
@@ -1099,6 +1124,17 @@ local function bind_context(T)
         }
     end
 
+    local function c_pattern_escape(s)
+        return tostring(s):gsub("([^%w])", "%%%1")
+    end
+
+    local function c_signature_return_type(symbol, signature)
+        local sig = tostring(signature or "")
+        local ret = sig:match("^%s*(.-)%s+" .. c_pattern_escape(symbol) .. "%s*%(")
+        if ret ~= nil and ret ~= "" then return ret end
+        return "void"
+    end
+
     local function emit_c_module(module, artifacts, opts)
         opts = opts or {}
         local StencilC = require("lalin.stencil_c")(T)
@@ -1117,14 +1153,19 @@ local function bind_context(T)
                 omit_preamble = true,
                 c_decls = opts.c_decls or opts.decls,
             })
+            if type(stencil_source) ~= "string" then
+                local keys = {}
+                if type(stencil_source) == "table" then for k in pairs(stencil_source) do keys[#keys + 1] = tostring(k) end end
+                error("luajit_emit: stencil C source must be string, got " .. type(stencil_source) .. " keys=" .. table.concat(keys, ","), 2)
+            end
             if opts.static_stencils ~= false then
                 local seen = {}
                 for _, artifact in ipairs(artifacts or {}) do
                     local symbol = artifact.symbol.text
                     if not seen[symbol] then
-                        local ret = c_signature_parts(symbol, artifact.c_signature)
+                        local ret = c_signature_return_type(symbol, artifact.c_signature)
                         stencil_source = stencil_source:gsub(
-                            "([^\n]*)" .. pattern_escape(ret) .. "%s+" .. pattern_escape(symbol) .. "%s*%(",
+                            "([^\n]*)" .. c_pattern_escape(ret) .. "%s+" .. c_pattern_escape(symbol) .. "%s*%(",
                             function(prefix)
                                 if prefix ~= "" then return prefix .. ret .. " " .. symbol .. "(" end
                                 return "static inline " .. ret .. " " .. symbol .. "("

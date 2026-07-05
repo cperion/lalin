@@ -26,15 +26,20 @@ local function parse_named_payload(lex, ctx)
   lex:expect("(")
   if not lex:next_if(")") then
     repeat
-      local mark = lex:mark()
       local key
+      local value
       if lex:peek().kind == "name" and lex:peek(1).value == "=" then
         key = lex:next().value
         lex:expect("=")
+        value = Expr.parse(lex, ctx)
+      elseif lex:peek().kind == "name" and (lex:peek(1).value == "," or lex:peek(1).value == ")") then
+        local name = lex:next()
+        key = name.value
+        value = Ast.node("Name", { name = name.value }, Ast.origin(lex, name, name, "parsed:name"))
       else
-        lex:restore(mark)
+        value = Expr.parse(lex, ctx)
       end
-      fields[#fields + 1] = { key = key, value = Expr.parse(lex, ctx) }
+      fields[#fields + 1] = { key = key, value = value, shorthand = key ~= nil and value.tag == "Name" and value.name == key }
     until not lex:next_if(",")
     lex:expect(")")
   end

@@ -280,8 +280,8 @@ Parsed .lln: [fragment] is the normal splice form in list-like roles.
    surrounding lowering call the role adapter explicitly.
 3. Move current Lalin-specific host-escape conversion into role adapters:
    type, expr, stmt, decl, field/product, continuation/protocol.
-4. Implement declaration-value-to-type adaptation so `[Pair]` works without
-   `named("Pair")`.
+4. Done: declaration-value-to-type adaptation lets `[Pair]` work without
+   `named("Pair")`; keep `named("...")` only for dynamic/metaprogrammed names.
 5. Implement fragment splicing for parsed declaration, field/product, statement,
    and continuation roles.
 6. Keep Lua DSL `spread`/`_` intact, but document them as Lua-channel helpers,

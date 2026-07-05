@@ -2,20 +2,247 @@ local asdl = require("lalin.asdl")
 local ok_ffi, ffi = pcall(require, "ffi")
 if not ok_ffi then ffi = nil end
 
-if ffi ~= nil then
-    ffi.cdef [[
+local ffi_declared = false
+
+local function require_ffi(operation)
+    if ffi == nil then error("lalin.native_mc: ffi is required for " .. operation, 3) end
+    return ffi
+end
+
+local function declare_ffi()
+    local f = require_ffi("C-owned native bank runtime")
+    if ffi_declared then return f end
+    f.cdef [[
         void *mmap(void *addr, size_t length, int prot, int flags, int fd, int64_t offset);
+
+        typedef enum LalinNativeSelectionStatus {
+          LALIN_NATIVE_SELECT_OK = 0,
+          LALIN_NATIVE_SELECT_INVALID = 1,
+          LALIN_NATIVE_SELECT_TARGET_MISMATCH = 2,
+          LALIN_NATIVE_SELECT_MISSING = 3,
+          LALIN_NATIVE_SELECT_AMBIGUOUS = 4
+        } LalinNativeSelectionStatus;
+
+        typedef enum LalinNativeInstallStatus {
+          LALIN_NATIVE_INSTALL_OK = 0,
+          LALIN_NATIVE_INSTALL_REJECTED = 1,
+          LALIN_NATIVE_INSTALL_ALLOCATION_FAILED = 2
+        } LalinNativeInstallStatus;
+
+        typedef enum LalinNativePatchCoordinateKind {
+          LALIN_NATIVE_COORD_NONE = 0,
+          LALIN_NATIVE_COORD_IMMEDIATE_I32 = 1,
+          LALIN_NATIVE_COORD_IMMEDIATE_I64 = 2,
+          LALIN_NATIVE_COORD_POINTER64 = 3,
+          LALIN_NATIVE_COORD_FIELD_OFFSET = 4,
+          LALIN_NATIVE_COORD_COMPONENT_INDEX = 5,
+          LALIN_NATIVE_COORD_STRIDE = 6,
+          LALIN_NATIVE_COORD_AFFINE_COEFF = 7,
+          LALIN_NATIVE_COORD_AFFINE_OFFSET = 8,
+          LALIN_NATIVE_COORD_WINDOW_OFFSET = 9,
+          LALIN_NATIVE_COORD_BRANCH_TARGET = 10,
+          LALIN_NATIVE_COORD_CALL_TARGET = 11,
+          LALIN_NATIVE_COORD_CODE_DATA_ADDRESS = 12,
+          LALIN_NATIVE_COORD_CODE_GLOBAL_ADDRESS = 13,
+          LALIN_NATIVE_COORD_CODE_FUNC_ADDRESS = 14,
+          LALIN_NATIVE_COORD_CODE_EXTERN_ADDRESS = 15,
+          LALIN_NATIVE_COORD_FRAME_OFFSET = 16,
+          LALIN_NATIVE_COORD_FRAME_SIZE = 17,
+          LALIN_NATIVE_COORD_SCALAR_CONST = 18,
+          LALIN_NATIVE_COORD_CONSTANT_POOL_ENTRY = 19,
+          LALIN_NATIVE_COORD_MODULE_ADDRESS = 20
+        } LalinNativePatchCoordinateKind;
+
+        typedef enum LalinNativeInstallControlEdgeKind {
+          LALIN_NATIVE_INSTALL_EDGE_FALLTHROUGH = 1,
+          LALIN_NATIVE_INSTALL_EDGE_CONDITIONAL_BRANCH = 2,
+          LALIN_NATIVE_INSTALL_EDGE_LOOP_BACKEDGE = 3,
+          LALIN_NATIVE_INSTALL_EDGE_EXIT = 4,
+          LALIN_NATIVE_INSTALL_EDGE_CONTINUATION = 5,
+          LALIN_NATIVE_INSTALL_EDGE_RUNTIME_CALL_RETURN = 6
+        } LalinNativeInstallControlEdgeKind;
+
+        typedef enum LalinNativeModuleAddressKind {
+          LALIN_NATIVE_MODULE_ADDRESS_DATA = 1,
+          LALIN_NATIVE_MODULE_ADDRESS_GLOBAL = 2,
+          LALIN_NATIVE_MODULE_ADDRESS_FUNC = 3,
+          LALIN_NATIVE_MODULE_ADDRESS_EXTERN = 4
+        } LalinNativeModuleAddressKind;
+
+        typedef struct LalinNativeTemplateSelectorEntry {
+          const char *target_id;
+          const char *family_id;
+          size_t template_ordinal;
+        } LalinNativeTemplateSelectorEntry;
+
+        typedef struct LalinNativeTemplate {
+          size_t ordinal;
+          const char *template_id;
+          const char *family_id;
+          const char *extraction_kind;
+          const char *signature_frame_scalar_kind;
+          const unsigned char *text;
+          size_t text_size;
+          size_t text_alignment;
+          const void *symbols;
+          size_t symbol_count;
+          const void *relocations;
+          size_t relocation_count;
+          const void *holes;
+          size_t hole_count;
+          const void *hole_ordinals;
+          size_t hole_ordinal_count;
+          const void *constant_pool_entries;
+          size_t constant_pool_entry_count;
+          size_t constant_pool_size;
+          size_t constant_pool_alignment;
+        } LalinNativeTemplate;
+
+        typedef struct LalinNativeBankArtifact {
+          const char *bank_id;
+          const char *target_id;
+          const char *api_symbol;
+          const char *selector_symbol;
+          const char *installer_symbol;
+          const LalinNativeTemplate *templates;
+          size_t template_count;
+          const LalinNativeTemplateSelectorEntry *selectors;
+          size_t selector_count;
+          size_t manifest_total_count;
+        } LalinNativeBankArtifact;
+
+        typedef struct LalinNativeTemplateSelectorKey {
+          const char *target_id;
+          const char *family_id;
+        } LalinNativeTemplateSelectorKey;
+
+        typedef struct LalinNativeTemplateHandle {
+          const LalinNativeBankArtifact *bank;
+          const LalinNativeTemplate *template_entry;
+          size_t ordinal;
+        } LalinNativeTemplateHandle;
+
+        typedef struct LalinNativeTemplateSelection {
+          LalinNativeSelectionStatus status;
+          LalinNativeTemplateHandle handle;
+          const LalinNativeTemplateSelectorEntry *matches;
+          size_t match_count;
+        } LalinNativeTemplateSelection;
+
+        typedef struct LalinNativePatchCoordinate {
+          LalinNativePatchCoordinateKind kind;
+          int64_t signed_value;
+          uint64_t unsigned_value;
+          const char *primary_id;
+          const char *secondary_id;
+          size_t index;
+          const unsigned char *bytes;
+          size_t byte_size;
+          size_t byte_alignment;
+        } LalinNativePatchCoordinate;
+
+        typedef struct LalinNativeInstallBinding {
+          const char *node_id;
+          const char *instance_id;
+          const char *hole_id;
+          const char *hole_ordinal_id;
+          int has_hole_ordinal_index;
+          size_t hole_ordinal_index;
+          LalinNativePatchCoordinate coordinate;
+        } LalinNativeInstallBinding;
+
+        typedef struct LalinNativeInstallNode {
+          const char *node_id;
+          const char *instance_id;
+          const char *key_target_id;
+          const char *family_id;
+          const LalinNativeInstallBinding *bindings;
+          size_t binding_count;
+        } LalinNativeInstallNode;
+
+        typedef struct LalinNativeInstallControlEdge {
+          LalinNativeInstallControlEdgeKind kind;
+          const char *from_node_id;
+          const char *to_node_id;
+          const char *then_node_id;
+          const char *then_symbol;
+          const char *else_node_id;
+          const char *else_symbol;
+          const char *symbol;
+          const char *runtime_symbol_id;
+          const char *return_symbol;
+        } LalinNativeInstallControlEdge;
+
+        typedef struct LalinNativeRuntimeSymbolAddress {
+          const char *symbol_id;
+          uint64_t address;
+        } LalinNativeRuntimeSymbolAddress;
+
+        typedef struct LalinNativeModuleAddress {
+          LalinNativeModuleAddressKind kind;
+          const char *id;
+          uint64_t address;
+        } LalinNativeModuleAddress;
+
+        typedef void *(*LalinNativeExecutableAllocFn)(size_t size, size_t alignment, void *userdata);
+
+        typedef struct LalinNativeInstallRequest {
+          const char *target_id;
+          const LalinNativeInstallNode *nodes;
+          size_t node_count;
+          const LalinNativeInstallControlEdge *control_edges;
+          size_t control_edge_count;
+          const LalinNativeRuntimeSymbolAddress *runtime_symbols;
+          size_t runtime_symbol_count;
+          const LalinNativeModuleAddress *module_addresses;
+          size_t module_address_count;
+          const char *entry_node_id;
+          LalinNativeExecutableAllocFn allocate_executable;
+          void *allocator_userdata;
+        } LalinNativeInstallRequest;
+
+        typedef enum LalinNativeInstallRejectKind {
+          LALIN_NATIVE_INSTALL_REJECT_GENERIC = 0,
+          LALIN_NATIVE_INSTALL_REJECT_FALLTHROUGH_LAYOUT = 1
+        } LalinNativeInstallRejectKind;
+
+        typedef struct LalinNativeInstallReject {
+          LalinNativeInstallRejectKind kind;
+          const char *node_id;
+          const char *to_node_id;
+          const char *hole_id;
+          const char *reason;
+        } LalinNativeInstallReject;
+
+        typedef struct LalinNativeInstallResult {
+          LalinNativeInstallStatus status;
+          void *base_address;
+          void *entry_address;
+          size_t size;
+          const LalinNativeInstallReject *rejects;
+          size_t reject_count;
+        } LalinNativeInstallResult;
+
+        const LalinNativeBankArtifact *lalin_native_bank_artifact(void);
+        const LalinNativeTemplate *lalin_native_bank_template(const LalinNativeBankArtifact *bank, size_t ordinal);
+        LalinNativeSelectionStatus lalin_native_bank_select(const LalinNativeBankArtifact *bank, const LalinNativeTemplateSelectorKey *key, LalinNativeTemplateSelection *out);
+        LalinNativeInstallResult lalin_native_bank_install(const LalinNativeBankArtifact *bank, const LalinNativeInstallRequest *request);
     ]]
+    ffi_declared = true
+    return f
 end
 
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
     if T._lalin_api_cache.native_mc ~= nil then return T._lalin_api_cache.native_mc end
 
-    local native_api = require("lalin.native")(T)
+    require("lalin.native")(T)
+    require("lalin.native_template_sources")(T)
 
     local Native = T.LalinNative
+    local Support = require("lalin.native_template_support")(T)
     local api = {}
+    local loaded_libraries = {}
 
     local PROT_READ = 0x1
     local PROT_WRITE = 0x2
@@ -34,352 +261,116 @@ local function bind_context(T)
         error("lalin.native_mc: mmap allocator is not modeled for host OS " .. tostring(jit and jit.os), 3)
     end
 
-    local function template_id_for_embedded(bank, index, embedded)
-        local family_id = embedded.family.id and embedded.family.id.text or tostring(index)
-        return Native.NativeTemplateId(bank.id.text .. ":" .. family_id .. ":" .. tostring(index))
+    local function cstr(keepalive, value)
+        if value == nil then return nil end
+        local s = tostring(value)
+        keepalive[#keepalive + 1] = s
+        return s
     end
 
-    local function text_size(section)
-        if section.bytes.size ~= nil then return section.bytes.size end
-        return #section.bytes.bytes
+    local function text_id(value)
+        return value and value.text or nil
     end
 
-    local function compiled_from_embedded(bank, embedded, index)
-        return Native.NativeCompiledTemplate(
-            template_id_for_embedded(bank, index, embedded),
-            embedded.family,
-            bank.target,
-            embedded.extraction,
-            embedded.signature,
-            embedded.text,
-            embedded.symbols,
-            embedded.relocations,
-            embedded.holes,
-            embedded.hole_ordinals,
-            embedded.relocation_declarations,
-            embedded.constant_pool_layout
-        )
+    local function target_id(target)
+        return target and target.id and target.id.text or nil
     end
 
-    local function align_up(offset, alignment)
-        alignment = alignment or 1
-        if alignment <= 1 then return offset end
-        local rem = offset % alignment
-        if rem == 0 then return offset end
-        return offset + (alignment - rem)
+    local function family_id(family)
+        return family and family.id and family.id.text or nil
     end
 
-    local function node_layout_offset(layout, node_id)
-        for _, node_layout in ipairs(layout.nodes) do
-            if node_layout.node == node_id then return node_layout.offset end
-        end
-        return nil
-    end
-
-    local function entry_node_for_graph(graph)
-        for _, node in ipairs(graph.nodes) do
-            if node.id == graph.entry then return node end
-        end
-        error("lalin.native_mc: NativeTemplateGraph entry node is absent", 3)
-    end
-
-    local function symbol_offset(template, name)
-        for _, sym in ipairs(template.symbols or {}) do
-            if sym.name == name then return sym.offset end
-        end
-        return nil
-    end
-
-    function Native.NativeFallthroughEdge:native_continuation_target(from, symbol)
-        if self.from == from and self.symbol == symbol then return self.to end
-        return nil
-    end
-
-    function Native.NativeConditionalBranchEdge:native_continuation_target(from, symbol)
-        if self.from ~= from then return nil end
-        if self.then_symbol == symbol then return self.then_to end
-        if self.else_symbol == symbol then return self.else_to end
-        return nil
-    end
-
-    function Native.NativeLoopBackedgeEdge:native_continuation_target(from, symbol)
-        if self.from == from and self.symbol == symbol then return self.to end
-        return nil
-    end
-
-    function Native.NativeExitEdge:native_continuation_target(_from, _symbol)
-        return nil
-    end
-
-    function Native.NativeContinuationEdge:native_continuation_target(from, symbol)
-        if self.from == from and self.symbol == symbol then return self.to end
-        return nil
-    end
-
-    function Native.NativeRuntimeCallReturnEdge:native_continuation_target(from, symbol)
-        if self.from == from and self.return_symbol == symbol then return self.to end
-        return nil
-    end
-
-    local function continuation_target(graph, from, symbol)
-        for _, edge in ipairs(graph.control_edges or {}) do
-            local target = edge:native_continuation_target(from, symbol)
-            if target ~= nil then return target end
-        end
-        return nil
-    end
-
-    function Native.NativePatchBindingHoleId:native_patch_binding_key()
-        return "hole:" .. self.hole.text
-    end
-
-    function Native.NativePatchBindingHoleOrdinal:native_patch_binding_key()
-        return "ordinal:" .. self.ordinal.text
-    end
-
-    function Native.NativePatchBindingTarget:native_matches_hole(_hole_layout, _ordinal_id)
-        return false
-    end
-
-    function Native.NativePatchBindingHoleId:native_matches_hole(hole_layout, _ordinal_id)
-        return self.hole == hole_layout.id
-    end
-
-    function Native.NativePatchBindingHoleOrdinal:native_matches_hole(_hole_layout, ordinal_id)
-        return ordinal_id ~= nil and self.ordinal == ordinal_id
-    end
-
-    local function same_binding_scope(a, b)
-        return a.node == b.node and a.instance == b.instance
-    end
-
-    local function ordinal_id_for_hole(template, hole_layout)
-        for _, ordinal in ipairs(template.hole_ordinals or {}) do
-            if ordinal.symbol == hole_layout.symbol then return ordinal.id end
-        end
-        return nil
-    end
-
-    local function hole_layout_for_ordinal(template, ordinal)
-        for _, hole_layout in ipairs(template.holes or {}) do
-            if hole_layout.symbol == ordinal.symbol then return hole_layout end
-        end
-        local width = 4
-        if asdl.isa(ordinal.hole, Native.NativePatchImm64) or asdl.isa(ordinal.hole, Native.NativePatchPtr64) then width = 8 end
-        return Native.NativeHoleLayout(Native.NativePatchHoleId(ordinal.id.text), ordinal.symbol, 0, width, ordinal.hole)
-    end
-
-    local function duplicate_binding_hole_id(plan, binding)
-        if asdl.isa(binding.target, Native.NativePatchBindingHoleId) then return binding.target.hole end
-        for _, node in ipairs(plan.graph.nodes or {}) do
-            if node.id == binding.node and node.instance == binding.instance then
-                for _, ordinal in ipairs(node.entry.compiled.hole_ordinals or {}) do
-                    if asdl.isa(binding.target, Native.NativePatchBindingHoleOrdinal) and binding.target.ordinal == ordinal.id then
-                        return hole_layout_for_ordinal(node.entry.compiled, ordinal).id
-                    end
-                end
-            end
-        end
-        return Native.NativePatchHoleId(binding.target:native_patch_binding_key())
-    end
-
-    local function duplicate_binding_rejects(plan)
-        local rejects = {}
-        for i = 1, #(plan.bindings or {}) do
-            for j = i + 1, #(plan.bindings or {}) do
-                if same_binding_scope(plan.bindings[i], plan.bindings[j]) then
-                    local left_hole = duplicate_binding_hole_id(plan, plan.bindings[i])
-                    local right_hole = duplicate_binding_hole_id(plan, plan.bindings[j])
-                    if left_hole == right_hole then
-                        rejects[#rejects + 1] = Native.NativeInstallRejectDuplicateBinding(left_hole)
-                    end
-                end
-            end
-        end
-        return rejects
-    end
-
-    local function binding_for_hole(plan, node, hole_layout)
-        local ordinal_id = ordinal_id_for_hole(node.entry.compiled, hole_layout)
-        local found
-        for _, binding in ipairs(plan.bindings or {}) do
-            if binding.node == node.id and binding.instance == node.instance and binding.target:native_matches_hole(hole_layout, ordinal_id) then
-                if found ~= nil then return found end
-                found = binding
-            end
-        end
-        return found
-    end
-
-    local function binding_for_ordinal(plan, node, ordinal)
-        local found
-        for _, binding in ipairs(plan.bindings or {}) do
-            if binding.node == node.id and binding.instance == node.instance
-                and asdl.isa(binding.target, Native.NativePatchBindingHoleOrdinal)
-                and binding.target.ordinal == ordinal.id then
-                if found ~= nil then return found end
-                found = binding
-            end
-        end
-        if found ~= nil then return found end
-        return binding_for_hole(plan, node, hole_layout_for_ordinal(node.entry.compiled, ordinal))
+    local function symbol_name(symbol)
+        return symbol and symbol.name or nil
     end
 
     local function executable_id_for_plan(plan)
-        return Native.NativeExecutableId("native-executable:" .. plan.graph.entry.text)
+        return Native.NativeExecutableId("native-executable:" .. plan.entry.text)
     end
 
-    function Native.NativeEmbeddedBankImportRequest:import_native_bank()
-        local embedded = self.embedded
-        local rejects = {}
-        local entries = {}
-
-        for i, entry in ipairs(embedded.entries) do
-            local source_id = template_id_for_embedded(embedded, i, entry)
-            local size = text_size(entry.text)
-            if size <= 0 or entry.text.bytes.bytes == "" then
-                rejects[#rejects + 1] = Native.NativeBuildRejectEmptyText(source_id, "embedded native template has no text bytes")
-            end
-            for _, hole_layout in ipairs(entry.holes) do
-                if hole_layout.offset < 0 or hole_layout.width <= 0 or hole_layout.offset + hole_layout.width > size then
-                    rejects[#rejects + 1] = Native.NativeBuildRejectHoleOutOfRange(
-                        source_id,
-                        hole_layout.id,
-                        hole_layout.offset,
-                        hole_layout.width
-                    )
-                end
-            end
-            if #rejects == 0 then
-                local compiled = compiled_from_embedded(embedded, entry, i)
-                entries[#entries + 1] = Native.NativeTemplateBankEntry(entry.family, compiled)
-            end
-        end
-
-        if #rejects > 0 then
-            return Native.NativeEmbeddedBankRejected(rejects)
-        end
-        return Native.NativeEmbeddedBankImported(Native.NativeTemplateBank(embedded.id, embedded.target, embedded.manifest, entries))
+    local function bank_pointer(bank)
+        local f = declare_ffi()
+        if bank.handle_address == nil or bank.handle_address == 0 then return nil end
+        return f.cast("const LalinNativeBankArtifact *", bank.handle_address)
     end
 
-    function Native.NativeTemplateBank:select_native_template(input)
-        if self.target ~= input.target then
+    local function bank_library(bank)
+        local f = declare_ffi()
+        return loaded_libraries[bank.handle_address] or f.C
+    end
+
+    local function reject_summary(rejects)
+        local count = #(rejects or {})
+        if count == 0 then return "no typed rejects supplied" end
+        return tostring(count) .. " typed reject(s); first reject: " .. tostring(rejects[1])
+    end
+
+    local function library_for_request(request)
+        local f = declare_ffi()
+        if request.shared_object_path ~= nil then
+            local lib = f.load(request.shared_object_path)
+            loaded_libraries[request.artifact] = lib
+            return lib
+        end
+        return f.C
+    end
+
+    local function require_generated_symbols(artifact)
+        if artifact.api_symbol ~= "lalin_native_bank_artifact" then
+            return Native.NativeBankRejectMissingSymbol(artifact.api_symbol)
+        end
+        if artifact.selector_symbol ~= "lalin_native_bank_select" then
+            return Native.NativeBankRejectMissingSymbol(artifact.selector_symbol)
+        end
+        if artifact.installer_symbol ~= "lalin_native_bank_install" then
+            return Native.NativeBankRejectMissingSymbol(artifact.installer_symbol)
+        end
+        return nil
+    end
+
+    local function selection_reject(status, input)
+        if status == 2 then
             return Native.NativeTemplateSelectionRejected({
-                Native.NativeSelectionRejectTargetMismatch(input.target, self.target),
+                Native.NativeSelectionRejectTargetMismatch(input.key.target, input.bank.artifact.target),
             })
         end
-
-        local matches = {}
-        for _, entry in ipairs(self.entries) do
-            local selected = entry:select_native_template(input)
-            if asdl.isa(selected, Native.NativeTemplateSelected) then
-                matches[#matches + 1] = entry
-            end
-        end
-
-        if #matches == 1 then
-            return Native.NativeTemplateSelected(matches[1])
-        end
-        if #matches > 1 then
-            return Native.NativeTemplateSelectionAmbiguous(input.family, matches)
+        if status == 3 then
+            return Native.NativeTemplateSelectionRejected({
+                Native.NativeSelectionRejectMissingBankEntry(input.key.family),
+            })
         end
         return Native.NativeTemplateSelectionRejected({
-            Native.NativeSelectionRejectMissingBankEntry(input.family),
+            Native.NativeSelectionRejectMissingBankEntry(input.key.family),
         })
     end
 
-    function Native.NativeTemplateGraph:select_native_copy_plan(_input)
-        local layout_nodes = {}
-        local offset = 0
-        local alignment = 1
-        local bindings = {}
-        local constant_pool_entries = {}
-        local constant_pool_alignment = 1
-
-        for _, node in ipairs(self.nodes) do
-            local text = node.entry.compiled.text
-            offset = align_up(offset, text.alignment)
-            layout_nodes[#layout_nodes + 1] = Native.NativeCodeLayoutNode(node.id, offset)
-            for _, binding in ipairs(node.bindings) do
-                bindings[#bindings + 1] = binding
-            end
-            offset = offset + text_size(text)
-            if text.alignment > alignment then alignment = text.alignment end
-        end
-
-        local code_size = offset
-        for _, node in ipairs(self.nodes) do
-            local pool = node.entry.compiled.constant_pool_layout
-            if pool ~= nil then
-                if pool.alignment > constant_pool_alignment then constant_pool_alignment = pool.alignment end
-                for _, layout_entry in ipairs(pool.entries or {}) do
-                    local entry_alignment = layout_entry.entry.alignment or pool.alignment or 1
-                    offset = align_up(offset, entry_alignment)
-                    constant_pool_entries[#constant_pool_entries + 1] = Native.NativeConstantPoolLayoutEntry(layout_entry.entry, offset)
-                    offset = offset + layout_entry.entry.bytes.size
-                    if entry_alignment > alignment then alignment = entry_alignment end
-                end
-            end
-        end
-
-        entry_node_for_graph(self)
-        return Native.NativeCopyPlan(
-            self,
-            Native.NativeCodeLayout(layout_nodes, code_size, alignment),
-            self.frame_layout,
-            Native.NativeConstantPoolLayout(constant_pool_entries, offset - code_size, constant_pool_alignment),
-            self.addresses,
-            offset,
-            bindings,
-            self.protocol
+    local function selected_template_handle(input, c_handle)
+        local template = c_handle.template_entry
+        return Native.NativeTemplateHandle(
+            input.bank.artifact.id,
+            tonumber(c_handle.ordinal),
+            input.key.family,
+            tonumber(template.text_size),
+            tonumber(template.text_alignment),
+            tonumber(template.constant_pool_size),
+            tonumber(template.constant_pool_alignment)
         )
     end
 
-    local function apply_rel32(base_address, patch_address, target_address, addend)
-        local delta = target_address + (addend or 0) - patch_address
-        if delta < -2147483648 or delta > 2147483647 then
-            return false
-        end
-        native_api.write_u32_le(patch_address, delta)
-        return true
+    local function c_coordinate(keepalive)
+        local f = declare_ffi()
+        local coord = f.new("LalinNativePatchCoordinate")
+        keepalive[#keepalive + 1] = coord
+        return coord
     end
 
-    local function constant_pool_offset_for_node(plan, node, entry_id)
-        local flat_index = 0
-        for _, graph_node in ipairs(plan.graph.nodes or {}) do
-            for _, layout_entry in ipairs((graph_node.entry.compiled.constant_pool_layout and graph_node.entry.compiled.constant_pool_layout.entries) or {}) do
-                flat_index = flat_index + 1
-                local copied_entry = plan.constant_pool_layout.entries[flat_index]
-                if graph_node == node and layout_entry.entry.id == entry_id and copied_entry ~= nil then
-                    return copied_entry.offset
-                end
-            end
-        end
-        return nil
-    end
-
-    local function constant_pool_layout_for_node(plan, node)
-        local entries = {}
-        local max_align = 1
-        local flat_index = 0
-        for _, graph_node in ipairs(plan.graph.nodes or {}) do
-            for _, layout_entry in ipairs((graph_node.entry.compiled.constant_pool_layout and graph_node.entry.compiled.constant_pool_layout.entries) or {}) do
-                flat_index = flat_index + 1
-                local copied_entry = plan.constant_pool_layout.entries[flat_index]
-                if graph_node == node and copied_entry ~= nil then
-                    entries[#entries + 1] = copied_entry
-                    if copied_entry.entry.alignment > max_align then max_align = copied_entry.entry.alignment end
-                end
-            end
-        end
-        return Native.NativeConstantPoolLayout(entries, plan.constant_pool_layout.size, max_align)
-    end
-
-    local function runtime_symbol_by_id(runtime, symbol_id)
-        for _, symbol in ipairs((runtime and runtime.symbols) or {}) do
-            if symbol.id == symbol_id then return symbol end
-        end
-        return nil
+    local function put_bytes(row, keepalive, bytes_value, alignment)
+        if bytes_value == nil then return end
+        local bytes = bytes_value.bytes or ""
+        keepalive[#keepalive + 1] = bytes
+        row.bytes = ffi.cast("const unsigned char *", bytes)
+        row.byte_size = bytes_value.size or #bytes
+        row.byte_alignment = alignment or 1
     end
 
     function Native.NativeRuntimeAddressCapability:native_runtime_address()
@@ -394,228 +385,679 @@ local function bind_context(T)
         return nil
     end
 
-    local function relocation_patch_in_range(node, relocation, width)
-        return relocation.offset >= 0 and relocation.offset + width <= text_size(node.entry.compiled.text)
+    function Native.NativeBankLoadRejected:required_native_bank()
+        error("lalin.native_mc: native bank load rejected: " .. reject_summary(self.rejects), 3)
     end
 
-    local function native_patch_apply_input(input, plan, node, base_address, node_offset, hole_layout, binding, addend, branch_target_address)
-        local executable_hole_layout = Native.NativeHoleLayout(
-            hole_layout.id,
-            hole_layout.symbol,
-            node_offset + hole_layout.offset,
-            hole_layout.width,
-            hole_layout.hole
+    function Native.NativeBankLoaded:required_native_bank()
+        return self.bank
+    end
+
+    function Native.NativeBankLoadRequest:load_native_bank()
+        local f = declare_ffi()
+        local reject = require_generated_symbols(self.artifact)
+        if reject ~= nil then return Native.NativeBankLoadRejected({ reject }) end
+        local ok, lib_or_err = pcall(library_for_request, self)
+        if not ok then return Native.NativeBankLoadRejected({ Native.NativeBankRejectLoadFailed(tostring(lib_or_err)) }) end
+        local lib = lib_or_err
+        local ok_call, ptr_or_err = pcall(function() return lib.lalin_native_bank_artifact() end)
+        if not ok_call or ptr_or_err == nil then
+            return Native.NativeBankLoadRejected({ Native.NativeBankRejectMissingSymbol(self.artifact.api_symbol) })
+        end
+        local c_bank = ptr_or_err
+        local handle_address = tonumber(ffi.cast("uintptr_t", c_bank))
+        loaded_libraries[handle_address] = lib
+        if c_bank.bank_id ~= nil and ffi.string(c_bank.bank_id) ~= self.artifact.id.text then
+            return Native.NativeBankLoadRejected({ Native.NativeBankRejectInvalidHandle("bank id does not match NativeBankArtifact descriptor") })
+        end
+        if c_bank.target_id ~= nil and ffi.string(c_bank.target_id) ~= self.artifact.target.id.text then
+            return Native.NativeBankLoadRejected({ Native.NativeBankRejectInvalidHandle("target id does not match NativeBankArtifact descriptor") })
+        end
+        return Native.NativeBankLoaded(Native.NativeLoadedBank(self.artifact, handle_address))
+    end
+
+    function Native.NativeBankArtifact:load_native_bank(shared_object_path)
+        return Native.NativeBankLoadRequest(self, shared_object_path):load_native_bank()
+    end
+
+    function Native.NativeTemplateSelectionRejected:required_template_handle()
+        error("lalin.native_mc: native template selection rejected: " .. reject_summary(self.rejects), 3)
+    end
+
+    function Native.NativeTemplateSelectionAmbiguous:required_template_handle()
+        error("lalin.native_mc: native template selection ambiguous for " .. self.key.family.id.text, 3)
+    end
+
+    function Native.NativeTemplateSelected:required_template_handle()
+        return self.handle
+    end
+
+    function Native.NativeLoadedBank:select_native_template(input)
+        local f = declare_ffi()
+        if input.bank ~= self then error("lalin.native_mc: NativeTemplateSelectionInput bank does not match receiver", 3) end
+        local c_bank = bank_pointer(self)
+        if c_bank == nil then
+            return Native.NativeTemplateSelectionRejected({ Native.NativeSelectionRejectMissingBankEntry(input.key.family) })
+        end
+        if self.artifact.target ~= input.key.target then
+            return Native.NativeTemplateSelectionRejected({ Native.NativeSelectionRejectTargetMismatch(input.key.target, self.artifact.target) })
+        end
+        local keepalive = {}
+        local key = f.new("LalinNativeTemplateSelectorKey")
+        key.target_id = cstr(keepalive, target_id(input.key.target))
+        key.family_id = cstr(keepalive, family_id(input.key.family))
+        local out = f.new("LalinNativeTemplateSelection")
+        local lib = bank_library(self)
+        local status = lib.lalin_native_bank_select(c_bank, key, out)
+        if status == 0 then return Native.NativeTemplateSelected(selected_template_handle(input, out.handle)) end
+        if status == 4 then
+            local handles = {}
+            for i = 0, tonumber(out.match_count) - 1 do
+                local ordinal = tonumber(out.matches[i].template_ordinal)
+                local template = lib.lalin_native_bank_template(c_bank, ordinal)
+                handles[#handles + 1] = Native.NativeTemplateHandle(
+                    self.artifact.id,
+                    ordinal,
+                    input.key.family,
+                    tonumber(template.text_size),
+                    tonumber(template.text_alignment),
+                    tonumber(template.constant_pool_size),
+                    tonumber(template.constant_pool_alignment)
+                )
+            end
+            return Native.NativeTemplateSelectionAmbiguous(input.key, handles)
+        end
+        return selection_reject(tonumber(status), input)
+    end
+
+    function Native.NativeTemplateSelectionInput:select_native_template()
+        return self.bank:select_native_template(self)
+    end
+
+    function Native.NativePatchBindingHoleId:native_c_binding_target(row, keepalive)
+        row.hole_id = cstr(keepalive, self.hole.text)
+    end
+
+    function Native.NativePatchBindingHoleOrdinal:native_c_binding_target(row, keepalive)
+        row.hole_ordinal_id = cstr(keepalive, self.ordinal.text)
+    end
+
+    function Native.NativePatchBindingHoleOrdinalIndex:native_c_binding_target(row, _keepalive)
+        row.has_hole_ordinal_index = 1
+        row.hole_ordinal_index = self.ordinal
+    end
+
+    function Native.NativeBankPatchCoordinate:native_c_patch_coordinate(_row, _keepalive)
+        error("lalin.native_mc: missing C projection for " .. tostring(asdl.class_basename(self)), 3)
+    end
+
+    function Native.NativeBankPatchImmediateI32:native_c_patch_coordinate(row, _keepalive)
+        row.kind = 1
+        row.signed_value = self.value
+    end
+
+    function Native.NativeBankPatchImmediateI64:native_c_patch_coordinate(row, _keepalive)
+        row.kind = 2
+        row.signed_value = self.value
+    end
+
+    function Native.NativeBankPatchPointer64:native_c_patch_coordinate(row, _keepalive)
+        row.kind = 3
+        row.unsigned_value = self.address
+    end
+
+    function Native.NativeBankPatchFieldOffset:native_c_patch_coordinate(row, keepalive)
+        row.kind = 4
+        row.signed_value = self.offset
+        row.primary_id = cstr(keepalive, self.field_name)
+    end
+
+    function Native.NativeBankPatchComponentIndex:native_c_patch_coordinate(row, keepalive)
+        row.kind = 5
+        row.signed_value = self.component_index
+        row.primary_id = cstr(keepalive, self.field_name)
+    end
+
+    function Native.NativeBankPatchStride:native_c_patch_coordinate(row, _keepalive)
+        row.kind = 6
+        row.signed_value = self.stride
+    end
+
+    function Native.NativeBankPatchWindowOffset:native_c_patch_coordinate(row, _keepalive)
+        row.kind = 9
+        row.index = self.axis_index
+        row.signed_value = self.offset
+    end
+
+    function Native.NativeBankPatchBranchTarget:native_c_patch_coordinate(row, keepalive)
+        row.kind = 10
+        row.primary_id = cstr(keepalive, self.node.text)
+    end
+
+    function Native.NativeBankPatchCallTarget:native_c_patch_coordinate(row, keepalive)
+        row.kind = 11
+        row.primary_id = cstr(keepalive, self.symbol.text)
+    end
+
+    function Native.NativeBankCodeDataAddress:native_c_module_address_kind()
+        return 1, self.data.text, self.address
+    end
+
+    function Native.NativeBankCodeGlobalAddress:native_c_module_address_kind()
+        return 2, self.global.text, self.address
+    end
+
+    function Native.NativeBankCodeFuncAddress:native_c_module_address_kind()
+        return 3, self.func.text, self.address
+    end
+
+    function Native.NativeBankCodeExternAddress:native_c_module_address_kind()
+        return 4, self.extern.text, self.address
+    end
+
+    function Native.NativeBankPatchModuleAddress:native_c_patch_coordinate(row, keepalive)
+        local _kind, id, address = self.address:native_c_module_address_kind()
+        row.kind = 20
+        row.primary_id = cstr(keepalive, id)
+        row.unsigned_value = address
+    end
+
+    function Native.NativeBankPatchFrameOffset:native_c_patch_coordinate(row, _keepalive)
+        row.kind = 16
+        row.signed_value = self.offset
+    end
+
+    function Native.NativeBankPatchFrameSize:native_c_patch_coordinate(row, _keepalive)
+        row.kind = 17
+        row.signed_value = self.size
+    end
+
+    function Native.NativeBankPatchScalarBytes:native_c_patch_coordinate(row, keepalive)
+        row.kind = 18
+        put_bytes(row, keepalive, self.bytes, self.bytes and self.bytes.size or 1)
+    end
+
+    function Native.NativeBankPatchConstantPoolEntry:native_c_patch_coordinate(row, keepalive)
+        row.kind = 19
+        row.primary_id = cstr(keepalive, self.entry.text)
+        put_bytes(row, keepalive, self.bytes, self.bytes and self.bytes.size or 1)
+    end
+
+    function Native.NativePatchCoordinate:native_bank_patch_coordinate(_input)
+        error("lalin.native_mc: native patch coordinate cannot be projected to C bank install ABI: " .. tostring(asdl.class_basename(self)), 3)
+    end
+
+    function Native.NativePatchImmediateI32:native_bank_patch_coordinate(_input) return Native.NativeBankPatchImmediateI32(self.value) end
+    function Native.NativePatchImmediateI64:native_bank_patch_coordinate(_input) return Native.NativeBankPatchImmediateI64(self.value) end
+    function Native.NativePatchPointer64:native_bank_patch_coordinate(_input) return Native.NativeBankPatchPointer64(self.address) end
+    function Native.NativePatchFieldOffset:native_bank_patch_coordinate(_input) return Native.NativeBankPatchFieldOffset(self.field_name, self.offset) end
+    function Native.NativePatchComponentIndex:native_bank_patch_coordinate(_input) return Native.NativeBankPatchComponentIndex(self.field_name, self.component_index) end
+    function Native.NativePatchStride:native_bank_patch_coordinate(_input) return Native.NativeBankPatchStride(self.stride) end
+    function Native.NativePatchWindowOffset:native_bank_patch_coordinate(_input) return Native.NativeBankPatchWindowOffset(self.axis_index, self.offset) end
+    function Native.NativePatchBranchTarget:native_bank_patch_coordinate(_input) return Native.NativeBankPatchBranchTarget(self.node) end
+    function Native.NativePatchCallTarget:native_bank_patch_coordinate(_input) return Native.NativeBankPatchCallTarget(self.symbol) end
+    function Native.NativePatchFrameOffset:native_bank_patch_coordinate(_input) return Native.NativeBankPatchFrameOffset(self.offset) end
+    function Native.NativePatchFrameSize:native_bank_patch_coordinate(_input) return Native.NativeBankPatchFrameSize(self.size) end
+    function Native.NativePatchScalarConst:native_bank_patch_coordinate(_input)
+        error("lalin.native_mc: NativePatchScalarConst must be lowered to NativeBankPatchScalarBytes before C bank install", 3)
+    end
+    function Native.NativePatchConstantPoolEntry:native_bank_patch_coordinate(_input)
+        return Native.NativeBankPatchConstantPoolEntry(self.entry, self.bytes, self.ty)
+    end
+
+    function Native.NativeCodeAddressCapability:native_bank_patch_coordinate(_input, _coordinate)
+        error("lalin.native_mc: native code address capability cannot be projected to C bank patch coordinate: " .. tostring(asdl.class_basename(self)), 3)
+    end
+
+    function Native.NativeCodeAddressRuntimeSymbol:native_bank_patch_coordinate(_input, _coordinate)
+        return Native.NativeBankPatchCallTarget(self.symbol)
+    end
+
+    function Native.NativePatchCodeExternAddress:native_bank_patch_coordinate(input)
+        local projection = self:native_module_address_projection(input)
+        if projection == nil then
+            error("lalin.native_mc: NativePatchCodeExternAddress has no NativeModuleAddressPlan extern projection for " .. self.extern.text, 3)
+        end
+        return projection.capability:native_bank_patch_coordinate(input, self)
+    end
+
+    local function append_runtime_symbols(out, runtime)
+        for _, symbol in ipairs((runtime and runtime.symbols) or {}) do
+            local address = symbol.address and symbol.address:native_runtime_address() or nil
+            if address ~= nil then out[#out + 1] = Native.NativeBankRuntimeSymbolAddress(symbol.id, address) end
+        end
+    end
+
+    local function append_module_addresses(_out, _addresses)
+        -- Module-address projections that depend on executable layout are C-bank-owned
+        -- and must be expressed as NativeBankPatchBranchTarget/ConstantPoolEntry or
+        -- concrete NativeBankModuleAddress values by the graph builder. There is no
+        -- sound Lua-side address to compute here before C has selected and laid out
+        -- templates.
+    end
+
+    local function fast_region_node_id(region_id)
+        return Native.NativeTemplateNodeId("native.fast.node." .. region_id.text)
+    end
+
+    local function fast_region_instance_id(node_id)
+        return Native.NativeTemplateInstanceId("native.fast.instance." .. node_id.text)
+    end
+
+    local function scalar_value_representation(scalar)
+        return Native.NativeScalarValueRepresentation(scalar)
+    end
+
+    function Native.NativeRegionBoundaryResidence:native_fast_value_location(_binding)
+        error("lalin.native_mc: fast-region residence cannot be projected to a graph value location: " .. tostring(asdl.class_basename(self)), 3)
+    end
+
+    function Native.NativeResidenceFrameSlot:native_fast_value_location(_binding)
+        return Native.NativeValueFrameSlotLocation(self.slot)
+    end
+
+    function Native.NativeResidenceImmediate:native_fast_value_location(_binding)
+        return Native.NativeValuePatchCoordinateLocation(self.coordinate)
+    end
+
+    function Native.NativeResidenceConstantPool:native_fast_value_location(binding)
+        return Native.NativeValueConstantPoolLocation(self.entry, scalar_value_representation(binding.scalar))
+    end
+
+    function Native.NativeResidenceRuntimeSymbol:native_fast_value_location(_binding)
+        return Native.NativeValuePatchCoordinateLocation(Native.NativePatchCallTarget(self.symbol))
+    end
+
+    function Native.NativeRegionBoundaryResidence:native_fast_patch_coordinate(_binding)
+        error("lalin.native_mc: fast-region residence cannot be projected to a patch coordinate: " .. tostring(asdl.class_basename(self)), 3)
+    end
+
+    function Native.NativeResidenceFrameSlot:native_fast_patch_coordinate(_binding)
+        return Native.NativePatchFrameOffset(self.slot.offset)
+    end
+
+    function Native.NativeResidenceImmediate:native_fast_patch_coordinate(_binding)
+        return self.coordinate
+    end
+
+    function Native.NativeResidenceRuntimeSymbol:native_fast_patch_coordinate(_binding)
+        return Native.NativePatchCallTarget(self.symbol)
+    end
+
+    function Native.NativeResidenceDiscard:native_fast_patch_coordinate(_binding)
+        return nil
+    end
+
+    function Native.NativeRegionValueBinding:native_fast_value_placement()
+        return Native.NativeValuePlacement(self.value, scalar_value_representation(self.scalar), self.residence:native_fast_value_location(self))
+    end
+
+    local function append_fast_region_binding(out, node_id, instance, ordinal, binding)
+        local coordinate = binding.residence:native_fast_patch_coordinate(binding)
+        if coordinate == nil then return ordinal end
+        out[#out + 1] = Native.NativePatchBinding(node_id, instance, Native.NativePatchBindingHoleOrdinalIndex(ordinal), coordinate)
+        return ordinal + 1
+    end
+
+    local function append_fast_region_bindings(node_id, instance, inputs, outputs)
+        local out = {}
+        local ordinal = 0
+        for _, binding in ipairs(inputs or {}) do ordinal = append_fast_region_binding(out, node_id, instance, ordinal, binding) end
+        for _, binding in ipairs(outputs or {}) do ordinal = append_fast_region_binding(out, node_id, instance, ordinal, binding) end
+        return out
+    end
+
+    local function fast_code_expr_family(input, shape)
+        local token = shape:native_fast_expr_token()
+        return Native.NativeTemplateFamily(
+            Native.NativeTemplateFamilyId("native.fast.code.expr." .. token),
+            Native.NativeRoleCodeTerm,
+            {
+                Support.axis_target(input.target),
+                Support.axis_machine_scalar(shape:native_fast_expr_result_scalar()),
+                Support.axis_fast_code_expr(shape),
+            },
+            Support.protocol_void_none()
         )
-        return Native.NativePatchApplyInput(
-            base_address,
-            executable_hole_layout,
-            binding,
-            input.runtime,
-            constant_pool_layout_for_node(plan, node),
-            plan.graph,
-            plan.layout,
-            plan.addresses,
-            base_address + node_offset,
-            branch_target_address,
-            addend or 0
+    end
+
+    function Native.NativeFastRegionBody:native_fast_template_family(_input)
+        error("lalin.native_mc: fast-region body cannot be lowered to a template family: " .. tostring(asdl.class_basename(self)), 3)
+    end
+
+    function Native.NativeFrameMicroOpRegion:native_fast_template_family(_input)
+        return self.family
+    end
+
+    function Native.NativeCodeExprRegion:native_fast_template_family(input)
+        return fast_code_expr_family(input, self.shape)
+    end
+
+    function Native.NativeCodeCompareBranchRegion:native_fast_template_family(_input)
+        error("lalin.native_mc: NativeCodeCompareBranchRegion graph lowering requires generated compare-branch template family ASDL axes/sources", 3)
+    end
+
+    function Native.NativeFastRegion:native_template_node(input)
+        local node_id = fast_region_node_id(self.id)
+        local instance = fast_region_instance_id(node_id)
+        local inputs = {}
+        local outputs = {}
+        for _, binding in ipairs(self.inputs or {}) do inputs[#inputs + 1] = binding:native_fast_value_placement() end
+        for _, binding in ipairs(self.outputs or {}) do outputs[#outputs + 1] = binding:native_fast_value_placement() end
+        return Native.NativeTemplateNode(
+            node_id,
+            instance,
+            self.body:native_fast_template_family(input),
+            inputs,
+            outputs,
+            append_fast_region_bindings(node_id, instance, self.inputs, self.outputs)
         )
     end
 
-    local function apply_node_relocation(plan, node, node_offset, relocation, base_address, input)
-        local patch_address = base_address + node_offset + relocation.offset
-        if asdl.isa(relocation, Native.NativeRelocationContinuation) then
-            if not relocation_patch_in_range(node, relocation, 4) then
-                return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "continuation relocation is out of node text range")
-            end
-            local target_node = continuation_target(plan.graph, node.id, relocation.symbol)
-            if target_node == nil then
-                return Native.NativeInstallRejectMissingContinuationTarget(node.id, relocation.symbol)
-            end
-            local target_offset = node_layout_offset(plan.layout, target_node)
-            if target_offset == nil then
-                return Native.NativeInstallRejectMissingContinuationTarget(node.id, relocation.symbol)
-            end
-            if not apply_rel32(base_address, patch_address, base_address + target_offset, relocation.addend) then
-                return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "continuation rel32 target is out of range")
-            end
-            return nil
-        end
-        if asdl.isa(relocation, Native.NativeRelocationRel32) then
-            if not relocation_patch_in_range(node, relocation, 4) then
-                return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "rel32 relocation is out of node text range")
-            end
-            local target_offset = symbol_offset(node.entry.compiled, relocation.symbol)
-            if target_offset == nil then
-                return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "missing local rel32 symbol " .. tostring(relocation.symbol))
-            end
-            if not apply_rel32(base_address, patch_address, base_address + node_offset + target_offset, relocation.addend) then
-                return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "local rel32 target is out of range")
-            end
-            return nil
-        end
-        if asdl.isa(relocation, Native.NativeRelocationAbs64) then
-            if not relocation_patch_in_range(node, relocation, 8) then
-                return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "abs64 relocation is out of node text range")
-            end
-            local target_offset = symbol_offset(node.entry.compiled, relocation.symbol)
-            if target_offset == nil then
-                return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "missing local abs64 symbol " .. tostring(relocation.symbol))
-            end
-            native_api.write_u64_le(patch_address, base_address + node_offset + target_offset + (relocation.addend or 0))
-            return nil
-        end
-        if asdl.isa(relocation, Native.NativeRelocationHoleOrdinal) then
-            local hole_layout = hole_layout_for_ordinal(node.entry.compiled, relocation.ordinal)
-            hole_layout = Native.NativeHoleLayout(hole_layout.id, hole_layout.symbol, relocation.offset, hole_layout.width, hole_layout.hole)
-            if not relocation_patch_in_range(node, relocation, hole_layout.width) then
-                return Native.NativeInstallRejectPatchOutOfRange(hole_layout.id, node_offset + relocation.offset, hole_layout.width, plan.layout.size)
-            end
-            local binding = binding_for_ordinal(plan, node, relocation.ordinal)
-            if binding == nil then return Native.NativeInstallRejectMissingBinding(hole_layout.id) end
-            local patch_input = native_patch_apply_input(input, plan, node, base_address, node_offset, hole_layout, binding, relocation.addend, nil)
-            if asdl.isa(relocation.formula, Native.NativePatchPcRel32)
-                and not asdl.isa(hole_layout.hole, Native.NativePatchFrameOffset32)
-                and not asdl.isa(hole_layout.hole, Native.NativePatchImm32) then
-                return binding.coordinate:write_native_patch_rel32(patch_input)
-            end
-            return hole_layout.hole:apply_native_patch(patch_input)
-        end
-        if asdl.isa(relocation, Native.NativeRelocationConstantPool) then
-            local width = 4
-            if asdl.isa(relocation.formula, Native.NativePatchSym64) then width = 8 end
-            if not relocation_patch_in_range(node, relocation, width) then
-                return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "constant-pool relocation is out of node text range")
-            end
-            local target_offset = constant_pool_offset_for_node(plan, node, relocation.entry)
-            if target_offset == nil then
-                return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "missing constant-pool entry " .. tostring(relocation.entry.text))
-            end
-            local target_address = base_address + target_offset
-            if asdl.isa(relocation.formula, Native.NativePatchPcRel32) then
-                if not apply_rel32(base_address, patch_address, target_address, relocation.addend) then
-                    return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "constant-pool rel32 target is out of range")
-                end
-                return nil
-            end
-            if asdl.isa(relocation.formula, Native.NativePatchSym64) then
-                native_api.write_u64_le(patch_address, target_address + (relocation.addend or 0))
-                return nil
-            end
-            if asdl.isa(relocation.formula, Native.NativePatchSym32) then
-                local value = target_address + (relocation.addend or 0)
-                if value < 0 or value > 4294967295 then
-                    return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "constant-pool absolute 32-bit target is out of range")
-                end
-                native_api.write_u32_le(patch_address, value)
-                return nil
-            end
-            return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "unsupported constant-pool relocation formula")
-        end
-        if asdl.isa(relocation, Native.NativeRelocationRuntimeSymbol) then
-            if not relocation_patch_in_range(node, relocation, 4) then
-                return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "runtime-symbol relocation is out of node text range")
-            end
-            local symbol = runtime_symbol_by_id(input.runtime, relocation.symbol)
-            local address = symbol and symbol.address and symbol.address:native_runtime_address() or nil
-            if address == nil then
-                return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "runtime symbol relocation has no supplied runtime address")
-            end
-            if not apply_rel32(base_address, patch_address, address, relocation.addend) then
-                return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "runtime symbol rel32 target is out of range")
-            end
-            return nil
-        end
-        return Native.NativeInstallRejectUnsupportedRelocation(node.id, relocation.offset, "unknown relocation kind")
+    function Native.NativeRegionTransfer:append_native_fast_control_edges(_edges, _from)
+        error("lalin.native_mc: fast-region transfer cannot be lowered to graph control edges: " .. tostring(asdl.class_basename(self)), 3)
     end
 
-    function Native.NativeExecutableAllocatorMmap:allocate_native_memory(_input, size)
-        if ffi == nil then error("lalin.native_mc: ffi is required for mmap native executable allocation", 3) end
-        if size <= 0 then
-            return nil, Native.NativeInstallRejectAllocation("native executable allocation requested zero bytes")
-        end
-        local ptr = ffi.C.mmap(nil, size, PROT_READ + PROT_WRITE + PROT_EXEC, MAP_PRIVATE + map_anon_flag(), -1, 0)
-        if ptr == mmap_failed_pointer() then
-            return nil, Native.NativeInstallRejectAllocation("mmap failed")
-        end
-        return tonumber(ffi.cast("uintptr_t", ptr)), nil
+    function Native.NativeRegionFallthrough:append_native_fast_control_edges(edges, from)
+        edges[#edges + 1] = Native.NativeFallthroughEdge(from, fast_region_node_id(self.to), Support.next_continuation_symbol())
     end
 
-    function Native.NativeCopyPlan:install_native(input)
-        local rejects = duplicate_binding_rejects(self)
+    function Native.NativeRegionJump:append_native_fast_control_edges(edges, from)
+        edges[#edges + 1] = Native.NativeContinuationEdge(from, fast_region_node_id(self.to), Support.next_continuation_symbol())
+    end
 
-        for _, node in ipairs(self.graph.nodes) do
-            local node_offset = node_layout_offset(self.layout, node.id)
-            if node_offset == nil then
-                error("lalin.native_mc: NativeCodeLayout is missing a graph node", 3)
+    function Native.NativeRegionBranch:append_native_fast_control_edges(edges, from)
+        edges[#edges + 1] = Native.NativeConditionalBranchEdge(from, fast_region_node_id(self.then_to), Support.then_continuation_symbol(), fast_region_node_id(self.else_to), Support.else_continuation_symbol(), self.condition)
+    end
+
+    function Native.NativeRegionSwitch:append_native_fast_control_edges(_edges, _from)
+        error("lalin.native_mc: NativeRegionSwitch graph lowering requires a typed NativeSwitchEdge graph/install edge", 3)
+    end
+
+    function Native.NativeRegionCallReturn:append_native_fast_control_edges(edges, from)
+        edges[#edges + 1] = Native.NativeRuntimeCallReturnEdge(from, fast_region_node_id(self.return_to), self.call_symbol, Support.next_continuation_symbol())
+    end
+
+    function Native.NativeRegionReturn:append_native_fast_control_edges(_edges, _from)
+    end
+
+    function Native.NativeRegionTrap:append_native_fast_control_edges(_edges, _from)
+    end
+
+    function Native.NativeFastRegionPlan:lower_native_template_graph(addresses)
+        local nodes = {}
+        local edges = {}
+        for _, region in ipairs(self.regions or {}) do
+            local node = region:native_template_node(self)
+            nodes[#nodes + 1] = node
+            region.transfer:append_native_fast_control_edges(edges, node.id)
+        end
+        local exits = {}
+        for _, exit in ipairs(self.exits or {}) do exits[#exits + 1] = fast_region_node_id(exit) end
+        return Native.NativeTemplateGraph(
+            self.target,
+            self.public_protocol,
+            self.frame_layout,
+            nodes,
+            edges,
+            {},
+            addresses or Native.NativeModuleAddressPlan({}, {}, {}, {}, {}, {}),
+            fast_region_node_id(self.entry),
+            exits
+        )
+    end
+
+    function Native.NativeControlEdge:native_bank_install_control_edge()
+        error("lalin.native_mc: missing bank install edge projection for " .. tostring(asdl.class_basename(self)), 3)
+    end
+
+    function Native.NativeFallthroughEdge:native_bank_install_control_edge()
+        return Native.NativeBankFallthroughEdge(self.from, self.to, self.symbol)
+    end
+
+    function Native.NativeConditionalBranchEdge:native_bank_install_control_edge()
+        return Native.NativeBankConditionalBranchEdge(self.from, self.then_to, self.then_symbol, self.else_to, self.else_symbol)
+    end
+
+    function Native.NativeLoopBackedgeEdge:native_bank_install_control_edge()
+        return Native.NativeBankLoopBackedgeEdge(self.from, self.to, self.symbol)
+    end
+
+    function Native.NativeExitEdge:native_bank_install_control_edge()
+        return Native.NativeBankExitEdge(self.from, self.symbol)
+    end
+
+    function Native.NativeContinuationEdge:native_bank_install_control_edge()
+        return Native.NativeBankContinuationEdge(self.from, self.to, self.symbol)
+    end
+
+    function Native.NativeRuntimeCallReturnEdge:native_bank_install_control_edge()
+        return Native.NativeBankRuntimeCallReturnEdge(self.from, self.to, self.runtime_symbol, self.return_symbol)
+    end
+
+    function Native.NativeTemplateGraph:select_native_bank_install_plan(input)
+        if self.target ~= input.target then
+            error("lalin.native_mc: NativeTemplateGraph target does not match bank install plan selection target", 3)
+        end
+        local nodes = {}
+        local patch_input = Native.NativeBankPatchProjectionInput(input.target, input.runtime, self.addresses)
+        for _, node in ipairs(self.nodes or {}) do
+            local key = Native.NativeTemplateSelectorKey(input.target, node.family)
+            local bindings = {}
+            for _, binding in ipairs(node.bindings or {}) do
+                bindings[#bindings + 1] = Native.NativeBankInstallBinding(
+                    binding.node,
+                    binding.instance,
+                    binding.target,
+                    binding.coordinate:native_bank_patch_coordinate(patch_input)
+                )
             end
-            local code_size = self.layout.size
-            for _, hole_layout in ipairs(node.entry.compiled.holes) do
-                local binding = binding_for_hole(self, node, hole_layout)
-                if binding == nil then
-                    rejects[#rejects + 1] = Native.NativeInstallRejectMissingBinding(hole_layout.id)
-                elseif node_offset + hole_layout.offset < 0 or node_offset + hole_layout.offset + hole_layout.width > code_size then
-                    rejects[#rejects + 1] = Native.NativeInstallRejectPatchOutOfRange(
-                        hole_layout.id,
-                        node_offset + hole_layout.offset,
-                        hole_layout.width,
-                        code_size
-                    )
-                end
-            end
+            nodes[#nodes + 1] = Native.NativeBankInstallNode(node.id, node.instance, key, bindings)
         end
-
-        if #rejects > 0 then
-            return Native.NativeInstallRejected(rejects)
+        local edges = {}
+        for _, edge in ipairs(self.control_edges or {}) do
+            edges[#edges + 1] = edge:native_bank_install_control_edge()
         end
-
-        local base_address, allocation_reject = input.allocator:allocate_native_memory(input, self.total_size)
-        if allocation_reject ~= nil then
-            return Native.NativeInstallRejected({ allocation_reject })
-        end
-
-        for _, node in ipairs(self.graph.nodes) do
-            local node_offset = node_layout_offset(self.layout, node.id)
-            local dest = ffi.cast("uint8_t *", base_address + node_offset)
-            local bytes = node.entry.compiled.text.bytes.bytes
-            ffi.copy(dest, bytes, #bytes)
-        end
-
-        for _, node in ipairs(self.graph.nodes) do
-            local node_offset = node_layout_offset(self.layout, node.id)
-            for _, relocation in ipairs(node.entry.compiled.relocations or {}) do
-                local reject = apply_node_relocation(self, node, node_offset, relocation, base_address, input)
-                if reject ~= nil then rejects[#rejects + 1] = reject end
-            end
-        end
-
-        for _, layout_entry in ipairs(self.constant_pool_layout.entries or {}) do
-            local dest = ffi.cast("uint8_t *", base_address + layout_entry.offset)
-            local bytes = layout_entry.entry.bytes.bytes
-            ffi.copy(dest, bytes, #bytes)
-        end
-
-        for _, node in ipairs(self.graph.nodes) do
-            local node_offset = node_layout_offset(self.layout, node.id)
-            for _, hole_layout in ipairs(node.entry.compiled.holes) do
-                local binding = binding_for_hole(self, node, hole_layout)
-                local reject = hole_layout.hole:apply_native_patch(native_patch_apply_input(input, self, node, base_address, node_offset, hole_layout, binding, 0, nil))
-                if reject ~= nil then rejects[#rejects + 1] = reject end
-            end
-        end
-
-        if #rejects > 0 then
-            return Native.NativeInstallRejected(rejects)
-        end
-
-        local entry_offset = node_layout_offset(self.layout, self.graph.entry)
-        if entry_offset == nil then error("lalin.native_mc: NativeCodeLayout is missing graph entry", 3) end
-        return Native.NativeInstallSucceeded(Native.NativeExecutable(
-            executable_id_for_plan(self),
+        local runtime_symbols = {}
+        append_runtime_symbols(runtime_symbols, input.runtime)
+        local module_addresses = {}
+        append_module_addresses(module_addresses, self.addresses)
+        return Native.NativeBankInstallPlan(
             input.target,
-            base_address,
-            base_address + entry_offset,
-            self.total_size,
-            self.protocol
+            self.protocol,
+            self.frame_layout,
+            nodes,
+            edges,
+            runtime_symbols,
+            module_addresses,
+            self.entry,
+            self.exits
+        )
+    end
+
+    function Native.NativeBankInstallControlEdge:native_c_control_edge(_row, _keepalive)
+        error("lalin.native_mc: missing C control-edge projection for " .. tostring(asdl.class_basename(self)), 3)
+    end
+
+    function Native.NativeBankFallthroughEdge:native_c_control_edge(row, keepalive)
+        row.kind = 1
+        row.from_node_id = cstr(keepalive, self.from.text)
+        row.to_node_id = cstr(keepalive, self.to.text)
+        row.symbol = cstr(keepalive, symbol_name(self.symbol))
+    end
+
+    function Native.NativeBankConditionalBranchEdge:native_c_control_edge(row, keepalive)
+        row.kind = 2
+        row.from_node_id = cstr(keepalive, self.from.text)
+        row.then_node_id = cstr(keepalive, self.then_to.text)
+        row.then_symbol = cstr(keepalive, symbol_name(self.then_symbol))
+        row.else_node_id = cstr(keepalive, self.else_to.text)
+        row.else_symbol = cstr(keepalive, symbol_name(self.else_symbol))
+    end
+
+    function Native.NativeBankLoopBackedgeEdge:native_c_control_edge(row, keepalive)
+        row.kind = 3
+        row.from_node_id = cstr(keepalive, self.from.text)
+        row.to_node_id = cstr(keepalive, self.to.text)
+        row.symbol = cstr(keepalive, symbol_name(self.symbol))
+    end
+
+    function Native.NativeBankExitEdge:native_c_control_edge(row, keepalive)
+        row.kind = 4
+        row.from_node_id = cstr(keepalive, self.from.text)
+        row.symbol = cstr(keepalive, symbol_name(self.symbol))
+    end
+
+    function Native.NativeBankContinuationEdge:native_c_control_edge(row, keepalive)
+        row.kind = 5
+        row.from_node_id = cstr(keepalive, self.from.text)
+        row.to_node_id = cstr(keepalive, self.to.text)
+        row.symbol = cstr(keepalive, symbol_name(self.symbol))
+    end
+
+    function Native.NativeBankRuntimeCallReturnEdge:native_c_control_edge(row, keepalive)
+        row.kind = 6
+        row.from_node_id = cstr(keepalive, self.from.text)
+        row.to_node_id = cstr(keepalive, self.to.text)
+        row.runtime_symbol_id = cstr(keepalive, self.runtime_symbol.text)
+        row.return_symbol = cstr(keepalive, symbol_name(self.return_symbol))
+    end
+
+    local function c_array(ctype, values, fill)
+        local f = declare_ffi()
+        if #(values or {}) == 0 then return nil, 0, {} end
+        local keepalive = {}
+        local arr = f.new(ctype .. "[?]", #values)
+        keepalive[#keepalive + 1] = arr
+        for i, value in ipairs(values) do fill(arr[i - 1], value, keepalive) end
+        return arr, #values, keepalive
+    end
+
+    local function c_bindings(bindings)
+        return c_array("LalinNativeInstallBinding", bindings, function(row, binding, keepalive)
+            row.node_id = cstr(keepalive, binding.node.text)
+            row.instance_id = cstr(keepalive, binding.instance.text)
+            binding.target:native_c_binding_target(row, keepalive)
+            binding.coordinate:native_c_patch_coordinate(row.coordinate, keepalive)
+        end)
+    end
+
+    local function c_nodes(nodes, outer_keepalive)
+        return c_array("LalinNativeInstallNode", nodes, function(row, node, keepalive)
+            row.node_id = cstr(keepalive, node.id.text)
+            row.instance_id = cstr(keepalive, node.instance.text)
+            row.key_target_id = cstr(keepalive, target_id(node.key.target))
+            row.family_id = cstr(keepalive, family_id(node.key.family))
+            local bindings, binding_count, binding_keepalive = c_bindings(node.bindings)
+            row.bindings = bindings
+            row.binding_count = binding_count
+            outer_keepalive[#outer_keepalive + 1] = binding_keepalive
+        end)
+    end
+
+    local function c_edges(edges)
+        return c_array("LalinNativeInstallControlEdge", edges, function(row, edge, keepalive)
+            edge:native_c_control_edge(row, keepalive)
+        end)
+    end
+
+    local function c_runtime_symbols(symbols)
+        return c_array("LalinNativeRuntimeSymbolAddress", symbols, function(row, symbol, keepalive)
+            row.symbol_id = cstr(keepalive, symbol.symbol.text)
+            row.address = symbol.address
+        end)
+    end
+
+    local function c_module_addresses(addresses)
+        return c_array("LalinNativeModuleAddress", addresses, function(row, address, keepalive)
+            local kind, id, value = address:native_c_module_address_kind()
+            row.kind = kind
+            row.id = cstr(keepalive, id)
+            row.address = value
+        end)
+    end
+
+    local function c_reject_to_native(reject, status)
+        local reason = reject ~= nil and reject.reason ~= nil and ffi.string(reject.reason) or "native bank install rejected"
+        local node = reject ~= nil and reject.node_id ~= nil and Native.NativeTemplateNodeId(ffi.string(reject.node_id)) or nil
+        local hole = reject ~= nil and reject.hole_id ~= nil and Native.NativePatchHoleId(ffi.string(reject.hole_id)) or nil
+        if status == 2 then return Native.NativeInstallRejectAllocation(reason) end
+        local to_node = reject ~= nil and reject.to_node_id ~= nil and Native.NativeTemplateNodeId(ffi.string(reject.to_node_id)) or nil
+        if tonumber(reject ~= nil and reject.kind or 0) == 1 and node ~= nil and to_node ~= nil then
+            return Native.NativeInstallRejectFallthroughLayout(node, to_node, reason)
+        end
+        if hole ~= nil and reason == "missing binding" then return Native.NativeInstallRejectMissingBinding(hole) end
+        if hole ~= nil and reason == "duplicate binding" then return Native.NativeInstallRejectDuplicateBinding(hole) end
+        return Native.NativeInstallRejectBankRejected(node, hole, reason)
+    end
+
+    local function install_rejects(c_result)
+        local rejects = {}
+        local count = tonumber(c_result.reject_count)
+        for i = 0, count - 1 do
+            rejects[#rejects + 1] = c_reject_to_native(c_result.rejects[i], tonumber(c_result.status))
+        end
+        if #rejects == 0 then rejects[1] = c_reject_to_native(nil, tonumber(c_result.status)) end
+        return rejects
+    end
+
+    function Native.NativeExecutableAllocatorMmap:native_c_allocator()
+        local f = declare_ffi()
+        local callback = f.cast("LalinNativeExecutableAllocFn", function(size, _alignment, _userdata)
+            if tonumber(size) <= 0 then return nil end
+            local ptr = f.C.mmap(nil, size, PROT_READ + PROT_WRITE + PROT_EXEC, MAP_PRIVATE + map_anon_flag(), -1, 0)
+            if ptr == mmap_failed_pointer() then return nil end
+            return ptr
+        end)
+        return callback, nil
+    end
+
+    function Native.NativeExecutableAllocatorVirtualAlloc:native_c_allocator()
+        error("lalin.native_mc: NativeExecutableAllocatorVirtualAlloc is not modeled for this C-owned bank installer", 3)
+    end
+
+    function Native.NativeBankInstallRequest:install_native()
+        local f = declare_ffi()
+        local c_bank = bank_pointer(self.bank)
+        if c_bank == nil then return Native.NativeInstallRejected({ Native.NativeInstallRejectAllocation("native bank handle is not loaded") }) end
+
+        local keepalive = {}
+        local nodes, node_count, node_keepalive = c_nodes(self.plan.nodes or {}, keepalive)
+        local edges, edge_count, edge_keepalive = c_edges(self.plan.control_edges or {})
+        local runtime_symbols, runtime_symbol_count, runtime_keepalive = c_runtime_symbols(self.plan.runtime_symbols or {})
+        local module_addresses, module_address_count, module_keepalive = c_module_addresses(self.plan.module_addresses or {})
+        keepalive[#keepalive + 1] = node_keepalive
+        keepalive[#keepalive + 1] = edge_keepalive
+        keepalive[#keepalive + 1] = runtime_keepalive
+        keepalive[#keepalive + 1] = module_keepalive
+
+        local allocator_cb, allocator_userdata = self.allocator:native_c_allocator()
+        keepalive[#keepalive + 1] = allocator_cb
+
+        local request = f.new("LalinNativeInstallRequest")
+        keepalive[#keepalive + 1] = request
+        request.target_id = cstr(keepalive, target_id(self.plan.target))
+        request.nodes = nodes
+        request.node_count = node_count
+        request.control_edges = edges
+        request.control_edge_count = edge_count
+        request.runtime_symbols = runtime_symbols
+        request.runtime_symbol_count = runtime_symbol_count
+        request.module_addresses = module_addresses
+        request.module_address_count = module_address_count
+        request.entry_node_id = cstr(keepalive, self.plan.entry.text)
+        request.allocate_executable = allocator_cb
+        request.allocator_userdata = allocator_userdata
+
+        local result = bank_library(self.bank).lalin_native_bank_install(c_bank, request)
+        if tonumber(result.status) ~= 0 then return Native.NativeInstallRejected(install_rejects(result)) end
+        return Native.NativeInstallSucceeded(Native.NativeExecutable(
+            executable_id_for_plan(self.plan),
+            self.plan.target,
+            tonumber(f.cast("uintptr_t", result.base_address)),
+            tonumber(f.cast("uintptr_t", result.entry_address)),
+            tonumber(result.size),
+            self.plan.protocol
         ))
     end
 

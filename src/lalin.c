@@ -7,20 +7,12 @@
 #include "lalin_embedded_bc_bank.h"
 #include "lalin_native_template_bank.h"
 
-static void lalin_install_native_template_bank_debug_metadata(lua_State *L) {
-  const LalinNativeEmbeddedTemplateBank *bank = lalin_native_embedded_template_bank();
-  if (bank == NULL) return;
-
-  /* Debug/inspection metadata only.  Runtime native compilation imports the
-     generated Lua ASDL bridge as NativeEmbeddedTemplateBank; the raw C view is
-     not an install hook and intentionally does not publish old machine-code
-     bank registry keys. */
-  lua_pushstring(L, bank->bank_id ? bank->bank_id : "");
-  lua_setfield(L, LUA_REGISTRYINDEX, "lalin.native_template_bank.raw_id");
-  lua_pushinteger(L, (lua_Integer)bank->entry_count);
-  lua_setfield(L, LUA_REGISTRYINDEX, "lalin.native_template_bank.raw_count");
-  lua_pushinteger(L, (lua_Integer)bank->manifest_total_count);
-  lua_setfield(L, LUA_REGISTRYINDEX, "lalin.native_template_bank.manifest_total_count");
+static void lalin_assert_native_template_bank_api_linked(void) {
+  /* The generated native bank is a C-owned runtime artifact.  Lua reaches it
+     through the exported lalin_native_bank_* FFI API and a typed
+     NativeBankArtifact descriptor, not through registry debug metadata or the
+     removed passive NativeEmbeddedTemplateBank import path. */
+  (void)lalin_native_bank_artifact();
 }
 
 static void lalin_push_argv(lua_State *L, int argc, char **argv) {
@@ -43,7 +35,7 @@ int main(int argc, char **argv) {
 
   luaL_openlibs(L);
   lalin_install_embedded_bc_bank(L);
-  lalin_install_native_template_bank_debug_metadata(L);
+  lalin_assert_native_template_bank_api_linked();
   lalin_push_argv(L, argc, argv);
 
   lua_getglobal(L, "require");

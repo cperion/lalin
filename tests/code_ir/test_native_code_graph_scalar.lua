@@ -80,6 +80,7 @@ mf:close()
 local c_path = dir .. "/bank.c"
 local h_path = dir .. "/bank.h"
 local lua_path = dir .. "/bank.lua"
+local so_path = dir .. "/bank.so"
 local cmd = table.concat({
     "luajit tools/gen_lalin_mc_bank.lua",
     shell_quote(c_path),
@@ -90,6 +91,7 @@ local cmd = table.concat({
     "2>", shell_quote(dir .. "/generator.log"),
 }, " ")
 assert(command_ok(cmd), "native scalar bank generator should build the full scalar support domain")
+assert(command_ok("gcc -shared -fPIC " .. shell_quote(c_path) .. " -o " .. shell_quote(so_path)), "native scalar C-owned bank should link as a shared object")
 
 local generated_lua = read_file(lua_path)
 local generated_c = read_file(c_path)
@@ -143,8 +145,9 @@ local ok_multi_result, err_multi_result = pcall(function()
 end)
 assert(not ok_multi_result and tostring(err_multi_result):find("zero or one result", 1, true), "native ABI projection must reject multi-result CodeSig values")
 
-local embedded = dofile(lua_path)(T)
-local bank = NativeBackend.require_imported_bank(embedded)
+local artifact = dofile(lua_path)(T)
+assert(asdl.isa(artifact, Native.NativeBankArtifact), tostring(artifact))
+local bank = NativeBackend.require_native_bank(artifact, target, request.manifest, so_path)
 local origin = Code.CodeOriginUnknown
 
 local function int_semantics()
@@ -335,7 +338,7 @@ local function assert_typed_graph(func, signature)
         for _, binding in ipairs(node.bindings or {}) do
             assert(binding.node == node.id, "patch bindings must be scoped to the owning node")
             assert(binding.instance == node.instance, "patch bindings must be scoped to the owning template instance")
-            assert(asdl.isa(binding.target, Native.NativePatchBindingHoleOrdinal), "generated scalar graph bindings should use object-derived hole ordinals")
+            assert(asdl.isa(binding.target, Native.NativePatchBindingHoleId) or asdl.isa(binding.target, Native.NativePatchBindingHoleOrdinal), "generated scalar graph bindings should use typed hole binding targets")
         end
         for _, placement in ipairs(node.inputs) do
             assert(asdl.isa(placement, Native.NativeValuePlacement), "node input should be a NativeValuePlacement")

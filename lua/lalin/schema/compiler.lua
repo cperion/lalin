@@ -32,41 +32,4 @@ return schema. LalinCompiler {
     layout_env [LalinSem.LayoutEnv],
   },
 
-  sum. FlatlineImageIssue {
-    FlatlineImageIssueUnexpectedValue {
-      variant_unique,
-      expected [str],
-      actual [str],
-    },
-    FlatlineImageIssueBadHeader {
-      variant_unique,
-      reason [str],
-    },
-    FlatlineImageIssueBadMagic {
-      variant_unique,
-      actual [number],
-    },
-    FlatlineImageIssueBadVersion {
-      variant_unique,
-      expected [number],
-      actual [number],
-    },
-    FlatlineImageIssueBadSection {
-      variant_unique,
-      field. name [str],
-      reason [str],
-    },
-  },
-
-  product. FlatlineImageReport {
-    interned,
-    issues [many [LalinCompiler.FlatlineImageIssue]],
-  },
-
-  product. FlatlineImage {
-    interned,
-    format [str],
-    version [number],
-    bytes [str],
-  },
 }

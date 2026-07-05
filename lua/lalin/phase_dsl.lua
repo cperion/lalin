@@ -38,7 +38,7 @@ local function type_ref(spec)
     end
     if spec == nil or spec == "any" or spec == "*" then return P.TypeRefAny end
     if type(spec) == "string" then
-        error("phase_dsl: world type refs use structured names, write world. name [LalinTree.Module], not world. name [\"LalinTree.Module\"]", 3)
+        error("E_BAD_SLOT: phase_dsl: world type refs use structured names, write world. name [LalinTree.Module], not world. name [\"LalinTree.Module\"]", 3)
     end
     error("phase_dsl: type ref must be a structured LalinPhase.TypeRef or dotted LLBL symbol like LalinTree.Module", 3)
 end

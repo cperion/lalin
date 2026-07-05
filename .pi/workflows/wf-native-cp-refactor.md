@@ -1894,3 +1894,14 @@ Updated docs to reflect the completed residualless native C-stencil copy-patch a
 
 ## Notes
 Ran documentation sanity `rg` checks for stale terms/patterns; no schema/code_ir tests were run because this was docs-only. No coms-net used.
+
+## Worker Output — 2026-07-05 05:37:41
+
+## Completed
+Claimed `T039` and blocked it immediately after confirming the current ASDL/source-shape model cannot honestly define a complete finite language-surface native bank.
+
+## Files Changed
+- None
+
+## Notes
+Blocker recorded in edit plan `main`: Kernel/Stencil/ABI source supports still contain unbounded or program-specific axes (`field_name`, ranks/counts, byte sizes/alignments, schedule flags/named targets, arbitrary ABI projections, etc.). A generated default bank would require arbitrary limits/placeholders or omit implemented leaves, violating T039.

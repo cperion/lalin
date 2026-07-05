@@ -9,10 +9,10 @@ A(T)
 local S = T.LalinSource
 local Apply = SourceApply(T)
 
-local uri = S.DocUri("file:///edit.mlua")
-local other = S.DocUri("file:///other.mlua")
+local uri = S.DocUri("file:///edit.lalin")
+local other = S.DocUri("file:///other.lalin")
 local function doc(version, text)
-    return S.DocumentSnapshot(uri, S.DocVersion(version), S.LangMlua, text)
+    return S.DocumentSnapshot(uri, S.DocVersion(version), S.LangLalin, text)
 end
 
 local d1 = doc(1, "hello")
