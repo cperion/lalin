@@ -7,3 +7,6 @@
 [submodule "deps/tinycc"]
 	path = deps/tinycc
 	url = https://repo.or.cz/tinycc.git
+[submodule ".vendor/gcc"]
+	path = .vendor/gcc
+	url = https://github.com/gcc-mirror/gcc.git
