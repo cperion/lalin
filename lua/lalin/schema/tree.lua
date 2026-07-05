@@ -150,6 +150,38 @@ return schema. LalinTree {
     init [LalinTree.Expr],
   },
   product. JumpArg { interned, field. name [str], field. value [LalinTree.Expr], },
+  product. RegionInvokeTarget { interned, path [LalinCore.Path], },
+  sum. RegionWireTarget {
+    RegionWireBlock { variant_unique, label [LalinTree.BlockLabel], },
+    RegionWireCont { variant_unique, cont [LalinTree.RegionCont], },
+  },
+  product. RegionContWire { interned, field. name [str], target [LalinTree.RegionWireTarget], },
+  product. TypeRegionDef {
+    interned,
+    target [LalinTree.RegionInvokeTarget],
+    region [LalinTree.Region],
+  },
+  sum. RegionInvokeReject {
+    RegionInvokeMissingTarget { variant_unique, target [LalinTree.RegionInvokeTarget], },
+    RegionInvokeArgCount { variant_unique, target [LalinTree.RegionInvokeTarget], expected [number], actual [number], },
+    RegionInvokeMissingWire { variant_unique, target [LalinTree.RegionInvokeTarget], cont [LalinTree.RegionCont], },
+    RegionInvokeExtraWire { variant_unique, target [LalinTree.RegionInvokeTarget], field. name [str], },
+    RegionInvokeDuplicateWire { variant_unique, target [LalinTree.RegionInvokeTarget], field. name [str], },
+    RegionInvokeCallFrameUnsupported { variant_unique, target [LalinTree.RegionInvokeTarget], },
+  },
+  product. RegionInvokeExpandInput {
+    interned,
+    scope [LalinTree.TypeValueScope],
+  },
+  product. RegionInvokeSplice {
+    interned,
+    entry_stmt [LalinTree.Stmt],
+    blocks [many [LalinTree.ControlBlock]],
+  },
+  sum. RegionInvokeExpandResult {
+    RegionInvokeExpanded { variant_unique, splice [LalinTree.RegionInvokeSplice], },
+    RegionInvokeRejected { variant_unique, reject [LalinTree.RegionInvokeReject], },
+  },
   sum. FuncContract {
     ContractBounds { variant_unique, base [LalinTree.Expr], len [LalinTree.Expr], },
     ContractWindowBounds {
@@ -603,6 +635,22 @@ return schema. LalinTree {
       cont [LalinTree.RegionCont],
       args [many [LalinTree.JumpArg]],
     },
+    StmtRegionEmit {
+      variant_unique,
+      h [LalinTree.StmtHeader],
+      invoke_id [str],
+      target [LalinTree.RegionInvokeTarget],
+      args [many [LalinTree.Expr]],
+      wiring [many [LalinTree.RegionContWire]],
+    },
+    StmtRegionCall {
+      variant_unique,
+      h [LalinTree.StmtHeader],
+      invoke_id [str],
+      target [LalinTree.RegionInvokeTarget],
+      args [many [LalinTree.Expr]],
+      wiring [many [LalinTree.RegionContWire]],
+    },
     StmtYieldVoid { variant_unique, h [LalinTree.StmtHeader], },
     StmtYieldValue {
       variant_unique,
@@ -792,6 +840,7 @@ return schema. LalinTree {
       region_id [str],
       reject [LalinTree.ControlReject],
     },
+    TypeIssueRegionInvoke { variant_unique, reject [LalinTree.RegionInvokeReject], },
     TypeIssueUnknownVariant { variant_unique, type_name [str], variant_name [str], },
     TypeIssueVariantPayloadMismatch {
       variant_unique,
@@ -880,6 +929,7 @@ return schema. LalinTree {
     variants [many [LalinTree.TypeVariantDef]],
     handles [many [LalinTree.TypeHandleDef]],
     effects [many [LalinTree.TypeFuncEffect]],
+    regions [many [LalinTree.TypeRegionDef]],
   },
   product. TypeModuleFactsInput {
     interned,

@@ -32,6 +32,8 @@ local function bind_context(T)
   adapter:set_lowering(ToTree)
   ToTree.role_adapter = adapter
 
+  local region_invoke_counter = 0
+
   local binop_map = {
     add = C.BinAdd, sub = C.BinSub, mul = C.BinMul, div = C.BinDiv,
     mod = C.BinRem,
@@ -55,6 +57,32 @@ local function bind_context(T)
     raw = tostring(raw or "0")
     if raw:find("[%.eE]") then return C.LitFloat(raw) end
     return C.LitInt(raw)
+  end
+
+  local function path_from_parts(parts)
+    local out = {}
+    for i, part in ipairs(parts or {}) do out[i] = C.Name(part) end
+    return C.Path(out)
+  end
+
+  local function region_target(parsed)
+    if parsed.callee_path ~= nil then
+      return Tr.RegionInvokeTarget(path_from_parts(parsed.callee_path))
+    end
+    error("parsed_to_tree: region invocation requires a callee path", 2)
+  end
+
+  local function region_wiring(items)
+    local out = {}
+    for i, wire in ipairs(items or {}) do
+      out[i] = Tr.RegionContWire(wire.name, Tr.RegionWireBlock(Tr.BlockLabel(wire.target)))
+    end
+    return out
+  end
+
+  local function next_region_invoke_id(kind)
+    region_invoke_counter = region_invoke_counter + 1
+    return "lln." .. tostring(kind) .. "." .. tostring(region_invoke_counter)
   end
 
   --- Convert a parsed AST expression node to a LalinTree.Expr.
@@ -306,7 +334,14 @@ local function bind_context(T)
       return Tr.StmtJump(Tr.StmtSurface, Tr.BlockLabel(parsed.target), payload)
 
     elseif tag == "StmtEmit" then
-      return Tr.StmtExpr(Tr.StmtSurface, ToTree.expr(parsed.callee))
+      local args = {}
+      for i, arg in ipairs(parsed.data_args or {}) do args[i] = ToTree.expr(arg) end
+      return Tr.StmtRegionEmit(Tr.StmtSurface, next_region_invoke_id("emit"), region_target(parsed), args, region_wiring(parsed.cont_wiring))
+
+    elseif tag == "StmtCall" then
+      local args = {}
+      for i, arg in ipairs(parsed.data_args or {}) do args[i] = ToTree.expr(arg) end
+      return Tr.StmtRegionCall(Tr.StmtSurface, next_region_invoke_id("call"), region_target(parsed), args, region_wiring(parsed.cont_wiring))
 
     elseif tag == "StmtFragment" then
       return stmt_list(ToTree.stmts(parsed.body))

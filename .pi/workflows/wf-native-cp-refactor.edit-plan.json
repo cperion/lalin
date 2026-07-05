@@ -2,10 +2,10 @@
 	"version": 1,
 	"workflowId": "wf-native-cp-refactor",
 	"planId": "main",
-	"revision": 171,
+	"revision": 179,
 	"nextId": 38,
 	"createdAt": "2026-07-02T17:26:00.699Z",
-	"updatedAt": "2026-07-04T20:04:38.096Z",
+	"updatedAt": "2026-07-04T23:13:52.837Z",
 	"tasks": [
 		{
 			"id": "T001",
@@ -502,11 +502,13 @@
 				"T018R",
 				"T019R"
 			],
-			"status": "todo",
+			"status": "done",
 			"order": 29,
+			"claimedBy": "agent-1TZS92",
+			"evidence": "Added focused Kernel/Stencil lowering coverage in tests/code_ir/test_native_kernel_stencil.lua. The test constructs a KernelPlanned and StencilInstance ASDL values, builds typed lowering inputs, constructs fake banks from selected source-shape families, calls plan_native_copy for both, and asserts kernel domain/lane/effect/proof/result graph nodes, symbol-bearing branch/loopback edges, stencil producer/access/recursive-point/body/sink graph nodes, stencil frame role allocation, access address value edges, and typed address plans. Checks passed: luajit tests/code_ir/test_native_kernel_stencil.lua; luajit tests/run.lua code_ir (49 passed, 1 skipped).",
 			"notes": [],
 			"createdAt": "2026-07-02T17:26:00.699Z",
-			"updatedAt": "2026-07-04T08:35:30.132Z"
+			"updatedAt": "2026-07-04T23:05:49.643Z"
 		},
 		{
 			"id": "T030",
@@ -624,11 +626,13 @@
 				"T035",
 				"T037"
 			],
-			"status": "todo",
+			"status": "done",
 			"order": 36,
+			"claimedBy": "agent-1TZS92",
+			"evidence": "Ran the native refactor verification suite in the requested order. All commands passed: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_c_continuation_branch.lua; luajit tests/code_ir/test_native_code_graph_scalar.lua; luajit tests/code_ir/test_native_code_control.lua; luajit tests/code_ir/test_native_kernel_stencil.lua; luajit tests/code_ir/test_luajit_backend_non_native.lua; luajit tests/code_ir/test_lalin_binary.lua; luajit tests/run.lua schema (11 passed); luajit tests/run.lua code_ir (49 passed, 1 skipped).",
 			"notes": [],
 			"createdAt": "2026-07-02T17:26:00.699Z",
-			"updatedAt": "2026-07-04T09:45:41.810Z"
+			"updatedAt": "2026-07-04T23:13:52.837Z"
 		},
 		{
 			"id": "T037",
@@ -833,10 +837,10 @@
 				"T018S",
 				"T018R"
 			],
-			"status": "todo",
+			"status": "done",
 			"order": 49,
-			"claimedBy": "agent-PCWEJX",
-			"blockedReason": "Cannot implement honest StencilOp source builders from the current ASDL/source-manifest model. The schema has broad NativeStencilProducer/Access/Point/Sink/Schedule axes and NativeChunkStencilOp/NativeRoleStencil* roles, but it lacks the T018-style separation between program-specific Stencil semantic projections and finite bank-enumerable StencilOp source-shape facts: no NativeStencil*Projection facets for descriptor/access/body/sink/schedule ownership, no NativeStencil*SourceShape vocabulary, no NativeStencilSourceSupport field on NativeTemplateSupportDomain, no source-shape axis for StencilOp families, and no typed frame/ABI/value-location input for dynamic access descriptors, producer bounds, point-expression temps, sink/reduction state, or schedule control. Implementing T019S now would require either enumerating program-specific StencilDescriptor/AccessRef/PointExpr values as bank axes, inventing placeholder C chunks, or mirroring stencil semantics in LalinNative optional builders, violating the ASDL-first/no semantic mirror/no exact-cell enumeration rules. Need ASDL-first unblock tasks analogous to T018U/T018V for Stencil projection and finite source-shape/source-support contracts before concrete NativeChunkStencilOp C source builders can be added.",
+			"claimedBy": "agent-RKZK95",
+			"evidence": "Implemented concrete NativeChunkStencilOp source builders and manifest entries in lua/lalin/native_template_sources.lua for NativeStencilSourceSupport producers/accesses/points/bodies/sinks/schedules using NativeStencil*SourceShapeAxis family axes. Added source/manifest assertions in tests/code_ir/test_native_template_sources.lua covering finite stencil source-shape support, no program-specific StencilInstance/AccessRef/PointExpr family ids, continuation/hole ordinals, and generator chunk classes. Checks run: luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_stencil_contracts.lua; luajit tests/run.lua schema; luajit tests/run.lua code_ir (48 passed, 1 skipped); stencil support bank smoke via luajit tools/gen_lalin_mc_bank.lua plus gcc -c on generated C.",
 			"notes": [
 				"Unblock for T019: stencil lowering must follow concrete StencilOp source builders/manifest entries.",
 				"Added T016R4 dependency to respect current user priority: do not start Kernel/Stencil before Code source-axis/address-plan unblock path.",
@@ -846,7 +850,7 @@
 				"Blocker processed by adding stencil projection/source-shape/source-support ASDL contracts and methods: lua/lalin/schema/native.lua, lua/lalin/native.lua, lua/lalin/native_stencil_methods.lua, lua/lalin/native_template_support.lua, tests/code_ir/test_native_stencil_contracts.lua, docs/COPY_PATCH_TEMPLATE_ENUMERATION_NOTES.md. Checks: luajit tests/run.lua schema; luajit tests/run.lua code_ir."
 			],
 			"createdAt": "2026-07-04T08:35:30.132Z",
-			"updatedAt": "2026-07-04T20:04:38.096Z"
+			"updatedAt": "2026-07-04T22:49:55.579Z"
 		},
 		{
 			"id": "T019R",
@@ -856,11 +860,13 @@
 			"after": [
 				"T019S"
 			],
-			"status": "todo",
+			"status": "done",
 			"order": 50,
+			"claimedBy": "agent-1TZS92",
+			"evidence": "Implemented Stencil native lowering in lua/lalin/native_stencil_methods.lua with typed NativeStencilLoweringInput/FrameLayout graph-builder ASDL added to lua/lalin/schema/native.lua. StencilInstance now builds typed lowering input; StencilDescriptor composes NativeTemplateGraph nodes for schedule, producer, access, recursive point expressions, body, and sink using T019S source families, node-scoped patch bindings, frame slots, symbol-bearing conditional/loopback/continuation edges, and a NativeModuleAddressPlan. Added focused graph/lowering assertions to tests/code_ir/test_native_stencil_contracts.lua. Checks passed: luajit tests/schema/test_schema_native.lua; luajit tests/code_ir/test_native_template_sources.lua; luajit tests/code_ir/test_native_bank_generator.lua; luajit tests/code_ir/test_native_mc_import.lua; luajit tests/code_ir/test_native_kernel_contracts.lua; luajit tests/code_ir/test_native_stencil_contracts.lua; luajit tests/run.lua schema; luajit tests/run.lua code_ir (48 passed, 1 skipped).",
 			"notes": [],
 			"createdAt": "2026-07-04T08:35:30.132Z",
-			"updatedAt": "2026-07-04T08:35:30.132Z"
+			"updatedAt": "2026-07-04T23:01:33.501Z"
 		},
 		{
 			"id": "T016U",

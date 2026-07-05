@@ -150,6 +150,14 @@ parser = Pratt.new {
       local name = lex:expect_name("field name")
       return Ast.node("Field", { base = left, name = name.value }, Ast.origin(lex, op, name, "parsed:field"))
     end },
+    [":"] = { bp = 98, emit = function(op, left, lex, ctx)
+      local name = lex:expect_name("method name")
+      lex:expect("(")
+      local args = parse_expr_list(lex, ctx, ")")
+      table.insert(args, 1, left)
+      local callee = Ast.node("Name", { name = name.value }, Ast.origin(lex, name, name, "parsed:name"))
+      return Ast.node("Call", { callee = callee, args = args }, Ast.origin(lex, op, lex.last, "parsed:call"))
+    end },
   },
   infix = {
     ["or"]  = { bp = 10, emit = binop("or") },

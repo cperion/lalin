@@ -360,6 +360,82 @@ local call_kernel_source = kernel_source_for(kernel_shapes[7])
 assert(call_kernel_source.c_text:find("extern void lalin_native_hole_", 1, true), "kernel call source should patch a frame-protocol helper target through a hole")
 assert_relocation_kinds(call_kernel_source, { Native.NativeTemplateRelocationHoleOrdinal, Native.NativeTemplateRelocationContinuation })
 
+local stencil_value_i32 = Native.NativeStencilValueScalarShape(Support.scalar_i32())
+local stencil_producer_shape = Native.NativeStencilProducerRange1DShape(stencil_value_i32, 1, Stencil.StencilProducerForward)
+local stencil_access_shape = Native.NativeStencilAccessContiguousShape(stencil_value_i32, 1)
+local stencil_point_shape = Native.NativeStencilPointBinaryShape(Stencil.StencilBinaryAdd, stencil_value_i32)
+local stencil_cast_shape = Native.NativeStencilPointCastShape(Core.MachineCastIdentity, stencil_value_i32, stencil_value_i32)
+local stencil_pred_shape = Native.NativeKernelPredicateCompareConstShape(Core.CmpGt, kernel_value_i32)
+local stencil_select_shape = Native.NativeStencilPointSelectShape(stencil_pred_shape, stencil_value_i32)
+local stencil_body_shape = Native.NativeStencilBodyPointShape(stencil_point_shape)
+local stencil_sink_shape = Native.NativeStencilSinkStoreShape(Stencil.StencilStoreElementwise, stencil_access_shape)
+local stencil_int_semantics = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZero, Code.CodeShiftMaskCount)
+local stencil_reduce_shape = Native.NativeStencilSinkReduceShape(stencil_value_i32, Stencil.StencilReduceScopeDomain, Stencil.StencilReduceFold(Stencil.StencilReducer(Value.ReductionAdd, Code.CodeTyInt(32, Code.CodeSigned), Value.ValueExprConst(Code.CodeConstLiteral(Code.CodeTyInt(32, Code.CodeSigned), Core.LitInt("0"))), stencil_int_semantics, nil)))
+local stencil_compiler = Stencil.StencilCompilerPolicy(Stencil.StencilCompilerGcc, Stencil.StencilOptO2, Stencil.StencilMachineNative, {})
+local stencil_schedule_shape = Native.NativeStencilScheduleScalarShape(stencil_compiler)
+local stencil_shapes = {
+    producers = { stencil_producer_shape },
+    accesses = { stencil_access_shape },
+    points = { stencil_point_shape, stencil_cast_shape, stencil_select_shape },
+    bodies = { stencil_body_shape },
+    sinks = { stencil_sink_shape, stencil_reduce_shape },
+    schedules = { stencil_schedule_shape },
+}
+local stencil_domain = Support.support_domain_with_sources(
+    Native.NativeTemplateSupportDomainId("native.template.support.test.stencil.sources"),
+    NativeBackend.host_target(),
+    NativeBackend.empty_runtime(),
+    {},
+    Support.empty_kernel_source_support(),
+    Support.stencil_source_support(stencil_shapes.producers, stencil_shapes.accesses, stencil_shapes.points, stencil_shapes.bodies, stencil_shapes.sinks, stencil_shapes.schedules)
+)
+local stencil_request = Sources.bank_request_for_support_domain(stencil_domain, Native.NativeBankId("native.template.test.stencil.sources"))
+Sources.assert_manifest_matches_sources(stencil_request.manifest, stencil_request.sources)
+local stencil_source_count = 0
+for _, source in ipairs(stencil_request.sources) do
+    if source.family.id.text:find("native.stencil.", 1, true) == 1 then stencil_source_count = stencil_source_count + 1 end
+end
+assert(stencil_source_count == 9, "stencil source support should emit exactly the requested finite StencilOp source shapes")
+local function stencil_source_for(family_id)
+    for _, source in ipairs(stencil_request.sources) do
+        if source.family.id.text == family_id then return source end
+    end
+end
+local function assert_stencil_source(family_id, axis_parent_name)
+    local source = stencil_source_for(family_id)
+    assert(source ~= nil, "stencil source support should emit " .. family_id)
+    assert(asdl.isa(source.generator.chunk_class, Native.NativeChunkStencilOp), family_id .. " should be a NativeChunkStencilOp")
+    assert(source.family.axes[1].target == NativeBackend.host_target(), family_id .. " should carry target as first family axis")
+    assert(not source.family.id.text:find("native.stencil.contract", 1, true), family_id .. " must not encode program StencilInstance ids")
+    assert(not source.family.id.text:find("AccessRef", 1, true), family_id .. " must not encode program AccessRef identities")
+    assert(not source.family.id.text:find("PointExpr", 1, true), family_id .. " must not encode program PointExpr identities")
+    assert(source.c_text:find("uint8_t %*frame", 1, false), family_id .. " should use the frame continuation protocol")
+    if axis_parent_name == "producer" then assert(asdl.isa(source.family.axes[2].axis, Native.NativeStencilProducerSourceShapeAxis), family_id .. " should use producer source-shape axis") end
+    if axis_parent_name == "access" then assert(asdl.isa(source.family.axes[2].axis, Native.NativeStencilAccessSourceShapeAxis), family_id .. " should use access source-shape axis") end
+    if axis_parent_name == "point" then assert(asdl.isa(source.family.axes[2].axis, Native.NativeStencilPointSourceShapeAxis), family_id .. " should use point source-shape axis") end
+    if axis_parent_name == "body" then assert(asdl.isa(source.family.axes[2].axis, Native.NativeStencilBodySourceShapeAxis), family_id .. " should use body source-shape axis") end
+    if axis_parent_name == "sink" then assert(asdl.isa(source.family.axes[2].axis, Native.NativeStencilSinkSourceShapeAxis), family_id .. " should use sink source-shape axis") end
+    if axis_parent_name == "schedule" then assert(asdl.isa(source.family.axes[2].axis, Native.NativeStencilScheduleSourceShapeAxis), family_id .. " should use schedule source-shape axis") end
+    return source
+end
+local stencil_producer_source = assert_stencil_source("native.stencil.producer.range1d.i32.step1.forward", "producer")
+assert(#stencil_producer_source.declared_continuation_ordinals == 2, "stencil producer source should declare body/exit continuations")
+assert(#stencil_producer_source.declared_hole_ordinals >= 2, "stencil producer source should use frame holes for dynamic counter/bounds")
+assert(stencil_producer_source.c_text:find("counter", 1, true), "stencil producer source should materialize loop counter state")
+local stencil_access_source = assert_stencil_source("native.stencil.access.contiguous.i32.stride1", "access")
+assert(stencil_access_source.c_text:find("elem_size", 1, true), "stencil access source should patch static element size through a hole")
+local stencil_point_source = assert_stencil_source("native.stencil.point.binary.add.i32", "point")
+assert(stencil_point_source.c_text:find("+", 1, true), "stencil binary point source should emit typed scalar arithmetic")
+assert_relocation_kinds(stencil_point_source, { Native.NativeTemplateRelocationHoleOrdinal, Native.NativeTemplateRelocationContinuation })
+assert_stencil_source("native.stencil.point.cast.identity.i32.to.i32", "point")
+assert_stencil_source("native.stencil.point.select.compare_const.gt.i32.i32", "point")
+assert_stencil_source("native.stencil.body.point.binary.add.i32", "body")
+local stencil_sink_source = assert_stencil_source("native.stencil.sink.store.elementwise.contiguous.i32.stride1", "sink")
+assert(stencil_sink_source.c_text:find("uintptr_t", 1, true), "stencil sink source should compose access address fragments through frame values")
+assert_stencil_source("native.stencil.sink.reduce.i32.domain.fold.add.i32", "sink")
+local stencil_schedule_source = assert_stencil_source("native.stencil.schedule.scalar.gcc.o2.native.flags.", "schedule")
+assert(#stencil_schedule_source.declared_continuation_ordinals == 1, "stencil schedule source should continue to the next graph node")
+
 local request = Sources.bank_request_for_support_domain(i32_domain, Support.host_scalar_i32_bank_id())
 assert_source_manifest_closure("i32 host scalar bank request", request, i32_domain, 301)
 assert(#request.sources > 0, "scalar i32 support slice should be non-empty")

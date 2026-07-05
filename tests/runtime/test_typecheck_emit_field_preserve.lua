@@ -54,7 +54,7 @@ local ptr_instr = Ty.TPtr(instr_ty)
 local u16 = scalar(C.ScalarU16)
 local binding = B.Binding(C.Id("inst"), "inst", ptr_instr, B.BindingRoleLocalValue)
 local env = B.Env("", { B.ValueEntry("inst", binding) }, {}, {})
-local scope = Tr.TypeValueScope(env.module_name, env.values, env.types, env.layouts, Tr.TypeModuleFacts({}, {}, {}))
+local scope = Tr.TypeValueScope(env.module_name, env.values, env.types, env.layouts, Tr.TypeModuleFacts({}, {}, {}, {}))
 local expr_input = Tr.TypeExprInput(scope)
 local place_input = Tr.TypePlaceInput(scope)
 

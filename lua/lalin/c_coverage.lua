@@ -135,6 +135,8 @@ local tables = {
         StmtSwitch = supported("C_BACKEND_DESIGN.md §13", "Scalar switch statements lower to switch/goto CFG; variant arms are tracked separately."),
         StmtJump = supported("C_BACKEND_DESIGN.md §13", "Block jumps lower to parallel block-parameter transfers and goto."),
         StmtJumpCont = phase_unreachable("C_BACKEND_DESIGN.md §13", "Continuation jumps are region-internal control and must not escape to final C lowering."),
+        StmtRegionEmit = phase_unreachable("C_BACKEND_DESIGN.md §13", "Region emit invocation is expanded/spliced into enclosing control regions before backend C lowering."),
+        StmtRegionCall = phase_unreachable("C_BACKEND_DESIGN.md §13", "Region call invocation is frontend control syntax; frame expansion must happen or diagnose before backend C lowering."),
         StmtYieldVoid = supported("C_BACKEND_DESIGN.md §13", "Void region yields lower to the region join/exit label."),
         StmtYieldValue = supported("C_BACKEND_DESIGN.md §13", "Value region yields assign the result temp and branch to the join label."),
         StmtReturnVoid = supported("C_BACKEND_DESIGN.md §15", "Void returns lower to CBackend return terminators."),
@@ -198,12 +200,19 @@ local tables = {
         SwitchVariantExprArm = supported("C_BACKEND_DESIGN.md §13", "Variant switch expression arms lower through tag cases, payload binds, result assignment, and joins."),
     },
 
+    ["LalinTree.RegionWireTarget"] = {
+        RegionWireBlock = phase_unreachable("C_BACKEND_DESIGN.md §13", "Region continuation block wiring is consumed by region invocation expansion before backend lowering."),
+        RegionWireCont = phase_unreachable("C_BACKEND_DESIGN.md §13", "Region continuation-to-continuation wiring is consumed by region invocation expansion before backend lowering."),
+    },
+
     ["LalinTree.ControlProducts"] = {
         VariantBind = supported("C_BACKEND_DESIGN.md §13", "Variant payload binds lower to arm-local payload loads using shared layout offsets."),
         BlockLabel = supported("C_BACKEND_DESIGN.md §13", "Block labels lower to deterministic C labels."),
         BlockParam = supported("C_BACKEND_DESIGN.md §13", "Block parameters lower to CFG locals with parallel transfer semantics."),
         EntryBlockParam = supported("C_BACKEND_DESIGN.md §13", "Entry parameters lower to initialized CFG locals."),
         JumpArg = supported("C_BACKEND_DESIGN.md §13", "Jump arguments lower via parallel transfer temporaries."),
+        RegionInvokeTarget = phase_unreachable("C_BACKEND_DESIGN.md §13", "Region invocation targets are frontend/control expansion inputs, not backend C artifacts."),
+        RegionContWire = phase_unreachable("C_BACKEND_DESIGN.md §13", "Region continuation wiring is consumed by region invocation expansion before backend lowering."),
         EntryControlBlock = supported("C_BACKEND_DESIGN.md §13", "Entry control blocks lower to the first generated C label/block."),
         ControlBlock = supported("C_BACKEND_DESIGN.md §13", "Control blocks lower to C labels and terminators."),
         ControlStmtRegion = supported("C_BACKEND_DESIGN.md §13", "Statement regions lower inline to labels/gotos."),

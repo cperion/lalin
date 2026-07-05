@@ -114,6 +114,7 @@ local issue_code_map = {
 
     -- Control flow
     TypeIssueInvalidControl = "E0405",
+    TypeIssueRegionInvoke = "E0408",
     TypeIssueMissingJumpTarget = "E0402",
     TypeIssueMissingJumpArg = "E0404",
     TypeIssueExtraJumpArg = "E0404",

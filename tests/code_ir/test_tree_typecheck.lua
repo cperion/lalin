@@ -78,4 +78,39 @@ local control_report = Typecheck.explain_type_issue(Tr.TypeIssueInvalidControl(
 assert(control_report.code == "E0404")
 assert(control_report.primary.message:find("missing argument `code`", 1, true))
 
+local done_cont = Tr.RegionCont("cont:R.Target:done:1", "done", { Tr.BlockParam("v", i32) })
+local target_region = Tr.Region(
+    "R.Target",
+    { Ty.Param("p", i32) },
+    { done_cont },
+    Tr.EntryControlBlock(Tr.BlockLabel("start"), {}, {
+        Tr.StmtJumpCont(Tr.StmtSurface, done_cont, { Tr.JumpArg("v", name("p")) }),
+    }),
+    {})
+local invoke_region = Tr.ControlStmtRegion(
+    "control.invoke.emit",
+    Tr.EntryControlBlock(Tr.BlockLabel("entry"), {}, {
+        Tr.StmtRegionEmit(
+            Tr.StmtSurface,
+            "test.emit.1",
+            Tr.RegionInvokeTarget(C.Path({ C.Name("R"), C.Name("Target") })),
+            { lit("41") },
+            { Tr.RegionContWire("done", Tr.RegionWireBlock(Tr.BlockLabel("done"))) }),
+    }),
+    {
+        Tr.ControlBlock(Tr.BlockLabel("done"), { Tr.BlockParam("v", i32) }, {
+            Tr.StmtReturnValue(Tr.StmtSurface, name("v")),
+        }),
+    })
+local invoke_module = Tr.Module(Tr.ModuleSurface, {
+    Tr.ItemRegion(target_region),
+    Tr.ItemFunc(Tr.FuncExport("invoke_emit", {}, i32, { Tr.StmtControl(Tr.StmtSurface, invoke_region) })),
+})
+local invoke_checked = TC.check_module(invoke_module)
+assert(#invoke_checked.issues == 0, "expanded region emit should typecheck")
+local invoke_typed_region = invoke_checked.module.items[1].func.body[1].region
+assert(#invoke_typed_region.blocks == 2, "emit expansion should append cloned callee entry block")
+assert(invoke_typed_region.entry.body[1].target.name == "test.emit.1.start", "emit site should jump to cloned callee entry")
+assert(invoke_typed_region.blocks[2].label.name == "test.emit.1.start", "cloned callee entry block should be present")
+
 print("lalin tree_typecheck ok")

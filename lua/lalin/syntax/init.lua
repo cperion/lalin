@@ -124,7 +124,7 @@ function LalinSyntax.register()
     keywords = {
       "fn", "region", "struct", "union", "handle", "requires", "ensures",
       "do", "end", "if", "then", "elseif", "else", "loop", "in",
-      "grid", "tiled", "window", "return", "jump", "emit", "entry", "block",
+      "grid", "tiled", "window", "return", "jump", "emit", "call", "entry", "block",
       "let", "var", "fold", "scan", "by", "over", "step", "into",
     },
     parse_entry = LalinSyntax.parse_entry,
@@ -171,6 +171,13 @@ function LalinSyntax.to_module(parsed_decls, name, T)
     return "__lln_fn_" .. tostring(anon_id)
   end
 
+  local function qualified_compiler_name(parsed)
+    local parts = {}
+    for i, p in ipairs(parsed.qualifier or {}) do parts[#parts + 1] = p end
+    parts[#parts + 1] = compiler_name(parsed)
+    return table.concat(parts, ".")
+  end
+
   local function parsed_type(ptype)
     return to_tree.parsed_type(ptype)
   end
@@ -194,6 +201,71 @@ function LalinSyntax.to_module(parsed_decls, name, T)
   local function handle_invalid(raw)
     if raw == nil then return Ty.HandleInvalidNone end
     return Ty.HandleInvalidInt(tostring(raw))
+  end
+
+  local function block_params(fields)
+    local out = {}
+    for i, f in ipairs(to_tree.product_fields(fields or {})) do
+      out[i] = Tr.BlockParam(f.name, parsed_type(f.type))
+    end
+    return out
+  end
+
+  local function entry_params(fields)
+    local out = {}
+    for i, f in ipairs(to_tree.product_fields(fields or {})) do
+      out[i] = Tr.EntryBlockParam(f.name, parsed_type(f.type), Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(f.name)))
+    end
+    return out
+  end
+
+  local function region_conts(exits, region_name)
+    local conts, by_name = {}, {}
+    for i, exit in ipairs(to_tree.conts(exits or {})) do
+      conts[i] = Tr.RegionCont("cont:" .. tostring(region_name) .. ":" .. tostring(exit.name) .. ":" .. tostring(i), exit.name, block_params(exit.fields or {}))
+      by_name[exit.name] = conts[i]
+    end
+    return conts, by_name
+  end
+
+  local region_stmts
+
+  local function retarget_region_stmt(stmt, cont_by_name)
+    if stmt.tag == "StmtEmit" or stmt.tag == "StmtCall" then
+      local lowered = to_tree.stmt(stmt)
+      local wiring = {}
+      for i, wire in ipairs(lowered.wiring or {}) do
+        local cont = cont_by_name[wire.target.label.name]
+        wiring[i] = cont and Tr.RegionContWire(wire.name, Tr.RegionWireCont(cont)) or wire
+      end
+      if stmt.tag == "StmtEmit" then
+        return Tr.StmtRegionEmit(lowered.h, lowered.invoke_id, lowered.target, lowered.args, wiring)
+      end
+      return Tr.StmtRegionCall(lowered.h, lowered.invoke_id, lowered.target, lowered.args, wiring)
+    elseif stmt.tag == "StmtJump" then
+      local cont = cont_by_name[stmt.target]
+      if cont then
+        local args = {}
+        for i, f in ipairs(stmt.payload or {}) do args[i] = Tr.JumpArg(f.key or "", to_tree.expr(f.value)) end
+        return Tr.StmtJumpCont(Tr.StmtSurface, cont, args)
+      end
+    elseif stmt.tag == "StmtIf" then
+      local then_body = region_stmts(stmt.then_body or {}, cont_by_name)
+      local else_body = stmt.else_body and region_stmts(stmt.else_body, cont_by_name) or {}
+      for _, elseif_block in ipairs(stmt.elseif_blocks or {}) do
+        else_body = {
+          Tr.StmtIf(Tr.StmtSurface, to_tree.expr(elseif_block.cond), region_stmts(elseif_block.body or {}, cont_by_name), else_body),
+        }
+      end
+      return Tr.StmtIf(Tr.StmtSurface, to_tree.expr(stmt.cond), then_body, else_body)
+    end
+    return to_tree.stmt(stmt)
+  end
+
+  region_stmts = function(stmts, cont_by_name)
+    local out = {}
+    for i, stmt in ipairs(stmts or {}) do out[i] = retarget_region_stmt(stmt, cont_by_name) end
+    return out
   end
 
   -- Helper: convert a single parsed decl to a Tr.Item for the module.
@@ -294,6 +366,28 @@ function LalinSyntax.to_module(parsed_decls, name, T)
       if parsed.domain ~= nil then facts[#facts + 1] = Ty.HandleDomain(handle_type_ref(parsed.domain, "handle domain")) end
       if parsed.target ~= nil then facts[#facts + 1] = Ty.HandleTarget(handle_type_ref(parsed.target, "handle target")) end
       return Tr.ItemType(Tr.TypeDeclHandle(parsed.name, handle_repr(parsed.repr), handle_invalid(parsed.invalid), facts))
+    elseif parsed.tag == "DeclRegion" then
+      local rname = qualified_compiler_name(parsed)
+      local params = {}
+      for i, p in ipairs(to_tree.product_fields(parsed.inputs or {})) do
+        params[i] = T.LalinType.Param(p.name, parsed_type(p.type))
+      end
+      local conts, cont_by_name = region_conts(parsed.exits or {}, rname)
+      local entry_src, block_src = nil, {}
+      for _, b in ipairs(parsed.blocks or {}) do
+        if b.tag == "RegionEntry" and entry_src == nil then entry_src = b else block_src[#block_src + 1] = b end
+      end
+      entry_src = entry_src or { name = "entry", state = {}, body = {} }
+      local blocks = {}
+      for i, b in ipairs(block_src) do
+        blocks[i] = Tr.ControlBlock(Tr.BlockLabel(b.name), block_params(b.state or {}), region_stmts(b.body or {}, cont_by_name))
+      end
+      return Tr.ItemRegion(Tr.Region(
+        rname,
+        params,
+        conts,
+        Tr.EntryControlBlock(Tr.BlockLabel(entry_src.name), entry_params(entry_src.state or {}), region_stmts(entry_src.body or {}, cont_by_name)),
+        blocks))
     end
     error("parsed_to_module: unsupported decl tag " .. tostring(parsed.tag), 2)
   end

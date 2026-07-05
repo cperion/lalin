@@ -102,6 +102,10 @@ local function concrete_type(v)
     local name = symbol_text(v, "type name")
     if name then return Ty.TNamed(Ty.TypeRefPath(path(name))) end
     if type(v) == "string" then return Ty.TNamed(Ty.TypeRefPath(path(v))) end
+    -- Parsed AST declaration values: adapt to typed name
+    if type(v) == "table" and type(v.tag) == "string" and v.tag:match("^Decl") ~= nil and v.name ~= nil then
+      return Ty.TNamed(Ty.TypeRefPath(path(v.name)))
+    end
     die("expected type value, got " .. tostring(v), 2)
 end
 

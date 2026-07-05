@@ -2361,6 +2361,100 @@ return schema. LalinNative {
     field. abi [LalinStencil.StencilAbi],
   },
 
+  sum. NativeStencilFrameRole {
+    NativeStencilFrameAbiParam { field. index [number], },
+    NativeStencilFrameProducerCounter { field. axis [number], },
+    NativeStencilFrameProducerStop { field. axis [number], },
+    NativeStencilFrameAccessBase { field. access [LalinStencil.StencilAccessRef], },
+    NativeStencilFrameAccessIndex { field. access [LalinStencil.StencilAccessRef], },
+    NativeStencilFrameAccessStride { field. access [LalinStencil.StencilAccessRef], },
+    NativeStencilFrameAccessDescriptor { field. access [LalinStencil.StencilAccessRef], },
+    NativeStencilFrameAccessByteOffset { field. access [LalinStencil.StencilAccessRef], },
+    NativeStencilFrameAccessAddress { field. access [LalinStencil.StencilAccessRef], },
+    NativeStencilFramePointValue { field. ordinal [number], },
+    NativeStencilFrameSinkState { field. ordinal [number], },
+    NativeStencilFrameScheduleState,
+  },
+
+  product. NativeStencilFrameEntry {
+    interned,
+    field. role [LalinNative.NativeStencilFrameRole],
+    field. storage [LalinNative.NativeStorageLayout],
+    field. value [LalinNative.NativeTemplateValueId],
+  },
+
+  product. NativeStencilFrameSlotEntry {
+    interned,
+    field. entry [LalinNative.NativeStencilFrameEntry],
+    field. slot [LalinNative.NativeFrameSlot],
+  },
+
+  product. NativeStencilFrameLayout {
+    interned,
+    field. entries [many [LalinNative.NativeStencilFrameSlotEntry]],
+    field. frame [LalinNative.NativeFrameLayout],
+  },
+
+  product. NativeStencilProducerLoopEntry {
+    interned,
+    field. axis [number],
+    field. counter [LalinNative.NativeStencilFrameEntry],
+    field. stop [LalinNative.NativeStencilFrameEntry],
+  },
+
+  product. NativeStencilAccessAddressEntry {
+    interned,
+    field. access [LalinStencil.StencilAccessRef],
+    field. base [LalinNative.NativeStencilFrameEntry],
+    field. index [optional [LalinNative.NativeStencilFrameEntry]],
+    field. stride [optional [LalinNative.NativeStencilFrameEntry]],
+    field. descriptor [optional [LalinNative.NativeStencilFrameEntry]],
+    field. byte_offset [optional [LalinNative.NativeStencilFrameEntry]],
+    field. address [LalinNative.NativeStencilFrameEntry],
+  },
+
+  product. NativeStencilPointValueEntry {
+    interned,
+    field. ordinal [number],
+    field. expr [LalinStencil.StencilPointExpr],
+    field. frame [LalinNative.NativeStencilFrameEntry],
+  },
+
+  product. NativeStencilSinkStateEntry {
+    interned,
+    field. ordinal [number],
+    field. sink [LalinStencil.StencilSink],
+    field. state [optional [LalinNative.NativeStencilFrameEntry]],
+    field. value [LalinNative.NativeStencilFrameEntry],
+  },
+
+  product. NativeStencilLoweringInput {
+    field. instance [LalinStencil.StencilInstance],
+    field. projection [LalinNative.NativeStencilInstanceProjection],
+    field. type_layouts [LalinNative.NativeCodeTypeLayoutPlan],
+    field. abi [LalinStencil.StencilAbi],
+    field. frame [LalinNative.NativeStencilFrameLayout],
+    field. producers [many [LalinNative.NativeStencilProducerLoopEntry]],
+    field. accesses [many [LalinNative.NativeStencilAccessAddressEntry]],
+    field. point_values [many [LalinNative.NativeStencilPointValueEntry]],
+    field. body_value [LalinNative.NativeStencilPointValueEntry],
+    field. sink_state [LalinNative.NativeStencilSinkStateEntry],
+    field. addresses [LalinNative.NativeModuleAddressPlan],
+  },
+
+  product. NativeStencilGraphBuilderState {
+    field. nodes [many [LalinNative.NativeTemplateNode]],
+    field. control_edges [many [LalinNative.NativeControlEdge]],
+    field. value_edges [many [LalinNative.NativeValueEdge]],
+    field. exits [many [LalinNative.NativeTemplateNodeId]],
+  },
+
+  product. NativeStencilGraphBuildInput {
+    field. plan [LalinNative.NativePlanInput],
+    field. lowering [LalinNative.NativeStencilLoweringInput],
+    field. state [LalinNative.NativeStencilGraphBuilderState],
+  },
+
   product. NativeStencilSourceSupport {
     field. producers [many [LalinNative.NativeStencilProducerSourceShape]],
     field. accesses [many [LalinNative.NativeStencilAccessSourceShape]],

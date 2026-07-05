@@ -833,6 +833,12 @@ local function bind_context(T)
     function Tr.StmtJumpCont:tree_code_collect_address_taken_stmt(out)
         for j = 1, #(self.args or {}) do collect_address_taken_expr(self.args[j].value, out) end
     end
+    function Tr.StmtRegionEmit:tree_code_collect_address_taken_stmt(out)
+        for j = 1, #(self.args or {}) do collect_address_taken_expr(self.args[j], out) end
+    end
+    function Tr.StmtRegionCall:tree_code_collect_address_taken_stmt(out)
+        for j = 1, #(self.args or {}) do collect_address_taken_expr(self.args[j], out) end
+    end
     function Tr.StmtControl:tree_code_collect_address_taken_stmt(out)
         collect_address_taken_stmts(self.region.entry.body, out)
         for j = 1, #(self.region.blocks or {}) do collect_address_taken_stmts(self.region.blocks[j].body, out) end
@@ -2471,6 +2477,14 @@ local function bind_context(T)
 
     function Tr.StmtJumpCont:lower_tree_stmt_to_code(input)
         unsupported(input, self, "continuation slot jump after open expansion")
+    end
+
+    function Tr.StmtRegionEmit:lower_tree_stmt_to_code(input)
+        unsupported(input, self, "region emit invocation requires region expansion before code lowering")
+    end
+
+    function Tr.StmtRegionCall:lower_tree_stmt_to_code(input)
+        unsupported(input, self, "region call invocation requires region expansion before code lowering")
     end
 
     function Tr.TreeCodeExprControlRegion:tree_code_yield_value_exit(tree_code_input, stmt)

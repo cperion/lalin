@@ -210,7 +210,7 @@ local function bind_context(T)
     end
 
     local function empty_type_module_facts()
-        return Tr.TypeModuleFacts({}, {}, {})
+        return Tr.TypeModuleFacts({}, {}, {}, {})
     end
 
     local function variant_name_text(v)
@@ -666,15 +666,8 @@ local function bind_context(T)
         local region_scope = input.scope:typecheck_tree_add_params("region:" .. tostring(region.name), region.params)
         local stmt_input = region_scope:typecheck_tree_stmt_input(Ty.TScalar(C.ScalarVoid), Tr.TypeYieldNone)
         local region_id = "region:" .. tostring(region.name)
-        local control_input = Tr.TypeControlInput(stmt_input:typecheck_tree_with_yield(Tr.TypeYieldVoid), region_id)
-        local typed_entry, entry_issues = region.entry:typecheck_tree_control_entry(control_input)
-        append_all(issues, entry_issues)
-        local typed_blocks = {}
-        for i = 1, #(region.blocks or {}) do
-            local b, bi = region.blocks[i]:typecheck_tree_control_block(control_input)
-            typed_blocks[#typed_blocks + 1] = b
-            append_all(issues, bi)
-        end
+        local typed_region = Tr.ControlStmtRegion(region_id, region.entry, region.blocks):typecheck_tree_control_stmt_region(Tr.TypeControlInput(stmt_input, region_id))
+        append_all(issues, typed_region.issues)
         local runtime_bindings = {}
         for i = 1, #region.params do
             local p = region.params[i]
@@ -683,7 +676,7 @@ local function bind_context(T)
         end
         local cont_targets = {}
         for i = 1, #(region.conts or {}) do cont_targets[region.conts[i].name] = true end
-        check_owned_control_region(Tr.ControlStmtRegion(region_id, typed_entry, typed_blocks), issues, runtime_bindings, cont_targets)
+        check_owned_control_region(typed_region.region, issues, runtime_bindings, cont_targets)
         return Tr.TypeItemResult({}, issues)
     end
 
@@ -838,6 +831,49 @@ local function bind_context(T)
         local region = self.region_id or (reject and reject.region_id) or "?"
         local report = reject and reject:typecheck_tree_report(region) or self:typecheck_tree_fallback_control_report(region)
         return Tr.TypeIssueExplanation(report.code, "while checking control flow", report.primary, report.notes, report.suggestions)
+    end
+
+    local function invoke_target_name(target)
+        local parts = {}
+        for i, p in ipairs((target and target.path and target.path.parts) or {}) do parts[#parts + 1] = p.text end
+        return table.concat(parts, ".")
+    end
+
+    function Tr.RegionInvokeMissingTarget:typecheck_tree_report()
+        local name = invoke_target_name(self.target)
+        return Tr.TypeIssueExplanation("E0408", "while expanding region invocation", "unknown region `" .. name .. "`", {
+            "region invocations must target a region declaration visible in the module",
+        }, {})
+    end
+
+    function Tr.RegionInvokeArgCount:typecheck_tree_report()
+        return Tr.TypeIssueExplanation("E0408", "while expanding region invocation", "region argument count mismatch", {
+            "expected " .. tostring(self.expected) .. " data argument(s), got " .. tostring(self.actual),
+        }, {})
+    end
+
+    function Tr.RegionInvokeMissingWire:typecheck_tree_report()
+        return Tr.TypeIssueExplanation("E0408", "while expanding region invocation", "missing continuation wiring `" .. tostring(self.cont and self.cont.name or "?") .. "`", {
+            "every region continuation must be wired at the call site",
+        }, {})
+    end
+
+    function Tr.RegionInvokeExtraWire:typecheck_tree_report()
+        return Tr.TypeIssueExplanation("E0408", "while expanding region invocation", "unknown continuation wiring `" .. tostring(self.name or "?") .. "`", {}, {})
+    end
+
+    function Tr.RegionInvokeDuplicateWire:typecheck_tree_report()
+        return Tr.TypeIssueExplanation("E0203", "while expanding region invocation", "duplicate continuation wiring `" .. tostring(self.name or "?") .. "`", {}, {})
+    end
+
+    function Tr.RegionInvokeCallFrameUnsupported:typecheck_tree_report()
+        return Tr.TypeIssueExplanation("E0408", "while expanding region invocation", "region `call` frame expansion is not implemented yet", {
+            "use `emit` for CFG splicing until region call frames are implemented",
+        }, {})
+    end
+
+    function Tr.TypeIssueRegionInvoke:typecheck_tree_explanation()
+        return self.reject:typecheck_tree_report()
     end
 
     function Tr.TypeIssueMissingJumpTarget:typecheck_tree_explanation()

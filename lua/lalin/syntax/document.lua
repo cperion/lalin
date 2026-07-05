@@ -157,6 +157,18 @@ end
 local function bind_named_decl(env, decl)
   local name = binding_name(decl)
   if name ~= nil then env[name] = decl end
+  -- Qualified function: fn Point.norm(...) -> set Point.norm = decl
+  if type(decl) == "table" and decl.qualifier and #decl.qualifier > 0 and name ~= nil then
+    local target = env
+    for i = 1, #decl.qualifier do
+      local key = decl.qualifier[i]
+      target = target[key]
+      if target == nil then break end
+    end
+    if target ~= nil then
+      target[name] = decl
+    end
+  end
 end
 
 local function resolve_decl(env, decl)

@@ -274,12 +274,39 @@ function Stmt.parse(lex, ctx)
     if lex:peek().value == "(" then payload = parse_named_payload(lex, ctx) end
     return Ast.node("StmtJump", { target = target, payload = payload }, Ast.origin(lex, start, lex.last, "parsed:jump"))
 
-  elseif t.value == "emit" then
+  elseif t.value == "emit" or t.value == "call" then
     local start = lex:next()
-    local callee = Expr.parse(lex, ctx)
-    local handlers = nil
-    if lex:peek().value == "{" then handlers = Expr.parse(lex, ctx) end
-    return Ast.node("StmtEmit", { callee = callee, handlers = handlers }, Ast.origin(lex, start, lex.last, "parsed:emit"))
+    local first = lex:expect_name("region name")
+    local callee_path = { first.value }
+    local callee = Ast.node("Name", { name = first.value }, Ast.origin(lex, first, first, "parsed:name"))
+    while lex:next_if(".") do
+      local part = lex:expect_name("qualified region name")
+      callee_path[#callee_path + 1] = part.value
+      callee = Ast.node("Field", { base = callee, name = part.value }, Ast.origin(lex, first, part, "parsed:field"))
+    end
+    lex:expect("(")
+    local data_args, cont_wiring = {}, {}
+    if not lex:next_if(")") then
+      repeat
+        if lex:peek().value == ";" then break end
+        data_args[#data_args + 1] = Expr.parse(lex, ctx)
+      until not lex:next_if(",") or lex:peek().value == ";"
+      if lex:next_if(";") then
+        repeat
+          local cname = lex:expect_name("continuation name").value
+          lex:expect("=")
+          local target = lex:expect_name("continuation block")
+          cont_wiring[#cont_wiring + 1] = { name = cname, target = target.value }
+        until not lex:next_if(",")
+      end
+      lex:expect(")")
+    end
+    return Ast.node(start.value == "call" and "StmtCall" or "StmtEmit", {
+      callee = callee,
+      callee_path = callee_path,
+      data_args = data_args,
+      cont_wiring = cont_wiring,
+    }, Ast.origin(lex, start, lex.last, "parsed:region_call"))
 
   else
     local start = lex:peek()

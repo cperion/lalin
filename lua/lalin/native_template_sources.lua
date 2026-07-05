@@ -3566,6 +3566,777 @@ local function bind_context(T)
         end
     end
 
+    function Stencil.StencilProducerOrder:native_stencil_order_token()
+        internal_error("unsupported stencil producer order token")
+    end
+    function Stencil.StencilProducerForward:native_stencil_order_token() return "forward" end
+    function Stencil.StencilProducerBackward:native_stencil_order_token() return "backward" end
+
+    function Native.NativeStencilValueSourceShape:native_stencil_value_token()
+        internal_error("unsupported stencil value source-shape token")
+    end
+    function Native.NativeStencilValueVoidShape:native_stencil_value_token() return "void" end
+    function Native.NativeStencilValueScalarShape:native_stencil_value_token() return self.scalar:native_scalar_token() end
+    function Native.NativeStencilValuePointerShape:native_stencil_value_token() return "ptr." .. self.pointer:native_scalar_token() end
+    function Native.NativeStencilValueBytesShape:native_stencil_value_token() return "bytes" .. tostring(self.size) .. ".align" .. tostring(self.alignment) end
+
+    function Native.NativeStencilValueSourceShape:native_stencil_family_scalar(target)
+        return Support.scalar_bool8(target and target.pointer_bits or nil)
+    end
+    function Native.NativeStencilValueScalarShape:native_stencil_family_scalar(_target) return self.scalar end
+    function Native.NativeStencilValuePointerShape:native_stencil_family_scalar(_target) return self.pointer end
+
+    function Native.NativeStencilValueSourceShape:native_stencil_c_scalar(_target)
+        return nil
+    end
+    function Native.NativeStencilValueScalarShape:native_stencil_c_scalar(_target) return self.scalar end
+    function Native.NativeStencilValuePointerShape:native_stencil_c_scalar(_target) return self.pointer end
+
+    function Native.NativeStencilValueSourceShape:native_stencil_value_size(target)
+        return target.pointer_bits / 8
+    end
+    function Native.NativeStencilValueVoidShape:native_stencil_value_size(_target) return 0 end
+    function Native.NativeStencilValueScalarShape:native_stencil_value_size(_target) return self.scalar:native_size_bytes() end
+    function Native.NativeStencilValuePointerShape:native_stencil_value_size(_target) return self.pointer:native_size_bytes() end
+    function Native.NativeStencilValueBytesShape:native_stencil_value_size(_target) return self.size end
+
+    function Native.NativeStencilValueSourceShape:native_stencil_load_expr(_target, _hole)
+        internal_error("stencil value source shape is not scalar-loadable")
+    end
+    function Native.NativeStencilValueScalarShape:native_stencil_load_expr(_target, hole)
+        return frame_load(self.scalar:native_c_scalar_type(), hole_address_expr(hole))
+    end
+    function Native.NativeStencilValuePointerShape:native_stencil_load_expr(_target, hole)
+        return frame_load(self.pointer:native_c_scalar_type(), hole_address_expr(hole))
+    end
+
+    function Native.NativeStencilValueSourceShape:native_stencil_store_line(_target, _hole, _expr)
+        internal_error("stencil value source shape is not scalar-storable")
+    end
+    function Native.NativeStencilValueScalarShape:native_stencil_store_line(_target, hole, expr)
+        return frame_store(self.scalar:native_c_scalar_type(), hole_address_expr(hole), expr)
+    end
+    function Native.NativeStencilValuePointerShape:native_stencil_store_line(_target, hole, expr)
+        return frame_store(self.pointer:native_c_scalar_type(), hole_address_expr(hole), expr)
+    end
+
+    local function append_stencil_hole_externs(lines, holes)
+        for _, hole in ipairs(holes or {}) do
+            if not asdl.isa(hole.hole, Native.NativePatchCallRel32) then
+                lines[#lines + 1] = "extern const uint8_t " .. hole.symbol .. ";"
+            end
+        end
+    end
+
+    function Native.NativeStencilProducerSourceShape:native_stencil_producer_token()
+        internal_error("unsupported stencil producer source-shape token")
+    end
+    function Native.NativeStencilProducerRange1DShape:native_stencil_producer_token()
+        return "range1d." .. self.index:native_stencil_value_token() .. ".step" .. tostring(self.step) .. "." .. self.order:native_stencil_order_token()
+    end
+    function Native.NativeStencilProducerRangeNDShape:native_stencil_producer_token() return "rangend.rank" .. tostring(self.rank) end
+    function Native.NativeStencilProducerWindowNDShape:native_stencil_producer_token() return "windownd.rank" .. tostring(self.rank) .. ".windows" .. tostring(self.window_count) end
+    function Native.NativeStencilProducerTiledNDShape:native_stencil_producer_token() return "tilednd.rank" .. tostring(self.rank) .. ".tiles" .. tostring(self.tile_count) end
+
+    function Native.NativeStencilAccessSourceShape:native_stencil_access_token()
+        internal_error("unsupported stencil access source-shape token")
+    end
+    function Native.NativeStencilAccessScalarShape:native_stencil_access_token() return "scalar." .. self.value:native_stencil_value_token() end
+    function Native.NativeStencilAccessContiguousShape:native_stencil_access_token() return "contiguous." .. self.value:native_stencil_value_token() .. ".stride" .. tostring(self.stride) end
+    function Native.NativeStencilAccessIndexedShape:native_stencil_access_token() return "indexed." .. self.value:native_stencil_value_token() .. ".index." .. self.index:native_stencil_value_token() .. ".stride" .. tostring(self.stride) end
+    function Native.NativeStencilAccessAffine1DShape:native_stencil_access_token() return "affine1d." .. self.value:native_stencil_value_token() .. ".scale" .. tostring(self.scale) end
+    function Native.NativeStencilAccessAffineNDShape:native_stencil_access_token() return "affinend." .. self.value:native_stencil_value_token() .. ".terms" .. tostring(self.term_count) end
+    function Native.NativeStencilAccessFieldProjectionShape:native_stencil_access_token() return "field." .. symbol_fragment(self.field_name) .. "." .. self.value:native_stencil_value_token() end
+    function Native.NativeStencilAccessSoAComponentShape:native_stencil_access_token() return "soa." .. symbol_fragment(self.field_name) .. "." .. self.value:native_stencil_value_token() end
+    function Native.NativeStencilAccessSliceDescriptorShape:native_stencil_access_token() return "slice_descriptor." .. self.value:native_stencil_value_token() end
+    function Native.NativeStencilAccessByteSpanDescriptorShape:native_stencil_access_token() return "bytespan_descriptor." .. self.value:native_stencil_value_token() end
+    function Native.NativeStencilAccessViewDescriptorShape:native_stencil_access_token() return "view_descriptor." .. self.value:native_stencil_value_token() .. (self.has_const_stride and ".const_stride" or ".dynamic_stride") end
+
+    function Stencil.StencilUnaryOp:native_stencil_unary_token()
+        internal_error("unsupported stencil unary op token")
+    end
+    function Stencil.StencilUnaryIdentity:native_stencil_unary_token() return "identity" end
+    function Stencil.StencilUnaryNeg:native_stencil_unary_token() return "neg" end
+    function Stencil.StencilUnaryBitNot:native_stencil_unary_token() return "bitnot" end
+    function Stencil.StencilUnaryBoolNot:native_stencil_unary_token() return "boolnot" end
+
+    function Stencil.StencilUnaryOp:native_stencil_unary_expr(_scalar, _value)
+        internal_error("unsupported stencil unary op C expression")
+    end
+    function Stencil.StencilUnaryIdentity:native_stencil_unary_expr(_scalar, value) return value end
+    function Stencil.StencilUnaryNeg:native_stencil_unary_expr(_scalar, value) return "(-(" .. value .. "))" end
+    function Stencil.StencilUnaryBitNot:native_stencil_unary_expr(_scalar, value) return "(~(" .. value .. "))" end
+    function Stencil.StencilUnaryBoolNot:native_stencil_unary_expr(_scalar, value) return "((" .. value .. ") == 0)" end
+
+    function Stencil.StencilBinaryOp:native_stencil_binary_token()
+        internal_error("unsupported stencil binary op token")
+    end
+    function Stencil.StencilBinaryAdd:native_stencil_binary_token() return "add" end
+    function Stencil.StencilBinarySub:native_stencil_binary_token() return "sub" end
+    function Stencil.StencilBinaryMul:native_stencil_binary_token() return "mul" end
+    function Stencil.StencilBinaryDiv:native_stencil_binary_token() return "div" end
+    function Stencil.StencilBinaryMod:native_stencil_binary_token() return "mod" end
+    function Stencil.StencilBinaryAnd:native_stencil_binary_token() return "and" end
+    function Stencil.StencilBinaryOr:native_stencil_binary_token() return "or" end
+    function Stencil.StencilBinaryXor:native_stencil_binary_token() return "xor" end
+    function Stencil.StencilBinaryShl:native_stencil_binary_token() return "shl" end
+    function Stencil.StencilBinaryLShr:native_stencil_binary_token() return "lshr" end
+    function Stencil.StencilBinaryAShr:native_stencil_binary_token() return "ashr" end
+    function Stencil.StencilBinaryMin:native_stencil_binary_token() return "min" end
+    function Stencil.StencilBinaryMax:native_stencil_binary_token() return "max" end
+
+    function Stencil.StencilBinaryOp:native_stencil_binary_expr(_scalar, _lhs, _rhs)
+        internal_error("unsupported stencil binary op C expression")
+    end
+    function Stencil.StencilBinaryAdd:native_stencil_binary_expr(_scalar, lhs, rhs) return "((" .. lhs .. ") + (" .. rhs .. "))" end
+    function Stencil.StencilBinarySub:native_stencil_binary_expr(_scalar, lhs, rhs) return "((" .. lhs .. ") - (" .. rhs .. "))" end
+    function Stencil.StencilBinaryMul:native_stencil_binary_expr(_scalar, lhs, rhs) return "((" .. lhs .. ") * (" .. rhs .. "))" end
+    function Stencil.StencilBinaryDiv:native_stencil_binary_expr(_scalar, lhs, rhs) return "((" .. rhs .. ") == 0 ? 0 : ((" .. lhs .. ") / (" .. rhs .. ")))" end
+    function Stencil.StencilBinaryMod:native_stencil_binary_expr(_scalar, lhs, rhs) return "((" .. rhs .. ") == 0 ? 0 : ((" .. lhs .. ") % (" .. rhs .. ")))" end
+    function Stencil.StencilBinaryAnd:native_stencil_binary_expr(_scalar, lhs, rhs) return "((" .. lhs .. ") & (" .. rhs .. "))" end
+    function Stencil.StencilBinaryOr:native_stencil_binary_expr(_scalar, lhs, rhs) return "((" .. lhs .. ") | (" .. rhs .. "))" end
+    function Stencil.StencilBinaryXor:native_stencil_binary_expr(_scalar, lhs, rhs) return "((" .. lhs .. ") ^ (" .. rhs .. "))" end
+    function Stencil.StencilBinaryShl:native_stencil_binary_expr(_scalar, lhs, rhs) return "((" .. lhs .. ") << (" .. rhs .. "))" end
+    function Stencil.StencilBinaryLShr:native_stencil_binary_expr(_scalar, lhs, rhs) return "((" .. lhs .. ") >> (" .. rhs .. "))" end
+    function Stencil.StencilBinaryAShr:native_stencil_binary_expr(_scalar, lhs, rhs) return "((" .. lhs .. ") >> (" .. rhs .. "))" end
+    function Stencil.StencilBinaryMin:native_stencil_binary_expr(_scalar, lhs, rhs) return "((" .. lhs .. ") < (" .. rhs .. ") ? (" .. lhs .. ") : (" .. rhs .. "))" end
+    function Stencil.StencilBinaryMax:native_stencil_binary_expr(_scalar, lhs, rhs) return "((" .. lhs .. ") > (" .. rhs .. ") ? (" .. lhs .. ") : (" .. rhs .. "))" end
+
+    function Native.NativeStencilPointSourceShape:native_stencil_point_token()
+        internal_error("unsupported stencil point source-shape token")
+    end
+    function Native.NativeStencilPointInputShape:native_stencil_point_token() return "input." .. self.value:native_stencil_value_token() end
+    function Native.NativeStencilPointWindowInputShape:native_stencil_point_token() return "window_input." .. self.value:native_stencil_value_token() .. ".offsets" .. tostring(self.offset_count) end
+    function Native.NativeStencilPointConstShape:native_stencil_point_token() return "const." .. self.value:native_stencil_value_token() end
+    function Native.NativeStencilPointUnaryShape:native_stencil_point_token() return "unary." .. self.op:native_stencil_unary_token() .. "." .. self.value:native_stencil_value_token() end
+    function Native.NativeStencilPointBinaryShape:native_stencil_point_token() return "binary." .. self.op:native_stencil_binary_token() .. "." .. self.value:native_stencil_value_token() end
+    function Native.NativeStencilPointCastShape:native_stencil_point_token() return "cast." .. self.op:native_cast_family_name() .. "." .. self.from:native_stencil_value_token() .. ".to." .. self.to:native_stencil_value_token() end
+    function Native.NativeStencilPointPredicateShape:native_stencil_point_token() return "predicate." .. self.pred:native_kernel_predicate_token() .. "." .. self.value:native_stencil_value_token() end
+    function Native.NativeStencilPointCompareShape:native_stencil_point_token() return "compare." .. self.cmp:native_compare_family_name() .. "." .. self.value:native_stencil_value_token() end
+    function Native.NativeStencilPointSelectShape:native_stencil_point_token() return "select." .. self.pred:native_kernel_predicate_token() .. "." .. self.value:native_stencil_value_token() end
+
+    function Native.NativeStencilPointSourceShape:native_stencil_result_value_shape()
+        internal_error("unsupported stencil point result value shape")
+    end
+    function Native.NativeStencilPointInputShape:native_stencil_result_value_shape() return self.value end
+    function Native.NativeStencilPointWindowInputShape:native_stencil_result_value_shape() return self.value end
+    function Native.NativeStencilPointConstShape:native_stencil_result_value_shape() return self.value end
+    function Native.NativeStencilPointUnaryShape:native_stencil_result_value_shape() return self.value end
+    function Native.NativeStencilPointBinaryShape:native_stencil_result_value_shape() return self.value end
+    function Native.NativeStencilPointCastShape:native_stencil_result_value_shape() return self.to end
+    function Native.NativeStencilPointPredicateShape:native_stencil_result_value_shape() return self.value end
+    function Native.NativeStencilPointCompareShape:native_stencil_result_value_shape() return Native.NativeStencilValueScalarShape(Support.scalar_bool8()) end
+    function Native.NativeStencilPointSelectShape:native_stencil_result_value_shape() return self.value end
+
+    function Native.NativeStencilBodySourceShape:native_stencil_body_token()
+        internal_error("unsupported stencil body source-shape token")
+    end
+    function Native.NativeStencilBodyPointShape:native_stencil_body_token() return "point." .. self.expr:native_stencil_point_token() end
+
+    function Stencil.StencilStoreSemantics:native_stencil_store_token()
+        internal_error("unsupported stencil store semantics token")
+    end
+    function Stencil.StencilStoreElementwise:native_stencil_store_token() return "elementwise" end
+    function Stencil.StencilStoreCopy:native_stencil_store_token() return "copy." .. self.semantics:native_kernel_copy_token() end
+    function Stencil.StencilStoreScatter:native_stencil_store_token() return "scatter." .. self.conflicts:native_stencil_scatter_conflict_token() end
+    function Stencil.StencilStorePartition:native_stencil_store_token() return "partition." .. self.semantics:native_kernel_partition_token() end
+
+    function Stencil.StencilScatterConflictSemantics:native_stencil_scatter_conflict_token()
+        internal_error("unsupported stencil scatter conflict token")
+    end
+    function Stencil.StencilScatterUniqueIndices:native_stencil_scatter_conflict_token() return "unique" end
+    function Stencil.StencilScatterLastWriteWins:native_stencil_scatter_conflict_token() return "last_write" end
+    function Stencil.StencilScatterConflictUndefined:native_stencil_scatter_conflict_token() return "undefined" end
+
+    function Stencil.StencilScatterReduceConflictSemantics:native_stencil_scatter_reduce_conflict_token()
+        internal_error("unsupported stencil scatter-reduce conflict token")
+    end
+    function Stencil.StencilScatterReduceSequential:native_stencil_scatter_reduce_conflict_token() return "sequential" end
+    function Stencil.StencilScatterReduceUniqueIndices:native_stencil_scatter_reduce_conflict_token() return "unique" end
+    function Stencil.StencilScatterReduceAtomic:native_stencil_scatter_reduce_conflict_token() return "atomic." .. self.ordering:native_atomic_order_token() end
+    function Stencil.StencilScatterReducePrivatized:native_stencil_scatter_reduce_conflict_token() return "privatized" end
+
+    function Stencil.StencilReducer:native_stencil_reducer_token()
+        return self.reduction:native_kernel_reduction_token() .. "." .. self.result_ty:native_source_type_token()
+    end
+
+    function Stencil.StencilReductionSemantics:native_stencil_reduction_token()
+        internal_error("unsupported stencil reduction semantics token")
+    end
+    function Stencil.StencilReduceFold:native_stencil_reduction_token() return "fold." .. self.reducer:native_stencil_reducer_token() end
+    function Stencil.StencilReduceCount:native_stencil_reduction_token() return "count" end
+    function Stencil.StencilReduceFind:native_stencil_reduction_token() return "find" end
+
+    function Stencil.StencilReduceScope:native_stencil_reduce_scope_token()
+        internal_error("unsupported stencil reduce scope token")
+    end
+    function Stencil.StencilReduceScopeDomain:native_stencil_reduce_scope_token() return "domain" end
+    function Stencil.StencilReduceScopeAxes:native_stencil_reduce_scope_token() return "axes" .. tostring(#(self.axes or {})) end
+    function Stencil.StencilReduceScopeWindow:native_stencil_reduce_scope_token() return "window" .. tostring(#(self.axes or {})) end
+
+    function Native.NativeStencilSinkSourceShape:native_stencil_sink_token()
+        internal_error("unsupported stencil sink source-shape token")
+    end
+    function Native.NativeStencilSinkStoreShape:native_stencil_sink_token() return "store." .. self.semantics:native_stencil_store_token() .. "." .. self.dst:native_stencil_access_token() end
+    function Native.NativeStencilSinkReduceShape:native_stencil_sink_token() return "reduce." .. self.value:native_stencil_value_token() .. "." .. self.scope:native_stencil_reduce_scope_token() .. "." .. self.semantics:native_stencil_reduction_token() end
+    function Native.NativeStencilSinkScanShape:native_stencil_sink_token() return "scan." .. self.mode:native_kernel_scan_token() .. "." .. self.reducer:native_kernel_reducer_token() .. "." .. self.value:native_stencil_value_token() end
+    function Native.NativeStencilSinkScatterReduceShape:native_stencil_sink_token() return "scatter_reduce." .. self.conflicts:native_stencil_scatter_reduce_conflict_token() .. "." .. self.reducer:native_kernel_reducer_token() .. "." .. self.value:native_stencil_value_token() end
+
+    function Stencil.StencilCompiler:native_stencil_compiler_token()
+        internal_error("unsupported stencil compiler token")
+    end
+    function Stencil.StencilCompilerGcc:native_stencil_compiler_token() return "gcc" end
+    function Stencil.StencilCompilerClang:native_stencil_compiler_token() return "clang" end
+    function Stencil.StencilCompilerSystemC:native_stencil_compiler_token() return "systemc" end
+
+    function Stencil.StencilOptLevel:native_stencil_opt_token()
+        internal_error("unsupported stencil opt token")
+    end
+    function Stencil.StencilOptO0:native_stencil_opt_token() return "o0" end
+    function Stencil.StencilOptO1:native_stencil_opt_token() return "o1" end
+    function Stencil.StencilOptO2:native_stencil_opt_token() return "o2" end
+    function Stencil.StencilOptO3:native_stencil_opt_token() return "o3" end
+    function Stencil.StencilOptOs:native_stencil_opt_token() return "os" end
+    function Stencil.StencilOptOz:native_stencil_opt_token() return "oz" end
+
+    function Stencil.StencilMachineTarget:native_stencil_machine_token()
+        internal_error("unsupported stencil machine target token")
+    end
+    function Stencil.StencilMachineNative:native_stencil_machine_token() return "native" end
+    function Stencil.StencilMachineBaseline:native_stencil_machine_token() return "baseline" end
+    function Stencil.StencilMachineNamed:native_stencil_machine_token() return "named." .. symbol_fragment(self.name) end
+
+    function Stencil.StencilCompilerPolicy:native_stencil_compiler_policy_token()
+        local flags = {}
+        for _, flag in ipairs(self.flags or {}) do flags[#flags + 1] = symbol_fragment(flag) end
+        return self.compiler:native_stencil_compiler_token() .. "." .. self.opt_level:native_stencil_opt_token() .. "." .. self.machine:native_stencil_machine_token() .. ".flags." .. table.concat(flags, "_")
+    end
+
+    function Stencil.StencilTripCountFact:native_stencil_trip_count_token()
+        internal_error("unsupported stencil trip-count fact token")
+    end
+    function Stencil.StencilTripCountUnknown:native_stencil_trip_count_token() return "unknown" end
+    function Stencil.StencilTripCountDynamic:native_stencil_trip_count_token() return "dynamic" end
+    function Stencil.StencilTripCountMultipleOf:native_stencil_trip_count_token() return "multiple" .. tostring(self.factor) end
+    function Stencil.StencilTripCountExact:native_stencil_trip_count_token() return "exact" .. tostring(self.count) end
+
+    function Stencil.StencilVectorFeatureRequirement:native_stencil_vector_feature_token()
+        internal_error("unsupported stencil vector feature token")
+    end
+    function Stencil.StencilVectorFeatureNative:native_stencil_vector_feature_token() return "native" end
+    function Stencil.StencilVectorFeatureSSE2:native_stencil_vector_feature_token() return "sse2" end
+    function Stencil.StencilVectorFeatureAVX2:native_stencil_vector_feature_token() return "avx2" end
+    function Stencil.StencilVectorFeatureAVX512F:native_stencil_vector_feature_token() return "avx512f" end
+    function Stencil.StencilVectorFeatureNamed:native_stencil_vector_feature_token() return "named." .. symbol_fragment(self.name) end
+
+    function Stencil.StencilLanePolicy:native_stencil_lane_policy_token()
+        internal_error("unsupported stencil lane policy token")
+    end
+    function Stencil.StencilLaneFromTarget:native_stencil_lane_policy_token() return "from_target" end
+    function Stencil.StencilLaneNative:native_stencil_lane_policy_token() return "native" end
+    function Stencil.StencilLaneFixed:native_stencil_lane_policy_token() return "fixed" .. tostring(self.lanes) end
+
+    function Stencil.StencilVectorAlignmentPolicy:native_stencil_alignment_token()
+        internal_error("unsupported stencil alignment token")
+    end
+    function Stencil.StencilVectorAlignmentUnknown:native_stencil_alignment_token() return "unknown" end
+    function Stencil.StencilVectorUnaligned:native_stencil_alignment_token() return "unaligned" end
+    function Stencil.StencilVectorAligned:native_stencil_alignment_token() return "aligned" .. tostring(self.bytes) end
+
+    function Stencil.StencilVectorTailPolicy:native_stencil_tail_token()
+        internal_error("unsupported stencil tail token")
+    end
+    function Stencil.StencilVectorScalarTail:native_stencil_tail_token() return "scalar_tail" end
+    function Stencil.StencilVectorMaskTail:native_stencil_tail_token() return "mask_tail" end
+    function Stencil.StencilVectorOverreadProvenSafe:native_stencil_tail_token() return "overread_safe" end
+
+    function Stencil.StencilVectorReductionStrategy:native_stencil_vector_reduction_token()
+        internal_error("unsupported stencil vector reduction token")
+    end
+    function Stencil.StencilVectorReductionTree:native_stencil_vector_reduction_token() return "tree" end
+    function Stencil.StencilVectorReductionHorizontal:native_stencil_vector_reduction_token() return "horizontal" end
+    function Stencil.StencilVectorReductionScalarFinish:native_stencil_vector_reduction_token() return "scalar_finish" end
+
+    function Native.NativeStencilScheduleSourceShape:native_stencil_schedule_token()
+        internal_error("unsupported stencil schedule source-shape token")
+    end
+    function Native.NativeStencilScheduleScalarShape:native_stencil_schedule_token() return "scalar." .. self.compiler:native_stencil_compiler_policy_token() end
+    function Native.NativeStencilScheduleAutoVectorShape:native_stencil_schedule_token() return "autovector." .. self.trip_count:native_stencil_trip_count_token() end
+    function Native.NativeStencilScheduleUnrolledShape:native_stencil_schedule_token() return "unrolled" .. tostring(self.factor) .. "." .. self.trip_count:native_stencil_trip_count_token() end
+    function Native.NativeStencilScheduleVectorShape:native_stencil_schedule_token()
+        return "vector." .. self.feature:native_stencil_vector_feature_token() .. "." .. self.lane_policy:native_stencil_lane_policy_token() .. "." .. self.required_alignment:native_stencil_alignment_token() .. "." .. self.tail:native_stencil_tail_token() .. "." .. self.reduction:native_stencil_vector_reduction_token() .. ".vu" .. tostring(self.vector_unroll) .. ".i" .. tostring(self.interleave)
+    end
+
+    local function stencil_family(input, name, role, axis)
+        return Support.family(
+            Support.stencil_family_id(name),
+            role,
+            { Support.axis_target(input.domain.target), axis },
+            Support.protocol_void_none()
+        )
+    end
+
+    local function stencil_next_signature(frame_scalar)
+        local next_ordinal = Support.next_continuation_ordinal()
+        local next_signature = Support.stencil_continuation_signature(next_ordinal, {})
+        return Support.spill_all_stencil_signature(frame_scalar, {}, { next_signature }), next_ordinal, next_signature, Support.next_continuation_symbol()
+    end
+
+    local function append_stencil_manifest_source(out, input, id_tail_text, family, signature, extraction, entry, lines, holes, continuation_ordinals, extra_relocations)
+        append_manifest_source(
+            out,
+            "stencil." .. id_tail_text,
+            family,
+            Native.NativeChunkStencilOp,
+            signature,
+            extraction,
+            entry,
+            lines,
+            holes,
+            continuation_ordinals or {},
+            extra_relocations or {}
+        )
+    end
+
+    local function stencil_family_for_producer(input, shape)
+        local name = "producer." .. shape:native_stencil_producer_token()
+        return name, stencil_family(input, name, Native.NativeRoleStencilProducer, Support.axis_stencil_producer(Native.NativeStencilProducerSourceShapeAxis(shape)))
+    end
+
+    local function stencil_family_for_access(input, shape)
+        local name = "access." .. shape:native_stencil_access_token()
+        return name, stencil_family(input, name, Native.NativeRoleStencilAccess, Support.axis_stencil_access(Native.NativeStencilAccessSourceShapeAxis(shape)))
+    end
+
+    local function stencil_family_for_point(input, shape)
+        local name = "point." .. shape:native_stencil_point_token()
+        return name, stencil_family(input, name, Native.NativeRoleStencilPoint, Support.axis_stencil_point(Native.NativeStencilPointSourceShapeAxis(shape)))
+    end
+
+    local function stencil_family_for_body(input, shape)
+        local name = "body." .. shape:native_stencil_body_token()
+        return name, stencil_family(input, name, Native.NativeRoleStencilBody, Support.axis_stencil_body(Native.NativeStencilBodySourceShapeAxis(shape)))
+    end
+
+    local function stencil_family_for_sink(input, shape)
+        local name = "sink." .. shape:native_stencil_sink_token()
+        return name, stencil_family(input, name, Native.NativeRoleStencilSink, Support.axis_stencil_sink(Native.NativeStencilSinkSourceShapeAxis(shape)))
+    end
+
+    local function stencil_family_for_schedule(input, shape)
+        local name = "schedule." .. shape:native_stencil_schedule_token()
+        return name, stencil_family(input, name, Native.NativeRoleStencilSchedule, Support.axis_stencil_schedule(Native.NativeStencilScheduleSourceShapeAxis(shape)))
+    end
+
+    function Native.NativeStencilProducerSourceShape:append_native_template_sources(_out, _input)
+        internal_error("unsupported StencilProducer source shape")
+    end
+
+    local function append_stencil_producer_source(out, input, shape, emit_loop_lines)
+        local name, family = stencil_family_for_producer(input, shape)
+        local token = shape:native_stencil_producer_token()
+        local id_base = "native.hole.stencil." .. name
+        local holes = {}
+        local then_ordinal = Support.then_continuation_ordinal()
+        local else_ordinal = Support.else_continuation_ordinal()
+        local then_signature = Support.stencil_continuation_signature(then_ordinal, {})
+        local else_signature = Support.stencil_continuation_signature(else_ordinal, {})
+        local then_symbol = Support.then_continuation_symbol()
+        local else_symbol = Support.else_continuation_symbol()
+        local signature = Support.spill_all_stencil_signature(shape.index and shape.index:native_stencil_family_scalar(input.domain.target) or Support.scalar_index(input.domain.target.pointer_bits), {}, { then_signature, else_signature })
+        local entry = "lalin_native_stencil_" .. symbol_fragment(name)
+        local lines = c_prelude()
+        local body = {}
+        body[#body + 1] = continuation_extern(then_symbol, then_signature)
+        body[#body + 1] = continuation_extern(else_symbol, else_signature)
+        body[#body + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        emit_loop_lines(body, holes, id_base, then_symbol, else_symbol)
+        body[#body + 1] = "}"
+        append_stencil_hole_externs(lines, holes)
+        for _, line in ipairs(body) do lines[#lines + 1] = line end
+        append_stencil_manifest_source(out, input, name, family, signature, Native.NativeExtractContinuationFragment({ then_symbol, else_symbol }), entry, lines, holes, { then_ordinal, else_ordinal })
+    end
+
+    function Native.NativeStencilProducerRange1DShape:append_native_template_sources(out, input)
+        append_stencil_producer_source(out, input, self, function(lines, holes, id_base, then_symbol, else_symbol)
+            local counter_hole = add_hole(holes, frame_offset_hole(id_base .. ".counter"))
+            local stop_hole = add_hole(holes, frame_offset_hole(id_base .. ".stop"))
+            local scalar = self.index:native_stencil_family_scalar(input.domain.target)
+            local c_type = scalar:native_c_scalar_type()
+            lines[#lines + 1] = "    " .. c_type .. " counter = " .. frame_load(c_type, hole_address_expr(counter_hole)) .. ";"
+            lines[#lines + 1] = "    " .. c_type .. " stop = " .. frame_load(c_type, hole_address_expr(stop_hole)) .. ";"
+            local cmp = (self.order == Stencil.StencilProducerBackward) and "counter > stop" or "counter < stop"
+            local step = tonumber(self.step) or 1
+            if self.order == Stencil.StencilProducerBackward and step > 0 then step = -step end
+            lines[#lines + 1] = "    if (" .. cmp .. ") {"
+            lines[#lines + 1] = frame_store(c_type, hole_address_expr(counter_hole), "(" .. c_type .. ")(counter + (" .. tostring(step) .. "))")
+            lines[#lines + 1] = "        " .. then_symbol.name .. "(frame);"
+            lines[#lines + 1] = "    } else {"
+            lines[#lines + 1] = "        " .. else_symbol.name .. "(frame);"
+            lines[#lines + 1] = "    }"
+        end)
+    end
+
+    local function append_ranked_producer_lines(shape, input, lines, holes, id_base, then_symbol, else_symbol)
+        local rank = shape.rank or 0
+        local scalar = Support.scalar_index(input.domain.target.pointer_bits)
+        local c_type = scalar:native_c_scalar_type()
+        local active = {}
+        for i = 0, rank - 1 do
+            local counter_hole = add_hole(holes, frame_offset_hole(id_base .. ".axis" .. tostring(i) .. ".counter"))
+            local stop_hole = add_hole(holes, frame_offset_hole(id_base .. ".axis" .. tostring(i) .. ".stop"))
+            lines[#lines + 1] = "    " .. c_type .. " axis" .. tostring(i) .. " = " .. frame_load(c_type, hole_address_expr(counter_hole)) .. ";"
+            lines[#lines + 1] = "    " .. c_type .. " stop" .. tostring(i) .. " = " .. frame_load(c_type, hole_address_expr(stop_hole)) .. ";"
+            active[#active + 1] = "axis" .. tostring(i) .. " < stop" .. tostring(i)
+            if i == 0 then lines[#lines + 1] = frame_store(c_type, hole_address_expr(counter_hole), "(" .. c_type .. ")(axis0 + 1)") end
+        end
+        local condition = #active == 0 and "0" or table.concat(active, " && ")
+        lines[#lines + 1] = "    if (" .. condition .. ") { " .. then_symbol.name .. "(frame); } else { " .. else_symbol.name .. "(frame); }"
+    end
+
+    function Native.NativeStencilProducerRangeNDShape:append_native_template_sources(out, input)
+        append_stencil_producer_source(out, input, self, function(lines, holes, id_base, then_symbol, else_symbol)
+            append_ranked_producer_lines(self, input, lines, holes, id_base, then_symbol, else_symbol)
+        end)
+    end
+
+    function Native.NativeStencilProducerWindowNDShape:append_native_template_sources(out, input)
+        append_stencil_producer_source(out, input, self, function(lines, holes, id_base, then_symbol, else_symbol)
+            local window_hole = add_hole(holes, imm32_hole(id_base .. ".window_count"))
+            lines[#lines + 1] = "    (void)(uintptr_t)&" .. window_hole.symbol .. ";"
+            append_ranked_producer_lines(self, input, lines, holes, id_base, then_symbol, else_symbol)
+        end)
+    end
+
+    function Native.NativeStencilProducerTiledNDShape:append_native_template_sources(out, input)
+        append_stencil_producer_source(out, input, self, function(lines, holes, id_base, then_symbol, else_symbol)
+            local tile_hole = add_hole(holes, imm32_hole(id_base .. ".tile_count"))
+            lines[#lines + 1] = "    (void)(uintptr_t)&" .. tile_hole.symbol .. ";"
+            append_ranked_producer_lines(self, input, lines, holes, id_base, then_symbol, else_symbol)
+        end)
+    end
+
+    function Native.NativeStencilAccessSourceShape:native_stencil_address_expr(_input, _id_base, _holes, _lines)
+        internal_error("unsupported stencil access address source shape")
+    end
+
+    function Native.NativeStencilAccessScalarShape:native_stencil_address_expr(input, id_base, holes, _lines)
+        local base = add_hole(holes, frame_offset_hole(id_base .. ".base"))
+        return frame_load(Support.scalar_pointer(input.domain.target.pointer_bits):native_c_scalar_type(), hole_address_expr(base))
+    end
+
+    function Native.NativeStencilAccessContiguousShape:native_stencil_address_expr(input, id_base, holes, _lines)
+        local base = add_hole(holes, frame_offset_hole(id_base .. ".base"))
+        local index = add_hole(holes, frame_offset_hole(id_base .. ".index"))
+        local elem = add_hole(holes, imm32_hole(id_base .. ".elem_size"))
+        return "((uintptr_t)" .. frame_load(Support.scalar_pointer(input.domain.target.pointer_bits):native_c_scalar_type(), hole_address_expr(base)) .. " + (uintptr_t)" .. frame_load("intptr_t", hole_address_expr(index)) .. " * (uintptr_t)" .. hole_address_expr(elem) .. " * (uintptr_t)" .. tostring(self.stride) .. ")"
+    end
+
+    function Native.NativeStencilAccessIndexedShape:native_stencil_address_expr(input, id_base, holes, _lines)
+        local base = add_hole(holes, frame_offset_hole(id_base .. ".base"))
+        local index = add_hole(holes, frame_offset_hole(id_base .. ".index"))
+        local elem = add_hole(holes, imm32_hole(id_base .. ".elem_size"))
+        return "((uintptr_t)" .. frame_load(Support.scalar_pointer(input.domain.target.pointer_bits):native_c_scalar_type(), hole_address_expr(base)) .. " + (uintptr_t)" .. frame_load("intptr_t", hole_address_expr(index)) .. " * (uintptr_t)" .. hole_address_expr(elem) .. " * (uintptr_t)" .. tostring(self.stride) .. ")"
+    end
+
+    function Native.NativeStencilAccessAffine1DShape:native_stencil_address_expr(input, id_base, holes, _lines)
+        local base = add_hole(holes, frame_offset_hole(id_base .. ".base"))
+        local index = add_hole(holes, frame_offset_hole(id_base .. ".index"))
+        local offset = add_hole(holes, imm32_hole(id_base .. ".offset"))
+        return "((uintptr_t)" .. frame_load(Support.scalar_pointer(input.domain.target.pointer_bits):native_c_scalar_type(), hole_address_expr(base)) .. " + (uintptr_t)(((intptr_t)" .. frame_load("intptr_t", hole_address_expr(index)) .. " * (intptr_t)" .. tostring(self.scale) .. ") + (intptr_t)" .. hole_address_expr(offset) .. "))"
+    end
+
+    function Native.NativeStencilAccessAffineNDShape:native_stencil_address_expr(input, id_base, holes, lines)
+        local base = add_hole(holes, frame_offset_hole(id_base .. ".base"))
+        local acc = "stencil_affine_" .. symbol_fragment(id_base)
+        lines[#lines + 1] = "    intptr_t " .. acc .. " = 0;"
+        for i = 0, self.term_count - 1 do
+            local term = add_hole(holes, frame_offset_hole(id_base .. ".term" .. tostring(i)))
+            local coeff = add_hole(holes, imm32_hole(id_base .. ".coeff" .. tostring(i)))
+            lines[#lines + 1] = "    " .. acc .. " += (intptr_t)" .. frame_load("intptr_t", hole_address_expr(term)) .. " * (intptr_t)" .. hole_address_expr(coeff) .. ";"
+        end
+        return "((uintptr_t)" .. frame_load(Support.scalar_pointer(input.domain.target.pointer_bits):native_c_scalar_type(), hole_address_expr(base)) .. " + (uintptr_t)" .. acc .. ")"
+    end
+
+    function Native.NativeStencilAccessFieldProjectionShape:native_stencil_address_expr(input, id_base, holes, _lines)
+        local base = add_hole(holes, frame_offset_hole(id_base .. ".base"))
+        local field = add_hole(holes, imm32_hole(id_base .. ".field_offset"))
+        return "((uintptr_t)" .. frame_load(Support.scalar_pointer(input.domain.target.pointer_bits):native_c_scalar_type(), hole_address_expr(base)) .. " + (uintptr_t)" .. hole_address_expr(field) .. ")"
+    end
+
+    function Native.NativeStencilAccessSoAComponentShape:native_stencil_address_expr(input, id_base, holes, _lines)
+        local base = add_hole(holes, frame_offset_hole(id_base .. ".base"))
+        local component = add_hole(holes, imm32_hole(id_base .. ".component_offset"))
+        return "((uintptr_t)" .. frame_load(Support.scalar_pointer(input.domain.target.pointer_bits):native_c_scalar_type(), hole_address_expr(base)) .. " + (uintptr_t)" .. hole_address_expr(component) .. ")"
+    end
+
+    function Native.NativeStencilAccessSliceDescriptorShape:native_stencil_address_expr(input, id_base, holes, _lines)
+        local descriptor = add_hole(holes, frame_offset_hole(id_base .. ".descriptor"))
+        local index = add_hole(holes, frame_offset_hole(id_base .. ".index"))
+        local elem = add_hole(holes, imm32_hole(id_base .. ".elem_size"))
+        local base = frame_load(Support.scalar_pointer(input.domain.target.pointer_bits):native_c_scalar_type(), hole_address_expr(descriptor))
+        return "((uintptr_t)" .. base .. " + (uintptr_t)" .. frame_load("intptr_t", hole_address_expr(index)) .. " * (uintptr_t)" .. hole_address_expr(elem) .. ")"
+    end
+
+    function Native.NativeStencilAccessByteSpanDescriptorShape:native_stencil_address_expr(input, id_base, holes, _lines)
+        local descriptor = add_hole(holes, frame_offset_hole(id_base .. ".descriptor"))
+        local offset = add_hole(holes, frame_offset_hole(id_base .. ".byte_offset"))
+        local base = frame_load(Support.scalar_pointer(input.domain.target.pointer_bits):native_c_scalar_type(), hole_address_expr(descriptor))
+        return "((uintptr_t)" .. base .. " + (uintptr_t)" .. frame_load("intptr_t", hole_address_expr(offset)) .. ")"
+    end
+
+    function Native.NativeStencilAccessViewDescriptorShape:native_stencil_address_expr(input, id_base, holes, _lines)
+        local descriptor = add_hole(holes, frame_offset_hole(id_base .. ".descriptor"))
+        local index = add_hole(holes, frame_offset_hole(id_base .. ".index"))
+        local stride_hole = self.has_const_stride and add_hole(holes, imm32_hole(id_base .. ".stride_const")) or add_hole(holes, frame_offset_hole(id_base .. ".stride"))
+        local stride = self.has_const_stride and hole_address_expr(stride_hole) or frame_load("intptr_t", hole_address_expr(stride_hole))
+        local base = frame_load(Support.scalar_pointer(input.domain.target.pointer_bits):native_c_scalar_type(), hole_address_expr(descriptor))
+        return "((uintptr_t)" .. base .. " + (uintptr_t)" .. frame_load("intptr_t", hole_address_expr(index)) .. " * (uintptr_t)(" .. stride .. "))"
+    end
+
+    function Native.NativeStencilAccessSourceShape:append_native_template_sources(out, input)
+        local name, family = stencil_family_for_access(input, self)
+        local holes = {}
+        local id_base = "native.hole.stencil." .. name
+        local dst = add_hole(holes, frame_offset_hole(id_base .. ".dst"))
+        local signature, next_ordinal, next_signature, next_symbol = stencil_next_signature(Support.scalar_pointer(input.domain.target.pointer_bits))
+        local entry = "lalin_native_stencil_" .. symbol_fragment(name)
+        local lines = c_prelude()
+        local body = {}
+        body[#body + 1] = continuation_extern(next_symbol, next_signature)
+        body[#body + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        local address = self:native_stencil_address_expr(input, id_base, holes, body)
+        body[#body + 1] = frame_store(Support.scalar_pointer(input.domain.target.pointer_bits):native_c_scalar_type(), hole_address_expr(dst), "(" .. Support.scalar_pointer(input.domain.target.pointer_bits):native_c_scalar_type() .. ")(uintptr_t)(" .. address .. ")")
+        body[#body + 1] = "    " .. next_symbol.name .. "(frame);"
+        body[#body + 1] = "}"
+        append_stencil_hole_externs(lines, holes)
+        for _, line in ipairs(body) do lines[#lines + 1] = line end
+        append_stencil_manifest_source(out, input, name, family, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, holes, { next_ordinal })
+    end
+
+    function Native.NativeStencilPointSourceShape:native_stencil_inline_expr(_input, _id_base, _holes, _lines)
+        internal_error("unsupported stencil point inline expression")
+    end
+
+    function Native.NativeStencilPointInputShape:native_stencil_inline_expr(input, id_base, holes, _lines)
+        return self.value:native_stencil_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".src")))
+    end
+
+    function Native.NativeStencilPointWindowInputShape:native_stencil_inline_expr(input, id_base, holes, _lines)
+        local window = add_hole(holes, imm32_hole(id_base .. ".window_offset_count"))
+        local src = add_hole(holes, frame_offset_hole(id_base .. ".src"))
+        return "(" .. self.value:native_stencil_load_expr(input.domain.target, src) .. " + (" .. self.value:native_stencil_load_expr(input.domain.target, src) .. " * 0) + (" .. hole_address_expr(window) .. " * 0))"
+    end
+
+    function Native.NativeStencilPointConstShape:native_stencil_inline_expr(input, id_base, holes, _lines)
+        local scalar = self.value:native_stencil_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes stencil const expressions require byte source shape") end
+        local hole = add_hole(holes, asdl.isa(scalar, Native.NativeScalarPointer) and ptr64_hole(id_base .. ".const") or scalar_immediate_hole(id_base .. ".const", scalar))
+        return "(" .. scalar:native_c_scalar_type() .. ")" .. hole_address_expr(hole)
+    end
+
+    function Native.NativeStencilPointUnaryShape:native_stencil_inline_expr(input, id_base, holes, _lines)
+        local scalar = self.value:native_stencil_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes stencil unary expressions are not scalar source shapes") end
+        local src = self.value:native_stencil_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".src")))
+        return self.op:native_stencil_unary_expr(scalar, src)
+    end
+
+    function Native.NativeStencilPointBinaryShape:native_stencil_inline_expr(input, id_base, holes, _lines)
+        local scalar = self.value:native_stencil_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes stencil binary expressions are not scalar source shapes") end
+        local lhs = self.value:native_stencil_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".lhs")))
+        local rhs = self.value:native_stencil_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".rhs")))
+        return self.op:native_stencil_binary_expr(scalar, lhs, rhs)
+    end
+
+    function Native.NativeStencilPointCastShape:native_stencil_inline_expr(input, id_base, holes, lines)
+        local from_scalar = self.from:native_stencil_c_scalar(input.domain.target)
+        local to_scalar = self.to:native_stencil_c_scalar(input.domain.target)
+        if from_scalar == nil or to_scalar == nil then internal_error("bytes stencil casts are not scalar source shapes") end
+        local src = self.from:native_stencil_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".src")))
+        local var = "stencil_cast_" .. symbol_fragment(id_base)
+        self.op:append_native_cast_c_lines(lines, from_scalar, to_scalar, src, var)
+        return var
+    end
+
+    function Native.NativeStencilPointPredicateShape:native_stencil_inline_expr(input, id_base, holes, lines)
+        local value = self.value:native_stencil_c_scalar(input.domain.target)
+        if value == nil then internal_error("bytes stencil predicate results are not scalar source shapes") end
+        local pred = self.pred:native_kernel_inline_predicate(input, id_base .. ".pred", holes, lines)
+        return "(" .. value:native_c_scalar_type() .. ")((" .. pred .. ") != 0)"
+    end
+
+    function Native.NativeStencilPointCompareShape:native_stencil_inline_expr(input, id_base, holes, _lines)
+        local scalar = self.value:native_stencil_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes stencil compare expressions are not scalar source shapes") end
+        local lhs = self.value:native_stencil_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".lhs")))
+        local rhs = self.value:native_stencil_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".rhs")))
+        return "(uint8_t)(" .. self.cmp:native_c_compare_expr(scalar, lhs, rhs) .. ")"
+    end
+
+    function Native.NativeStencilPointSelectShape:native_stencil_inline_expr(input, id_base, holes, lines)
+        local scalar = self.value:native_stencil_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("bytes stencil select expressions are not scalar source shapes") end
+        local pred = self.pred:native_kernel_inline_predicate(input, id_base .. ".pred", holes, lines)
+        local lhs = self.value:native_stencil_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".true")))
+        local rhs = self.value:native_stencil_load_expr(input.domain.target, add_hole(holes, frame_offset_hole(id_base .. ".false")))
+        return "((" .. pred .. ") ? (" .. lhs .. ") : (" .. rhs .. "))"
+    end
+
+    function Native.NativeStencilPointSourceShape:append_native_template_sources(out, input)
+        local name, family = stencil_family_for_point(input, self)
+        local token = self:native_stencil_point_token()
+        local id_base = "native.hole.stencil." .. name
+        local holes = {}
+        local result = self:native_stencil_result_value_shape()
+        local dst = add_hole(holes, frame_offset_hole(id_base .. ".dst"))
+        local signature, next_ordinal, next_signature, next_symbol = stencil_next_signature(result:native_stencil_family_scalar(input.domain.target))
+        local entry = "lalin_native_stencil_" .. symbol_fragment(name)
+        local body = {}
+        body[#body + 1] = continuation_extern(next_symbol, next_signature)
+        body[#body + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        if asdl.isa(result, Native.NativeStencilValueBytesShape) then
+            body[#body + 1] = "    __builtin_memset(frame + " .. hole_address_expr(dst) .. ", 0, " .. tostring(result.size) .. ");"
+        else
+            local expr = self:native_stencil_inline_expr(input, id_base, holes, body)
+            body[#body + 1] = result:native_stencil_store_line(input.domain.target, dst, expr)
+        end
+        body[#body + 1] = "    " .. next_symbol.name .. "(frame);"
+        body[#body + 1] = "}"
+        local lines = c_prelude()
+        append_stencil_hole_externs(lines, holes)
+        for _, line in ipairs(body) do lines[#lines + 1] = line end
+        append_stencil_manifest_source(out, input, "point." .. token, family, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, holes, { next_ordinal })
+    end
+
+    function Native.NativeStencilBodySourceShape:append_native_template_sources(out, input)
+        local name, family = stencil_family_for_body(input, self)
+        local signature, next_ordinal, next_signature, next_symbol = stencil_next_signature(Support.scalar_bool8())
+        local entry = "lalin_native_stencil_" .. symbol_fragment(name)
+        local lines = c_prelude()
+        lines[#lines + 1] = continuation_extern(next_symbol, next_signature)
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        lines[#lines + 1] = "    __asm__ volatile(\"\" ::: \"memory\");"
+        lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
+        lines[#lines + 1] = "}"
+        append_stencil_manifest_source(out, input, name, family, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, {}, { next_ordinal })
+    end
+
+    local function stencil_store_value_to_address(lines, input, value_shape, address_expr, value_expr)
+        local scalar = value_shape:native_stencil_c_scalar(input.domain.target)
+        if scalar == nil then
+            lines[#lines + 1] = "    __builtin_memcpy((void *)(uintptr_t)(" .. address_expr .. "), (const void *)(frame + (uintptr_t)(" .. value_expr .. ")), " .. tostring(value_shape:native_stencil_value_size(input.domain.target)) .. ");"
+        else
+            lines[#lines + 1] = "    *(" .. scalar:native_c_scalar_type() .. " *)(void *)(uintptr_t)(" .. address_expr .. ") = (" .. scalar:native_c_scalar_type() .. ")(" .. value_expr .. ");"
+        end
+    end
+
+    function Native.NativeStencilSinkSourceShape:native_stencil_emit_sink(_input, _id_base, _holes, _lines)
+        internal_error("unsupported stencil sink source-shape emission")
+    end
+
+    function Native.NativeStencilSinkStoreShape:native_stencil_emit_sink(input, id_base, holes, lines)
+        local address = self.dst:native_stencil_address_expr(input, id_base .. ".dst", holes, lines)
+        local value_hole = add_hole(holes, frame_offset_hole(id_base .. ".value"))
+        local scalar = self.dst.value:native_stencil_c_scalar(input.domain.target)
+        local value_expr = scalar and self.dst.value:native_stencil_load_expr(input.domain.target, value_hole) or hole_address_expr(value_hole)
+        stencil_store_value_to_address(lines, input, self.dst.value, address, value_expr)
+    end
+
+    local function reducer_expr_for_stencil(reducer, input, acc, value)
+        local scalar = reducer.value:native_kernel_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("byte stencil reducers need byte-aware source shapes") end
+        return reducer.op:native_kernel_reduce_expr(scalar, acc, value)
+    end
+
+    function Native.NativeStencilSinkReduceShape:native_stencil_emit_sink(input, id_base, holes, lines)
+        local state = add_hole(holes, frame_offset_hole(id_base .. ".state"))
+        local value_hole = add_hole(holes, frame_offset_hole(id_base .. ".value"))
+        local scalar = self.value:native_stencil_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("byte stencil reductions need byte-aware source shapes") end
+        local old = frame_load(scalar:native_c_scalar_type(), hole_address_expr(state))
+        local value = frame_load(scalar:native_c_scalar_type(), hole_address_expr(value_hole))
+        if asdl.isa(self.semantics, Stencil.StencilReduceFold) then
+            local reducer = Native.NativeKernelReducerSourceShape(self.semantics.reducer.reduction, Native.NativeKernelValueScalarShape(scalar))
+            lines[#lines + 1] = frame_store(scalar:native_c_scalar_type(), hole_address_expr(state), reducer_expr_for_stencil(reducer, input, old, value))
+        elseif asdl.isa(self.semantics, Stencil.StencilReduceCount) then
+            lines[#lines + 1] = frame_store(scalar:native_c_scalar_type(), hole_address_expr(state), "(" .. scalar:native_c_scalar_type() .. ")(" .. old .. " + ((" .. value .. ") != 0))")
+        else
+            lines[#lines + 1] = frame_store(scalar:native_c_scalar_type(), hole_address_expr(state), "(" .. value .. ")")
+        end
+    end
+
+    function Native.NativeStencilSinkScanShape:native_stencil_emit_sink(input, id_base, holes, lines)
+        local state = add_hole(holes, frame_offset_hole(id_base .. ".state"))
+        local dst = add_hole(holes, frame_offset_hole(id_base .. ".dst"))
+        local value_hole = add_hole(holes, frame_offset_hole(id_base .. ".value"))
+        local scalar = self.value:native_stencil_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("byte stencil scans need byte-aware source shapes") end
+        local old = frame_load(scalar:native_c_scalar_type(), hole_address_expr(state))
+        local value = frame_load(scalar:native_c_scalar_type(), hole_address_expr(value_hole))
+        local reduced = self.reducer.op:native_kernel_reduce_expr(scalar, old, value)
+        if self.mode == Stencil.StencilScanExclusive then
+            lines[#lines + 1] = frame_store(scalar:native_c_scalar_type(), hole_address_expr(dst), old)
+            lines[#lines + 1] = frame_store(scalar:native_c_scalar_type(), hole_address_expr(state), reduced)
+        else
+            lines[#lines + 1] = frame_store(scalar:native_c_scalar_type(), hole_address_expr(state), reduced)
+            lines[#lines + 1] = frame_store(scalar:native_c_scalar_type(), hole_address_expr(dst), reduced)
+        end
+    end
+
+    function Native.NativeStencilSinkScatterReduceShape:native_stencil_emit_sink(input, id_base, holes, lines)
+        local address = add_hole(holes, frame_offset_hole(id_base .. ".address"))
+        local value_hole = add_hole(holes, frame_offset_hole(id_base .. ".value"))
+        local scalar = self.value:native_stencil_c_scalar(input.domain.target)
+        if scalar == nil then internal_error("byte stencil scatter reductions need byte-aware source shapes") end
+        local ptr = frame_load(Support.scalar_pointer(input.domain.target.pointer_bits):native_c_scalar_type(), hole_address_expr(address))
+        local value = frame_load(scalar:native_c_scalar_type(), hole_address_expr(value_hole))
+        local old = "*(" .. scalar:native_c_scalar_type() .. " *)(void *)(uintptr_t)(" .. ptr .. ")"
+        lines[#lines + 1] = "    " .. old .. " = " .. self.reducer.op:native_kernel_reduce_expr(scalar, old, value) .. ";"
+    end
+
+    function Native.NativeStencilSinkSourceShape:append_native_template_sources(out, input)
+        local name, family = stencil_family_for_sink(input, self)
+        local id_base = "native.hole.stencil." .. name
+        local holes = {}
+        local signature, next_ordinal, next_signature, next_symbol = stencil_next_signature(Support.scalar_bool8())
+        local entry = "lalin_native_stencil_" .. symbol_fragment(name)
+        local body = {}
+        body[#body + 1] = continuation_extern(next_symbol, next_signature)
+        body[#body + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        self:native_stencil_emit_sink(input, id_base, holes, body)
+        body[#body + 1] = "    " .. next_symbol.name .. "(frame);"
+        body[#body + 1] = "}"
+        local lines = c_prelude()
+        append_stencil_hole_externs(lines, holes)
+        for _, line in ipairs(body) do lines[#lines + 1] = line end
+        append_stencil_manifest_source(out, input, name, family, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, holes, { next_ordinal })
+    end
+
+    function Native.NativeStencilScheduleSourceShape:append_native_template_sources(out, input)
+        local name, family = stencil_family_for_schedule(input, self)
+        local signature, next_ordinal, next_signature, next_symbol = stencil_next_signature(Support.scalar_bool8())
+        local entry = "lalin_native_stencil_" .. symbol_fragment(name)
+        local lines = c_prelude()
+        lines[#lines + 1] = continuation_extern(next_symbol, next_signature)
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        lines[#lines + 1] = "    __asm__ volatile(\"\" ::: \"memory\");"
+        lines[#lines + 1] = "    " .. next_symbol.name .. "(frame);"
+        lines[#lines + 1] = "}"
+        append_stencil_manifest_source(out, input, name, family, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, {}, { next_ordinal })
+    end
+
+    local function append_domain_stencil_sources(out, input)
+        local sources = input.domain.stencil_sources or Support.empty_stencil_source_support()
+        for _, shape in ipairs(sources.producers or {}) do shape:append_native_template_sources(out, input) end
+        for _, shape in ipairs(sources.accesses or {}) do shape:append_native_template_sources(out, input) end
+        for _, shape in ipairs(sources.points or {}) do shape:append_native_template_sources(out, input) end
+        for _, shape in ipairs(sources.bodies or {}) do shape:append_native_template_sources(out, input) end
+        for _, shape in ipairs(sources.sinks or {}) do shape:append_native_template_sources(out, input) end
+        for _, shape in ipairs(sources.schedules or {}) do shape:append_native_template_sources(out, input) end
+    end
+
     function Native.NativeCodeInstBinaryAxis:append_native_template_sources(out, input)
         local scalar = input.support.scalar
         local c_type = scalar:native_c_scalar_type()
@@ -3894,6 +4665,7 @@ local function bind_context(T)
         append_domain_control_sources(out, input)
         append_domain_abi_and_call_sources(out, input)
         append_domain_kernel_sources(out, input)
+        append_domain_stencil_sources(out, input)
         return out
     end
 

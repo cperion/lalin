@@ -200,6 +200,14 @@ local function bind_context(T, opts)
             return (function()
  return {}
             end)(node, ...)
+        elseif schema.isa(node, Tr.StmtRegionEmit) then
+            return (function()
+ return {}
+            end)(node, ...)
+        elseif schema.isa(node, Tr.StmtRegionCall) then
+            return (function()
+ return {}
+            end)(node, ...)
         elseif schema.isa(node, Tr.StmtTrap) then
             return (function()
  return {}
@@ -276,6 +284,14 @@ local function bind_context(T, opts)
  return single(false)
             end)(node, ...)
         elseif schema.isa(node, Tr.StmtAssert) then
+            return (function()
+ return single(false)
+            end)(node, ...)
+        elseif schema.isa(node, Tr.StmtRegionEmit) then
+            return (function()
+ return single(false)
+            end)(node, ...)
+        elseif schema.isa(node, Tr.StmtRegionCall) then
             return (function()
  return single(false)
             end)(node, ...)

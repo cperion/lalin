@@ -1643,3 +1643,45 @@ Passed:
 
 ## Notes
 `T019S` is blocked because Stencil source builders need ASDL-first Stencil projection/source-shape/source-support contracts before honest `NativeChunkStencilOp` generation can proceed.
+
+## Worker Output — 2026-07-04 22:50:03
+
+## Completed
+Implemented `T019S`: concrete `NativeChunkStencilOp` source builders and manifest entries for stencil producer/access/point/body/sink/schedule source-shape support.
+
+## Files Changed
+- `lua/lalin/native_template_sources.lua` - added stencil source-shape tokening, C source builders, manifest/family generation via `NativeStencil*SourceShapeAxis`, and support-domain emission.
+- `tests/code_ir/test_native_template_sources.lua` - added stencil source support/manifest assertions.
+
+## Notes
+Checks passed:
+- `luajit tests/code_ir/test_native_template_sources.lua`
+- `luajit tests/code_ir/test_native_stencil_contracts.lua`
+- `luajit tests/run.lua schema`
+- `luajit tests/run.lua code_ir` — 48 passed, 1 skipped
+- Stencil support bank smoke: `tools/gen_lalin_mc_bank.lua` + `gcc -c`
+
+Marked `T019S` done in edit plan `main`.
+
+## Worker Output — 2026-07-04 23:14:14
+
+## Completed
+- Implemented `T019R` Stencil native lowering.
+- Added focused Kernel/Stencil lowering test `T029`.
+- Ran and completed final verification `T036`.
+- No ready tasks remain in edit plan `main`.
+
+## Files Changed
+- `lua/lalin/schema/native.lua` - added typed Stencil lowering/frame/graph ASDL.
+- `lua/lalin/native_stencil_methods.lua` - implemented Stencil graph lowering and typed lowering input construction.
+- `tests/code_ir/test_native_stencil_contracts.lua` - added Stencil lowering/graph assertions.
+- `tests/code_ir/test_native_kernel_stencil.lua` - new focused Kernel/Stencil lowering test.
+- `.pi/workflows/wf-native-cp-refactor.edit-plan.json` - marked tasks complete.
+
+## Notes
+Verification passed:
+- Final requested native suite
+- `luajit tests/run.lua schema` — 11 passed
+- `luajit tests/run.lua code_ir` — 49 passed, 1 skipped
+
+No coms-net used.

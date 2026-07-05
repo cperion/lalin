@@ -40,9 +40,12 @@ Important rules:
   expression must evaluate to a Lalin type value.
 - Type constructors are Lua values too. Use `ptr [i32]`, `array [i32] [4]`,
   `view [i32]`, and similar constructor calls inside the outer type escape.
+- Structs own their protocol vocabulary: attach functions, regions, and handles
+  with a qualified name (`fn Struct.method`, `region Struct.open`, `handle Struct.Ref`).
 - Every block path terminates.
 - Region protocols are explicit named exits.
-- Memory identity and access are explicit: handles are durable names, leases are temporary access facts, and owned values are exactly-once obligations.
+- Memory identity and access are explicit: handles are durable names, leases are
+  temporary access facts, and owned values are exactly-once obligations.
 - Backend facts are explicit ASDL facts.
 
 ---
@@ -63,11 +66,16 @@ Top-level Lua chunk forms such as `local`, `return`, `module`, and parse-time
 `import` are rejected by the document loader.
 
 ```lln
-struct Pair
+struct Point
   x [i32]
+  y [i32]
 end
 
-fn add(a [i32], b [i32]) [i32] do
+fn Point.norm(self [ptr [Point]]) [i32]
+  return self.x + self.y
+end
+
+fn add(a [i32], b [i32]) [i32]
   return a + b
 end
 ```
@@ -129,7 +137,7 @@ The loader supplies the standard Lalin host environment (`i32`, `ptr`, `array`,
 
 ```lua
 local decls = assert(lalin.loadstring([[
-fn scaled(x [i32]) [i32] do
+fn scaled(x [i32]) [i32]
   return x * [scale]
 end
 ]], "@scaled.lln", {
@@ -145,7 +153,7 @@ struct Pair
   x [i32]
 end
 
-fn accept(p [Pair]) [void] do
+fn accept(p [Pair]) [void]
   return
 end
 ```
@@ -156,7 +164,7 @@ ordered declarations into the document:
 ```lln
 [generated_decls]
 
-fn use_generated(x [Generated]) [void] do
+fn use_generated(x [Generated]) [void]
   return
 end
 ```
@@ -174,7 +182,7 @@ fragments, parsed expression AST values, or already-constructed LalinTree
 expression values:
 
 ```lln
-fn scale_one(x [i32]) [i32] do
+fn scale_one(x [i32]) [i32]
   return [scaled_expr]
 end
 ```
@@ -184,7 +192,7 @@ statement AST values, arrays of statements, or already-constructed LalinTree
 statements:
 
 ```lln
-fn scale(dst [ptr [i32]], src [ptr [i32]], n [index]) [void] do
+fn scale(dst [ptr [i32]], src [ptr [i32]], n [index]) [void]
   requires bounds(dst)(n), writeonly(dst), bounds(src)(n), readonly(src)
   requires disjoint(dst)(src)
   loop i in 0 .. n do
@@ -233,7 +241,7 @@ builder code, not top-level `.lln` statements. A document consumes them through
 role-directed brackets:
 
 ```lln
-fn use_fragment(x [i32]) [i32] do
+fn use_fragment(x [i32]) [i32]
   [prologue]
   return [rhs]
 end
@@ -275,7 +283,7 @@ fn struct union handle region
 requires ensures
 do end if then elseif else
 loop in grid tiled window
-return jump emit entry block
+return jump emit call entry block
 let var
 true false nil
 and or not
@@ -400,15 +408,34 @@ end
 
 ### Functions
 
+Functions are declaration values in the document stream. A function with a
+qualified name (e.g. `fn Point.norm`) binds to the named struct value in the
+document environment, making it available for method dispatch:
+
+```lln
+struct Point
+  x [i32]
+  y [i32]
+end
+
+fn Point.norm(self [ptr [Point]]) [i32]
+  return self.x + self.y
+end
+
+fn use(p [ptr [Point]]) [i32]
+  return p:norm()
+end
+```
+
+Unqualified functions are also valid:
+
 ```lln
 fn add(a [i32], b [i32]) [i32]
   return a + b
 end
 ```
 
-Functions are declaration values in the document stream and typed function items after Lalin
-normalization. Parameters are immutable values. Mutable local state is
-introduced with `var`.
+Parameters are immutable values. Mutable local state is introduced with `var`.
 
 ### Structs
 
@@ -437,13 +464,96 @@ end
 Variants may have named payload fields or no payload. Union payloads are durable
 stored data, so they cannot contain leases or owned obligations.
 
+### Struct Protocols — Methods, Regions, Handles
+
+Structs are not just data bags. They own their protocol vocabulary: functions,
+regions, and handles declared with a qualified name are attached to the struct
+value in the document environment.
+
+```lln
+struct Connection
+  fd [i32]
+end
+
+-- Method
+fn Connection.read(self [ptr [Connection]], buf [ptr [u8]], len [index]) [index]
+  return 0
+end
+
+-- Resolver region with named continuations
+region Connection.open(addr [slice [u8]];
+  connected(conn [ptr [Connection]]),
+  refused,
+  timeout
+)
+  entry dial()
+    jump connected(conn = [null])
+  end
+end
+
+-- Handle scoped to this struct's store
+handle Connection.Ref [u32]
+  invalid = 0
+  domain [Connection]
+  target [Connection]
+end
+```
+
+All qualified declarations bind to the struct value: `env.Connection.read`,
+`env.Connection.open`, `env.Connection.Ref`. The unqualified names are also in
+scope, so method dispatch works naturally:
+
+```lln
+fn handle(conn [ptr [Connection]]) [void]
+  let n [index] = conn:read(buf, 1024)
+end
+```
+
+#### Method Call Syntax
+
+`obj:method(a, b)` desugars to `method(obj, a, b)` at parse time. The implicit
+self argument is inserted as the first argument. Chaining works naturally:
+
+```lln
+p:norm()           -- norm(p)
+p:helper(a, b)     -- helper(p, a, b)
+p:norm():other()   -- other(norm(p))
+p:clear()          -- clear(p)
+```
+
+Methods have no special runtime behavior or vtable dispatch. They are purely
+syntactic sugar for passing the receiver as the first argument.
+
+#### Qualified Declaration Names
+
+Any declaration (`fn`, `region`, `handle`) can use a qualified name to attach
+itself to a previously declared struct (or other declaration) value:
+
+```lln
+fn Point.norm(self [ptr [Point]]) [i32]       -- Point.norm   bound to Point
+region Store.borrow(store [ptr [Store]], buf [Handle]; ...) end
+handle Store.Ref [u32] invalid 0 end          -- Store.Ref    bound to Store
+```
+
+Deep qualification is supported:
+
+```lln
+fn Wrapper.Point.norm(self [ptr [Point]]) [i32]
+  return 0
+end
+```
+
+This pattern makes structs the API boundary: declare the product, then attach
+what you can do with it.
+
 ### Handles
 
 A handle is a nominal durable identity value. It may be copied, stored, compared
 with the same handle type, passed, and returned. It is not dereferenceable, not
 indexable, and not implicitly convertible to its integer representation.
 
-Handle declarations are available in parsed `.lln` syntax:
+Handle declarations are available in parsed `.lln` syntax, either standalone or
+qualified to a struct:
 
 ```lln
 struct AudioBufferStore
@@ -457,6 +567,12 @@ end
 handle AudioBuffer [u32]
   invalid = 0
   domain [AudioBufferStore]
+  target [AudioBufferRecord]
+end
+
+-- Qualified: AudioBufferStore owns the handle
+handle AudioBufferStore.Ref [u32]
+  invalid = 0
   target [AudioBufferRecord]
 end
 ```
@@ -489,7 +605,7 @@ Runtime Lua APIs, tables, and macros live in `.lua` builder modules; pass their
 results into documents through `opts.env` or HostEval brackets.
 
 ```lln
-fn add(a [i32], b [i32]) [i32] do
+fn add(a [i32], b [i32]) [i32]
   return a + b
 end
 ```
@@ -672,7 +788,7 @@ Allowed loop body forms are intentionally narrow:
 Rejected loop body forms include:
 
 - arbitrary calls unless a later pass marks them pure/inlinable
-- `region`, `jump`, or `emit`
+- `region`, `jump`, `emit`, or `call`
 - host escapes after parsing
 - unknown side effects
 - nested loops for now
@@ -698,17 +814,6 @@ or positional:
 ```lua
 jump done(x)
 ```
-
-### Emit
-
-`emit` composes a region-like callee into the current control context:
-
-```lua
-emit finish(result)
-```
-
-The parser records the callee expression and optional handlers. Region
-composition support is still narrower than ordinary function lowering.
 
 ---
 
@@ -888,25 +993,10 @@ literals and expression fragments/ASDL expressions are spliced directly.
 
 ## Regions
 
-Regions are explicit control protocols. They are the source construct to reach
-for when the problem is control flow rather than domain iteration.
+Regions are explicit control protocols. They can be standalone or qualified to
+a struct, making the struct own its access and control vocabulary.
 
-Use regions for:
-
-- named continuations and exits
-- state-machine-like flow
-- repeated control steps that are not stencil/domain loops
-- explicit transfer with payloads
-- control protocols consumed by another dialect/member
-
-A region has:
-
-- input data parameters
-- continuation exits
-- one or more `entry` / `block` labels
-- explicit `jump` terminators
-
-Shape:
+**Shape:**
 
 ```lln
 region name(inputs; exits)
@@ -920,32 +1010,52 @@ region name(inputs; exits)
 end
 ```
 
-Example:
+**Standalone region:**
 
 ```lln
-region clamp_region(x [i32], lo [i32], hi [i32]; done(result [i32]))
+region clamp(x [i32], lo [i32], hi [i32]; done(result [i32]))
   entry start()
-    if x < lo then
-      jump done(result = lo)
-    end
-
-    if x > hi then
-      jump done(result = hi)
-    end
-
+    if x < lo then jump done(result = lo) end
+    if x > hi then jump done(result = hi) end
     jump done(result = x)
   end
 end
 ```
 
-Continuation exits use direct payload application:
+**Qualified region on a struct:**
 
 ```lln
-region r(x [i32]; done(result [i32]))
-  entry start()
-    jump done(result = x)
+struct Connection
+  fd [i32]
+end
+
+region Connection.open(addr [slice [u8]];
+  connected(conn [ptr [Connection]]),
+  refused,
+  timeout
+)
+  entry dial()
+    jump connected(conn = [null])
   end
 end
+
+region Connection.close(self [ptr [Connection]];
+  closed,
+  error(code [i32])
+)
+  entry shutdown()
+    jump closed
+  end
+end
+```
+
+Continuation exits accept named payloads:
+
+```lln
+connected(conn [ptr [Connection]])    -- named payload field
+done(result [i32])                     -- named payload field
+refused                                -- nullary exit
+timeout                                -- nullary exit
 ```
 
 Payload fields may be named or anonymous:
@@ -955,8 +1065,47 @@ done(result [i32])
 done([i32])
 ```
 
-Parsed region parsing is implemented. The most mature end-to-end path today is
-function/struct/union conversion; region integration is still narrower.
+Regions transfer control inside a region with `jump`:
+
+```lln
+jump connected(conn = conn)
+jump done(result = x)
+jump done(x)           -- positional
+```
+
+Regions are invoked with the same shape as their signature. Data arguments come
+before `;`; continuation wiring comes after `;` as `continuation = block` pairs.
+The wired values are continuation blocks/values, so the call site does not use
+`jump`:
+
+```lln
+call Connection.open("localhost:8080";
+  connected = handle_connected,
+  refused = retry_open,
+  timeout = retry_open
+)
+
+emit Connection.open("localhost:8080";
+  connected = handle_connected,
+  refused = retry_open,
+  timeout = retry_open
+)
+```
+
+`emit` splices the region control graph into the current control context. The
+frontend expands it by cloning the target region's entry and blocks into the
+enclosing control region, then replacing the emit site with a jump to the cloned
+entry. Continuation wiring targets the caller's blocks or enclosing
+continuations.
+
+`call` uses the same surface syntax but is reserved for a call/frame boundary.
+Its ASDL form is present and typechecked as an invocation node, but frame
+expansion is not implemented yet; using `call` in a control region produces a
+typed region-invocation diagnostic.
+
+Parsed region declarations lower to `ItemRegion`. Region invocation syntax lowers
+to explicit ASDL invocation statements; `emit` expands before backend lowering,
+so unexpanded emit nodes do not reach code generation.
 
 ---
 
@@ -1020,14 +1169,21 @@ boundary contract.
 
 ### Handle Resolution
 
-A resolver takes a handle plus access to its domain store and exposes access only
-through its successful continuation:
+A resolver takes a handle plus access to its domain store and exposes access
+only through its successful continuation. With qualified regions, the store
+owns its resolver:
 
 ```lln
-region borrow_audio_buffer(
-  store [readonly [ptr [AudioBufferStore]]],
+struct AudioBufferStore
+  slots [ptr [AudioBufferSlot]]
+  samples [ptr [f32]]
+  capacity [index]
+end
+
+region AudioBufferStore.borrow(
+  self [readonly [ptr [AudioBufferStore]]],
   buffer [AudioBuffer];
-  borrowed(record [lease("store", ptr [AudioBufferRecord])]),
+  borrowed(record [lease("self", ptr [AudioBufferRecord])]),
   stale(buffer [AudioBuffer]),
   missing(buffer [AudioBuffer])
 )
@@ -1054,7 +1210,7 @@ positions and in expression-style region-call result objects. In source terms:
   closure-like aggregate
 - do not pass a lease to a retaining plain `ptr`/`view` parameter; use a lease or
   `noescape` parameter
-- use `emit`/explicit continuations for region protocols whose payload carries a
+- use explicit continuations for region protocols whose payload carries a
   lease; do not box that protocol into a generated result union
 
 Field lookup and indexing can use lease bases, so a `lease ptr(T)` behaves like
@@ -1440,16 +1596,19 @@ The formatter currently prints the Lua/LLBL DSL surface.
 | Construct | Status |
 |---|---|
 | `fn name(params) [result] ... end` | implemented |
-| `fn name(params) [result] ... end` | implemented as explicit direct declaration |
-| `struct Name ... end` | implemented |
-| `union Name ... end` | implemented |
+| `fn Struct.name(...) ... end` | implemented; attaches function to struct value in env |
+| `region Struct.name(...; ...) ... end` | implemented; qualified regions bind to struct value in env |
+| `handle Struct.name [repr] ... end` | implemented; qualified handles bind to struct value in env |
 | `handle Name [repr] ... end` | implemented; handle fact types use bracket type values |
 | `region name(params; exits) ... end` | parser implemented; integration is narrower than function/struct/union |
+| `emit Region(args; cont = block)` | parsed, lowered to ASDL, expanded into enclosing control CFG before backend lowering |
+| `call Region(args; cont = block)` | parsed and lowered to ASDL; frame expansion pending and diagnosed if used |
 | `let` / `var` | implemented |
 | assignment | implemented |
 | `return` | implemented |
 | `requires` | implemented, including memory/effect contracts such as `bounds`, `readonly`, `writeonly`, `noalias`, `disjoint`, `preserve`, and `invalidate` |
 | access / lease / owned type values | implemented through Lua type values in brackets |
+| `expr:method(args)` method call | implemented; desugars to `method(expr, args)` at parse time |
 | `if` / `elseif` / `else` | implemented |
 | `loop i in 0 .. n do ... end` | implemented |
 | parsed `fold` / `scan` inside loops | implemented |

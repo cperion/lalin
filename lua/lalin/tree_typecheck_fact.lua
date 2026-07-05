@@ -294,6 +294,21 @@ return function(T)
         return self.t:typecheck_tree_handle_defs(input)
     end
 
+    function Tr.Item:typecheck_tree_region_defs(input)
+        return {}
+    end
+
+    local function region_path(name)
+        local parts = {}
+        for part in tostring(name or ""):gmatch("[^%.]+") do parts[#parts + 1] = C.Name(part) end
+        if #parts == 0 then parts[1] = C.Name(tostring(name or "")) end
+        return C.Path(parts)
+    end
+
+    function Tr.ItemRegion:typecheck_tree_region_defs(input)
+        return { Tr.TypeRegionDef(Tr.RegionInvokeTarget(region_path(self.region.name)), self.region) }
+    end
+
     function Tr.Item:typecheck_tree_effect_defs(input)
         return {}
     end
@@ -307,7 +322,7 @@ return function(T)
     end
 
     function Tr.Module:typecheck_tree_module_facts(input)
-        local variants, handles, effects = {}, {}, {}
+        local variants, handles, effects, regions = {}, {}, {}, {}
         for i = 1, #self.items do
             local item = self.items[i]
             local item_variants = item:typecheck_tree_variant_defs(input)
@@ -316,7 +331,9 @@ return function(T)
             for j = 1, #item_handles do handles[#handles + 1] = item_handles[j] end
             local item_effects = item:typecheck_tree_effect_defs(input)
             for j = 1, #item_effects do effects[#effects + 1] = item_effects[j] end
+            local item_regions = item:typecheck_tree_region_defs(input)
+            for j = 1, #item_regions do regions[#regions + 1] = item_regions[j] end
         end
-        return Tr.TypeModuleFacts(variants, handles, effects)
+        return Tr.TypeModuleFacts(variants, handles, effects, regions)
     end
 end
