@@ -36,6 +36,10 @@ semantic meaning of those bindings.
 
 ## Quick Start
 
+The default `lalin.compile` path is native copy-patch and requires a supplied
+native template bank. The quickstart uses explicit LuaJIT bytecode mode so it can
+run without a prebuilt bank:
+
 ```lua
 local lalin = require("lalin")
 lalin.language.use()
@@ -44,7 +48,7 @@ local add = lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
   lln.ret (a + b),
 }
 
-local module = lalin.compile("demo", { add })
+local module = lalin.compile("demo", { add }, { bytecode = true })
 print(module.add(3, 4)) -- 7
 ```
 
@@ -73,7 +77,8 @@ make
 Native runtime compilation does not require Cargo, Rust, Cranelift, TCC,
 readelf, or a system C compiler. It does require a prebuilt
 `NativeTemplateBank`/`NativeEmbeddedTemplateBank`; the offline bank build is the
-only step that compiles generated C stencils and verifies object files.
+only step that compiles generated C stencils. The offline generator verifies
+objects through Lalin's internal ELF/object parser and typed native verifier.
 
 The default `lalin.compile` path is native copy-patch. Select LuaJIT bytecode
 explicitly with `compile_luajit` or `{ bytecode = true }`.
@@ -97,9 +102,14 @@ luajit tests/run.lua ui
 Useful backend checks:
 
 ```sh
-luajit tests/code_ir/test_copy_patch_bc.lua
+luajit tests/code_ir/test_native_template_sources.lua
+luajit tests/code_ir/test_native_bank_generator.lua
+luajit tests/code_ir/test_native_mc_import.lua
+luajit tests/code_ir/test_native_code_graph_scalar.lua
+luajit tests/code_ir/test_native_code_control.lua
+luajit tests/code_ir/test_native_kernel_contracts.lua
+luajit tests/code_ir/test_native_stencil_contracts.lua
 luajit tests/code_ir/test_luajit_backend_bc.lua
-luajit tests/code_ir/test_copy_patch_luatrace.lua
 ```
 
 ## Repository Map

@@ -89,7 +89,7 @@ NeedsResidualC
 Uncovered*
 Coverage*
 fallback native path
-exact embedded MC bank as main bank
+exact embedded machine-code bank as main bank
 exact-cell bank enumeration
 handwritten assembly template source
 NativeTemplateAssembly
@@ -712,9 +712,9 @@ branch/jump targets
 call/runtime symbols
 ```
 
-Marker-byte immediate scanning is allowed only to keep existing bootstrap tests
-running while relocation-hole support lands. New closed-design stencil generators
-must use extern-symbol relocation holes. Marker scanning is not the architecture.
+Extern-symbol relocation holes are the only current hole-discovery mechanism for
+closed-design stencil generators. Byte-pattern scanning is not a verifier input
+and is not part of the native bank format.
 
 ### Runtime copy-and-patch algorithm
 
@@ -1118,11 +1118,10 @@ float constants / pointer constants / aggregate constants / large scalar constan
   -> constant-pool entries addressed through object relocations
 ```
 
-Marker-byte immediate scanning is only a temporary bootstrap implementation for
-existing proof-slice stencils. It is not an admitted target architecture path.
+Extern-symbol relocation holes are the admitted implementation path for current
+stencils. Byte-pattern scanning is not admitted by the verifier contract.
 
-Add/maintain ASDL for constant pools when constants move beyond the scalar proof
-slice:
+Constant-pool facts are ASDL-owned:
 
 ```text
 NativeConstantPoolEntry { id, bytes, alignment, scalar_or_type }
@@ -1139,9 +1138,8 @@ only when their verifier contract is target-specific and explicit.
 
 ### Object parser and verifier
 
-The target design uses an internal object parser, not `readelf`, as the source of
-truth. Tooling may temporarily shell out to `readelf` while the parser is being
-implemented, but the architecture is:
+The implementation uses an internal object parser, not `readelf`, as the source
+of truth:
 
 ```text
 object bytes -> LalinNativeObject ASDL -> verifier -> NativeCompiledTemplate
@@ -1169,14 +1167,18 @@ NativeExtractStandaloneCallable verifies standalone public callable shape
 For x64 SysV ELF, allowed relocation kinds are closed initially:
 
 ```text
-R_X86_64_PLT32 / R_X86_64_PC32 -> rel32 continuation/call/runtime/local symbol
-R_X86_64_64                    -> absolute pointer/constant-pool/runtime symbol
+R_X86_64_PLT32 / R_X86_64_PC32 -> rel32 continuation/call/local symbol,
+                                  or declared runtime symbol
+R_X86_64_64                    -> absolute pointer or constant-pool/hole form
+R_X86_64_32 / R_X86_64_32S     -> explicit 32-bit hole/constant forms
 ```
 
-Other relocation kinds are build rejects until the target leaf explicitly admits
-and implements them. Relocations must point inside copied text, declared runtime
-symbols, declared continuation symbols, declared call targets, or declared
-constant-pool entries. Extra unresolved symbols are rejects.
+Runtime symbols are admitted only for declared PC-relative call/jump forms that
+install patches as rel32. Other relocation kinds are build rejects until the
+target leaf explicitly admits and implements them. Relocations must point inside
+copied text, declared runtime symbols, declared continuation symbols, declared
+call targets, or declared constant-pool entries. Extra unresolved symbols are
+rejects.
 
 ### Code control lowering
 
@@ -1283,8 +1285,8 @@ scan prefix state and output effect owned by scan mode leaf
 
 Scatter/scatter-reduce conflict semantics, atomicity, partition/find behavior,
 and copy overlap behavior are owned by their existing semantic leaves. If a leaf
-requires a runtime helper (for example trap, allocator, atomics fallback), that
-helper is a declared `NativeRuntimeSymbol` with typed ABI.
+requires a runtime helper (for example trap, allocator, or an atomic helper),
+that helper is a declared `NativeRuntimeSymbol` with typed ABI.
 
 ### Supertemplates and optimization
 
@@ -1566,54 +1568,53 @@ missing compiler architecture.
 
 ## Required Methods
 
-Semantic native methods are installed on existing semantic ASDL leaves:
+Semantic native methods are installed on existing semantic ASDL leaves. Current
+method families include:
 
 ```text
 CodeModule:plan_native_copy(input)
 CodeFunc:plan_native_copy(input)
-CodeBlock:select_native_template_graph(input)
-CodeInst:append_native_inst_template(input)
-CodeInstOp*:append_native_inst_template(input)
-CodeTerm:append_native_term_template(input)
-CodeTermOp*:append_native_term_template(input)
-CodePlace*:select_native_place_template(input)
-CodeConst*:select_native_patch_coordinate(input)
-CodeType*:select_native_abi_protocol(input)
-CodeSig*:select_native_call_protocol(input)
-CodeCallTarget*:select_native_call_protocol(input)
+CodeBlock / CodeInst / CodeInstOp / CodeTerm / CodeTermOp append graph nodes
+CodePlace*:native_code_address_projection(input)
+CodeConst*:native_code_patch_coordinate(input)
+CodeType*:native_abi_projection(target)
+CodeType*:native_storage_layout(target, layout_plan)
+CodeSig:native_abi_projection(target)
+CodeSig:select_native_abi_protocol(target)
+CodeCallTarget*:select_native_call_projection(sig, target)
+CodeCallTarget*:append_native_call_bindings(input, token, projection, args, result)
 
 KernelPlan*:plan_native_copy(input)
-KernelBody:select_native_template_graph(input)
-KernelDomain*:select_native_domain_template(input)
-KernelExpr*:select_native_expr_template(input)
-KernelEffect*:append_native_effect_template(input)
-KernelResult*:append_native_result_template(input)
-KernelProof*:require_native_proof(input)
+KernelPlan*:native_kernel_lowering_input(...)
+KernelDomain* / KernelExpr* / KernelEffect* / KernelResult* / KernelProof*
+  produce program-specific projections, finite source shapes, graph nodes, and
+  node-scoped bindings.
 
 StencilInstance:plan_native_copy(input)
+StencilInstance:native_stencil_lowering_input(...)
 StencilDescriptor:select_native_template_graph(input)
-StencilProducerShape*:select_native_generator_template(input)
-StencilAccessLayout*:select_native_access_template(input)
-StencilPointExpr*:select_native_point_template(input)
-StencilBody*:select_native_body_template(input)
-StencilSink*:select_native_sink_template(input)
-StencilStoreSemantics*:select_native_store_template(input)
-StencilReductionSemantics*:select_native_reduction_template(input)
-StencilSchedule*:select_native_schedule_template(input)
+StencilProducer* / StencilAccess* / StencilPointExpr* / StencilBody* /
+StencilSink* / StencilSchedule*
+  produce program-specific projections, finite source shapes, graph nodes, and
+  node-scoped bindings.
 ```
 
-Native source-builder methods are also installed on the semantic/native leaves
-that own finite family axes:
+Native source-builder methods are installed on the native leaves that own finite
+manifest axes:
 
 ```text
+NativeTemplateSupportDomain:native_template_manifest()
 NativeTemplateSupportDomain:native_template_sources()
-NativeScalarSupport:append_native_template_sources(out, input)
-NativeMachineScalarRep*:append_native_template_sources(out, input)
-NativeCodeInstAxis*:append_native_template_sources(out, input)
-NativeCodeTermAxis*:append_native_template_sources(out, input)
-NativeCodeConstAxis*:append_native_template_sources(out, input)
-NativeKernelAxis*:append_native_template_sources(out, input)
-NativeStencil*Axis*:append_native_template_sources(out, input)
+NativeTemplateSupportDomain:native_template_bank_request(bank_id)
+NativeCodeInstAxis* / NativeCodeTermAxis* / NativeCodeConstAxis*
+NativeKernelSourceShapeAxis*
+NativeStencilProducerSourceShapeAxis*
+NativeStencilAccessSourceShapeAxis*
+NativeStencilPointSourceShapeAxis*
+NativeStencilBodySourceShapeAxis*
+NativeStencilSinkSourceShapeAxis*
+NativeStencilScheduleSourceShapeAxis*
+  append manifest entries and C stencil sources for support-domain shapes.
 ```
 
 Native artifact methods are installed on `LalinNative` leaves:
@@ -1648,9 +1649,10 @@ NativeCompileRequest:compile_native()
   -> NativeTemplateGraph:select_native_copy_plan()
   -> NativeCopyPlan
   -> NativeCopyPlan:install_native()
-       copy precompiled text bytes
-       patch NativePatchHole bindings
-       patch NativeRelocationContinuation edges
+       copy precompiled text and constant-pool bytes
+       patch node-scoped NativePatchHole / hole-ordinal bindings
+       patch NativeRelocationContinuation, NativeRelocationConstantPool,
+       NativeRelocationRuntimeSymbol, and supported local/call relocations
   -> NativeInstallResult
 ```
 
@@ -1758,40 +1760,31 @@ is continuation relocation patching.
 
 ## Implementation Phase Status
 
-The architecture above is the target design. The current implementation has a
-working scalar proof slice:
+The current implementation follows this architecture for the native proof set:
 
 ```text
-C-only source generation for spill-all frame-profile stencils
-temporary readelf-backed object extraction
-marker-hole resolution for offset/immediate proof holes
-continuation relocation patching
-frame-slot scalar graph lowering without continuation-arg/pass-through planning
-single-scalar CodeTermReturn
-scalar execution for bool/i8/u8/i16/u16/i32/u32/i64/u64/f32/f64 proof cases
-manual branch-continuation execution test
+manifest-first NativeTemplateSupportDomain -> NativeTemplateSource generation
+extern-symbol hole ordinals and typed relocation declarations
+internal ELF64/x64 object parser and verifier
+node/instance-scoped patch bindings by hole id or hole ordinal
+constant-pool layout/copy/relocation support
+NativeAbiProjection and zero-or-one-result CodeSig lowering, including void and sret
+canonical frame layout with NativeFrameStackLimit enforcement
+Code control/call lowering for jumps, branches, switches, traps, returns, and calls
+Code scalar/data lowering for casts, selects, memory, aggregates, variants, and atomics
+Kernel source-shape support and NativeKernelLoweringInput graph lowering
+Stencil source-shape support and NativeStencilLoweringInput graph lowering
+runtime install that copies prebuilt text/pools and patches typed relocations only
 ```
 
-Still to implement under this design:
+Remaining expansion work is ordinary ASDL-owned extension of semantic coverage
+and target support. New targets, new runtime helpers, new source-shape families,
+or new object relocation forms require explicit schema/projection/verifier
+support before implementation code is added.
 
-```text
-NativeStencilGenerator/metavar/manifest ASDL and exact bank-count tests
-extern-symbol hole ordinal protocol replacing marker-hole bootstrap
-value-location planning with continuation args, spills, and pass-through budgets
-NativeAbiProjection ASDL and full zero-or-one-result CodeSig lowering
-void CodeTermReturn and single aggregate-result/sret CodeTermReturn
-CodeTermBranch/Jump/Switch/loop lowering from Code ASDL using edge-copy chains
-memory ops, casts, calls, aggregates, closures, atomics
-KernelPlan and StencilInstance continuation lowering under the closed mapping
-internal object parser replacing temporary readelf-backed extraction
-constant-pool ASDL, layout, relocation, and install support
-NativeFrameStackLimit enforcement and public-adapter frame-size alloca holes
-target leaf methods beyond x64 SysV little-endian proof slice
-```
-
-Incomplete implementation is represented by absent semantic methods or explicit
-internal errors at the owning leaf while it is still outside the supported slice;
-it is not represented by green placeholder stubs.
+Incomplete future implementation is represented by absent semantic methods or
+explicit internal errors at the owning leaf while it is outside the supported
+slice; it is not represented by green placeholder stubs.
 
 ## Error Model
 

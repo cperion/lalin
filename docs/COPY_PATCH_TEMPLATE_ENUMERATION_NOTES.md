@@ -1,9 +1,11 @@
 # Copy-Patch Template Enumeration Notes
 
-This note records the research pass for redesigning the Lalin native bank from
-first principles. It is intentionally local and operational: it should guide the
-next rewrite of `residual_mc_intern_set.lua`, the embedded bank generator, and
-the ASDL vocabulary around patch-template coverage.
+This note records the historical research pass for redesigning the Lalin native
+bank from first principles. It is not the binding implementation contract;
+`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` is. The current native backend is the
+residualless C-stencil copy-patch architecture: support domains produce manifests
+and C stencil sources, the offline generator builds verified native template
+banks, and runtime compilation only copies, patches, and installs bank entries.
 
 ## Sources Read
 
@@ -124,17 +126,17 @@ surface combinations.
 
 The bank is a fast copy-patch compiler for Lalin loop semantics.
 
-The semantic flow should be:
+The semantic flow is:
 
 ```text
 Lalin loop/source semantics
-  -> Code/Kernel facts
-  -> normalized StencilInstance or stencil-fragment graph
-  -> PatchTemplateFamily selection
-  -> binary template selection
-  -> copy contiguous fragments
-  -> patch typed holes
-  -> TCC residual glue for calls/wrappers/remaining host integration
+  -> Code/Kernel/Stencil ASDL facts
+  -> finite source-shape projections and NativeTemplateSourceManifest
+  -> verified NativeTemplateBank entries built offline
+  -> NativeTemplateGraph selection at runtime
+  -> copy code and constant-pool bytes
+  -> patch node-scoped typed holes, continuations, constants, and runtime symbols
+  -> installed native executable entry
 ```
 
 The bank is not:
@@ -143,7 +145,7 @@ The bank is not:
 - a table of all Cartesian combinations,
 - a set of "SOAC family names",
 - a dedupe pass over generated cells,
-- a fallback cache.
+- an alternate artifact path for missing template-bank entries.
 
 The bank is:
 
@@ -290,43 +292,37 @@ Bad supertemplate candidates:
   address projection;
 - variants that differ only by values that can be holes.
 
-## ASDL Consequences
+## Current ASDL Consequences
 
-The next schema should model template compilation, not enumeration mechanics.
-Likely missing values:
+The implemented native schema models template compilation and runtime copy-patch
+facts directly:
 
-- `StencilTemplateFragment`: semantic binary-template fragment.
-- `StencilTemplateSupernode`: selected fused semantic fragment.
-- `StencilTemplateGraph`: CPS/copy graph of fragments for a normalized loop.
-- `StencilTemplateSelectorResult`: selected fragment/template plus holes.
-- `StencilTemplateHolePlan`: typed mapping from semantic coordinate to binary
-  hole.
-- `StencilTemplateRegisterProtocol`: ABI/register/pass-through shape.
-- `StencilTemplateCoverage`: whether a normalized loop is fully template-covered
-  or needs residual C.
+- `NativeTemplateSupportDomain` carries scalar, ABI adapter, Code, Kernel,
+  Stencil, atomics, frame-limit, and constant-pool support.
+- `NativeTemplateSourceManifest` closes bank cardinality before sources are
+  emitted.
+- `NativeStencilGenerator`, metavars, configurations, signatures, hole ordinals,
+  continuation ordinals, and relocation declarations describe reusable template
+  identity.
+- `NativeTemplateGraph`, node/instance identities, frame/value/control plans,
+  edge-copy plans, and node-scoped patch bindings describe program-specific
+  runtime copying.
+- `NativeStorageLayout`, `NativeValueRepresentation`, `NativeCodeTypeLayoutPlan`,
+  `NativeModuleAddressPlan`, `NativeKernelLoweringInput`, and
+  `NativeStencilLoweringInput` carry semantic lowering facts without side tables.
 
-Methods should live on ASDL leaves:
+Methods live on concrete ASDL leaves. Stencil and Kernel lowering first derive
+program-specific projections and then finite source-shape axes such as
+`NativeKernelSourceSupport` / `NativeStencilSourceSupport`; generated bank
+families do not key on concrete program bodies. No selector tables, kind strings,
+cell records, side maps, or placeholder support values are part of the current
+architecture.
 
-```text
-StencilProducerShape*:select_template_fragment(input)
-StencilPointExpr*:select_template_fragment(input)
-StencilSink*:select_template_fragment(input)
-StencilAccessLayout*:select_template_fragment(input)
-StencilSchedule*:select_template_fragment(input)
-StencilTemplateGraph:copy_patch(input)
-```
+## Superseded Enumeration Warning
 
-No selector tables, kind strings, cell records, or side maps.
-
-## Current Rewrite Warning
-
-The current typed template stream is better than the old exact-cell archive, but
-it is still too close to a Cartesian product. Its measured default size was
-440,748 template entries at `input_count_max = 3`. With the rough current
-estimate of about 348 bytes/template, that implies around 153 MB before source
-strings, metadata, object overhead, and final binary overhead. That number is
-not a target; it is evidence that the enumeration is still wrong.
-
-The next rewrite should delete broad template-seed cross-products and replace
-them with a normalized loop/SOAC grammar plus selected supertemplates.
+Older experiments measured large template streams from broad cross-products.
+Those measurements remain useful only as warnings. The current direction is
+manifest-first support-domain enumeration plus graph composition, selected
+source-shape families, and supertemplates only when a semantic owner provides a
+precise ASDL projection.
 

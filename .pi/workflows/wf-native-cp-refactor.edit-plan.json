@@ -2,10 +2,10 @@
 	"version": 1,
 	"workflowId": "wf-native-cp-refactor",
 	"planId": "main",
-	"revision": 179,
-	"nextId": 38,
+	"revision": 182,
+	"nextId": 39,
 	"createdAt": "2026-07-02T17:26:00.699Z",
-	"updatedAt": "2026-07-04T23:13:52.837Z",
+	"updatedAt": "2026-07-05T05:27:10.423Z",
 	"tasks": [
 		{
 			"id": "T001",
@@ -1150,6 +1150,22 @@
 			"notes": [],
 			"createdAt": "2026-07-04T13:26:57.663Z",
 			"updatedAt": "2026-07-04T14:07:42.516Z"
+		},
+		{
+			"id": "T038",
+			"title": "Synchronize documentation with completed native copy-patch refactor",
+			"detail": "Audit and update public/project docs after the residualless native copy-patch refactor. Use the scout audit in workflow context as input. Fix stale claims about residual/TCC/readelf/marker holes/fallback cache/LuaJIT default examples, update backend/default compile docs to explicit native bank requirement and explicit LuaJIT bytecode mode, repair current test lists, document current manifest-first support-domain -> source -> generator -> embedded bank flow, Code/Kernel/Stencil source-shape/projection/lowering-input architecture, node-scoped patch/hole ordinal path, internal ELF parser, constant-pool/runtime-symbol relocation restrictions, and current native tests. Relevant docs include README.md, AGENTS.md, docs/LANGUAGE_REFERENCE.md, docs/ARCHITECTURE.md, docs/COPY_PATCH_TEMPLATE_ENUMERATION_NOTES.md, docs/RESIDUAL_NATIVE_ARCHITECTURE.md, tests/README.md. Do not add compatibility language or obsolete residual fallback claims.",
+			"file": "docs/ARCHITECTURE.md",
+			"after": [
+				"T036"
+			],
+			"status": "done",
+			"order": 73,
+			"claimedBy": "agent-HC6HBP-docsync",
+			"evidence": "Updated docs only: README.md, AGENTS.md, docs/LANGUAGE_REFERENCE.md, docs/ARCHITECTURE.md, docs/COPY_PATCH_TEMPLATE_ENUMERATION_NOTES.md, docs/RESIDUAL_NATIVE_ARCHITECTURE.md, tests/README.md. Synchronized quickstart/default compile examples to explicit bytecode when no native bank is supplied; refreshed native test lists; documented manifest-first support-domain/source/generator flow, internal ELF parser/verifier, node/instance-scoped hole ordinals, constant-pool/runtime-symbol relocation restrictions, Code/Kernel/Stencil projection/source-shape/lowering-input architecture, and current implementation status. Ran documentation sanity searches: rg found no stale current-architecture mentions for MC bank/residual_mc/copy_patch_bc/copy_patch_luatrace/LuaJIT artifact/marker-hole/readelf-backed/TCC residual/fallback cache/needs residual C/stale compile demo patterns in the targeted docs. No schema/code_ir tests run because changes were documentation-only.",
+			"notes": [],
+			"createdAt": "2026-07-05T05:21:27.939Z",
+			"updatedAt": "2026-07-05T05:27:10.423Z"
 		},
 		{
 			"id": "T017",

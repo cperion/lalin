@@ -276,15 +276,15 @@ ASDL first; nullary variants also receive methods directly with normal
 | `lua/lalin/exec_plan.lua` | Produces `LalinExec` plans — divides functions into scalar blocks, stencil calls, control, calls, returns, traps; exec stencil selection uses typed ASDL methods. |
 | `lua/lalin/stencil_methods.lua` | Stencil-machine methods — classifies kernel body into point-expression plus sink vocabulary without a relation runner. |
 | `lua/lalin/stencil_artifact_plan.lua` | Generates canonical stencil artifacts: `store_n`, `reduce_n`, `scan_n`, and scatter-reduce descriptors. Store-shaped loops are `store_n` with explicit point body, sink, and layout modes. |
-| `lua/lalin/stencil_c.lua` | Generates complete C translation unit from stencil artifacts for GCC compilation. Produces the C source that becomes the MC bank. |
-| `lua/lalin/stencil_metastencil.lua` | Cross-provider stencil matching (MC bank ↔ BC bank equivalence). |
-| `lua/lalin/stencil_support_matrix.lua` | Declares which stencil operations are supported/rejected/future. |
+| `lua/lalin/stencil_c.lua` | Generates complete C translation units for the separate C/AOT artifact path; it is not the native template-bank source path. |
+| `lua/lalin/stencil_metastencil.lua` | Stencil matching/support analysis for non-native experiments; it is not a native-bank equivalence layer. |
+| `lua/lalin/stencil_support_matrix.lua` | Declares stencil operation support for semantic planning and diagnostics. |
 
 ### Explicit LuaJIT Bytecode Backend
 
 | File | Role |
 |------|------|
-| `lua/lalin/luajit_backend.lua` | Explicit non-native backend facade for LuaJIT artifact planning/emission. |
+| `lua/lalin/luajit_backend.lua` | Explicit non-native backend facade for LuaJIT bytecode planning/emission. |
 | `lua/lalin/luajit_lower.lua` | Lowers `LalinCode` + kernel plans to `LalinLuaJIT` IR for the bytecode path. |
 | `lua/lalin/luajit_emit.lua` | Emits Lua source from `LalinLuaJIT` IR — LuaJIT functions with FFI ctypes and bytecode-path calls. |
 | `lua/lalin/luajit_expr.lua` | Lua expression utilities for emission. |
@@ -316,7 +316,7 @@ ASDL first; nullary variants also receive methods directly with normal
 | `lua/lalin/c_helpers.lua` | C helper function library for stencil operations. |
 | `lua/lalin/c_tcc.lua` | Legacy in-process C tooling boundary; not part of runtime native copy-patch compilation. |
 | `lua/lalin/c_abi.lua` | C ABI classification — how types are passed/returned. |
-| `lua/lalin/c_coverage.lua` | Coverage tracking — marks unimplemented C backend constructs. |
+| `lua/lalin/c_coverage.lua` | Explicit C-backend support diagnostics; not native compiler coverage accounting. |
 
 ### Compiler Process
 
@@ -473,6 +473,15 @@ many template instances are copied into the executable layout, not which source
 families exist in the bank. Patch identity is node/instance-scoped so the same
 compiled template can be copied repeatedly with different frame offsets,
 constants, continuations, or runtime capabilities.
+
+The source side is manifest-first: a `NativeTemplateSupportDomain` records scalar
+support, ABI adapter support, code/kernel/stencil source-shape support, frame
+limits, atomics, and constant-pool capabilities; it computes a
+`NativeTemplateSourceManifest` and then emits exactly matching
+`NativeTemplateSource` values. `LalinCode` uses ABI, storage/layout,
+module-address, and call projections. `LalinKernel` and `LalinStencil` split
+program-specific projections/lowering inputs from finite source-shape axes so
+bank families never carry concrete program bodies as identity.
 
 ## Explicit LuaJIT Bytecode Mode
 
@@ -713,8 +722,15 @@ explicit prebuild step):
 - Validate target, manifest, ABI projection, and bank identity.
 - Select matching templates for `NativeTemplateGraph` nodes.
 - Lay out copied code and constant pools.
-- Apply node-scoped patch bindings and typed relocations.
+- Apply node/instance-scoped patch bindings by hole id or extern-symbol hole
+  ordinal, plus typed continuation, constant-pool, and runtime-symbol
+  relocations.
 - Install executable memory and expose the entry through its ABI projection.
+
+The current x64 object verifier admits PC-relative continuation/call/local
+relocations, absolute relocations for supported hole/constant-pool cases, and
+runtime-symbol relocations only for declared PC-relative call/jump forms that the
+installer patches as rel32.
 
 Runtime native compilation does not invoke a C compiler, object parser, object
 dumper, linker, shell command, bytecode path, or compatibility layer.

@@ -1685,3 +1685,212 @@ Verification passed:
 - `luajit tests/run.lua code_ir` — 49 passed, 1 skipped
 
 No coms-net used.
+
+## Scout Output — 2026-07-05 05:21:04
+
+## Files Retrieved
+
+1. `docs/LANGUAGE_REFERENCE.md` (lines 1-30, 1250-1388) - Intro/pipeline and backend defaults.
+2. `README.md` (lines 1-80, 99-102) - Public quickstart/build/backend/test guidance.
+3. `AGENTS.md` (lines 183-190, 237-256, 287-291) - Project agent backend guidance and examples.
+4. `docs/ARCHITECTURE.md` (lines 272-319, 445-531, 690-753) - Backend architecture/file-role sections.
+5. `docs/CONVENTIONS.md` (lines 137-173) - Backend doctrine; mostly current.
+6. `docs/COPY_PATCH_TEMPLATE_ENUMERATION_NOTES.md` (lines 1-180, 181-350) - Mixed old research notes and newer Kernel/Stencil source-shape notes.
+7. `docs/RESIDUAL_NATIVE_ARCHITECTURE.md` (lines 470-680, 760-850, 970-1183, 1390-1435, 1560-1640, 1720-1789) - Binding native architecture; has stale implementation-status/temporary-tooling sections.
+8. `docs/references/copy-patch-howto.md` (lines 1-220) - Generic copy-patch reference; not current Lalin architecture.
+9. `tests/README.md` (lines 7-20) - Test-suite docs.
+10. `lua/lalin/init.lua` (lines 644-658, 807-817, 840-857) - Current public compile/native bank option behavior.
+11. `lua/lalin/native_backend.lua` (lines 27-61, 95-118) - Current bank/manifest validation.
+12. `lua/lalin/schema/native.lua` (lines 1438-1523, 1930-2105, 2224-2470, 2570-2810) - Current native bank, Kernel/Stencil source-shape, graph, patch, call schema.
+13. `lua/lalin/native_template_sources.lua` (lines 4680-4722) - Current manifest-first source generation.
+14. `tools/gen_lalin_mc_bank.lua` (lines 310-324, 580-586, 856-871) - Current typed object relocation/runtime-symbol behavior.
+15. `lua/lalin/native_mc.lua` (lines 483-525) - Current constant-pool/runtime-symbol install behavior.
+16. `lua/lalin/native_template_support.lua` (lines 1247-1326) - Current support-domain defaults incl. kernel/stencil source support and atomics.
+
+## Key Code
+
+Current native compile requires explicit bank; no implicit fallback:
+
+```lua
+-- lua/lalin/init.lua:811-817
+if opts.native_bank ~= nil then return Backend.require_native_bank(opts.native_bank, target, expected_manifest) end
+if opts.bank ~= nil then return Backend.require_native_bank(opts.bank, target, expected_manifest) end
+if opts.native_embedded_bank ~= nil then return Backend.require_imported_bank(opts.native_embedded_bank, expected_manifest) end
+if opts.embedded_bank ~= nil then return Backend.require_imported_bank(opts.embedded_bank, expected_manifest) end
+error("compile_native requires opts.native_bank/opts.bank NativeTemplateBank or opts.native_embedded_bank/opts.embedded_bank NativeEmbeddedTemplateBank; ...")
+```
+
+Current bank schema carries manifests and compiled template facts:
+
+```lua
+-- lua/lalin/schema/native.lua:1438-1523
+product. NativeTemplateBankRequest { id, target, runtime, manifest, sources }
+product. NativeTemplateBank { id, target, manifest, entries }
+product. NativeEmbeddedTemplate { family, extraction, signature, text, symbols,
+  relocations, holes, hole_ordinals, relocation_declarations, constant_pool_layout }
+product. NativeEmbeddedTemplateBank { id, target, manifest, entries }
+```
+
+Current source generation is manifest-first:
+
+```lua
+-- lua/lalin/native_template_sources.lua:4699-4722
+function Native.NativeTemplateSupportDomain:native_template_manifest()
+  local sources = build_sources_for_domain(self)
+  local manifest = manifest_from_sources(self, sources)
+  manifest_source_cache[self] = { manifest = manifest, sources = sources }
+  return manifest
+end
+
+function Native.NativeTemplateSupportDomain:native_template_bank_request(bank_id)
+  local manifest = self:native_template_manifest()
+  ...
+  api.assert_manifest_matches_sources(manifest, sources)
+```
+
+Current runtime-symbol object relocations are only PC-relative:
+
+```lua
+-- tools/gen_lalin_mc_bank.lua:319-324
+function Native.NativeObjectRelocX64Pc32:native_runtime_symbol_relocation(...)
+  return Native.NativeRelocationRuntimeSymbol(...)
+end
+function Native.NativeObjectRelocX64Plt32:native_runtime_symbol_relocation(...)
+  return Native.NativeRelocationRuntimeSymbol(...)
+end
+```
+
+Install patches runtime symbols as rel32:
+
+```lua
+-- lua/lalin/native_mc.lua:514-525
+if asdl.isa(relocation, Native.NativeRelocationRuntimeSymbol) then
+  ...
+  if not apply_rel32(base_address, patch_address, address, relocation.addend) then
+    return Native.NativeInstallRejectUnsupportedRelocation(...)
+  end
+end
+```
+
+Current schema has post-refactor concepts not fully documented in top docs:
+
+```lua
+-- examples from lua/lalin/schema/native.lua
+NativeAtomicCodegenCapability
+NativeCodeTypeLayoutPlan
+NativeModuleAddressPlan
+NativeKernelSourceSupport
+NativeStencilSourceSupport
+NativeKernelLoweringInput
+NativeStencilLoweringInput
+NativeStorageLayout / NativeValueRepresentation
+```
+
+## Relationships
+
+- Public docs should describe:
+  `lalin.compile()` → native by default → requires `NativeTemplateBank`/`NativeEmbeddedTemplateBank`; `compile_luajit`/`{bytecode=true}` is explicit.
+- Offline native generation is:
+  support domain → `NativeTemplateSourceManifest` + sources → `tools/gen_lalin_mc_bank.lua` → `lalin_native_template_bank.*`.
+- Runtime native path is:
+  semantic ASDL leaf lowering → `NativeTemplateGraph` → copy plan → copy code/constants → patch node-scoped holes/relocations → install executable.
+- Current Kernel/Stencil native lowering now exists and is source-shape/projection based, not the older broad placeholder method vocabulary.
+
+## Observations
+
+### Concrete stale claims
+
+1. **`docs/LANGUAGE_REFERENCE.md` lines 3-30**
+   - Stale: says Lalin lowers “into executable LuaJIT artifacts” and pipeline ends in `LuaJIT artifact`.
+   - Should mention native copy-patch as default and explicit LuaJIT bytecode as non-native mode.
+
+2. **`README.md` lines 39-48 and `AGENTS.md` lines 237-256**
+   - Stale examples: `local module = lalin.compile("demo", { add })` without a bank now fails because default compile is native and requires a bank.
+   - Fix by using explicit `{ bytecode = true }` / `compile_luajit` for quickstart, or show `native_embedded_bank`.
+
+3. **`README.md` lines 99-102 and `AGENTS.md` lines 287-290**
+   - Stale focused tests: `test_copy_patch_bc.lua` and `test_copy_patch_luatrace.lua` do not exist.
+   - Replace with current native tests such as `test_native_template_sources.lua`, `test_native_bank_generator.lua`, `test_native_mc_import.lua`, `test_native_code_graph_scalar.lua`, `test_native_code_control.lua`, `test_native_kernel_contracts.lua`, `test_native_stencil_contracts.lua`.
+
+4. **`docs/ARCHITECTURE.md` lines 276-280**
+   - Stale: `stencil_c.lua` “Produces the C source that becomes the MC bank”; `stencil_metastencil.lua` “MC bank ↔ BC bank equivalence”.
+   - Current native bank C comes from `native_template_sources.lua` + `tools/gen_lalin_mc_bank.lua`; `stencil_c.lua` is not the native template-bank source path.
+
+5. **`docs/COPY_PATCH_TEMPLATE_ENUMERATION_NOTES.md`**
+   - Lines 3-6 mention `residual_mc_intern_set.lua` and ���patch-template coverage”.
+   - Lines 131-137 include `TCC residual glue`.
+   - Lines 144-146 mention “fallback cache”.
+   - Lines 297-306 propose `StencilTemplateCoverage` / “needs residual C”.
+   - These contradict the completed residualless architecture. The file should be marked superseded, archived, or split so only the updated Kernel/Stencil source-shape sections remain.
+
+6. **`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` lines 715-717, 914-916, 1121-1122**
+   - Stale: marker-byte scanning allowed temporarily.
+   - Current generator/source path uses extern-symbol hole ordinals; `tools/gen_lalin_mc_bank.lua` has no readelf/marker path.
+
+7. **`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` lines 1142-1144**
+   - Stale: says tooling may temporarily shell out to `readelf`.
+   - Current code uses `lua/lalin/native_object.lua` internal parser as authority.
+
+8. **`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` lines 1174-1175**
+   - Stale/inaccurate: says `R_X86_64_64 -> ... runtime symbol`.
+   - Current verifier admits runtime symbols only for `R_X86_64_PC32`/`PLT32`; install applies rel32. Also docs omit current `ABS32`/`ABS32S` hole-relocation kinds.
+
+9. **`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` lines 1569-1616**
+   - Required method names are partially stale, especially Kernel/Stencil/source-builder methods.
+   - Current implementation uses projection/source-shape/lowering-input methods such as `native_kernel_*_projection`, `native_kernel_*_source_shape`, `native_stencil_projection`, `native_stencil_*_source_shape`, `append_native_stencil_*_bindings/templates`.
+
+10. **`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` lines 1764-1789**
+    - Entire “Implementation Phase Status” is stale. It lists old proof-slice state and “still to implement” items that are now done: manifest ASDL, extern holes, ABI projection, void/sret returns, control/call lowering, memory/casts/aggregates/atomics, Kernel/Stencil lowering, internal object parser, constant pools, frame limits.
+
+11. **`tests/README.md` lines 17-20**
+    - Stale/incomplete: `code_ir/` described as Tree/Code/LuaTrace bytecode backend only.
+    - Should include native template/source/object/copy-patch tests now present in `tests/code_ir`.
+
+### Missing new concepts in docs
+
+Main architecture docs should add or expand:
+- `NativeAtomicCodegenCapability`
+- `NativeCodeTypeLayoutPlan`
+- `NativeModuleAddressPlan`
+- CodeData/CodeGlobal native storage/address plans
+- `NativeStorageLayout` / `NativeValueRepresentation`
+- `NativeKernelSourceSupport` / `NativeStencilSourceSupport`
+- `NativeKernelLoweringInput` / `NativeStencilLoweringInput`
+- node/instance-scoped patch binding by hole id or hole ordinal
+- current object relocation set: PC32/PLT32/ABS64/ABS32/ABS32S and runtime-symbol rel32 restriction
+
+### Mostly synchronized
+
+- `docs/CONVENTIONS.md` backend section is largely current.
+- `docs/ARCHITECTURE.md` Native Copy-Patch Direction and Backend Model sections are mostly current.
+- `docs/LANGUAGE_REFERENCE.md` Backend Defaults section is mostly current after its stale intro is fixed.
+- `README.md` backend summary is current; examples/tests need repair.
+
+No files were edited.
+
+## Worker Output — 2026-07-05 05:27:21
+
+## Completed
+Implemented T038 documentation sync and marked it done in edit plan `main`.
+
+Updated docs to reflect the completed residualless native C-stencil copy-patch architecture:
+- explicit native bank requirement for default `lalin.compile`
+- explicit LuaJIT bytecode examples where no native bank is supplied
+- manifest-first native bank generation flow
+- internal ELF parser/verifier
+- extern-symbol hole ordinals and node/instance-scoped patching
+- constant-pool/runtime-symbol relocation restrictions
+- current Code/Kernel/Stencil projection/source-shape/lowering-input architecture
+- current native test lists and implementation status
+
+## Files Changed
+- `README.md`
+- `AGENTS.md`
+- `docs/LANGUAGE_REFERENCE.md`
+- `docs/ARCHITECTURE.md`
+- `docs/COPY_PATCH_TEMPLATE_ENUMERATION_NOTES.md`
+- `docs/RESIDUAL_NATIVE_ARCHITECTURE.md`
+- `tests/README.md`
+
+## Notes
+Ran documentation sanity `rg` checks for stale terms/patterns; no schema/code_ir tests were run because this was docs-only. No coms-net used.

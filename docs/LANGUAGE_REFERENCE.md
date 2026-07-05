@@ -2,7 +2,9 @@
 
 Lalin is the compiled language member of the LLBL workbench. Lua is the
 metaprogramming layer; Lalin receives monomorphic programs and lowers them
-through typed ASDL facts into executable LuaJIT artifacts.
+through typed ASDL facts into native C-stencil copy-patch artifacts by default,
+or into LuaJIT bytecode artifacts when that non-native mode is selected
+explicitly.
 
 This reference treats the parsed syntax as the standard source surface. The
 Lua/LLBL DSL is documented in one chapter near the end because it is still the
@@ -27,7 +29,8 @@ The pipeline is:
   -> typecheck
   -> LalinCode facts
   -> flow/value/memory/effect/kernel/schedule facts
-  -> LuaJIT artifact
+  -> native copy-patch install with a supplied NativeTemplateBank
+     or explicit LuaJIT bytecode artifact
 ```
 
 Important rules:
@@ -1347,14 +1350,16 @@ local module2 = lalin.compile("demo", decls, {
 ```
 
 LuaJIT bytecode mode is not a recovery path for a missing native bank, and native
-banks are rejected by the LuaJIT artifact APIs.
+banks are rejected by the LuaJIT bytecode APIs.
 
 ### Offline Native Template Banks
 
 Use `NativeTemplateBankRequest` and its `NativeTemplateSourceManifest` when you
-want to build or reuse a native bank outside the runtime compile path. The
-offline generator consumes the request, compiles the generated C stencils ahead
-of time, verifies object facts, and emits the checked-in/native binary artifacts:
+want to build or reuse a native bank outside the runtime compile path. A native
+support domain first computes a manifest, then generates exactly matching
+`NativeTemplateSource` C stencils. The offline generator consumes the request,
+compiles those stencils ahead of time, verifies typed object facts with Lalin's
+internal ELF/object parser, and emits the checked-in/native binary artifacts:
 
 ```sh
 luajit tools/gen_lalin_mc_bank.lua \
@@ -1365,7 +1370,11 @@ luajit tools/gen_lalin_mc_bank.lua \
 
 The generated Lua bridge reconstructs a `NativeEmbeddedTemplateBank` carrying the
 manifest, target, compiled templates, signatures, extraction facts, hole
-ordinals, relocations, and constant-pool layout.
+ordinals, relocations, and constant-pool layout. Extern-symbol hole ordinals are
+the source of patch identity; byte-pattern scanning is not part of the current
+bank format. Runtime symbols are admitted only through declared typed runtime
+capabilities and currently use x64 PC-relative call/jump relocations in the
+native template verifier/install path.
 
 ### C / AOT Emission
 
@@ -1554,16 +1563,22 @@ long-form splice.
 
 ### Compiling DSL Values
 
+For quick local execution without a prebuilt native bank, select explicit LuaJIT
+bytecode mode:
+
 ```lua
-local module = lalin.compile("demo", { add })
+local module = lalin.compile("demo", { add }, { bytecode = true })
 ```
 
 or:
 
 ```lua
 local unit = lalin.unit("demo", { add })
-local module = lalin.compile("demo", unit)
+local module = lalin.compile("demo", unit, { bytecode = true })
 ```
+
+For native copy-patch, pass a compatible `NativeTemplateBank` or
+`NativeEmbeddedTemplateBank` as described in [Backend Defaults](#backend-defaults).
 
 ---
 

@@ -16,7 +16,7 @@ Directories:
 - `asdl/` - ASDL model and builder mechanics
 - `compiler_process/` - compiler process/package orchestration tests
 - `frontend/` - syntax, parsing, open expansion, RNF, splicing, `.mlua`
-- `code_ir/` - Tree/Code IR phases, validation, facts, lowering plans, LuaTrace bytecode backend
+- `code_ir/` - Tree/Code IR phases, validation, facts, lowering plans, explicit LuaJIT bytecode backend, and native copy-patch template/source/object/install tests
 - `c_backend/` - C emission/AOT path
 - `host/` - hosted Lua builder/value APIs
 - `runtime/` - language-level execution and semantic behavior
