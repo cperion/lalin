@@ -264,6 +264,7 @@ local function bind_context(T)
     function Value.ValueExpr:lower_c_value(c_emission) error("lower_to_c: unsupported semantic ValueExpr " .. node_name(self), 3) end
     function Value.ValueExprConst:lower_c_value(c_emission) return const_atom(c_emission, self.const) end
     function Value.ValueExprValue:lower_c_value(c_emission) local ty=value_ty(c_emission,self.value); if ty==nil then error("lower_to_c: semantic expression references unknown value " .. self.value.text, 3) end; return atom(self.value), ty end
+    function Value.ValueExprCast:lower_c_value(c_emission) local src,src_ty=lower_value_expr(c_emission,self.value); local dst=tmp(c_emission,"cast",self.to); assign(c_emission,dst,C.CBackendRCast(self.op,c_ty(c_emission,self.to),src)); return C.CBackendAtomLocal(dst),self.to end
     local function lower_binary_value(c_emission, expr, op, lane, index_ty)
         local lower = lane == nil and lower_value_expr or lower_value_expr_lane
         local a, aty = lower(c_emission, expr.a, lane, index_ty); local b, bty = lower(c_emission, expr.b, lane, index_ty)
@@ -343,7 +344,56 @@ local function bind_context(T)
     function Mem.MemIndexInduction:lower_c_elem_size() return self.elem_size or 1 end
     function Mem.MemIndexInduction:lower_c_const_offset() return self.const_offset or 0 end
 
+    function Lower.LowerAddressLaneUse:lower_c_serves_lane(lane)
+        return self.lane == lane.id
+    end
+    function Lower.LowerCarrierBlockParam:lower_c_matches_block(func, block)
+        return self.block.func == func and self.block.block == block
+    end
+    function Lower.LowerAddressPlan:lower_c_serves_lane(lane)
+        for _, use in ipairs(self.lanes or {}) do if use:lower_c_serves_lane(lane) then return true end end
+        return false
+    end
+    function Lower.LowerCarrierPlan:lower_c_block_param_for(func, block)
+        for _, param in ipairs(self.blocks or {}) do if param:lower_c_matches_block(func, block) then return param end end
+        return nil
+    end
+    function Lower.LowerAddressBlockParam:lower_c_matches_block(func, block)
+        return self.block.func == func and self.block.block == block
+    end
+    function Lower.LowerAddressPlan:lower_c_block_param_for(func, block)
+        for _, param in ipairs(self.blocks or {}) do if param:lower_c_matches_block(func, block) then return param end end
+        return nil
+    end
+    function Lower.LowerAddressStrategy:lower_c_address_place(plan, c_emission, lane, block)
+        error("lower_to_c: unsupported LowerAddressStrategy " .. node_name(self), 2)
+    end
+    function Lower.LowerAddressReject:lower_c_address_place(plan, c_emission, lane, block)
+        error("lower_to_c: rejected LowerAddressPlan " .. plan.address.text .. ": " .. self.reason, 2)
+    end
+    function Lower.LowerAddressCarryProjected:lower_c_address_place(plan, c_emission, lane, block)
+        local param = plan:lower_c_block_param_for(c_emission.code_func.id, block)
+        if param == nil then error("lower_to_c: carried LowerAddressPlan has no block param for current block " .. plan.address.text, 2) end
+        return C.CBackendPlaceDeref(C.CBackendAtomLocal(param.param), c_ty(c_emission, plan.base.elem_ty), nil)
+    end
+    function Lower.LowerAddressPlan:lower_c_address_place(c_emission, lane, block)
+        if not self:lower_c_serves_lane(lane) then return nil end
+        return self.strategy:lower_c_address_place(self, c_emission, lane, block)
+    end
+
+    local function address_place_for_lane(c_emission, lane)
+        local block_id = c_emission.current_code_block_id
+        if block_id == nil then return nil end
+        for _, plan in ipairs(c_emission.active_address_plans or {}) do
+            local place = plan:lower_c_address_place(c_emission, lane, block_id)
+            if place ~= nil then return place end
+        end
+        return nil
+    end
+
     local function place_for_access(c_emission, lane, access, index_expr)
+        local address_place = address_place_for_lane(c_emission, lane)
+        if address_place ~= nil then return address_place end
         local index = access and access.index or nil
         local elem_size = index and index:lower_c_elem_size() or 1
         local const_offset = index and index:lower_c_const_offset() or 0
@@ -531,19 +581,38 @@ local function bind_context(T)
         return bindings_by_block, effects_by_block
     end
 
+    function Lower.LowerCarrierStrategy:lower_c_is_carry_carrier() return false end
+    function Lower.LowerCarrierCarry:lower_c_is_carry_carrier() return true end
+    function Lower.LowerAddressPlan:lower_c_is_active_for_kernel(kplan)
+        for _, lane in ipairs(kplan.body and kplan.body.lanes or {}) do if self:lower_c_serves_lane(lane) then return true end end
+        return false
+    end
+
+    local function active_addresses_for_kernel(c_emission, kplan)
+        local active = {}
+        for _, plan in ipairs(c_emission.address_plans or {}) do
+            if plan:lower_c_is_active_for_kernel(kplan) then active[#active + 1] = plan end
+        end
+        return active
+    end
+
     local function emit_scalar_kernel_fragment(c_emission, graph, flow, kernels, fragment)
         local kplan = kernel_by_id(kernels)[fragment.strategy.kernel.text]
         if kplan == nil then error("lower_to_c: kernel strategy references missing kernel " .. fragment.strategy.kernel.text, 2) end
         local loop, body_set, edge_facts, exit_edge, latch_edge, body_successor, cond = loop_partition(c_emission, graph, flow, kplan)
+        local previous_active_addresses = c_emission.active_address_plans
+        c_emission.active_address_plans = active_addresses_for_kernel(c_emission, kplan)
         local bindings_by_block, effects_by_block = place_bindings_effects(c_emission, kplan)
         local header_block = c_emission.block_by_id[loop.header.block.text]
+        c_emission.current_code_block_id = loop.header.block
         c_emission.stmts = { C.CBackendComment("semantic scalar kernel " .. kplan.id.text) }
         if semantic_fragment_prelude ~= nil then semantic_fragment_prelude(c_emission, graph, fragment, loop.header.block) end
         for _, b in ipairs(bindings_by_block[loop.header.block.text] or {}) do bind_kernel_value(c_emission, b) end
         c_emission.blocks[#c_emission.blocks + 1] = C.CBackendBlock(clabel(loop.header.block), c_block_params(c_emission, header_block), c_emission.stmts,
-            C.CBackendIfGoto(atom(cond), clabel(exit_edge.to.block), edge_args(c_emission, edge_facts[exit_edge.from.block.text .. "\0" .. exit_edge.to.block.text]), clabel(body_successor), edge_args(c_emission, edge_facts[exit_edge.from.block.text .. "\0" .. body_successor.text])))
+            C.CBackendIfGoto(atom(cond), clabel(body_successor), edge_args(c_emission, edge_facts[exit_edge.from.block.text .. "\0" .. body_successor.text]), clabel(exit_edge.to.block), edge_args(c_emission, edge_facts[exit_edge.from.block.text .. "\0" .. exit_edge.to.block.text])))
         for _, block in ipairs(c_emission.code_func.blocks or {}) do
             if body_set[block.id.text] and block.id ~= loop.header.block then
+                c_emission.current_code_block_id = block.id
                 c_emission.stmts = { C.CBackendComment("semantic scalar kernel body " .. kplan.id.text) }
                 if semantic_fragment_prelude ~= nil then semantic_fragment_prelude(c_emission, graph, fragment, block.id) end
                 for _, b in ipairs(bindings_by_block[block.id.text] or {}) do bind_kernel_value(c_emission, b) end
@@ -560,6 +629,8 @@ local function bind_context(T)
                 c_emission.blocks[#c_emission.blocks + 1] = C.CBackendBlock(clabel(block.id), c_block_params(c_emission, block), c_emission.stmts, term)
             end
         end
+        c_emission.current_code_block_id = nil
+        c_emission.active_address_plans = previous_active_addresses
     end
 
     local function value_expr_add_lane(c_emission, expr, lane, ty)
@@ -601,6 +672,7 @@ local function bind_context(T)
         return self:lower_c_value(c_emission)
     end
     function Value.ValueExprConst:lower_c_value_lane(c_emission, lane, index_ty) return const_atom(c_emission, self.const) end
+    function Value.ValueExprCast:lower_c_value_lane(c_emission, lane, index_ty) local src,src_ty=lower_value_expr_lane(c_emission,self.value,lane,index_ty); local dst=tmp(c_emission,"vec_cast",self.to); assign(c_emission,dst,C.CBackendRCast(self.op,c_ty(c_emission,self.to),src)); return C.CBackendAtomLocal(dst),self.to end
     function Value.ValueExprAdd:lower_c_value_lane(c_emission, lane, index_ty) return lower_binary_value(c_emission,self,Core.BinAdd,lane,index_ty) end
     function Value.ValueExprSub:lower_c_value_lane(c_emission, lane, index_ty) return lower_binary_value(c_emission,self,Core.BinSub,lane,index_ty) end
     function Value.ValueExprMul:lower_c_value_lane(c_emission, lane, index_ty) return lower_binary_value(c_emission,self,Core.BinMul,lane,index_ty) end
@@ -931,6 +1003,211 @@ local function bind_context(T)
         end
     end
 
+    local function append_args(base, extra)
+        local out = {}; for i = 1, #(base or {}) do out[i] = base[i] end; for i = 1, #(extra or {}) do out[#out + 1] = extra[i] end; return out
+    end
+
+    function Lower.LowerCarrierBlockParam:lower_c_label_text()
+        return clabel(self.block.block).text
+    end
+    function Lower.LowerCarrierEdgeTransfer:lower_c_matches_labels(source_label, dest_label)
+        return clabel(self.edge.from.block).text == source_label and clabel(self.edge.to.block).text == dest_label
+    end
+    function Lower.LowerCarrierPlan:lower_c_transfer_for_labels(source_label, dest_label)
+        for _, transfer in ipairs(self.transfers or {}) do if transfer:lower_c_matches_labels(source_label, dest_label) then return transfer end end
+        return nil
+    end
+    function Lower.LowerCarrierPlan:lower_c_param_for_label(label_text)
+        for _, param in ipairs(self.blocks or {}) do if param:lower_c_label_text() == label_text then return param end end
+        return nil
+    end
+    function Lower.LowerCarrierPlan:lower_c_recompute_arg(c_emission, index)
+        return atom(index), {}
+    end
+    function Lower.LowerCarrierEdgeSource:lower_c_arg(c_emission, plan, transfer, source_label) return nil, {} end
+    function Lower.LowerCarrierEdgeRecompute:lower_c_arg(c_emission, plan, transfer, source_label)
+        return plan:lower_c_recompute_arg(c_emission, self.index)
+    end
+    function Lower.LowerCarrierEdgeCarrySame:lower_c_arg(c_emission, plan, transfer, source_label)
+        local source_param = plan:lower_c_param_for_label(source_label)
+        if source_param == nil then return nil, {} end
+        return C.CBackendAtomLocal(source_param.param), {}
+    end
+    function Lower.LowerCarrierEdgeCarryConst:lower_c_arg(c_emission, plan, transfer, source_label)
+        local source_param = plan:lower_c_param_for_label(source_label)
+        if source_param == nil then return nil, {} end
+        local dst = tmp(c_emission, "carrier_next", plan.value_ty)
+        return C.CBackendAtomLocal(dst), { C.CBackendHelperCall(dst, binary_helper(c_emission, Core.BinAdd, plan.value_ty, nil), { C.CBackendAtomLocal(source_param.param), C.CBackendAtomLiteral(c_ty(c_emission, plan.value_ty), Core.LitInt(tostring(self.amount))) }) }
+    end
+    function Lower.LowerCarrierEdgeCarryDynamic:lower_c_arg(c_emission, plan, transfer, source_label)
+        local source_param = plan:lower_c_param_for_label(source_label)
+        if source_param == nil then return nil, {} end
+        local dst = tmp(c_emission, "carrier_next", plan.value_ty)
+        return C.CBackendAtomLocal(dst), { C.CBackendHelperCall(dst, binary_helper(c_emission, Core.BinAdd, plan.value_ty, nil), { C.CBackendAtomLocal(source_param.param), atom(self.step) }) }
+    end
+    function Lower.LowerCarrierEdgeTransfer:lower_c_arg(c_emission, plan, source_label)
+        return self.source:lower_c_arg(c_emission, plan, self, source_label)
+    end
+
+    function Lower.LowerAddressBlockParam:lower_c_label_text()
+        return clabel(self.block.block).text
+    end
+    function Lower.LowerAddressPlan:lower_c_param_for_label(label_text)
+        for _, param in ipairs(self.blocks or {}) do if param:lower_c_label_text() == label_text then return param end end
+        return nil
+    end
+    function Lower.LowerAddressPlan:lower_c_applies_to_func(func)
+        for _, param in ipairs(self.blocks or {}) do if param.block.func == func.id then return true end end
+        return false
+    end
+    function Lower.LowerAddressEdgeTransfer:lower_c_matches_labels(source_label, dest_label)
+        return clabel(self.edge.from.block).text == source_label and clabel(self.edge.to.block).text == dest_label
+    end
+    function Lower.LowerAddressPlan:lower_c_transfer_for_labels(source_label, dest_label)
+        for _, transfer in ipairs(self.transfers or {}) do if transfer:lower_c_matches_labels(source_label, dest_label) then return transfer end end
+        return nil
+    end
+    function Lower.LowerAddressEdgeSource:lower_c_arg(c_emission, plan, transfer, source_label) return nil, {} end
+    local function zero_index_atom() return C.CBackendAtomLiteral(C.CBackendIndex, Core.LitInt("0")) end
+    local function address_next_arg(c_emission, plan, rhs)
+        local dst = tmp(c_emission, "address_next", Code.CodeTyDataPtr(plan.base.elem_ty))
+        return C.CBackendAtomLocal(dst), { C.CBackendAssign(dst, rhs) }
+    end
+    function Lower.LowerAddressEdgeRecomputeFromCarrier:lower_c_arg(c_emission, plan, transfer, source_label)
+        return address_next_arg(c_emission, plan, C.CBackendRPtrOffset(base_atom(c_emission, plan.base.base), atom(self.index), plan.base.elem_size, 0))
+    end
+    function Lower.LowerAddressEdgeCarrySame:lower_c_arg(c_emission, plan, transfer, source_label)
+        local source_param = plan:lower_c_param_for_label(source_label)
+        if source_param == nil then return nil, {} end
+        return C.CBackendAtomLocal(source_param.param), {}
+    end
+    function Lower.LowerAddressEdgeCarryConstBytes:lower_c_arg(c_emission, plan, transfer, source_label)
+        local source_param = plan:lower_c_param_for_label(source_label)
+        if source_param == nil then return nil, {} end
+        return address_next_arg(c_emission, plan, C.CBackendRPtrOffset(C.CBackendAtomLocal(source_param.param), zero_index_atom(), 1, self.amount))
+    end
+    function Lower.LowerAddressEdgeCarryDynamicBytes:lower_c_arg(c_emission, plan, transfer, source_label)
+        local source_param = plan:lower_c_param_for_label(source_label)
+        if source_param == nil then return nil, {} end
+        return address_next_arg(c_emission, plan, C.CBackendRPtrOffset(C.CBackendAtomLocal(source_param.param), atom(self.step), self.elem_size, 0))
+    end
+    function Lower.LowerAddressEdgeTransfer:lower_c_arg(c_emission, plan, source_label)
+        return self.source:lower_c_arg(c_emission, plan, self, source_label)
+    end
+
+    local function edge_carrier_args(c_emission, source_label, dest_label)
+        local args, pre = {}, {}
+        for _, plan in ipairs(c_emission.carrier_plans or {}) do
+            local dest_param = plan:lower_c_param_for_label(dest_label)
+            local transfer = plan:lower_c_transfer_for_labels(source_label, dest_label)
+            if dest_param ~= nil and transfer == nil then error("lower_to_c: missing carrier transfer " .. plan.carrier.text .. " from " .. source_label .. " to " .. dest_label, 2) end
+            if transfer ~= nil then
+                local atom_, pre_ = transfer:lower_c_arg(c_emission, plan, source_label)
+                if atom_ == nil then error("lower_to_c: failed carrier transfer " .. plan.carrier.text .. " from " .. source_label .. " to " .. dest_label, 2) end
+                for _, st in ipairs(pre_ or {}) do pre[#pre + 1] = st end
+                args[#args + 1] = atom_
+            end
+        end
+        return args, pre
+    end
+    local function edge_address_args(c_emission, source_label, dest_label)
+        local args, pre = {}, {}
+        for _, plan in ipairs(c_emission.address_plans or {}) do
+            local dest_param = plan:lower_c_param_for_label(dest_label)
+            local transfer = plan:lower_c_transfer_for_labels(source_label, dest_label)
+            if dest_param ~= nil and transfer == nil then error("lower_to_c: missing address transfer " .. plan.address.text .. " from " .. source_label .. " to " .. dest_label, 2) end
+            if transfer ~= nil then
+                local atom_, pre_ = transfer:lower_c_arg(c_emission, plan, source_label)
+                if atom_ == nil then error("lower_to_c: failed address transfer " .. plan.address.text .. " from " .. source_label .. " to " .. dest_label, 2) end
+                for _, st in ipairs(pre_ or {}) do pre[#pre + 1] = st end
+                args[#args + 1] = atom_
+            end
+        end
+        return args, pre
+    end
+    local function edge_lower_args(c_emission, source_label, dest_label)
+        local carrier_args, carrier_pre = edge_carrier_args(c_emission, source_label, dest_label)
+        if carrier_args == nil then return nil, nil end
+        local address_args, address_pre = edge_address_args(c_emission, source_label, dest_label)
+        if address_args == nil then return nil, nil end
+        local args, pre = {}, {}
+        for _, atom_ in ipairs(carrier_args) do args[#args + 1] = atom_ end
+        for _, atom_ in ipairs(address_args) do args[#args + 1] = atom_ end
+        for _, st in ipairs(carrier_pre or {}) do pre[#pre + 1] = st end
+        for _, st in ipairs(address_pre or {}) do pre[#pre + 1] = st end
+        return args, pre
+    end
+
+    function C.CBackendTerminator:lower_c_apply_carrier_edges(c_emission, source_label) return self, {} end
+    function C.CBackendGoto:lower_c_apply_carrier_edges(c_emission, source_label)
+        local extra, pre = edge_lower_args(c_emission, source_label, self.dest.text)
+        if extra == nil then return self, {} end
+        return C.CBackendGoto(self.dest, append_args(self.args, extra)), pre
+    end
+    local function edge_transfer_label(c_emission, source_label, dest_label, suffix)
+        c_emission.next_edge_transfer = (c_emission.next_edge_transfer or 0) + 1
+        return C.CBackendLabel(sanitize("edge_xfer:" .. source_label .. ":" .. dest_label .. ":" .. suffix .. ":" .. tostring(c_emission.next_edge_transfer)))
+    end
+    local function edge_transfer_dest(c_emission, source_label, dest, args, extra, pre, suffix)
+        if #(pre or {}) == 0 then return dest, append_args(args, extra) end
+        local label = edge_transfer_label(c_emission, source_label, dest.text, suffix)
+        c_emission.edge_transfer_blocks = c_emission.edge_transfer_blocks or {}
+        c_emission.edge_transfer_blocks[#c_emission.edge_transfer_blocks + 1] = C.CBackendBlock(label, {}, pre, C.CBackendGoto(dest, append_args(args, extra)))
+        return label, {}
+    end
+    function C.CBackendIfGoto:lower_c_apply_carrier_edges(c_emission, source_label)
+        local then_extra, then_pre = edge_lower_args(c_emission, source_label, self.then_dest.text)
+        local else_extra, else_pre = edge_lower_args(c_emission, source_label, self.else_dest.text)
+        if then_extra == nil or else_extra == nil then return self, {} end
+        local then_dest, then_args = edge_transfer_dest(c_emission, source_label, self.then_dest, self.then_args, then_extra, then_pre, "then")
+        local else_dest, else_args = edge_transfer_dest(c_emission, source_label, self.else_dest, self.else_args, else_extra, else_pre, "else")
+        return C.CBackendIfGoto(self.cond, then_dest, then_args, else_dest, else_args), {}
+    end
+    function C.CBackendSwitchCase:lower_c_apply_carrier_edge(c_emission, source_label)
+        local extra, pre = edge_lower_args(c_emission, source_label, self.dest.text)
+        if extra == nil then return self end
+        local dest, args = edge_transfer_dest(c_emission, source_label, self.dest, self.args, extra, pre, "case")
+        return C.CBackendSwitchCase(self.literal, dest, args)
+    end
+    function C.CBackendSwitchGoto:lower_c_apply_carrier_edges(c_emission, source_label)
+        local default_extra, default_pre = edge_lower_args(c_emission, source_label, self.default_dest.text)
+        if default_extra == nil then return self, {} end
+        local default_dest, default_args = edge_transfer_dest(c_emission, source_label, self.default_dest, self.default_args, default_extra, default_pre, "default")
+        local cases = {}; for i = 1, #self.cases do cases[i] = self.cases[i]:lower_c_apply_carrier_edge(c_emission, source_label) end
+        return C.CBackendSwitchGoto(self.value, cases, default_dest, default_args), {}
+    end
+
+    function Lower.LowerCarrierPlan:lower_c_applies_to_func(func)
+        for _, param in ipairs(self.blocks or {}) do if param.block.func == func.id then return true end end
+        return false
+    end
+
+    local function apply_lower_c_carriers(c_emission, code_func, graph_loops, blocks)
+        local has_lower_edge_state = false
+        for _, plan in ipairs(c_emission.carrier_plans or {}) do if plan:lower_c_applies_to_func(code_func) then has_lower_edge_state = true end end
+        for _, plan in ipairs(c_emission.address_plans or {}) do if plan:lower_c_applies_to_func(code_func) then has_lower_edge_state = true end end
+        if not has_lower_edge_state then return blocks end
+        local rewritten = {}
+        for i, block in ipairs(blocks or {}) do
+            c_emission.edge_transfer_blocks = {}
+            local params = {}; for j = 1, #(block.params or {}) do params[j] = block.params[j] end
+            for _, plan in ipairs(c_emission.carrier_plans or {}) do
+                local param = plan:lower_c_param_for_label(block.label.text)
+                if param ~= nil and param.block.func == code_func.id then params[#params + 1] = C.CBackendBlockParam(param.param, c_ty(c_emission, param.value_ty)) end
+            end
+            for _, plan in ipairs(c_emission.address_plans or {}) do
+                local param = plan:lower_c_param_for_label(block.label.text)
+                if param ~= nil and param.block.func == code_func.id then params[#params + 1] = C.CBackendBlockParam(param.param, c_ty(c_emission, Code.CodeTyDataPtr(param.elem_ty))) end
+            end
+            local term, pre = block.term:lower_c_apply_carrier_edges(c_emission, block.label.text)
+            local stmts = {}; for j = 1, #(block.stmts or {}) do stmts[j] = block.stmts[j] end; for _, st in ipairs(pre or {}) do stmts[#stmts + 1] = st end
+            rewritten[#rewritten + 1] = C.CBackendBlock(block.label, params, stmts, term)
+            for _, edge_block in ipairs(c_emission.edge_transfer_blocks or {}) do rewritten[#rewritten + 1] = edge_block end
+            c_emission.edge_transfer_blocks = nil
+        end
+        return rewritten
+    end
+
     local function lower_semantic_func(c_emission, graph, flow, kernels, schedules, code_func, c_func, func_plan, graph_loops, baseline_blocks)
         local mutable_func = {
             name = c_func.name,
@@ -947,6 +1224,7 @@ local function bind_context(T)
             local selection = lower_emit_candidate(fragment, schedules_by_id):select_lower_emit()
             selection:emit_to_c(c_emission, Lower.LowerCEmitInput(graph, flow, kernels, schedules, code_func, fragment, baseline_blocks))
         end
+        local lowered_blocks = apply_lower_c_carriers(c_emission, code_func, graph_loops, c_emission.blocks)
         return C.CBackendFunc(
             mutable_func.name,
             mutable_func.symbol,
@@ -954,7 +1232,7 @@ local function bind_context(T)
             mutable_func.sig,
             mutable_func.params,
             mutable_func.locals,
-            C.CBackendBodyBlocks(clabel(code_func.blocks[1].id), c_emission.blocks)
+            C.CBackendBodyBlocks(clabel(code_func.blocks[1].id), lowered_blocks)
         )
     end
 
@@ -995,6 +1273,10 @@ local function bind_context(T)
         local kernels = CodeKernelPlan.plan(code_module, graph, flow, value, mem, effect)
         local schedules = CodeSchedulePlan.plan(code_module, kernels, flow, value, mem, effect, opts and (opts.target_model or opts.back_target_model))
         local lower = CodeLowerPlan.plan(code_module, graph, kernels, schedules, Lower.LowerTargetC)
+        flow = kernels.flow
+        value = kernels.value
+        mem = kernels.mem
+        effect = kernels.effect
         return graph, flow, value, mem, effect, kernels, schedules, lower, opts
     end
 
@@ -1002,9 +1284,11 @@ local function bind_context(T)
         local graph, flow, value, mem, effect, kernels, schedules, lower
         graph, flow, value, mem, effect, kernels, schedules, lower, opts = normalize_args(code_module, lower_module, opts)
         opts = opts or {}
-        local unit = CodeToC.module(code_module, opts)
         local has_semantic = false
-        for _, fp in ipairs(lower.funcs or {}) do for _, frag in ipairs(fp.fragments or {}) do if semantic_strategy(frag) then has_semantic = true end end end
+        local semantic_func = {}
+        for _, fp in ipairs(lower.funcs or {}) do for _, frag in ipairs(fp.fragments or {}) do if semantic_strategy(frag) then has_semantic = true; semantic_func[fp.func.text] = true end end end
+        local code_to_c_opts = {}; for k, v in pairs(opts or {}) do code_to_c_opts[k] = v end; code_to_c_opts.lower = lower; code_to_c_opts.lower_skip_funcs = semantic_func
+        local unit = CodeToC.module(code_module, code_to_c_opts)
         if not has_semantic then return unit end
 
         local base_func_by_name = {}; for _, f in ipairs(unit.funcs or {}) do base_func_by_name[f.symbol] = f end
@@ -1012,6 +1296,8 @@ local function bind_context(T)
         local funcs = func_by_id(code_module)
         local graph_loops = graph_indexes(graph)
         local cfuncs = {}
+        local carrier_plan_by_id = {}
+        for _, carrier in ipairs((lower and lower.carriers) or {}) do carrier_plan_by_id[carrier.carrier.text] = carrier end
         local c_emission = {
             unit = unit,
             c_type_projection = make_c_type_projection(code_module),
@@ -1020,6 +1306,9 @@ local function bind_context(T)
             next_tmp = 0,
             mem = mem,
             mem_projection = CodeMemFacts.access_projection(mem),
+            carrier_plans = (lower and lower.carriers) or {},
+            carrier_plan_by_id = carrier_plan_by_id,
+            address_plans = (lower and lower.addresses) or {},
         }
         for _, h in ipairs(unit.helpers or {}) do c_emission.helper_by_key[helper_key(h.spec)] = h end
 

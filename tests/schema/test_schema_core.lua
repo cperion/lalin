@@ -76,7 +76,7 @@ local intent_fact = Flow.FlowDomainIntentFact(
     { Flow.FlowProofFrontendFact("native-loop intent smoke") },
     Flow.FlowFactFrontendFact("frontend intent")
 )
-local flow = Flow.FlowFactSet(module.id, { domain }, { flow_edge }, { flow_loop }, { induction.range }, { shape_fact }, { intent_fact }, {})
+local flow = Flow.FlowFactSet(module.id, { domain }, { flow_edge }, { flow_loop }, { induction.range }, { shape_fact }, { intent_fact }, {}, {}, {})
 local trip = Flow.FlowTripCountUnknown("no explicit trip count value")
 local flow_sem = Flow.FlowSemanticFactSet(module.id, { Flow.FlowLoopNormalizedCounted(loop_id, counted, Flow.FlowLoopIncreasing, trip) })
 assert(flow.loops[1].loop == loop_id and flow_sem.facts[1].trip_count == trip)
@@ -120,7 +120,7 @@ assert(smod.schedules[1].kernel == kplan.id)
 
 local fragment = Lower.LowerFragment(Lower.LowerFragmentId("frag:loop"), Lower.LowerCoverLoop(loop_id), Lower.LowerStrategyKernel(kplan.id, sched.id), { Lower.LowerProofKernel(kplan.id, "planned"), Lower.LowerProofSchedule(sched.id, "scheduled") }, {})
 local fallback = Lower.LowerFragment(Lower.LowerFragmentId("frag:block"), Lower.LowerCoverBlock(func_id, block_id), Lower.LowerStrategyCode("fallback"), { Lower.LowerProofFallback("code") }, { Lower.LowerIssueFallback(Lower.LowerCoverBlock(func_id, block_id), "smoke") })
-local lower = Lower.LowerModule(module.id, Lower.LowerTargetBack, kmod, smod, { Lower.LowerFuncPlan(func_id, { fragment, fallback }) }, {})
+local lower = Lower.LowerModule(module.id, Lower.LowerTargetBack, kmod, smod, {}, {}, { Lower.LowerFuncPlan(func_id, { fragment, fallback }) }, {})
 assert(lower.funcs[1].fragments[1].strategy.kernel == kplan.id)
 assert(Lower["LowerFunc" .. "Kernel"] == nil and Lower["LowerFunc" .. "Code"] == nil, "old LowerFunc constructors must be removed")
 

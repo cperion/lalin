@@ -45,6 +45,9 @@ assert(dispatch_defs >= 2, "VM dispatch bundle declaration/definition missing")
 assert(artifact.source:match("typedef struct _Value%s*{%s*uint64_t bits"), "VM Value must stay a compact one-word tagged payload")
 assert(not artifact.source:match("typedef struct _Value%s*{[^}]*int64_t%s+i"), "VM Value must not regress to separate tag/int payload fields")
 assert(not artifact.source:match("__lalin_region_call_VM_decode%f[(]"), "decode must be inlined into VM dispatch bundle")
+assert(artifact.source:find("semantic_address_address_fn___lalin_region_call_VM_dispatch", 1, true), "VM dispatch instruction fetch must use carried generic LowerAddressPlan state")
+assert(artifact.source:find("+ ((ml_index)0) * 1 + 12", 1, true), "VM ADD fallthrough must carry instruction address by byte stride")
+assert(not artifact.source:find(")[v___lalin_region_call_VM_dispatch_control_param_region_bundle_VM_dispatch_lln_emit_69_read_pc]", 1, true), "VM dispatch instruction fetch must not regress to raw indexed pc access")
 for _, op_name in ipairs({ "loadk", "move", "add", "lt", "jmp", "jmpz", "ret" }) do
   assert(not artifact.source:match("__lalin_region_call_VM_op_" .. op_name .. "%f[(]"), op_name .. " op must be inlined into VM dispatch bundle")
 end

@@ -11,9 +11,11 @@ local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
     if T._lalin_api_cache.code_lower_plan ~= nil then return T._lalin_api_cache.code_lower_plan end
 
+    local Flow = T.LalinFlow
     local Kernel = T.LalinKernel
     local Schedule = T.LalinSchedule
     local Lower = T.LalinLower
+    local C = T.LalinC
     local CodeGraph = require("lalin.code_graph")(T)
     local CodeFlowFacts = require("lalin.code_flow_facts")(T)
     local CodeValueFacts = require("lalin.code_value_facts")(T)
@@ -210,6 +212,175 @@ local function bind_context(T)
         return Lower.LowerFragmentNoCandidate
     end
 
+    local function carrier_param_id(carrier, block)
+        return C.CBackendLocalId("semantic_carrier_" .. sanitize(carrier.id.text) .. "_" .. sanitize(block.block.text))
+    end
+
+    local function address_param_id(address, block)
+        return C.CBackendLocalId("semantic_address_" .. sanitize(address.id.text) .. "_" .. sanitize(block.block.text))
+    end
+
+    function Flow.FlowCarrierTransfer:lower_plan_matches_edge(edge)
+        return self.edge == edge
+    end
+
+    function Flow.FlowCarrierThread:lower_plan_transfer_for_edge(edge)
+        for _, transfer in ipairs(self.transfers or {}) do if transfer:lower_plan_matches_edge(edge) then return transfer end end
+        return nil
+    end
+
+    function Flow.FlowCarrierStep:lower_plan_edge_source(carrier, edge, flow) return carrier:lower_plan_recompute_edge_source(edge, flow) end
+    function Flow.FlowCarrierStepSame:lower_plan_edge_source() return Lower.LowerCarrierEdgeCarrySame end
+    function Flow.FlowCarrierStepConst:lower_plan_edge_source() return Lower.LowerCarrierEdgeCarryConst(self.amount) end
+    function Flow.FlowCarrierStepDynamic:lower_plan_edge_source() return Lower.LowerCarrierEdgeCarryDynamic(self.step) end
+    function Flow.FlowCarrierStepRecompute:lower_plan_edge_source() return Lower.LowerCarrierEdgeRecompute(self.index) end
+
+    function Flow.FlowCarrierThread:lower_plan_block_param(block)
+        return Lower.LowerCarrierBlockParam(self.id, block, carrier_param_id(self, block), self.value_ty)
+    end
+
+    function Flow.FlowCarrierThread:lower_plan_recompute_edge_source(edge, flow)
+        for _, fact in ipairs((flow and flow.edges) or {}) do
+            if fact.edge == edge then
+                for _, arg in ipairs(fact.args or {}) do
+                    if arg.dst_param == self.index then return Lower.LowerCarrierEdgeRecompute(arg.src) end
+                end
+            end
+        end
+        return Lower.LowerCarrierEdgeRecompute(self.index)
+    end
+
+    local function carrier_has_block(blocks, block)
+        for _, b in ipairs(blocks or {}) do if b.block == block then return true end end
+        return false
+    end
+
+    function Flow.FlowCarrierThread:lower_plan_edge_transfer(edge, blocks, flow)
+        if not carrier_has_block(blocks, edge.to) then return nil end
+        local transfer = self:lower_plan_transfer_for_edge(edge)
+        local source
+        if transfer ~= nil and carrier_has_block(blocks, edge.from) then source = transfer.step:lower_plan_edge_source(self, edge, flow)
+        elseif carrier_has_block(blocks, edge.from) then source = Lower.LowerCarrierEdgeCarrySame
+        else source = self:lower_plan_recompute_edge_source(edge, flow) end
+        return Lower.LowerCarrierEdgeTransfer(self.id, edge, source, carrier_param_id(self, edge.to))
+    end
+
+    function Flow.FlowCarrierThread:lower_plan_carrier(graph_loops, graph, flow)
+        local blocks = {}
+        for _, block in ipairs(self.blocks or {}) do blocks[#blocks + 1] = self:lower_plan_block_param(block) end
+        local transfers = {}
+        for _, fg in ipairs((graph and graph.funcs) or {}) do
+            if fg.func == self.func then
+                for _, edge in ipairs(fg.edges or {}) do
+                    local transfer = self:lower_plan_edge_transfer(edge, blocks, flow)
+                    if transfer ~= nil then transfers[#transfers + 1] = transfer end
+                end
+            end
+        end
+        return Lower.LowerCarrierPlan(self.id, self.index, self.value_ty, Lower.LowerCarrierCarry, blocks, transfers, { Lower.LowerProofCoverage("Flow carrier selected for carry lowering") })
+    end
+
+    function Kernel.KernelLane:lower_plan_address_lane_use(address)
+        for _, lane_access in ipairs(self.accesses or {}) do
+            for _, address_access in ipairs(address.accesses or {}) do
+                if lane_access == address_access then return Lower.LowerAddressLaneUse(address.id, self.id) end
+            end
+        end
+        return nil
+    end
+
+    function Kernel.KernelPlan:lower_plan_address_lane_uses(address, out) end
+    function Kernel.KernelPlanned:lower_plan_address_lane_uses(address, out)
+        for _, lane in ipairs(self.body and self.body.lanes or {}) do
+            local use = lane:lower_plan_address_lane_use(address)
+            if use ~= nil then out[#out + 1] = use end
+        end
+    end
+
+    local function lower_plan_address_lane_uses(address, kernels)
+        local out = {}
+        for _, plan in ipairs((kernels and kernels.plans) or {}) do plan:lower_plan_address_lane_uses(address, out) end
+        return out
+    end
+
+    function Flow.FlowAddressUse:lower_plan_inst_use(address)
+        return Lower.LowerAddressInstUse(address.id, self.inst)
+    end
+
+    function Flow.FlowAddressThread:lower_plan_inst_uses()
+        local out = {}
+        for _, use in ipairs(self.uses or {}) do out[#out + 1] = use:lower_plan_inst_use(self) end
+        return out
+    end
+
+    function Lower.LowerCarrierBlockParam:lower_plan_address_block_param(address)
+        return Lower.LowerAddressBlockParam(address.id, self.block, address_param_id(address, self.block), address.base.elem_ty)
+    end
+
+    function Lower.LowerCarrierEdgeSource:lower_plan_address_edge_source(address)
+        error("code_lower_plan: unsupported carrier edge source for address transfer " .. tostring(self), 2)
+    end
+    function Lower.LowerCarrierEdgeRecompute:lower_plan_address_edge_source(address)
+        return Lower.LowerAddressEdgeRecomputeFromCarrier(self.index)
+    end
+    function Lower.LowerCarrierEdgeCarrySame:lower_plan_address_edge_source(address)
+        return Lower.LowerAddressEdgeCarrySame
+    end
+    function Lower.LowerCarrierEdgeCarryConst:lower_plan_address_edge_source(address)
+        return Lower.LowerAddressEdgeCarryConstBytes(self.amount * address.base.elem_size)
+    end
+    function Lower.LowerCarrierEdgeCarryDynamic:lower_plan_address_edge_source(address)
+        return Lower.LowerAddressEdgeCarryDynamicBytes(self.step, address.base.elem_size)
+    end
+
+    function Lower.LowerCarrierEdgeTransfer:lower_plan_address_edge_transfer(address)
+        return Lower.LowerAddressEdgeTransfer(address.id, self.edge, self.source:lower_plan_address_edge_source(address), address_param_id(address, self.edge.to))
+    end
+
+    function Lower.LowerCarrierPlan:lower_plan_address_strategy(address)
+        return Lower.LowerAddressCarryProjected
+    end
+
+    function Lower.LowerCarrierPlan:lower_plan_address_blocks(address)
+        local out = {}
+        for _, block in ipairs(self.blocks or {}) do out[#out + 1] = block:lower_plan_address_block_param(address) end
+        return out
+    end
+
+    function Lower.LowerCarrierPlan:lower_plan_address_transfers(address)
+        local out = {}
+        for _, transfer in ipairs(self.transfers or {}) do out[#out + 1] = transfer:lower_plan_address_edge_transfer(address) end
+        return out
+    end
+
+    function Flow.FlowAddressThread:lower_plan_address(kernels, carrier_plan_by_id)
+        local carrier = carrier_plan_by_id and carrier_plan_by_id[self.carrier.text] or nil
+        local strategy, blocks, transfers
+        local proofs = { Lower.LowerProofCoverage("Flow address selected for materialization") }
+        if carrier == nil then
+            strategy = Lower.LowerAddressReject("missing LowerCarrierPlan for Flow address carrier " .. self.carrier.text)
+            blocks, transfers = {}, {}
+        else
+            strategy = carrier:lower_plan_address_strategy(self)
+            blocks = carrier:lower_plan_address_blocks(self)
+            transfers = carrier:lower_plan_address_transfers(self)
+            proofs[#proofs + 1] = Lower.LowerProofCoverage("address projection carried from Flow carrier recurrence")
+        end
+        return Lower.LowerAddressPlan(self.id, self.carrier, self.base, strategy, blocks, transfers, lower_plan_address_lane_uses(self, kernels), self:lower_plan_inst_uses(), proofs)
+    end
+
+    local function carrier_and_address_plans(flow, graph, kernels)
+        local _, graph_loops = graph_indexes(graph)
+        local carriers, addresses, carrier_plan_by_id = {}, {}, {}
+        for _, carrier in ipairs((flow and flow.carriers) or {}) do
+            local plan = carrier:lower_plan_carrier(graph_loops, graph, flow)
+            carriers[#carriers + 1] = plan
+            carrier_plan_by_id[plan.carrier.text] = plan
+        end
+        for _, address in ipairs((flow and flow.addresses) or {}) do addresses[#addresses + 1] = address:lower_plan_address(kernels, carrier_plan_by_id) end
+        return carriers, addresses
+    end
+
     local function plan_func(func, graph_func, kernel_for_loop, kernel_no_plan_for_loop, schedule_for_kernel, issues)
         local fragments, covered = {}, {}
         local function add(fragment)
@@ -267,7 +438,8 @@ local function bind_context(T)
         local schedule_for_kernel = schedule_by_kernel(schedules)
         local funcs, issues = {}, {}
         for _, func in ipairs(code_module.funcs or {}) do funcs[#funcs + 1] = plan_func(func, graph_funcs[func.id.text], kernel_for_loop, kernel_no_plan_for_loop, schedule_for_kernel, issues) end
-        return Lower.LowerModule(code_module.id, target, kernels, schedules, funcs, issues)
+        local carrier_plans, address_plans = carrier_and_address_plans(kernels and kernels.flow, graph, kernels)
+        return Lower.LowerModule(code_module.id, target, kernels, schedules, carrier_plans, address_plans, funcs, issues)
     end
 
     api.plan = plan

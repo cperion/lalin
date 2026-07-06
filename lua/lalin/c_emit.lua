@@ -75,16 +75,25 @@ local function bind_context(T)
     function C.CBackendType:c_emit_is_array() return false end
     function C.CBackendType:c_emit_needs_compound_decl_only() return false end
     function C.CBackendType:c_emit_is_void() return false end
+    function C.CBackendType:c_emit_can_hoist_field_load() return false end
+    function C.CBackendType:c_emit_can_copy_propagate() return false end
 
     function C.CBackendVoid:c_emit_type() return "void" end
     function C.CBackendVoid:c_emit_is_void() return true end
     function C.CBackendBool8:c_emit_type() return "uint8_t" end
+    function C.CBackendBool8:c_emit_can_copy_propagate() return true end
     function C.CBackendScalar:c_emit_type() return self.scalar:c_emit_scalar_name() end
+    function C.CBackendScalar:c_emit_can_copy_propagate() return true end
     function C.CBackendIndex:c_emit_type() return "ml_index" end
+    function C.CBackendIndex:c_emit_can_copy_propagate() return true end
     function C.CBackendDataPtr:c_emit_type() return self.pointee and (self.pointee:c_emit_type() .. "*") or "void*" end
+    function C.CBackendDataPtr:c_emit_can_hoist_field_load() return true end
+    function C.CBackendDataPtr:c_emit_can_copy_propagate() return true end
     function C.CBackendDataPtr:c_emit_visit_implicit(add_descriptor, add_closure) if self.pointee then self.pointee:c_emit_visit_implicit(add_descriptor, add_closure) end end
     function C.CBackendCodePtr:c_emit_type() return self.sig.text end
+    function C.CBackendCodePtr:c_emit_can_copy_propagate() return true end
     function C.CBackendImportedCodePtr:c_emit_type() return "void (*)(void)" end
+    function C.CBackendImportedCodePtr:c_emit_can_copy_propagate() return true end
     function C.CBackendNamed:c_emit_type() return (self.id.module_name .. "_" .. self.id.spelling):gsub("[^%w_]", "_") end
     function C.CBackendNamed:c_emit_named_deps(out) out[#out + 1] = self.id.module_name .. "\0" .. self.id.spelling end
     function C.CBackendNamed:c_emit_needs_compound_decl_only() return true end
@@ -127,11 +136,21 @@ local function bind_context(T)
 
     function C.CBackendAtom:c_emit_atom() error("missing c_emit_atom leaf method", 2) end
     function C.CBackendAtom:c_emit_local_text() return nil end
+    function C.CBackendAtom:c_emit_note_arg_local(out) end
     function C.CBackendAtomLocal:c_emit_atom() return self.local_id.text end
     function C.CBackendAtomLocal:c_emit_local_text() return self.local_id.text end
+    function C.CBackendAtomLocal:c_emit_note_arg_local(out) out[self.local_id.text] = true end
     function C.CBackendAtomGlobal:c_emit_atom() return self.global.text end
     function C.CBackendAtomLiteral:c_emit_atom() return "(" .. self.ty:c_emit_type() .. ")" .. self.literal:c_emit_literal() end
     function C.CBackendAtomNull:c_emit_atom() return "NULL" end
+    function C.CBackendAtom:c_emit_rewrite_aliases(aliases) return self end
+    function C.CBackendAtom:c_emit_alias_source_text() return nil end
+    function C.CBackendAtom:c_emit_collect_used_locals(used) end
+    function C.CBackendAtom:c_emit_inline_expr(ctx) return self:c_emit_atom() end
+    function C.CBackendAtomLocal:c_emit_rewrite_aliases(aliases) return aliases[self.local_id.text] or self end
+    function C.CBackendAtomLocal:c_emit_alias_source_text() return self.local_id.text end
+    function C.CBackendAtomLocal:c_emit_collect_used_locals(used) if used.__count then used[self.local_id.text] = (used[self.local_id.text] or 0) + 1 else used[self.local_id.text] = true end end
+    function C.CBackendAtomLocal:c_emit_inline_expr(ctx) return ctx:expr_for_local(self.local_id.text) or self.local_id.text end
 
     function C.CBackendPlace:c_emit_place() error("missing c_emit_place leaf method", 2) end
     function C.CBackendPlaceLocal:c_emit_place() return self.local_id.text end
@@ -143,6 +162,47 @@ local function bind_context(T)
     function C.CBackendPlaceDeref:c_emit_index_place(index_atom) return "((" .. self.ty:c_emit_type() .. "*)" .. self.addr:c_emit_atom() .. ")[" .. index_atom:c_emit_atom() .. "]" end
     function C.CBackendPlaceBytes:c_emit_place() return "(*(" .. self.ty:c_emit_type() .. "*)((unsigned char*)" .. self.base:c_emit_atom() .. " + " .. tostring(self.offset) .. "))" end
 
+    function C.CBackendPlace:c_emit_rewrite_aliases(aliases) return self end
+    function C.CBackendPlace:c_emit_collect_used_locals(used) end
+    function C.CBackendPlace:c_emit_inline_place_expr(ctx) return self:c_emit_place(), false end
+    function C.CBackendPlaceLocal:c_emit_rewrite_aliases(aliases) return self end
+    function C.CBackendPlaceLocal:c_emit_collect_used_locals(used) if used.__count then used[self.local_id.text] = (used[self.local_id.text] or 0) + 1 else used[self.local_id.text] = true end end
+    function C.CBackendPlaceLocal:c_emit_inline_place_expr(ctx) return self.local_id.text, true end
+    function C.CBackendPlaceGlobal:c_emit_rewrite_aliases(aliases) return self end
+    function C.CBackendPlaceGlobal:c_emit_inline_place_expr(ctx) return self.global.text, false end
+    function C.CBackendPlaceDeref:c_emit_rewrite_aliases(aliases) return C.CBackendPlaceDeref(self.addr:c_emit_rewrite_aliases(aliases), self.ty, self.align) end
+    function C.CBackendPlaceDeref:c_emit_collect_used_locals(used) self.addr:c_emit_collect_used_locals(used) end
+    function C.CBackendPlaceField:c_emit_rewrite_aliases(aliases) return C.CBackendPlaceField(self.base:c_emit_rewrite_aliases(aliases), self.field, self.ty, self.offset, self.size, self.align) end
+    function C.CBackendPlaceField:c_emit_collect_used_locals(used) self.base:c_emit_collect_used_locals(used) end
+    function C.CBackendPlaceField:c_emit_inline_place_expr(ctx) local base, ok = self.base:c_emit_inline_place_expr(ctx); if not ok then return self:c_emit_place(), false end; return base .. "." .. self.field.text, true end
+    function C.CBackendPlaceIndex:c_emit_rewrite_aliases(aliases) return C.CBackendPlaceIndex(self.base:c_emit_rewrite_aliases(aliases), self.index:c_emit_rewrite_aliases(aliases), self.ty, self.elem_size) end
+    function C.CBackendPlaceIndex:c_emit_collect_used_locals(used) self.base:c_emit_collect_used_locals(used); self.index:c_emit_collect_used_locals(used) end
+    function C.CBackendPlaceIndex:c_emit_inline_place_expr(ctx) local base, ok = self.base:c_emit_inline_place_expr(ctx); if not ok then return self:c_emit_place(), false end; return base .. "[" .. self.index:c_emit_inline_expr(ctx) .. "]", true end
+    function C.CBackendPlaceBytes:c_emit_rewrite_aliases(aliases) return C.CBackendPlaceBytes(self.base:c_emit_rewrite_aliases(aliases), self.offset, self.ty, self.size, self.align) end
+    function C.CBackendPlaceBytes:c_emit_collect_used_locals(used) self.base:c_emit_collect_used_locals(used) end
+
+    function C.CBackendPlace:c_emit_direct_field_base_local() return nil end
+    function C.CBackendPlaceDeref:c_emit_direct_field_base_local() return self.addr:c_emit_local_text() end
+    function C.CBackendPlace:c_emit_direct_field_load_candidate(canonicalize) return nil end
+    function C.CBackendPlaceField:c_emit_direct_field_load_candidate(canonicalize)
+        local base = self.base:c_emit_direct_field_base_local()
+        if base == nil or not self.ty:c_emit_can_hoist_field_load() then return nil end
+        local canonical_base = (canonicalize and canonicalize(base)) or base
+        local hoist_base = C.CBackendPlaceDeref(C.CBackendAtomLocal(C.CBackendLocalId(canonical_base)), self.base.ty, self.base.align)
+        local hoist_place = C.CBackendPlaceField(hoist_base, self.field, self.ty, self.offset, self.size, self.align)
+        return { key = canonical_base .. "\0" .. self.field.text, base = canonical_base, raw_base = base, field = self.field.text, place = hoist_place, ty = self.ty }
+    end
+    function C.CBackendPlace:c_emit_note_direct_field_store(blocked_fields, blocked_bases, canonicalize) end
+    function C.CBackendPlaceDeref:c_emit_note_direct_field_store(blocked_fields, blocked_bases, canonicalize)
+        local base = self.addr:c_emit_local_text()
+        if base ~= nil then blocked_bases[(canonicalize and canonicalize(base)) or base] = true end
+    end
+    function C.CBackendPlaceField:c_emit_note_direct_field_store(blocked_fields, blocked_bases, canonicalize)
+        local candidate = self:c_emit_direct_field_load_candidate(canonicalize)
+        if candidate ~= nil then blocked_fields[candidate.key] = true end
+        self.base:c_emit_note_direct_field_store(blocked_fields, blocked_bases, canonicalize)
+    end
+
     function C.CBackendRValue:c_emit_rvalue() error("missing c_emit_rvalue leaf method", 2) end
     function C.CBackendRAtom:c_emit_rvalue() return self.atom:c_emit_atom() end
     function C.CBackendRCompare:c_emit_rvalue() return "(" .. self.lhs:c_emit_atom() .. " " .. self.op:c_emit_cmp_op() .. " " .. self.rhs:c_emit_atom() .. ")" end
@@ -150,8 +210,35 @@ local function bind_context(T)
     function C.CBackendRSelect:c_emit_rvalue() return "(" .. self.cond:c_emit_atom() .. " ? " .. self.then_value:c_emit_atom() .. " : " .. self.else_value:c_emit_atom() .. ")" end
     function C.CBackendRFuncAddr:c_emit_rvalue() return self.func.text end
     function C.CBackendRExternAddr:c_emit_rvalue() return self["extern"].text end
-    function C.CBackendRPtrOffset:c_emit_rvalue() return "((char*)" .. self.base:c_emit_atom() .. " + (" .. self.index:c_emit_atom() .. ") * " .. tostring(self.elem_size) .. " + " .. tostring(self.const_offset) .. ")" end
+    function C.CBackendRPtrOffset:c_emit_rvalue() return "(void*)((char*)" .. self.base:c_emit_atom() .. " + (" .. self.index:c_emit_atom() .. ") * " .. tostring(self.elem_size) .. " + " .. tostring(self.const_offset) .. ")" end
     function C.CBackendRAddrOfPlace:c_emit_rvalue() return "&" .. self.place:c_emit_place() end
+    function C.CBackendRValue:c_emit_rewrite_aliases(aliases) return self end
+    function C.CBackendRValue:c_emit_copy_alias_atom() return nil end
+    function C.CBackendRValue:c_emit_collect_used_locals(used) end
+    function C.CBackendRValue:c_emit_inline_expr(ctx) return self:c_emit_rvalue() end
+    function C.CBackendRAtom:c_emit_rewrite_aliases(aliases) return C.CBackendRAtom(self.atom:c_emit_rewrite_aliases(aliases)) end
+    function C.CBackendRAtom:c_emit_copy_alias_atom() return self.atom end
+    function C.CBackendRAtom:c_emit_collect_used_locals(used) self.atom:c_emit_collect_used_locals(used) end
+    function C.CBackendRAtom:c_emit_inline_expr(ctx) return self.atom:c_emit_inline_expr(ctx) end
+    function C.CBackendRCompare:c_emit_rewrite_aliases(aliases) return C.CBackendRCompare(self.op, self.ty, self.lhs:c_emit_rewrite_aliases(aliases), self.rhs:c_emit_rewrite_aliases(aliases)) end
+    function C.CBackendRCompare:c_emit_collect_used_locals(used) self.lhs:c_emit_collect_used_locals(used); self.rhs:c_emit_collect_used_locals(used) end
+    function C.CBackendRCompare:c_emit_inline_expr(ctx) return "(" .. self.lhs:c_emit_inline_expr(ctx) .. " " .. self.op:c_emit_cmp_op() .. " " .. self.rhs:c_emit_inline_expr(ctx) .. ")" end
+    function C.CBackendRCast:c_emit_rewrite_aliases(aliases) return C.CBackendRCast(self.op, self.to, self.value:c_emit_rewrite_aliases(aliases)) end
+    function C.CBackendRCast:c_emit_collect_used_locals(used) self.value:c_emit_collect_used_locals(used) end
+    function C.CBackendRCast:c_emit_inline_expr(ctx) return "(" .. self.to:c_emit_type() .. ")(" .. self.value:c_emit_inline_expr(ctx) .. ")" end
+    function C.CBackendRSelect:c_emit_rewrite_aliases(aliases) return C.CBackendRSelect(self.ty, self.cond:c_emit_rewrite_aliases(aliases), self.then_value:c_emit_rewrite_aliases(aliases), self.else_value:c_emit_rewrite_aliases(aliases)) end
+    function C.CBackendRSelect:c_emit_collect_used_locals(used) self.cond:c_emit_collect_used_locals(used); self.then_value:c_emit_collect_used_locals(used); self.else_value:c_emit_collect_used_locals(used) end
+    function C.CBackendRSelect:c_emit_inline_expr(ctx) return "(" .. self.cond:c_emit_inline_expr(ctx) .. " ? " .. self.then_value:c_emit_inline_expr(ctx) .. " : " .. self.else_value:c_emit_inline_expr(ctx) .. ")" end
+    function C.CBackendRFuncAddr:c_emit_rewrite_aliases(aliases) return self end
+    function C.CBackendRFuncAddr:c_emit_inline_expr(ctx) return self.func.text end
+    function C.CBackendRExternAddr:c_emit_rewrite_aliases(aliases) return self end
+    function C.CBackendRExternAddr:c_emit_inline_expr(ctx) return self["extern"].text end
+    function C.CBackendRPtrOffset:c_emit_rewrite_aliases(aliases) return C.CBackendRPtrOffset(self.base:c_emit_rewrite_aliases(aliases), self.index:c_emit_rewrite_aliases(aliases), self.elem_size, self.const_offset) end
+    function C.CBackendRPtrOffset:c_emit_collect_used_locals(used) self.base:c_emit_collect_used_locals(used); self.index:c_emit_collect_used_locals(used) end
+    function C.CBackendRPtrOffset:c_emit_inline_expr(ctx) return "(void*)((char*)" .. self.base:c_emit_inline_expr(ctx) .. " + (" .. self.index:c_emit_inline_expr(ctx) .. ") * " .. tostring(self.elem_size) .. " + " .. tostring(self.const_offset) .. ")" end
+    function C.CBackendRAddrOfPlace:c_emit_rewrite_aliases(aliases) return C.CBackendRAddrOfPlace(self.place:c_emit_rewrite_aliases(aliases)) end
+    function C.CBackendRAddrOfPlace:c_emit_collect_used_locals(used) self.place:c_emit_collect_used_locals(used) end
+    function C.CBackendRAddrOfPlace:c_emit_inline_expr(ctx) local p = self.place:c_emit_inline_place_expr(ctx); return "&" .. p end
 
     function C.CBackendTypeDecl:c_emit_key() return self.id and (self.id.module_name .. "\0" .. self.id.spelling) or nil end
     function C.CBackendTypeDecl:c_emit_deps() return {} end
@@ -253,6 +340,7 @@ local function bind_context(T)
             end
         end
         for i = 1, #self.params do
+            if args[i] == nil then error("c_emit: missing transfer argument " .. tostring(i) .. " for block " .. self.label.text .. " with " .. tostring(#self.params) .. " params", 2) end
             local dst = self.params[i].local_id.text
             local src = scratch_needed[i] and self:c_emit_transfer_scratch_name(i) or args[i]:c_emit_atom()
             if src ~= dst then
@@ -263,43 +351,140 @@ local function bind_context(T)
     end
 
     function C.CBackendStmt:c_emit_stmt(out, blocks, local_types) error("missing c_emit_stmt leaf method", 2) end
+    function C.CBackendStmt:c_emit_collect_field_hoist_state(state) end
+    function C.CBackendStmt:c_emit_apply_field_hoists(hoists_by_key) return self end
+    function C.CBackendStmt:c_emit_rewrite_aliases(aliases) return self end
+    function C.CBackendStmt:c_emit_assigned_local() return nil end
+    function C.CBackendStmt:c_emit_copy_alias(local_types) return nil end
+    function C.CBackendStmt:c_emit_collect_used_locals(used) end
+    function C.CBackendStmt:c_emit_is_dead_copy_assign(used) return false end
+    function C.CBackendStmt:c_emit_inline_expr(ctx) return nil end
     function C.CBackendAssign:c_emit_stmt(out, blocks, local_types)
         if local_types[self.dst.text]:c_emit_is_array() then
             emit_storage_copy(out, self.dst.text, self.rhs.atom:c_emit_atom())
         else out[#out + 1] = "    " .. self.dst.text .. " = " .. self.rhs:c_emit_rvalue() .. ";" end
     end
+    function C.CBackendAssign:c_emit_collect_field_hoist_state(state) state:mark_assigned(self.dst.text) end
+    function C.CBackendAssign:c_emit_rewrite_aliases(aliases) return C.CBackendAssign(self.dst, self.rhs:c_emit_rewrite_aliases(aliases)) end
+    function C.CBackendAssign:c_emit_assigned_local() return self.dst.text end
+    function C.CBackendAssign:c_emit_copy_alias(local_types)
+        local atom = self.rhs:c_emit_copy_alias_atom()
+        local src = atom and atom:c_emit_alias_source_text() or nil
+        if src == nil or src == self.dst.text then return nil end
+        local dst_ty, src_ty = local_types[self.dst.text], local_types[src]
+        if dst_ty == nil or src_ty == nil or not dst_ty:c_emit_can_copy_propagate() or not src_ty:c_emit_can_copy_propagate() then return nil end
+        return atom
+    end
+    function C.CBackendAssign:c_emit_collect_used_locals(used) self.rhs:c_emit_collect_used_locals(used) end
+    function C.CBackendAssign:c_emit_is_dead_copy_assign(used) return self.rhs:c_emit_copy_alias_atom() ~= nil and not used[self.dst.text] end
+    function C.CBackendAssign:c_emit_inline_expr(ctx) return self.rhs:c_emit_inline_expr(ctx) end
     function C.CBackendHelperCall:c_emit_stmt(out)
         local args = {}; for i = 1, #self.args do args[i] = self.args[i]:c_emit_atom() end
         local call = self.helper.text .. "(" .. table.concat(args, ", ") .. ")"
         if self.dst then out[#out + 1] = "    " .. self.dst.text .. " = " .. call .. ";" else out[#out + 1] = "    " .. call .. ";" end
     end
+    function C.CBackendHelperCall:c_emit_collect_field_hoist_state(state)
+        if self.dst then state:mark_assigned(self.dst.text) end
+        for i = 1, #self.args do self.args[i]:c_emit_note_arg_local(state.call_arg_locals) end
+    end
+    function C.CBackendHelperCall:c_emit_rewrite_aliases(aliases) local args = {}; for i = 1, #self.args do args[i] = self.args[i]:c_emit_rewrite_aliases(aliases) end; return C.CBackendHelperCall(self.dst, self.helper, args) end
+    function C.CBackendHelperCall:c_emit_assigned_local() return self.dst and self.dst.text or nil end
+    function C.CBackendHelperCall:c_emit_collect_used_locals(used) for i = 1, #self.args do self.args[i]:c_emit_collect_used_locals(used) end end
     function C.CBackendLoad:c_emit_stmt(out) out[#out + 1] = "    memcpy(&" .. self.dst.text .. ", " .. self.addr:c_emit_atom() .. ", sizeof(" .. self.dst.text .. "));" end
+    function C.CBackendLoad:c_emit_rewrite_aliases(aliases) return C.CBackendLoad(self.dst, self.addr:c_emit_rewrite_aliases(aliases), self.access) end
+    function C.CBackendLoad:c_emit_assigned_local() return self.dst.text end
+    function C.CBackendLoad:c_emit_collect_used_locals(used) self.addr:c_emit_collect_used_locals(used) end
     function C.CBackendStore:c_emit_stmt(out) out[#out + 1] = "    memcpy(" .. self.addr:c_emit_atom() .. ", &" .. self.value:c_emit_atom() .. ", sizeof(" .. self.value:c_emit_atom() .. "));" end
+    function C.CBackendStore:c_emit_collect_field_hoist_state(state) local base = self.addr:c_emit_local_text(); if base ~= nil then state:mark_base_clobber(base) end end
+    function C.CBackendStore:c_emit_rewrite_aliases(aliases) return C.CBackendStore(self.addr:c_emit_rewrite_aliases(aliases), self.value:c_emit_rewrite_aliases(aliases), self.access) end
+    function C.CBackendStore:c_emit_collect_used_locals(used) self.addr:c_emit_collect_used_locals(used); self.value:c_emit_collect_used_locals(used) end
     function C.CBackendPlaceLoad:c_emit_stmt(out, blocks, local_types) if local_types[self.dst.text]:c_emit_is_array() then emit_storage_copy(out, self.dst.text, self.place:c_emit_place()) else out[#out + 1] = "    " .. self.dst.text .. " = " .. self.place:c_emit_place() .. ";" end end
+    function C.CBackendPlaceLoad:c_emit_collect_field_hoist_state(state)
+        state:mark_assigned(self.dst.text)
+        local candidate = self.place:c_emit_direct_field_load_candidate(function(name) return state:canonical_local(name) end)
+        if candidate == nil then return end
+        local entry = state.candidates[candidate.key]
+        if entry == nil then
+            entry = candidate
+            entry.count = 0
+            state.candidates[candidate.key] = entry
+            state.order[#state.order + 1] = candidate.key
+        end
+        entry.count = entry.count + 1
+    end
+    function C.CBackendPlaceLoad:c_emit_apply_field_hoists(hoists_by_key, canonicalize)
+        local candidate = self.place:c_emit_direct_field_load_candidate(canonicalize)
+        local hoist = candidate and hoists_by_key[candidate.key] or nil
+        if hoist == nil then return self end
+        return C.CBackendAssign(self.dst, C.CBackendRAtom(C.CBackendAtomLocal(hoist.local_id)))
+    end
+    function C.CBackendPlaceLoad:c_emit_rewrite_aliases(aliases) return C.CBackendPlaceLoad(self.dst, self.place:c_emit_rewrite_aliases(aliases)) end
+    function C.CBackendPlaceLoad:c_emit_assigned_local() return self.dst.text end
+    function C.CBackendPlaceLoad:c_emit_collect_used_locals(used) self.place:c_emit_collect_used_locals(used) end
+    function C.CBackendPlaceLoad:c_emit_inline_expr(ctx) local expr, ok = self.place:c_emit_inline_place_expr(ctx); return ok and expr or nil end
     function C.CBackendPlaceStore:c_emit_stmt(out) if self.place.ty:c_emit_is_array() then emit_storage_copy(out, self.place:c_emit_place(), self.value:c_emit_atom()) else out[#out + 1] = "    " .. self.place:c_emit_place() .. " = " .. self.value:c_emit_atom() .. ";" end end
+    function C.CBackendPlaceStore:c_emit_collect_field_hoist_state(state) self.place:c_emit_note_direct_field_store(state.blocked_fields, state.blocked_bases, function(name) return state:canonical_local(name) end) end
+    function C.CBackendPlaceStore:c_emit_rewrite_aliases(aliases) return C.CBackendPlaceStore(self.place:c_emit_rewrite_aliases(aliases), self.value:c_emit_rewrite_aliases(aliases)) end
+    function C.CBackendPlaceStore:c_emit_collect_used_locals(used) self.place:c_emit_collect_used_locals(used); self.value:c_emit_collect_used_locals(used) end
     function C.CBackendZeroInit:c_emit_stmt(out) out[#out + 1] = "    memset(&" .. self.place:c_emit_place() .. ", 0, (size_t)" .. tostring(self.size) .. ");" end
+    function C.CBackendZeroInit:c_emit_collect_field_hoist_state(state) self.place:c_emit_note_direct_field_store(state.blocked_fields, state.blocked_bases, function(name) return state:canonical_local(name) end) end
+    function C.CBackendZeroInit:c_emit_rewrite_aliases(aliases) return C.CBackendZeroInit(self.place:c_emit_rewrite_aliases(aliases), self.ty, self.size) end
+    function C.CBackendZeroInit:c_emit_collect_used_locals(used) self.place:c_emit_collect_used_locals(used) end
     function C.CBackendAggregateInit:c_emit_stmt(out) for i = 1, #self.fields do out[#out + 1] = "    " .. self.place:c_emit_place() .. "." .. self.fields[i].field.text .. " = " .. self.fields[i].value:c_emit_atom() .. ";" end end
+    function C.CBackendAggregateInit:c_emit_collect_field_hoist_state(state) self.place:c_emit_note_direct_field_store(state.blocked_fields, state.blocked_bases, function(name) return state:canonical_local(name) end) end
+    function C.CBackendAggregateInit:c_emit_rewrite_aliases(aliases) local fields = {}; for i = 1, #self.fields do fields[i] = C.CBackendAggregateFieldInit(self.fields[i].field, self.fields[i].value:c_emit_rewrite_aliases(aliases), self.fields[i].offset) end; return C.CBackendAggregateInit(self.place:c_emit_rewrite_aliases(aliases), self.ty, fields) end
+    function C.CBackendAggregateInit:c_emit_collect_used_locals(used) self.place:c_emit_collect_used_locals(used); for i = 1, #self.fields do self.fields[i].value:c_emit_collect_used_locals(used) end end
     function C.CBackendArrayInit:c_emit_stmt(out) for i = 1, #self.elems do out[#out + 1] = "    " .. self.place:c_emit_place() .. "[" .. tostring(self.elems[i].index) .. "] = " .. self.elems[i].value:c_emit_atom() .. ";" end end
+    function C.CBackendArrayInit:c_emit_collect_field_hoist_state(state) self.place:c_emit_note_direct_field_store(state.blocked_fields, state.blocked_bases, function(name) return state:canonical_local(name) end) end
+    function C.CBackendArrayInit:c_emit_rewrite_aliases(aliases) local elems = {}; for i = 1, #self.elems do elems[i] = C.CBackendArrayElemInit(self.elems[i].index, self.elems[i].value:c_emit_rewrite_aliases(aliases)) end; return C.CBackendArrayInit(self.place:c_emit_rewrite_aliases(aliases), self.ty, elems) end
+    function C.CBackendArrayInit:c_emit_collect_used_locals(used) self.place:c_emit_collect_used_locals(used); for i = 1, #self.elems do self.elems[i].value:c_emit_collect_used_locals(used) end end
     function C.CBackendCall:c_emit_stmt(out)
         local args = {}; for i = 1, #self.args do args[i] = self.args[i]:c_emit_atom() end
         local call = self.target:c_emit_callee(args) .. "(" .. table.concat(args, ", ") .. ")"
         if self.dst then out[#out + 1] = "    " .. self.dst.text .. " = " .. call .. ";" else out[#out + 1] = "    " .. call .. ";" end
     end
+    function C.CBackendCall:c_emit_collect_field_hoist_state(state)
+        if self.dst then state:mark_assigned(self.dst.text) end
+        self.target:c_emit_note_call_arg_locals(state.call_arg_locals)
+        for i = 1, #self.args do self.args[i]:c_emit_note_arg_local(state.call_arg_locals) end
+    end
+    function C.CBackendCall:c_emit_rewrite_aliases(aliases) local args = {}; for i = 1, #self.args do args[i] = self.args[i]:c_emit_rewrite_aliases(aliases) end; return C.CBackendCall(self.dst, self.target:c_emit_rewrite_aliases(aliases), args) end
+    function C.CBackendCall:c_emit_assigned_local() return self.dst and self.dst.text or nil end
+    function C.CBackendCall:c_emit_collect_used_locals(used) self.target:c_emit_collect_used_locals(used); for i = 1, #self.args do self.args[i]:c_emit_collect_used_locals(used) end end
     function C.CBackendComment:c_emit_stmt(out) out[#out + 1] = "    /* " .. self.text:gsub("%*/", "* /") .. " */" end
 
     function C.CBackendCallTarget:c_emit_callee(args) error("missing c_emit_callee leaf method", 2) end
+    function C.CBackendCallTarget:c_emit_note_call_arg_locals(out) end
+    function C.CBackendCallTarget:c_emit_rewrite_aliases(aliases) return self end
+    function C.CBackendCallTarget:c_emit_collect_used_locals(used) end
     function C.CBackendCallDirect:c_emit_callee(args) return self.func.text end
     function C.CBackendCallExtern:c_emit_callee(args) return self["extern"].text end
     function C.CBackendCallIndirect:c_emit_callee(args) return self.callee:c_emit_atom() end
+    function C.CBackendCallIndirect:c_emit_note_call_arg_locals(out) self.callee:c_emit_note_arg_local(out) end
+    function C.CBackendCallIndirect:c_emit_rewrite_aliases(aliases) return C.CBackendCallIndirect(self.callee:c_emit_rewrite_aliases(aliases), self.sig) end
+    function C.CBackendCallIndirect:c_emit_collect_used_locals(used) self.callee:c_emit_collect_used_locals(used) end
     function C.CBackendCallClosure:c_emit_callee(args) local closure = self.closure:c_emit_atom(); table.insert(args, 1, closure .. ".ctx"); return closure .. ".fn" end
+    function C.CBackendCallClosure:c_emit_note_call_arg_locals(out) self.closure:c_emit_note_arg_local(out) end
+    function C.CBackendCallClosure:c_emit_rewrite_aliases(aliases) return C.CBackendCallClosure(self.closure:c_emit_rewrite_aliases(aliases), self.sig) end
+    function C.CBackendCallClosure:c_emit_collect_used_locals(used) self.closure:c_emit_collect_used_locals(used) end
 
     function C.CBackendTerminator:c_emit_term(out, blocks) error("missing c_emit_term leaf method", 2) end
     function C.CBackendTerminator:c_emit_collect_transfer_scratch(blocks, scratch) end
+    function C.CBackendTerminator:c_emit_collect_transfer_edges(edges) end
+    function C.CBackendTerminator:c_emit_rewrite_aliases(aliases) return self end
+    function C.CBackendTerminator:c_emit_collect_used_locals(used) end
     function C.CBackendGoto:c_emit_collect_transfer_scratch(blocks, scratch) blocks[self.dest.text]:c_emit_note_transfer_scratch(self.args, scratch) end
+    function C.CBackendGoto:c_emit_collect_transfer_edges(edges) edges[#edges + 1] = { dest = self.dest.text, args = self.args } end
     function C.CBackendGoto:c_emit_term(out, blocks) blocks[self.dest.text]:c_emit_transfer(out, self.args) end
+    function C.CBackendGoto:c_emit_rewrite_aliases(aliases) local args = {}; for i = 1, #self.args do args[i] = self.args[i]:c_emit_rewrite_aliases(aliases) end; return C.CBackendGoto(self.dest, args) end
+    function C.CBackendGoto:c_emit_collect_used_locals(used) for i = 1, #self.args do self.args[i]:c_emit_collect_used_locals(used) end end
     function C.CBackendIfGoto:c_emit_collect_transfer_scratch(blocks, scratch)
         blocks[self.then_dest.text]:c_emit_note_transfer_scratch(self.then_args, scratch)
         blocks[self.else_dest.text]:c_emit_note_transfer_scratch(self.else_args, scratch)
+    end
+    function C.CBackendIfGoto:c_emit_collect_transfer_edges(edges)
+        edges[#edges + 1] = { dest = self.then_dest.text, args = self.then_args }
+        edges[#edges + 1] = { dest = self.else_dest.text, args = self.else_args }
     end
     function C.CBackendIfGoto:c_emit_term(out, blocks)
         out[#out + 1] = "    if (" .. self.cond:c_emit_atom() .. ") {"
@@ -308,14 +493,28 @@ local function bind_context(T)
         nested = {}; blocks[self.else_dest.text]:c_emit_transfer(nested, self.else_args); for i = 1, #nested do out[#out + 1] = "    " .. nested[i] end
         out[#out + 1] = "    }"
     end
+    function C.CBackendIfGoto:c_emit_rewrite_aliases(aliases)
+        local then_args, else_args = {}, {}
+        for i = 1, #self.then_args do then_args[i] = self.then_args[i]:c_emit_rewrite_aliases(aliases) end
+        for i = 1, #self.else_args do else_args[i] = self.else_args[i]:c_emit_rewrite_aliases(aliases) end
+        return C.CBackendIfGoto(self.cond:c_emit_rewrite_aliases(aliases), self.then_dest, then_args, self.else_dest, else_args)
+    end
+    function C.CBackendIfGoto:c_emit_collect_used_locals(used) self.cond:c_emit_collect_used_locals(used); for i = 1, #self.then_args do self.then_args[i]:c_emit_collect_used_locals(used) end; for i = 1, #self.else_args do self.else_args[i]:c_emit_collect_used_locals(used) end end
     function C.CBackendSwitchCase:c_emit_collect_transfer_scratch(blocks, scratch) blocks[self.dest.text]:c_emit_note_transfer_scratch(self.args, scratch) end
+    function C.CBackendSwitchCase:c_emit_collect_transfer_edges(edges) edges[#edges + 1] = { dest = self.dest.text, args = self.args } end
     function C.CBackendSwitchCase:c_emit_case(out, blocks)
         out[#out + 1] = "    case " .. self.literal:c_emit_literal() .. ":"
         blocks[self.dest.text]:c_emit_transfer(out, self.args)
     end
+    function C.CBackendSwitchCase:c_emit_rewrite_aliases(aliases) local args = {}; for i = 1, #self.args do args[i] = self.args[i]:c_emit_rewrite_aliases(aliases) end; return C.CBackendSwitchCase(self.literal, self.dest, args) end
+    function C.CBackendSwitchCase:c_emit_collect_used_locals(used) for i = 1, #self.args do self.args[i]:c_emit_collect_used_locals(used) end end
     function C.CBackendSwitchGoto:c_emit_collect_transfer_scratch(blocks, scratch)
         for i = 1, #self.cases do self.cases[i]:c_emit_collect_transfer_scratch(blocks, scratch) end
         blocks[self.default_dest.text]:c_emit_note_transfer_scratch(self.default_args, scratch)
+    end
+    function C.CBackendSwitchGoto:c_emit_collect_transfer_edges(edges)
+        for i = 1, #self.cases do self.cases[i]:c_emit_collect_transfer_edges(edges) end
+        edges[#edges + 1] = { dest = self.default_dest.text, args = self.default_args }
     end
     function C.CBackendSwitchGoto:c_emit_term(out, blocks)
         out[#out + 1] = "    switch (" .. self.value:c_emit_atom() .. ") {"
@@ -324,9 +523,34 @@ local function bind_context(T)
         blocks[self.default_dest.text]:c_emit_transfer(out, self.default_args)
         out[#out + 1] = "    }"
     end
+    function C.CBackendSwitchGoto:c_emit_rewrite_aliases(aliases)
+        local cases, default_args = {}, {}
+        for i = 1, #self.cases do cases[i] = self.cases[i]:c_emit_rewrite_aliases(aliases) end
+        for i = 1, #self.default_args do default_args[i] = self.default_args[i]:c_emit_rewrite_aliases(aliases) end
+        return C.CBackendSwitchGoto(self.value:c_emit_rewrite_aliases(aliases), cases, self.default_dest, default_args)
+    end
+    function C.CBackendSwitchGoto:c_emit_collect_used_locals(used) self.value:c_emit_collect_used_locals(used); for i = 1, #self.cases do self.cases[i]:c_emit_collect_used_locals(used) end; for i = 1, #self.default_args do self.default_args[i]:c_emit_collect_used_locals(used) end end
     function C.CBackendReturnVoid:c_emit_term(out) out[#out + 1] = "    return;" end
     function C.CBackendReturn:c_emit_term(out) out[#out + 1] = "    return " .. self.value:c_emit_atom() .. ";" end
+    function C.CBackendReturn:c_emit_rewrite_aliases(aliases) return C.CBackendReturn(self.value:c_emit_rewrite_aliases(aliases)) end
+    function C.CBackendReturn:c_emit_collect_used_locals(used) self.value:c_emit_collect_used_locals(used) end
     function C.CBackendTrap:c_emit_term(out) out[#out + 1] = "    abort();" end
+    function C.CBackendTerminator:c_emit_term_optimized(out, blocks, ctx) self:c_emit_term(out, blocks) end
+    function C.CBackendIfGoto:c_emit_term_optimized(out, blocks, ctx)
+        out[#out + 1] = "    if (" .. self.cond:c_emit_inline_expr(ctx) .. ") {"
+        local nested = {}; blocks[self.then_dest.text]:c_emit_transfer(nested, self.then_args); for i = 1, #nested do out[#out + 1] = "    " .. nested[i] end
+        out[#out + 1] = "    } else {"
+        nested = {}; blocks[self.else_dest.text]:c_emit_transfer(nested, self.else_args); for i = 1, #nested do out[#out + 1] = "    " .. nested[i] end
+        out[#out + 1] = "    }"
+    end
+    function C.CBackendSwitchGoto:c_emit_term_optimized(out, blocks, ctx)
+        out[#out + 1] = "    switch (" .. self.value:c_emit_inline_expr(ctx) .. ") {"
+        for i = 1, #self.cases do self.cases[i]:c_emit_case(out, blocks) end
+        out[#out + 1] = "    default:"
+        blocks[self.default_dest.text]:c_emit_transfer(out, self.default_args)
+        out[#out + 1] = "    }"
+    end
+    function C.CBackendReturn:c_emit_term_optimized(out, blocks, ctx) out[#out + 1] = "    return " .. self.value:c_emit_inline_expr(ctx) .. ";" end
 
     function C.CBackendFuncBody:c_emit_blocks() error("missing c_emit_blocks leaf method", 2) end
     function C.CBackendBodyBlocks:c_emit_blocks() return self.blocks end
@@ -403,7 +627,198 @@ local function bind_context(T)
     local function sig_by_id(unit) local out = {}; for i = 1, #unit.sigs do out[unit.sigs[i].id.text] = unit.sigs[i] end; return out end
     local function sig_params(params) local out = {}; if #params == 0 then return "void" end; for i = 1, #params do out[i] = params[i]:c_emit_type() end; return table.concat(out, ", ") end
     local function func_params(params) local out = {}; if #params == 0 then return "void" end; for i = 1, #params do out[i] = params[i].ty:c_emit_decl(params[i].id.text) end; return table.concat(out, ", ") end
-    local function emit_local_decl(out, local_id, ty) if ty:c_emit_needs_compound_decl_only() then out[#out + 1] = "    " .. ty:c_emit_decl(local_id) .. ";" else out[#out + 1] = "    " .. ty:c_emit_decl(local_id) .. " = 0;" end end
+    local function emit_local_decl(out, local_id, ty) out[#out + 1] = "    " .. ty:c_emit_decl(local_id) .. ";" end
+
+    local function fresh_local_id(existing, prefix)
+        local n = 1
+        local candidate = prefix
+        while existing[candidate] do
+            n = n + 1
+            candidate = prefix .. "_" .. tostring(n)
+        end
+        existing[candidate] = true
+        return C.CBackendLocalId(candidate)
+    end
+
+    local function invalidate_aliases_for_assignment(aliases, assigned)
+        if assigned == nil then return end
+        aliases[assigned] = nil
+        for name, atom in pairs(aliases) do
+            if atom:c_emit_alias_source_text() == assigned then aliases[name] = nil end
+        end
+    end
+
+    local function copy_propagate_block(block, local_types)
+        local aliases, stmts = {}, {}
+        for i = 1, #(block.stmts or {}) do
+            local stmt = block.stmts[i]:c_emit_rewrite_aliases(aliases)
+            local assigned = stmt:c_emit_assigned_local()
+            invalidate_aliases_for_assignment(aliases, assigned)
+            local alias = stmt:c_emit_copy_alias(local_types)
+            if alias ~= nil then aliases[assigned] = alias end
+            stmts[#stmts + 1] = stmt
+        end
+        return C.CBackendBlock(block.label, block.params, stmts, block.term:c_emit_rewrite_aliases(aliases))
+    end
+
+    local function copy_propagate_blocks(f_blocks, local_types)
+        local out = {}
+        for i = 1, #(f_blocks or {}) do out[i] = copy_propagate_block(f_blocks[i], local_types) end
+        return out
+    end
+
+    local function collect_used_locals(f_blocks)
+        local used = {}
+        for i = 1, #(f_blocks or {}) do
+            for j = 1, #(f_blocks[i].stmts or {}) do f_blocks[i].stmts[j]:c_emit_collect_used_locals(used) end
+            f_blocks[i].term:c_emit_collect_used_locals(used)
+        end
+        return used
+    end
+
+    local function remove_dead_copy_assigns(f_blocks)
+        local used = collect_used_locals(f_blocks)
+        local out = {}
+        for i = 1, #(f_blocks or {}) do
+            local b, stmts = f_blocks[i], {}
+            for j = 1, #(b.stmts or {}) do
+                if not b.stmts[j]:c_emit_is_dead_copy_assign(used) then stmts[#stmts + 1] = b.stmts[j] end
+            end
+            out[i] = C.CBackendBlock(b.label, b.params, stmts, b.term)
+        end
+        return out
+    end
+
+    local function block_use_counts(block)
+        local used = { __count = true }
+        for i = 1, #(block.stmts or {}) do block.stmts[i]:c_emit_collect_used_locals(used) end
+        block.term:c_emit_collect_used_locals(used)
+        return used
+    end
+
+    local function block_defs(block)
+        local defs = {}
+        for i = 1, #(block.stmts or {}) do
+            local dst = block.stmts[i]:c_emit_assigned_local()
+            if dst ~= nil and block.stmts[i]:c_emit_inline_expr({ expr_for_local = function() return nil end }) ~= nil then
+                if defs[dst] == nil then defs[dst] = i else defs[dst] = false end
+            end
+        end
+        return defs
+    end
+
+    local function emit_block_stmts_and_term(out, block, blocks, local_types)
+        local used = block_use_counts(block)
+        local defs = block_defs(block)
+        local removed, resolving = {}, {}
+        local ctx = {}
+        function ctx:expr_for_local(name)
+            if (used[name] or 0) ~= 1 or resolving[name] then return nil end
+            local idx = defs[name]
+            if type(idx) ~= "number" then return nil end
+            resolving[name] = true
+            local expr = block.stmts[idx]:c_emit_inline_expr(ctx)
+            resolving[name] = nil
+            if expr ~= nil then removed[idx] = true end
+            return expr
+        end
+        local term_out = {}
+        block.term:c_emit_term_optimized(term_out, blocks, ctx)
+        for j = 1, #(block.stmts or {}) do if not removed[j] then block.stmts[j]:c_emit_stmt(out, blocks, local_types) end end
+        for j = 1, #term_out do out[#out + 1] = term_out[j] end
+    end
+
+    local function transfer_edges_by_dest(f_blocks)
+        local edges, by_dest = {}, {}
+        for i = 1, #(f_blocks or {}) do f_blocks[i].term:c_emit_collect_transfer_edges(edges) end
+        for i = 1, #edges do
+            local dest = edges[i].dest
+            by_dest[dest] = by_dest[dest] or {}
+            by_dest[dest][#by_dest[dest] + 1] = edges[i]
+        end
+        return by_dest
+    end
+
+    local function compute_transfer_equivalence(func, f_blocks)
+        local alias, block_by_label = {}, {}
+        for i = 1, #(func.params or {}) do alias[func.params[i].id.text] = func.params[i].id.text end
+        for i = 1, #(func.locals or {}) do alias[func.locals[i].id.text] = func.locals[i].id.text end
+        for i = 1, #(f_blocks or {}) do
+            block_by_label[f_blocks[i].label.text] = f_blocks[i]
+            for j = 1, #(f_blocks[i].params or {}) do alias[f_blocks[i].params[j].local_id.text] = f_blocks[i].params[j].local_id.text end
+        end
+        local function root(name)
+            local cur, seen = name, {}
+            while alias[cur] ~= nil and alias[cur] ~= cur and not seen[cur] do seen[cur] = true; cur = alias[cur] end
+            return cur
+        end
+        local by_dest = transfer_edges_by_dest(f_blocks)
+        local changed = true
+        local limit = (#(f_blocks or {}) + 1) * 8
+        while changed and limit > 0 do
+            changed = false
+            limit = limit - 1
+            for i = 1, #(f_blocks or {}) do
+                local block = f_blocks[i]
+                local preds = by_dest[block.label.text] or {}
+                for j = 1, #(block.params or {}) do
+                    local param = block.params[j].local_id.text
+                    local chosen, invalid = nil, false
+                    for k = 1, #preds do
+                        local arg = preds[k].args[j]
+                        local src = arg and arg:c_emit_local_text() or nil
+                        if src == nil then invalid = true; break end
+                        if src ~= param then
+                            local src_root = root(src)
+                            if chosen == nil then chosen = src_root elseif chosen ~= src_root then invalid = true; break end
+                        end
+                    end
+                    if not invalid and chosen ~= nil and root(param) ~= chosen then alias[param] = chosen; changed = true end
+                end
+            end
+        end
+        return root
+    end
+
+    local function plan_field_hoists(func, f_blocks)
+        local canonical = compute_transfer_equivalence(func, f_blocks)
+        local state = { param_locals = {}, existing = {}, candidates = {}, order = {}, call_arg_locals = {}, blocked_fields = {}, blocked_bases = {} }
+        function state:canonical_local(name) return canonical(name) end
+        function state:mark_assigned(name) self.blocked_bases[self:canonical_local(name)] = true end
+        function state:mark_base_clobber(name) self.blocked_bases[self:canonical_local(name)] = true end
+        for i = 1, #(func.params or {}) do state.param_locals[func.params[i].id.text] = true; state.existing[func.params[i].id.text] = true end
+        for i = 1, #(func.locals or {}) do state.existing[func.locals[i].id.text] = true end
+        for i = 1, #(f_blocks or {}) do
+            for j = 1, #(f_blocks[i].params or {}) do state.existing[f_blocks[i].params[j].local_id.text] = true end
+            for j = 1, #(f_blocks[i].stmts or {}) do f_blocks[i].stmts[j]:c_emit_collect_field_hoist_state(state) end
+        end
+        local call_arg_roots = {}
+        for name in pairs(state.call_arg_locals) do call_arg_roots[state:canonical_local(name)] = true end
+        local hoists, by_key = {}, {}
+        for i = 1, #state.order do
+            local key = state.order[i]
+            local candidate = state.candidates[key]
+            if candidate.count >= 3 and state.param_locals[candidate.base] and not call_arg_roots[candidate.base] and not state.blocked_bases[candidate.base] and not state.blocked_fields[key] then
+                local id = fresh_local_id(state.existing, "__hoist_field_" .. tostring(#hoists + 1))
+                local local_ = C.CBackendLocal(id, C.CBackendName(id.text), candidate.ty)
+                local hoist = { key = key, local_id = id, local_ = local_, init = C.CBackendPlaceLoad(id, candidate.place) }
+                hoists[#hoists + 1] = hoist
+                by_key[key] = hoist
+            end
+        end
+        if #hoists == 0 then return f_blocks, {} end
+        local rewritten = {}
+        for i = 1, #f_blocks do
+            local b = f_blocks[i]
+            local stmts = {}
+            if i == 1 then for j = 1, #hoists do stmts[#stmts + 1] = hoists[j].init end end
+            for j = 1, #(b.stmts or {}) do stmts[#stmts + 1] = b.stmts[j]:c_emit_apply_field_hoists(by_key, function(name) return canonical(name) end) end
+            rewritten[i] = C.CBackendBlock(b.label, b.params, stmts, b.term)
+        end
+        local locals = {}
+        for i = 1, #hoists do locals[i] = hoists[i].local_ end
+        return rewritten, locals
+    end
 
     function C.CBackendFunc:c_emit_func(sigs, out)
         local sig = sigs[self.sig.text]
@@ -416,12 +831,19 @@ local function bind_context(T)
             if sig.result:c_emit_is_void() then out[#out + 1] = "    return;" elseif result then out[#out + 1] = "    return " .. result.text .. ";" else error("c_emit: non-void exec function has no exec result", 2) end
             out[#out + 1] = "}"; return
         elseif body_kind == "mixed" then for i = 1, #self.body.fragments do self.body.fragments[i]:c_emit_exec_site(out) end end
-        local f_blocks = self.body:c_emit_blocks(); local blocks = {}; for i = 1, #f_blocks do blocks[f_blocks[i].label.text] = f_blocks[i] end
+        local f_blocks = self.body:c_emit_blocks()
+        local hoist_locals
+        f_blocks, hoist_locals = plan_field_hoists(self, f_blocks)
+        for i = 1, #(hoist_locals or {}) do local_types[hoist_locals[i].id.text] = hoist_locals[i].ty end
+        for i = 1, #f_blocks do for j = 1, #f_blocks[i].params do local_types[f_blocks[i].params[j].local_id.text] = f_blocks[i].params[j].ty end end
+        if #(hoist_locals or {}) > 0 then f_blocks = remove_dead_copy_assigns(copy_propagate_blocks(f_blocks, local_types)) end
+        local blocks = {}; for i = 1, #f_blocks do blocks[f_blocks[i].label.text] = f_blocks[i] end
         local scratch = { by_name = {}, order = {} }
         for i = 1, #f_blocks do f_blocks[i].term:c_emit_collect_transfer_scratch(blocks, scratch) end
-        for i = 1, #f_blocks do for j = 1, #f_blocks[i].params do local_types[f_blocks[i].params[j].local_id.text] = f_blocks[i].params[j].ty; emit_local_decl(out, f_blocks[i].params[j].local_id.text, f_blocks[i].params[j].ty) end end
+        for i = 1, #(hoist_locals or {}) do emit_local_decl(out, hoist_locals[i].id.text, hoist_locals[i].ty) end
+        for i = 1, #f_blocks do for j = 1, #f_blocks[i].params do emit_local_decl(out, f_blocks[i].params[j].local_id.text, f_blocks[i].params[j].ty) end end
         for i = 1, #scratch.order do local name = scratch.order[i]; local_types[name] = scratch.by_name[name]; emit_local_decl(out, name, scratch.by_name[name]) end
-        for i = 1, #f_blocks do local b = f_blocks[i]; out[#out + 1] = b.label.text .. ":"; for j = 1, #b.stmts do b.stmts[j]:c_emit_stmt(out, blocks, local_types) end; b.term:c_emit_term(out, blocks) end
+        for i = 1, #f_blocks do local b = f_blocks[i]; out[#out + 1] = b.label.text .. ":"; emit_block_stmts_and_term(out, b, blocks, local_types) end
         out[#out + 1] = "}"
     end
 

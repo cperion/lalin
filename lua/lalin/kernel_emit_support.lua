@@ -63,6 +63,10 @@ local function bind_context(T)
         seen[expr] = true
         local cls = asdl.classof(expr)
         if cls == Value.ValueExprConst or cls == Value.ValueExprValue then return true end
+        if cls == Value.ValueExprCast then
+            if not is_scalar_code_ty(expr.to) then return false, "non-scalar cast target type" end
+            return value_expr_supported(expr.value, seen)
+        end
         if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul then
             if not is_scalar_code_ty(expr.ty) then return false, "non-scalar arithmetic type in " .. class_name(expr) end
             local ok, reason = value_expr_supported(expr.a, seen); if not ok then return false, reason end
