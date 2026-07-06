@@ -241,6 +241,11 @@ return schema. LalinTree {
       base [LalinBind.Binding],
       len [LalinBind.Binding],
     },
+    ContractFactExprBounds {
+      variant_unique,
+      base [LalinTree.Expr],
+      len [LalinTree.Expr],
+    },
     ContractFactWindowBounds {
       variant_unique,
       base [LalinBind.Binding],
@@ -260,6 +265,8 @@ return schema. LalinTree {
     ContractFactNoAlias { variant_unique, base [LalinBind.Binding], },
     ContractFactReadonly { variant_unique, base [LalinBind.Binding], },
     ContractFactWriteonly { variant_unique, base [LalinBind.Binding], },
+    ContractFactExprReadonly { variant_unique, base [LalinTree.Expr], },
+    ContractFactExprWriteonly { variant_unique, base [LalinTree.Expr], },
     ContractFactInvalidate { variant_unique, base [LalinBind.Binding], },
     ContractFactPreserve { variant_unique, base [LalinBind.Binding], },
     ContractFactRejected { variant_unique, issue [LalinTree.TypeIssue], },
@@ -295,6 +302,7 @@ return schema. LalinTree {
     field. name [str],
     params [many [LalinType.Param]],
     conts [many [LalinTree.RegionCont]],
+    contracts [many [LalinTree.FuncContract]],
     entry [LalinTree.EntryControlBlock],
     blocks [many [LalinTree.ControlBlock]],
   },

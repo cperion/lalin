@@ -91,6 +91,10 @@ return schema. LalinCMat {
       local_id [LalinCMat.CMatLocalId],
       field. ty [LalinCode.CodeType],
     },
+    CMatSinkControlResult {
+      variant_unique,
+      sink [LalinStencil.StencilSinkRef],
+    },
   },
 
   product. CMatFusedKernel {

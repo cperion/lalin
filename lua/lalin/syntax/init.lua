@@ -395,10 +395,17 @@ function LalinSyntax.to_module(parsed_decls, name, T)
       for i, b in ipairs(block_src) do
         blocks[i] = Tr.ControlBlock(Tr.BlockLabel(b.name), block_params(b.state or {}), region_stmts(b.body or {}, cont_by_name))
       end
+      local contracts = {}
+      for _, stmt in ipairs(parsed.contracts or {}) do
+        if stmt.tag == "StmtRequires" then
+          for _, expr in ipairs(stmt.exprs or {}) do contracts[#contracts + 1] = contract_from_expr(expr) end
+        end
+      end
       return Tr.ItemRegion(Tr.Region(
         rname,
         params,
         conts,
+        contracts,
         Tr.EntryControlBlock(Tr.BlockLabel(entry_src.name), entry_params(entry_src.state or {}), region_stmts(entry_src.body or {}, cont_by_name)),
         blocks))
     end

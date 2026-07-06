@@ -324,6 +324,15 @@ local function bind_context(T)
         elseif kind_name == "scalar_index" or kind_name == "scalar_pointer" then
             if asdl.classof(result) == Kernel.KernelResultClosedForm then rejects[#rejects + 1] = reject_algebra("closed-form result must use ScheduleClosedForm") end
             if body and body.domain and body.domain.counter == nil then rejects[#rejects + 1] = reject_algebra("scalar kernel requires loop counter") end
+            if asdl.classof(result) == Kernel.KernelResultAll or asdl.classof(result) == Kernel.KernelResultAny or asdl.classof(result) == Kernel.KernelResultFind then
+                local ok, reason = kernel_expr_supported(result.src)
+                if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
+            elseif asdl.classof(result) == Kernel.KernelResultAllCompare then
+                local ok, reason = kernel_expr_supported(result.left)
+                if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
+                ok, reason = kernel_expr_supported(result.right)
+                if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
+            end
             if #(body and body.effects or {}) == 0 and asdl.classof(result) == Kernel.KernelResultOriginalControl then rejects[#rejects + 1] = reject_profit("scalar kernel has no executable effects/result") end
         elseif kind_name == "vector_contiguous" then
             local sk = asdl.classof(schedule_kind) == Schedule.ScheduleVector and schedule_kind or nil

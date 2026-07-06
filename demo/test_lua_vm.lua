@@ -69,6 +69,8 @@ assert(artifact.source:find("sem_addr_", 1, true), "LuaVM dispatch instruction f
 assert(artifact.source:find("sem_car_", 1, true), "LuaVM dispatch pc must use compact carried LowerCarrierPlan state")
 assert(artifact.source:find("+ ((ml_index)0) * 1 + 12", 1, true), "LuaVM ADD fallthrough must carry instruction address by byte stride")
 assert(artifact.source:find("ml_index_add_intwrap", 1, true), "LuaVM dispatch should use semantic helper identity names")
+assert(artifact.source:find("semantic scalar CMat kernel kernel:loop___lalin_region_call_LuaString_eq", 1, true), "LuaString.eq byte loop must lower through generic inline CMat/SOAC")
+assert(artifact.source:find("v___lalin_region_call_LuaString_eq_field10[v___lalin_region_call_LuaString_eq_control_param_region_seal_LuaString_eq_loop_i] == v___lalin_region_call_LuaString_eq_field12[v___lalin_region_call_LuaString_eq_control_param_region_seal_LuaString_eq_loop_i]", 1, true), "LuaString.eq CMat all-compare sink must emit the byte predicate")
 assert(not artifact.source:find("ml_code_helper_", 1, true), "LuaVM dispatch must not regress to numbered helper names")
 assert(not artifact.source:find("semantic_address_address_fn___lalin_region_call_LuaVM_dispatch", 1, true), "LuaVM dispatch must not regress to huge carried address names")
 assert(not artifact.source:find(")[v___lalin_region_call_LuaVM_dispatch_control_param_region_bundle_LuaVM_dispatch___bundle_entry_LuaVM_dispatch_pc]", 1, true), "LuaVM dispatch instruction fetch must not regress to raw indexed pc access")

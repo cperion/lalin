@@ -38,6 +38,7 @@ region LuaString.eq(lhs [ptr [LuaString]], rhs [ptr [LuaString]];
   yes,
   no
 )
+  requires bounds(lhs.bytes)(lhs.len), readonly(lhs.bytes), bounds(rhs.bytes)(rhs.len), readonly(rhs.bytes)
   entry start()
     if lhs.len ~= rhs.len then
       jump no

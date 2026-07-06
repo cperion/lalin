@@ -535,12 +535,27 @@ local function bind_context(T)
         c_emission.blocks[#c_emission.blocks + 1] = C.CBackendBlock(clabel(loop.header.block), c_block_params(c_emission, header), c_emission.stmts, C.CBackendGoto(clabel(jump_dest), args))
     end
 
+    function Kernel.KernelResult:lower_c_is_control_result() return false end
+    function Kernel.KernelResultAll:lower_c_is_control_result() return true end
+    function Kernel.KernelResultAllCompare:lower_c_is_control_result() return true end
+    function Kernel.KernelResultAny:lower_c_is_control_result() return true end
+    function Kernel.KernelResultFind:lower_c_is_control_result() return true end
+
     local function loop_partition(c_emission, graph, flow, kplan)
         local loop = graph_loop_by_id(graph)[kplan.subject.loop.text]
-        if loop == nil or #(loop.latches or {}) ~= 1 or #(loop.exits or {}) ~= 1 then error("lower_to_c: kernel fragment requires one loop/latch/exit", 2) end
+        local result_name = tostring(kplan and kplan.body and kplan.body.result or "")
+        local control_result = kplan and kplan.body and kplan.body.result and kplan.body.result:lower_c_is_control_result() or false
+        if loop == nil or #(loop.latches or {}) ~= 1 or (#(loop.exits or {}) ~= 1 and not (control_result and #(loop.exits or {}) == 2)) then
+            local edges = {}
+            for _, e in ipairs(loop and loop.exits or {}) do edges[#edges + 1] = (e.from.block.text .. "->" .. e.to.block.text) end
+            error("lower_to_c: kernel fragment requires one loop/latch/exit (latches=" .. tostring(loop and #(loop.latches or {}) or 0) .. ", exits=" .. tostring(loop and #(loop.exits or {}) or 0) .. ", control=" .. tostring(control_result) .. ", result=" .. tostring(result_name) .. ", edges=" .. table.concat(edges, ",") .. ")", 2)
+        end
         local body_set = {}; for _, gb in ipairs(loop.body or {}) do body_set[gb.block.text] = true end
         local edge_facts = edge_fact_by_key(flow)
         local exit_edge, latch_edge = loop.exits[1], loop.latches[1]
+        if control_result then
+            for _, edge in ipairs(loop.exits or {}) do if edge.from.block == loop.header.block then exit_edge = edge end end
+        end
         local body_successor = nil
         for _, fg in ipairs(graph.funcs or {}) do
             if fg.func == loop.func then
@@ -1111,6 +1126,21 @@ local function bind_context(T)
         c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceStore(place, C.CBackendAtomLocal(old))
     end
 
+    local function lower_control_predicate_sink(op, c_emission, cmat, index_atom)
+        local value, vty = op.src:lower_c_inline_stream(c_emission, cmat, index_atom)
+        local pred = op.pred:lower_c_inline_pred(c_emission, cmat, index_atom, value, vty)
+        cmat.control_pred = pred
+    end
+    function Stencil.StencilSinkOpAll:lower_c_inline_sink(c_emission, cmat, index_atom)
+        lower_control_predicate_sink(self, c_emission, cmat, index_atom)
+    end
+    function Stencil.StencilSinkOpAny:lower_c_inline_sink(c_emission, cmat, index_atom)
+        lower_control_predicate_sink(self, c_emission, cmat, index_atom)
+    end
+    function Stencil.StencilSinkOpFind:lower_c_inline_sink(c_emission, cmat, index_atom)
+        lower_control_predicate_sink(self, c_emission, cmat, index_atom)
+    end
+
     function Stencil.StencilComputation:lower_c_inline_computation(c_emission, cmat, index_atom)
         cmat.computation = self
         cmat.stream_by_id = {}
@@ -1245,6 +1275,58 @@ local function bind_context(T)
         return cmat_context_for_computation(computation, access_by_name)
     end
 
+    local function cmat_control_kernel(c_emission, kplan, loop_fact, result, op_name)
+        local state = cmat_state_for_kernel(kplan)
+        local expr = result.src:lower_c_stencil_point(state)
+        local stream = Stencil.StencilStreamDef(Stencil.StencilStreamId("control"), result.src:lower_c_stencil_point_ty(state), Stencil.StencilStreamMap(expr, {}))
+        local stream_ref = Stencil.StencilStreamRef(stream.id)
+        local op = op_name == "any" and Stencil.StencilSinkOpAny(stream_ref, result.pred)
+            or (op_name == "find" and Stencil.StencilSinkOpFind(stream_ref, result.pred) or Stencil.StencilSinkOpAll(stream_ref, result.pred))
+        local sink = Stencil.StencilSinkDef(Stencil.StencilSinkId(op_name or "all"), op)
+        local accesses, streams = {}, { stream }
+        for _, access in ipairs(state.reads) do accesses[#accesses + 1] = access.source end
+        local computation = Stencil.StencilComputation(
+            Stencil.StencilMetastencilId("cmat:" .. sanitize(kplan.id.text) .. ":" .. sanitize(op_name or "all")),
+            producer_from_loop(loop_fact),
+            accesses,
+            streams,
+            { sink },
+            Stencil.StencilFusionLegality({}, {}, {}),
+            default_stencil_schedule(),
+            kplan.body.equivalence and kplan.body.equivalence.proofs or {}
+        )
+        note_cmat_param_qualifiers(c_emission, computation, state.reads)
+        local access_by_name = {}
+        for _, access in ipairs(state.reads) do access_by_name[access.access.name] = access end
+        return cmat_context_for_computation(computation, access_by_name)
+    end
+
+    local function cmat_control_compare_kernel(c_emission, kplan, loop_fact, result)
+        local state = cmat_state_for_kernel(kplan)
+        local left = result.left:lower_c_stencil_point(state)
+        local right = result.right:lower_c_stencil_point(state)
+        local ty = result.left:lower_c_stencil_point_ty(state) or result.right:lower_c_stencil_point_ty(state)
+        local expr = Stencil.StencilPointCompare(result.cmp, left, right, Code.CodeTyBool8)
+        local stream = Stencil.StencilStreamDef(Stencil.StencilStreamId("control"), Code.CodeTyBool8, Stencil.StencilStreamMap(expr, {}))
+        local sink = Stencil.StencilSinkDef(Stencil.StencilSinkId("all"), Stencil.StencilSinkOpAll(Stencil.StencilStreamRef(stream.id), Stencil.StencilPredNonZero))
+        local accesses, streams = {}, { stream }
+        for _, access in ipairs(state.reads) do accesses[#accesses + 1] = access.source end
+        local computation = Stencil.StencilComputation(
+            Stencil.StencilMetastencilId("cmat:" .. sanitize(kplan.id.text) .. ":all_compare"),
+            producer_from_loop(loop_fact),
+            accesses,
+            streams,
+            { sink },
+            Stencil.StencilFusionLegality({}, {}, {}),
+            default_stencil_schedule(),
+            kplan.body.equivalence and kplan.body.equivalence.proofs or {}
+        )
+        note_cmat_param_qualifiers(c_emission, computation, state.reads)
+        local access_by_name = {}
+        for _, access in ipairs(state.reads) do access_by_name[access.access.name] = access end
+        return cmat_context_for_computation(computation, access_by_name)
+    end
+
     function Kernel.KernelEffect:lower_c_emit_inline_cmat(_c_emission, _kplan, _loop_fact, _index_atom)
         error("lower_to_c: KernelEffect has no inline CMat materialization", 2)
     end
@@ -1320,6 +1402,20 @@ local function bind_context(T)
     function Kernel.KernelResult:lower_c_reduction_fact() return nil end
     function Kernel.KernelResultReduction:lower_c_reduction_fact() return self.reduction end
 
+    function Kernel.KernelResult:lower_c_control_state(_c_emission, _kplan, _loop_fact) return nil end
+    function Kernel.KernelResultAll:lower_c_control_state(c_emission, kplan, loop_fact)
+        return { result = self, cmat = cmat_control_kernel(c_emission, kplan, loop_fact, self, "all") }
+    end
+    function Kernel.KernelResultAllCompare:lower_c_control_state(c_emission, kplan, loop_fact)
+        return { result = self, cmat = cmat_control_compare_kernel(c_emission, kplan, loop_fact, self) }
+    end
+    function Kernel.KernelResultAny:lower_c_control_state(c_emission, kplan, loop_fact)
+        return { result = self, cmat = cmat_control_kernel(c_emission, kplan, loop_fact, self, "any") }
+    end
+    function Kernel.KernelResultFind:lower_c_control_state(c_emission, kplan, loop_fact)
+        return { result = self, cmat = cmat_control_kernel(c_emission, kplan, loop_fact, self, "find") }
+    end
+
     local function reduction_state_for_kernel(c_emission, kplan, loop_fact)
         local reduction = kplan.body.result:lower_c_reduction_fact()
         if reduction == nil then return nil end
@@ -1356,6 +1452,8 @@ local function bind_context(T)
         c_emission.active_address_plans = active_addresses_for_kernel(c_emission, kplan)
         local bindings_by_block, effects_by_block = place_bindings_effects(c_emission, kplan)
         local reduction_state = reduction_state_for_kernel(c_emission, kplan, loop_fact)
+        local control_state = kplan.body.result:lower_c_control_state(c_emission, kplan, loop_fact)
+        local control_emitted = false
         local data_bindings = binding_index_for_body(kplan)
         local header_block = c_emission.block_by_id[loop.header.block.text]
         c_emission.current_code_block_id = loop.header.block
@@ -1372,14 +1470,32 @@ local function bind_context(T)
                 bind_control_values(c_emission, data_bindings, bindings_by_block, block.id)
                 for _, e in ipairs(effects_by_block[block.id.text] or {}) do emit_inline_cmat_effect(c_emission, kplan, loop_fact, e, atom(kplan.body.domain.counter)) end
                 if block.id == latch_edge.from.block then emit_reduction_update(c_emission, reduction_state, atom(kplan.body.domain.counter)) end
+                local term_op = block.term and block.term.op or nil
                 local term
-                if block.id == latch_edge.from.block then
+                if control_state ~= nil and asdl.classof(term_op) == Code.CodeTermBranch then
+                    local cmat = control_state.cmat
+                    cmat.control_pred = nil
+                    cmat.computation:lower_c_inline_computation(c_emission, cmat, atom(kplan.body.domain.counter))
+                    if cmat.control_pred == nil then error("lower_to_c: control CMat sink did not produce a predicate", 2) end
+                    control_emitted = true
+                    term = C.CBackendIfGoto(cmat.control_pred, clabel(term_op.then_dest), edge_args_with_reduction(reduction_state, edge_facts[block.id.text .. "\0" .. term_op.then_dest.text]), clabel(term_op.else_dest), edge_args_with_reduction(reduction_state, edge_facts[block.id.text .. "\0" .. term_op.else_dest.text]))
+                elseif block.id == latch_edge.from.block then
                     term = C.CBackendGoto(clabel(loop.header.block), edge_args_with_reduction(reduction_state, edge_facts[latch_edge.from.block.text .. "\0" .. latch_edge.to.block.text]))
                 else
                     local next_edge = nil
                     for _, fg in ipairs(graph.funcs or {}) do if fg.func == loop.func then for _, edge in ipairs(fg.edges or {}) do if edge.from.block == block.id and body_set[edge.to.block.text] then next_edge = edge end end end end
                     if next_edge == nil then error("lower_to_c: scalar kernel body block has no in-loop successor", 2) end
-                    term = C.CBackendGoto(clabel(next_edge.to.block), edge_args_with_reduction(reduction_state, edge_facts[next_edge.from.block.text .. "\0" .. next_edge.to.block.text]))
+                    if control_state ~= nil and not control_emitted then
+                        local cmat = control_state.cmat
+                        cmat.control_pred = nil
+                        cmat.computation:lower_c_inline_computation(c_emission, cmat, atom(kplan.body.domain.counter))
+                        if cmat.control_pred == nil then error("lower_to_c: control CMat sink did not produce a predicate", 2) end
+                        local result = control_state.result
+                        control_emitted = true
+                        term = C.CBackendIfGoto(cmat.control_pred, clabel(next_edge.to.block), edge_args_with_reduction(reduction_state, edge_facts[next_edge.from.block.text .. "\0" .. next_edge.to.block.text]), clabel(result.failure), edge_args_with_reduction(reduction_state, edge_facts[block.id.text .. "\0" .. result.failure.text]))
+                    else
+                        term = C.CBackendGoto(clabel(next_edge.to.block), edge_args_with_reduction(reduction_state, edge_facts[next_edge.from.block.text .. "\0" .. next_edge.to.block.text]))
+                    end
                 end
                 c_emission.blocks[#c_emission.blocks + 1] = C.CBackendBlock(clabel(block.id), c_block_params(c_emission, block), c_emission.stmts, term)
             end

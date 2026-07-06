@@ -143,21 +143,43 @@ local function bind_context(T)
         return contracts
     end
 
+    local function place_key(place)
+        local cls = asdl.classof(place)
+        if cls == Code.CodePlaceLocal then return "local:" .. place.local_id.text end
+        if cls == Code.CodePlaceGlobal then return "global:" .. place.global.text end
+        if cls == Code.CodePlaceData then return "data:" .. place.data.text end
+        if cls == Code.CodePlaceDeref then return "deref:" .. place.addr.text end
+        if cls == Code.CodePlaceField then return "field:" .. tostring(place.offset or 0) .. ":" .. place_key(place.base) end
+        if cls == Code.CodePlaceIndex then return "index:" .. place.index.text .. ":" .. tostring(place.elem_size or 0) .. ":" .. place_key(place.base) end
+        if cls == Code.CodePlaceBytes then return "bytes:" .. place.base.text .. ":" .. tostring(place.offset or 0) .. ":" .. tostring(place.size or 0) end
+        return tostring(place)
+    end
+
+    local function contract_expr_key(expr)
+        local cls = asdl.classof(expr)
+        if cls == Code.CodeContractValueRef then return expr.value and ("value:" .. expr.value.text) or nil end
+        if cls == Code.CodeContractPlaceLoad then return expr.place and ("place:" .. place_key(expr.place)) or nil end
+        return nil
+    end
+
     local function contract_index(contracts)
-        local idx = { bounds = {}, window = {}, same_len = {}, disjoint = {}, soa = {}, noalias = {}, readonly = {}, writeonly = {}, by_func = {} }
+        local idx = { bounds = {}, projection_bounds = {}, window = {}, same_len = {}, disjoint = {}, soa = {}, noalias = {}, readonly = {}, writeonly = {}, projection_readonly = {}, projection_writeonly = {}, by_func = {} }
         for _, f in ipairs(contract_facts(contracts)) do
             idx.by_func[f.func.text] = idx.by_func[f.func.text] or {}
             idx.by_func[f.func.text][#idx.by_func[f.func.text] + 1] = f
             local k = f.fact
             local cls = asdl.classof(k)
             if cls == Code.CodeContractBounds then idx.bounds[f.func.text .. "\0" .. k.base.text] = f
+            elseif cls == Code.CodeContractProjectionBounds then local key = contract_expr_key(k.base); if key ~= nil then idx.projection_bounds[f.func.text .. "\0" .. key] = f end
             elseif cls == Code.CodeContractWindowBounds then idx.window[f.func.text .. "\0" .. k.base.text] = f
             elseif cls == Code.CodeContractSameLen then idx.same_len[#idx.same_len + 1] = f
             elseif cls == Code.CodeContractDisjoint then idx.disjoint[#idx.disjoint + 1] = f
             elseif cls == Code.CodeContractSoAComponent then idx.soa[f.func.text .. "\0" .. k.base.text] = f
             elseif cls == Code.CodeContractNoAlias then idx.noalias[f.func.text .. "\0" .. k.base.text] = f
             elseif cls == Code.CodeContractReadonly then idx.readonly[f.func.text .. "\0" .. k.base.text] = f
-            elseif cls == Code.CodeContractWriteonly then idx.writeonly[f.func.text .. "\0" .. k.base.text] = f end
+            elseif cls == Code.CodeContractWriteonly then idx.writeonly[f.func.text .. "\0" .. k.base.text] = f
+            elseif cls == Code.CodeContractProjectionReadonly then local key = contract_expr_key(k.base); if key ~= nil then idx.projection_readonly[f.func.text .. "\0" .. key] = f end
+            elseif cls == Code.CodeContractProjectionWriteonly then local key = contract_expr_key(k.base); if key ~= nil then idx.projection_writeonly[f.func.text .. "\0" .. key] = f end end
         end
         return idx
     end
@@ -309,6 +331,9 @@ local function bind_context(T)
             if form == Mem.MemObjectDerived and extent_cls ~= Mem.MemExtentUnknown then
                 return true, "derived object has explicit bounded extent"
             end
+            if form == Mem.MemObjectFieldPointer and extent_cls ~= Mem.MemExtentUnknown then
+                return true, "field-pointer projection has explicit bounded extent"
+            end
             if extent_cls == Mem.MemExtentUnknown then
                 return false, fact.extent.reason or "object extent is unknown"
             end
@@ -332,6 +357,22 @@ local function bind_context(T)
             local readonly_objects, writeonly_objects = {}, {}
             local consts = const_values(func)
             local value_index = CodeValueFacts.expr_index(value)
+            local load_by_place = {}
+            for _, block in ipairs(func.blocks or {}) do
+                for _, inst in ipairs(block.insts or {}) do
+                    local k = inst.op
+                    if asdl.classof(k) == Code.CodeInstLoad and k.place ~= nil then
+                        local key = place_key(k.place)
+                        if load_by_place[key] == nil then load_by_place[key] = k.dst end
+                    end
+                end
+            end
+            local function value_for_contract_expr(expr)
+                local cls = asdl.classof(expr)
+                if cls == Code.CodeContractValueRef then return expr.value end
+                if cls == Code.CodeContractPlaceLoad and expr.place ~= nil then return load_by_place[place_key(expr.place)] end
+                return nil
+            end
             local scaled_index_stride = {}
             local same_store = {}
 
@@ -512,6 +553,24 @@ local function bind_context(T)
                         value_object[k.dst.text] = value_object[k.span.text]
                     elseif cls == Code.CodeInstLoad then
                         if asdl.classof(k.place) == Code.CodePlaceLocal and local_value_object[k.place.local_id.text] then value_object[k.dst.text] = local_value_object[k.place.local_id.text] end
+                        local pkey = "place:" .. place_key(k.place)
+                        local bounds_contract = cidx.projection_bounds[func.id.text .. "\0" .. pkey]
+                        local elem_ty = pointee_ty(k.access.ty)
+                        if bounds_contract ~= nil and elem_ty ~= nil and asdl.classof(k.place) == Code.CodePlaceField then
+                            local len = value_for_contract_expr(bounds_contract.fact.len)
+                            if len ~= nil then
+                                local owner = object_for_place(k.place)
+                                local id = object_id(func.name, "field_ptr", k.dst.text)
+                                value_object[k.dst.text] = id
+                                add_object(Mem.MemObjectFact(id, func.id, Mem.MemObjectFieldPointer, Mem.MemProvFieldPointer(owner or Mem.MemObjectId("unknown:" .. sanitize(k.dst.text)), k.place.field, k.dst), elem_ty, Mem.MemExtentElements(len, elem_ty, "CodeContractProjectionBounds field-pointer extent"), Mem.MemStrideUnit))
+                                if owner ~= nil then
+                                    local proof = Mem.MemProofObject(id, "field-pointer load has extent from projection bounds contract")
+                                    proofs[#proofs + 1] = proof
+                                    relations[#relations + 1] = Mem.MemObjectSameStore(id, owner, proof)
+                                    mark_same_store(id, owner)
+                                end
+                            end
+                        end
                     elseif cls == Code.CodeInstStore then
                         if asdl.classof(k.place) == Code.CodePlaceLocal then merge_local_value(k.place.local_id, value_object[k.value.text]) end
                     elseif cls == Code.CodeInstAlias then
@@ -592,6 +651,13 @@ local function bind_context(T)
                     if obj ~= nil then
                         if cls == Code.CodeContractReadonly then readonly_objects[obj.text] = true else writeonly_objects[obj.text] = true end
                         effects[#effects + 1] = (cls == Code.CodeContractReadonly and Mem.MemObjectReadonly(obj, proof) or Mem.MemObjectWriteonly(obj, proof))
+                    end
+                elseif cls == Code.CodeContractProjectionReadonly or cls == Code.CodeContractProjectionWriteonly then
+                    local value = value_for_contract_expr(k.base)
+                    local obj = value and value_object[value.text] or nil
+                    if obj ~= nil then
+                        if cls == Code.CodeContractProjectionReadonly then readonly_objects[obj.text] = true else writeonly_objects[obj.text] = true end
+                        effects[#effects + 1] = (cls == Code.CodeContractProjectionReadonly and Mem.MemObjectReadonly(obj, proof) or Mem.MemObjectWriteonly(obj, proof))
                     end
                 elseif cls == Code.CodeContractSameLen then
                     local a, b = value_object[k.a.text], value_object[k.b.text]

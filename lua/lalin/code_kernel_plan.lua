@@ -1027,6 +1027,87 @@ local function bind_context(T)
         return Kernel.KernelSkeletonFind({}, Kernel.KernelResultFind(hit_src, hit_pred, not_found))
     end
 
+    local function infer_all_skeleton(func, graph_loop, loop, projection, value_index, proofs)
+        if graph_loop == nil or #(graph_loop.exits or {}) ~= 2 then return nil end
+        local blocks = block_index(func)
+        local body = {}
+        for _, gb in ipairs(graph_loop.body or {}) do body[gb.block.text] = true end
+        local success, failure, src, pred, cmp_left, cmp_right, cmp_op = nil, nil, nil, nil, nil, nil, nil
+        for _, edge in ipairs(graph_loop.exits or {}) do
+            local from_id, to_id = edge.from.block, edge.to.block
+            local from = blocks[from_id.text]
+            local term = from and from.term and from.term.op or nil
+            if from_id.text == graph_loop.header.block.text then
+                success = to_id
+            elseif asdl.classof(term) == Code.CodeTermBranch then
+                failure = to_id
+                local in_loop_dest, in_loop_polarity = nil, nil
+                if body[term.then_dest.text] then in_loop_dest, in_loop_polarity = term.then_dest, true end
+                if body[term.else_dest.text] then in_loop_dest, in_loop_polarity = term.else_dest, false end
+                if in_loop_dest ~= nil then
+                    src, pred = find_predicate_from_cond(term.cond, in_loop_polarity, projection, value_index)
+                end
+                if src == nil or pred == nil then
+                    local expr = value_index:expr_for_value_or_nil(term.cond)
+                    if asdl.classof(expr) == Value.ValueExprCmp then
+                        local op = in_loop_polarity and expr.op or invert_cmp(expr.op)
+                        cmp_left, cmp_right, cmp_op = expr_as_kernel_value(expr.a, projection), expr_as_kernel_value(expr.b, projection), op
+                    end
+                end
+            end
+        end
+        if success == nil then return nil end
+        if failure == nil or (src == nil and pred == nil and cmp_left == nil) then
+            for _, block in ipairs(func.blocks or {}) do
+                if body[block.id.text] and block.id.text ~= graph_loop.header.block.text then
+                    local term = block.term and block.term.op or nil
+                    if asdl.classof(term) == Code.CodeTermBranch then
+                        local then_in, else_in = body[term.then_dest.text], body[term.else_dest.text]
+                        if then_in ~= else_in then
+                            failure = then_in and term.else_dest or term.then_dest
+                            local in_loop_polarity = then_in and true or false
+                            src, pred = find_predicate_from_cond(term.cond, in_loop_polarity, projection, value_index)
+                            if src == nil or pred == nil then
+                                local expr = value_index:expr_for_value_or_nil(term.cond)
+                                if asdl.classof(expr) == Value.ValueExprCmp then
+                                    cmp_left, cmp_right, cmp_op = expr_as_kernel_value(expr.a, projection), expr_as_kernel_value(expr.b, projection), (in_loop_polarity and expr.op or invert_cmp(expr.op))
+                                end
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        if success == nil or failure == nil then return nil end
+        if src ~= nil and pred ~= nil then
+            if asdl.classof(src) ~= Kernel.KernelExprLaneLoad or not index_is_primary(src.index, loop, projection) then return nil end
+            proofs[#proofs + 1] = Kernel.KernelProofFunctionEquivalence("early-exit predicate-preserving counted loop is an all-sink skeleton")
+            return Kernel.KernelSkeletonFind({}, Kernel.KernelResultAll(src, pred, success, failure))
+        end
+        if cmp_left ~= nil and cmp_right ~= nil and cmp_op ~= nil then
+            local left_lane = asdl.classof(cmp_left) == Kernel.KernelExprLaneLoad and cmp_left or nil
+            local right_lane = asdl.classof(cmp_right) == Kernel.KernelExprLaneLoad and cmp_right or nil
+            if left_lane == nil and right_lane == nil then return nil end
+            if left_lane ~= nil and not index_is_primary(left_lane.index, loop, projection) then return nil end
+            if right_lane ~= nil and not index_is_primary(right_lane.index, loop, projection) then return nil end
+            proofs[#proofs + 1] = Kernel.KernelProofFunctionEquivalence("early-exit stream comparison counted loop is an all-sink skeleton")
+            return Kernel.KernelSkeletonFind({}, Kernel.KernelResultAllCompare(cmp_left, cmp_right, cmp_op, success, failure))
+        end
+        if success ~= nil and failure ~= nil then
+            local loads = {}
+            for _, binding in ipairs(projection.binding_by_kernel_value or {}) do
+                local expr = binding.binding and binding.binding.expr or nil
+                if asdl.classof(expr) == Kernel.KernelExprLaneLoad and index_is_primary(expr.index, loop, projection) then loads[#loads + 1] = expr end
+            end
+            if loads[1] ~= nil and loads[2] ~= nil then
+                proofs[#proofs + 1] = Kernel.KernelProofFunctionEquivalence("early-exit counted loop with two primary lane loads is an all-compare sink")
+                return Kernel.KernelSkeletonFind({}, Kernel.KernelResultAllCompare(loads[1], loads[2], Core.CmpEq, success, failure))
+            end
+        end
+        return nil
+    end
+
     local function infer_loop_skeleton(func, graph_loop, loop, effects, reductions, body_bindings, dependence_rejects, value_index, aliases, proofs)
         local projection = expr_projection(body_bindings, aliases)
         local scan = infer_scan_skeleton(func, graph_loop, loop, effects, reductions, projection, proofs)
@@ -1036,6 +1117,8 @@ local function bind_context(T)
             if scatter_reduce ~= nil then return scatter_reduce end
             local find = infer_find_skeleton(func, graph_loop, loop, projection, value_index, proofs)
             if find ~= nil then return find end
+            local all = infer_all_skeleton(func, graph_loop, loop, projection, value_index, proofs)
+            if all ~= nil then return all end
             local copy = infer_copy_skeleton(loop, effects, projection, dependence_rejects, proofs)
             if copy ~= nil then return copy end
         end

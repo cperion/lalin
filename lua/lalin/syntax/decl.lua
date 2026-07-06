@@ -383,10 +383,15 @@ function Decl.parse_region(lex, ctx, entry_start)
     table.insert(inputs, 1, implicit_self_field(lex, start, qualifier))
   end
 
+  local contracts = {}
+  while not lex:at_eof() and lex:peek().value == "requires" do
+    contracts[#contracts + 1] = Stmt.parse(lex, ctx)
+  end
+
   local blocks = {}
   while not lex:at_eof() and lex:peek().value ~= "end" do
     if lex:peek().value ~= "entry" and lex:peek().value ~= "block" then
-      lex:error_at(lex:peek(), "expected region entry/block or end")
+      lex:error_at(lex:peek(), "expected region requires/entry/block or end")
     end
     blocks[#blocks + 1] = parse_entry_block(lex, ctx)
   end
@@ -397,6 +402,7 @@ function Decl.parse_region(lex, ctx, entry_start)
     implicit_self = implicit_self,
     inputs = inputs,
     exits = exits,
+    contracts = contracts,
     blocks = blocks,
   }, Ast.origin(lex, start, lex.last, "parsed:decl"))
 end

@@ -1476,6 +1476,7 @@ function Decl:syntax_item()
             self.name,
             param_items(self.params, true),
             conts,
+            {},
             Tr.EntryControlBlock(Tr.BlockLabel(entry.name), entry_param_items(entry.params), retarget_cont_jumps_stmts(stmt_items(entry.body), cont_by_name)),
             retargeted_blocks))
     end

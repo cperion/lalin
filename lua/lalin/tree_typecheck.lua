@@ -507,7 +507,7 @@ local function bind_context(T)
         local entry = schema.with(region.entry, { params = canonical_entry_params(scope, region.entry.params) })
         local blocks = {}
         for i = 1, #(region.blocks or {}) do blocks[i] = schema.with(region.blocks[i], { params = canonical_block_params(scope, region.blocks[i].params) }) end
-        return schema.with(region, { params = params, conts = conts, entry = entry, blocks = blocks })
+        return schema.with(region, { params = params, conts = conts, contracts = region.contracts or {}, entry = entry, blocks = blocks })
     end
 
     local function type_plain_func(self, input)
@@ -842,6 +842,9 @@ local function bind_context(T)
         end
         local region_scope = input.scope:typecheck_tree_add_params("region:" .. tostring(region.name), region.params)
         local stmt_input = region_scope:typecheck_tree_stmt_input(Ty.TScalar(C.ScalarVoid), Tr.TypeYieldNone)
+        local typed_contracts, contract_issues = type_contracts(region.contracts or {}, stmt_input)
+        append_all(issues, contract_issues)
+        region = schema.with(region, { contracts = typed_contracts })
         local region_id = "region:" .. tostring(region.name)
         local typed_region = Tr.ControlStmtRegion(region_id, region.entry, region.blocks):typecheck_tree_control_stmt_region(Tr.TypeControlInput(stmt_input, region_id))
         append_all(issues, typed_region.issues)
@@ -1685,9 +1688,13 @@ local function bind_context(T)
             for j, p in ipairs(cont.params or {}) do args[j] = Tr.JumpArg(p.name, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(p.name))) end
             blocks[#blocks + 1] = Tr.ControlBlock(self:return_label_for_cont(cont), cont.params, { self:sealed_return_for_cont_args(cont, args) })
         end
-        return Tr.ItemFunc(Tr.FuncLocal(self.function_name, self.region.params, type_ref_path(self.protocol.result_type_name), {
+        local body = {
             Tr.StmtControl(Tr.StmtSurface, Tr.ControlStmtRegion("region-seal:" .. tostring(self.region.name), entry, blocks)),
-        }))
+        }
+        local func = #(self.region.contracts or {}) > 0
+            and Tr.FuncLocalContract(self.function_name, self.region.params, type_ref_path(self.protocol.result_type_name), self.region.contracts, body)
+            or Tr.FuncLocal(self.function_name, self.region.params, type_ref_path(self.protocol.result_type_name), body)
+        return Tr.ItemFunc(func)
     end
 
     function Tr.RegionSeal:generated_items(all_seals)

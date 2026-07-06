@@ -673,6 +673,21 @@ return schema. LalinStencil {
       reducer [LalinStencil.StencilReducer],
       conflicts [LalinStencil.StencilScatterReduceConflictSemantics],
     },
+    StencilSinkOpAll {
+      variant_unique,
+      src [LalinStencil.StencilStreamRef],
+      pred [LalinStencil.StencilPredicate],
+    },
+    StencilSinkOpAny {
+      variant_unique,
+      src [LalinStencil.StencilStreamRef],
+      pred [LalinStencil.StencilPredicate],
+    },
+    StencilSinkOpFind {
+      variant_unique,
+      src [LalinStencil.StencilStreamRef],
+      pred [LalinStencil.StencilPredicate],
+    },
   },
   product. StencilSinkDef {
     interned,

@@ -697,6 +697,23 @@ local function bind_context(T)
         end
     end
 
+    local function resolve_contract(contract, env, target)
+        local cls = schema.classof(contract)
+        if cls == Tr.ContractBounds then return schema.with(contract, { base = one(resolve_expr, contract.base, env, target), len = one(resolve_expr, contract.len, env, target) }) end
+        if cls == Tr.ContractWindowBounds then return schema.with(contract, { base = one(resolve_expr, contract.base, env, target), base_len = one(resolve_expr, contract.base_len, env, target), start = one(resolve_expr, contract.start, env, target), len = one(resolve_expr, contract.len, env, target) }) end
+        if cls == Tr.ContractDisjoint then return schema.with(contract, { a = one(resolve_expr, contract.a, env, target), b = one(resolve_expr, contract.b, env, target) }) end
+        if cls == Tr.ContractSameLen then return schema.with(contract, { a = one(resolve_expr, contract.a, env, target), b = one(resolve_expr, contract.b, env, target) }) end
+        if cls == Tr.ContractSoAComponent then return schema.with(contract, { base = one(resolve_expr, contract.base, env, target) }) end
+        if cls == Tr.ContractNoAlias or cls == Tr.ContractReadonly or cls == Tr.ContractWriteonly or cls == Tr.ContractInvalidate or cls == Tr.ContractPreserve then return schema.with(contract, { base = one(resolve_expr, contract.base, env, target) }) end
+        return contract
+    end
+
+    local function resolve_contracts(contracts, env, target)
+        local out = {}
+        for i = 1, #(contracts or {}) do out[i] = resolve_contract(contracts[i], env, target) end
+        return out
+    end
+
     function resolve_func(node, ...)
         local cls = schema.classof(node)
         if schema.isa(node, Tr.FuncLocal) then
@@ -709,11 +726,11 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.FuncLocalContract) then
             return (function(self, env, target)
- return single(schema.with(self, { body = map_stmts(self.body, env, target) }))
+ return single(schema.with(self, { contracts = resolve_contracts(self.contracts, env, target), body = map_stmts(self.body, env, target) }))
             end)(node, ...)
         elseif schema.isa(node, Tr.FuncExportContract) then
             return (function(self, env, target)
- return single(schema.with(self, { body = map_stmts(self.body, env, target) }))
+ return single(schema.with(self, { contracts = resolve_contracts(self.contracts, env, target), body = map_stmts(self.body, env, target) }))
             end)(node, ...)
         else
             error("phase lalin_sem_layout_func: no handler for " .. tostring(cls or type(node)), 2)

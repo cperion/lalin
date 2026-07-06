@@ -197,8 +197,21 @@ local function bind_context(T)
         return CMat.CMatStreamInline(Stencil.StencilStreamRef(self.id), self.ty)
     end
 
-    function Stencil.StencilSinkDef:cmat_sink_materialization(_input)
-        return CMat.CMatSinkInline(Stencil.StencilSinkRef(self.id))
+    function Stencil.StencilSinkDef:cmat_sink_materialization(input)
+        return self.op:cmat_sink_materialization(input, Stencil.StencilSinkRef(self.id))
+    end
+
+    function Stencil.StencilSinkOp:cmat_sink_materialization(_input, ref)
+        return CMat.CMatSinkInline(ref)
+    end
+    function Stencil.StencilSinkOpAll:cmat_sink_materialization(_input, ref)
+        return CMat.CMatSinkControlResult(ref)
+    end
+    function Stencil.StencilSinkOpAny:cmat_sink_materialization(_input, ref)
+        return CMat.CMatSinkControlResult(ref)
+    end
+    function Stencil.StencilSinkOpFind:cmat_sink_materialization(_input, ref)
+        return CMat.CMatSinkControlResult(ref)
     end
 
     local function computation_loop_nest(computation)

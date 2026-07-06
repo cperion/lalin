@@ -59,7 +59,7 @@ local function bind_context(T)
             return (function(self)
 
             local base, len = expr_binding(self.base), expr_binding(self.len)
-            if base == nil or len == nil then return single(reject("bounds")) end
+            if base == nil or len == nil then return single(Tr.ContractFactExprBounds(self.base, self.len)) end
             return single(Tr.ContractFactBounds(base, len))
             end)(node, ...)
         elseif schema.isa(node, Tr.ContractWindowBounds) then
@@ -101,14 +101,14 @@ local function bind_context(T)
             return (function(self)
 
             local base = expr_binding(self.base)
-            if base == nil then return single(reject("readonly")) end
+            if base == nil then return single(Tr.ContractFactExprReadonly(self.base)) end
             return single(Tr.ContractFactReadonly(base))
             end)(node, ...)
         elseif schema.isa(node, Tr.ContractWriteonly) then
             return (function(self)
 
             local base = expr_binding(self.base)
-            if base == nil then return single(reject("writeonly")) end
+            if base == nil then return single(Tr.ContractFactExprWriteonly(self.base)) end
             return single(Tr.ContractFactWriteonly(base))
             end)(node, ...)
         elseif schema.isa(node, Tr.ContractInvalidate) then

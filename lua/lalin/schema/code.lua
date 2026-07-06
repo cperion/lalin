@@ -723,11 +723,20 @@ return schema. LalinCode {
     sig [LalinCode.CodeSigId],
     origin [LalinCode.CodeOrigin],
   },
+  sum. CodeContractExpr {
+    CodeContractValueRef { variant_unique, field. value [LalinCode.CodeValueId], },
+    CodeContractPlaceLoad { variant_unique, place [LalinCode.CodePlace], },
+  },
   sum. CodeContractFact {
     CodeContractBounds {
       variant_unique,
       base [LalinCode.CodeValueId],
       len [LalinCode.CodeValueId],
+    },
+    CodeContractProjectionBounds {
+      variant_unique,
+      base [LalinCode.CodeContractExpr],
+      len [LalinCode.CodeContractExpr],
     },
     CodeContractWindowBounds {
       variant_unique,
@@ -756,6 +765,8 @@ return schema. LalinCode {
     CodeContractNoAlias { variant_unique, base [LalinCode.CodeValueId], },
     CodeContractReadonly { variant_unique, base [LalinCode.CodeValueId], },
     CodeContractWriteonly { variant_unique, base [LalinCode.CodeValueId], },
+    CodeContractProjectionReadonly { variant_unique, base [LalinCode.CodeContractExpr], },
+    CodeContractProjectionWriteonly { variant_unique, base [LalinCode.CodeContractExpr], },
     CodeContractInvalidate { variant_unique, base [LalinCode.CodeValueId], },
     CodeContractPreserve { variant_unique, base [LalinCode.CodeValueId], },
     CodeContractRejected { variant_unique, reason [str], },

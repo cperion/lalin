@@ -83,6 +83,7 @@ local target_region = Tr.Region(
     "R.Target",
     { Ty.Param("p", i32) },
     { done_cont },
+    {},
     Tr.EntryControlBlock(Tr.BlockLabel("start"), {}, {
         Tr.StmtJumpCont(Tr.StmtSurface, done_cont, { Tr.JumpArg("v", name("p")) }),
     }),

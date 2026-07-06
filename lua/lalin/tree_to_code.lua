@@ -2686,6 +2686,10 @@ local function bind_context(T)
         return expr:tree_code_contract_value(self)
     end
 
+    function Tr.TreeCodeContractInput:tree_code_contract_expr_for_expr(expr)
+        return expr:tree_code_contract_expr(self)
+    end
+
     function Tr.Expr:tree_code_contract_value(input)
         return nil, "contract expression is not a lowered binding reference: " .. class_name(self)
     end
@@ -2697,6 +2701,62 @@ local function bind_context(T)
     end
     function Bind.ValueRefBinding:tree_code_contract_value(input, expr)
         return input:tree_code_value_for_binding(self.binding)
+    end
+
+    function Tr.Expr:tree_code_contract_expr(input)
+        local value, reason = self:tree_code_contract_value(input)
+        if value ~= nil then return Code.CodeContractValueRef(value) end
+        return nil, reason
+    end
+    function Tr.ExprRef:tree_code_contract_expr(input)
+        local value, reason = self:tree_code_contract_value(input)
+        if value ~= nil then return Code.CodeContractValueRef(value) end
+        return nil, reason
+    end
+    function Tr.ExprField:tree_code_contract_expr(input)
+        local place, reason = self:tree_code_contract_place(input)
+        if place ~= nil then return Code.CodeContractPlaceLoad(place) end
+        return nil, reason
+    end
+    function Tr.Expr:tree_code_contract_place(input)
+        return nil, "contract expression is not a supported place projection: " .. class_name(self)
+    end
+    function Tr.ExprRef:tree_code_contract_place(input)
+        return self.ref:tree_code_contract_place(input, self)
+    end
+    function Bind.ValueRef:tree_code_contract_place(input, expr)
+        return nil, "contract reference is not a lowered place binding: " .. class_name(expr)
+    end
+    function Bind.ValueRefBinding:tree_code_contract_place(input, expr)
+        local binding = self.binding
+        if binding == nil then return nil, "contract reference has no binding" end
+        local role = binding.role
+        if role ~= nil and role.tree_code_global_place ~= nil then
+            local place = role:tree_code_global_place(input, binding)
+            if place ~= nil then return place end
+        end
+        return Code.CodePlaceDeref(input:tree_code_value_for_binding(binding), input:tree_code_type(binding.ty), input:tree_code_align_of(binding.ty))
+    end
+    function Tr.ExprField:tree_code_contract_place(input)
+        self.field:tree_code_require_lowered_field(input)
+        local base_ty = source_access_base(expr_type(self.base))
+        local base_place, reason
+        if base_ty ~= nil and base_ty.tree_code_contract_field_base_place ~= nil then
+            base_place, reason = base_ty:tree_code_contract_field_base_place(input, self.base)
+        else
+            base_place, reason = self.base:tree_code_contract_place(input)
+        end
+        if base_place == nil then return nil, reason end
+        local field_layout = input:tree_code_layout_of(self.field.ty)
+        return Code.CodePlaceField(base_place, self.field, input:tree_code_type(self.field.ty), self.field.offset, field_layout and field_layout.size or nil, field_layout and field_layout.align or nil)
+    end
+    function Ty.Type:tree_code_contract_field_base_place(input, base)
+        return base:tree_code_contract_place(input)
+    end
+    function Ty.TPtr:tree_code_contract_field_base_place(input, base)
+        local value, reason = base:tree_code_contract_value(input)
+        if value == nil then return nil, reason end
+        return Code.CodePlaceDeref(value, input:tree_code_type(self.elem), input:tree_code_align_of(self.elem))
     end
 
     function Tr.TreeCodeContractInput:tree_code_contract_reject(reason)
@@ -2721,6 +2781,15 @@ local function bind_context(T)
             tree_code_input:tree_code_value_for_binding(self.base),
             tree_code_input:tree_code_value_for_binding(self.len)
         ), origin_binding(self.base)))
+    end
+
+    function Tr.ContractFactExprBounds:lower_tree_contract_fact_to_code(tree_code_input)
+        local base, base_err = tree_code_input:tree_code_contract_expr_for_expr(self.base)
+        local len, len_err = tree_code_input:tree_code_contract_expr_for_expr(self.len)
+        if base == nil or len == nil then
+            return Tr.TreeCodeContractResult(tree_code_input:tree_code_contract_reject(tree_code_input:tree_code_join_reasons(base_err, len_err)))
+        end
+        return Tr.TreeCodeContractResult(Code.CodeFuncContractFact(tree_code_input.func_id, Code.CodeContractProjectionBounds(base, len), origin_generated("projection bounds contract")))
     end
 
     function Tr.ContractFactWindowBounds:lower_tree_contract_fact_to_code(tree_code_input)
@@ -2756,6 +2825,18 @@ local function bind_context(T)
 
     function Tr.ContractFactWriteonly:lower_tree_contract_fact_to_code(tree_code_input)
         return Tr.TreeCodeContractResult(Code.CodeFuncContractFact(tree_code_input.func_id, Code.CodeContractWriteonly(tree_code_input:tree_code_value_for_binding(self.base)), origin_binding(self.base)))
+    end
+
+    function Tr.ContractFactExprReadonly:lower_tree_contract_fact_to_code(tree_code_input)
+        local base, err = tree_code_input:tree_code_contract_expr_for_expr(self.base)
+        if base == nil then return Tr.TreeCodeContractResult(tree_code_input:tree_code_contract_reject(err)) end
+        return Tr.TreeCodeContractResult(Code.CodeFuncContractFact(tree_code_input.func_id, Code.CodeContractProjectionReadonly(base), origin_generated("projection readonly contract")))
+    end
+
+    function Tr.ContractFactExprWriteonly:lower_tree_contract_fact_to_code(tree_code_input)
+        local base, err = tree_code_input:tree_code_contract_expr_for_expr(self.base)
+        if base == nil then return Tr.TreeCodeContractResult(tree_code_input:tree_code_contract_reject(err)) end
+        return Tr.TreeCodeContractResult(Code.CodeFuncContractFact(tree_code_input.func_id, Code.CodeContractProjectionWriteonly(base), origin_generated("projection writeonly contract")))
     end
 
     function Tr.ContractFactInvalidate:lower_tree_contract_fact_to_code(tree_code_input)
