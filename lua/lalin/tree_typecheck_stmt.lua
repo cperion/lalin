@@ -54,12 +54,32 @@ return function(T)
         return self.name == cont.name
     end
 
+    local function expr_ref_name(expr)
+        if expr == nil or asdl.classof(expr) ~= Tr.ExprRef then return nil end
+        local ref = expr.ref
+        if ref ~= nil and ref.name ~= nil then return ref.name end
+        return nil
+    end
+
+    local function substituted_wire_args(explicit, source_args)
+        if #(explicit or {}) == 0 then return source_args end
+        local by_name = {}
+        for i, arg in ipairs(source_args or {}) do by_name[arg.name] = arg.value end
+        local out = {}
+        for i, arg in ipairs(explicit or {}) do
+            local ref_name = expr_ref_name(arg.value)
+            if ref_name ~= nil and by_name[ref_name] ~= nil then out[i] = Tr.JumpArg(arg.name, by_name[ref_name])
+            else out[i] = arg end
+        end
+        return out
+    end
+
     function Tr.RegionWireBlock:typecheck_tree_region_invoke_jump(args)
-        return Tr.StmtJump(Tr.StmtSurface, self.label, args)
+        return Tr.StmtJump(Tr.StmtSurface, self.label, substituted_wire_args(self.args or {}, args))
     end
 
     function Tr.RegionWireCont:typecheck_tree_region_invoke_jump(args)
-        return Tr.StmtJumpCont(Tr.StmtSurface, self.cont, args)
+        return Tr.StmtJumpCont(Tr.StmtSurface, self.cont, substituted_wire_args(self.args or {}, args))
     end
 
     local function find_wire(wiring, cont)
@@ -79,6 +99,19 @@ return function(T)
 
     function Tr.Stmt:typecheck_tree_region_invoke_clone(invoke_id, wiring)
         return self
+    end
+
+    local function invoke_local_binding(invoke_id, binding)
+        if binding == nil then return binding end
+        return B.Binding(C.Id("region-invoke:" .. tostring(invoke_id) .. ":" .. tostring(binding.id and binding.id.text or binding.name)), binding.name, binding.ty, binding.role)
+    end
+
+    function Tr.StmtLet:typecheck_tree_region_invoke_clone(invoke_id, wiring)
+        return Tr.StmtLet(self.h, invoke_local_binding(invoke_id, self.binding), self.init)
+    end
+
+    function Tr.StmtVar:typecheck_tree_region_invoke_clone(invoke_id, wiring)
+        return Tr.StmtVar(self.h, invoke_local_binding(invoke_id, self.binding), self.init)
     end
 
     function Tr.StmtJump:typecheck_tree_region_invoke_clone(invoke_id, wiring)
@@ -108,6 +141,38 @@ return function(T)
         return Tr.StmtSwitch(self.h, self.value, arms, variant_arms, default_body)
     end
 
+    function Tr.RegionWireTarget:typecheck_tree_region_invoke_clone(invoke_id, wiring)
+        return self
+    end
+
+    function Tr.RegionWireBlock:typecheck_tree_region_invoke_clone(invoke_id, wiring)
+        return Tr.RegionWireBlock(prefixed_label(invoke_id, self.label), self.args)
+    end
+
+    function Tr.RegionWireCont:typecheck_tree_region_invoke_clone(invoke_id, wiring)
+        local wire = find_wire(wiring, self.cont)
+        if wire ~= nil then return wire.target end
+        return self
+    end
+
+    function Tr.RegionContWire:typecheck_tree_region_invoke_clone(invoke_id, wiring)
+        return Tr.RegionContWire(self.name, self.target:typecheck_tree_region_invoke_clone(invoke_id, wiring))
+    end
+
+    local function clone_wiring_for_region_invoke(nested_wiring, invoke_id, wiring)
+        local out = {}
+        for i = 1, #(nested_wiring or {}) do out[i] = nested_wiring[i]:typecheck_tree_region_invoke_clone(invoke_id, wiring) end
+        return out
+    end
+
+    function Tr.StmtRegionCall:typecheck_tree_region_invoke_clone(invoke_id, wiring)
+        return Tr.StmtRegionCall(self.h, tostring(invoke_id) .. "." .. tostring(self.invoke_id), self.target, self.args, clone_wiring_for_region_invoke(self.wiring, invoke_id, wiring))
+    end
+
+    function Tr.StmtRegionEmit:typecheck_tree_region_invoke_clone(invoke_id, wiring)
+        return Tr.StmtRegionEmit(self.h, tostring(invoke_id) .. "." .. tostring(self.invoke_id), self.target, self.args, clone_wiring_for_region_invoke(self.wiring, invoke_id, wiring))
+    end
+
     clone_stmt_for_region_invoke = function(stmt, invoke_id, wiring)
         return stmt:typecheck_tree_region_invoke_clone(invoke_id, wiring)
     end
@@ -119,19 +184,22 @@ return function(T)
     end
 
     function Tr.EntryBlockParam:typecheck_tree_add_to_scope(input, region_id, label, index)
-        local init = type_expr_expect(self.init, input, self.ty)
+        local ty = self.ty:typecheck_tree_canonical(input.scope)
+        local init = type_expr_expect(self.init, input, ty)
         local issues = {}
         append_all(issues, init.issues)
-        check_expected("entry param", self.ty, init.ty, issues)
-        local binding = block_param_binding(region_id, label, self, index, B.BindingRoleEntryBlockParam(region_id, label.name, index))
+        check_expected("entry param", ty, init.ty, issues)
+        local param = Tr.EntryBlockParam(self.name, ty, init.expr)
+        local binding = block_param_binding(region_id, label, param, index, B.BindingRoleEntryBlockParam(region_id, label.name, index))
         local scope = input.scope:typecheck_tree_add_value(B.ValueEntry(self.name, binding))
-        return input:typecheck_tree_with_scope(scope), Tr.EntryBlockParam(self.name, self.ty, init.expr), issues
+        return input:typecheck_tree_with_scope(scope), param, issues
     end
 
     function Tr.BlockParam:typecheck_tree_add_to_scope(input, region_id, label, index)
-        local binding = block_param_binding(region_id, label, self, index, B.BindingRoleBlockParam(region_id, label.name, index))
+        local param = Tr.BlockParam(self.name, self.ty:typecheck_tree_canonical(input.scope))
+        local binding = block_param_binding(region_id, label, param, index, B.BindingRoleBlockParam(region_id, label.name, index))
         local scope = input.scope:typecheck_tree_add_value(B.ValueEntry(self.name, binding))
-        return input:typecheck_tree_with_scope(scope), self, {}
+        return input:typecheck_tree_with_scope(scope), param, {}
     end
 
     function Tr.JumpArg:typecheck_tree_jump_arg(input)
@@ -166,21 +234,25 @@ return function(T)
     end
 
     function Tr.StmtLet:typecheck_tree_stmt(input)
-        local init = type_expr_expect(self.init, input, self.binding.ty)
+        local ty = self.binding.ty:typecheck_tree_canonical(input.scope)
+        local binding = B.Binding(self.binding.id, self.binding.name, ty, self.binding.role)
+        local init = type_expr_expect(self.init, input, ty)
         local issues = {}
         append_all(issues, init.issues)
-        check_expected("let", self.binding.ty, init.ty, issues)
-        local scope = input.scope:typecheck_tree_add_value(B.ValueEntry(self.binding.name, self.binding))
-        return Tr.TypeStmtResult(input:typecheck_tree_with_scope(scope), { Tr.StmtLet(self.h, self.binding, init.expr) }, issues)
+        check_expected("let", ty, init.ty, issues)
+        local scope = input.scope:typecheck_tree_add_value(B.ValueEntry(binding.name, binding))
+        return Tr.TypeStmtResult(input:typecheck_tree_with_scope(scope), { Tr.StmtLet(self.h, binding, init.expr) }, issues)
     end
 
     function Tr.StmtVar:typecheck_tree_stmt(input)
-        local init = type_expr_expect(self.init, input, self.binding.ty)
+        local ty = self.binding.ty:typecheck_tree_canonical(input.scope)
+        local binding = B.Binding(self.binding.id, self.binding.name, ty, self.binding.role)
+        local init = type_expr_expect(self.init, input, ty)
         local issues = {}
         append_all(issues, init.issues)
-        check_expected("var", self.binding.ty, init.ty, issues)
-        local scope = input.scope:typecheck_tree_add_value(B.ValueEntry(self.binding.name, self.binding))
-        return Tr.TypeStmtResult(input:typecheck_tree_with_scope(scope), { Tr.StmtVar(self.h, self.binding, init.expr) }, issues)
+        check_expected("var", ty, init.ty, issues)
+        local scope = input.scope:typecheck_tree_add_value(B.ValueEntry(binding.name, binding))
+        return Tr.TypeStmtResult(input:typecheck_tree_with_scope(scope), { Tr.StmtVar(self.h, binding, init.expr) }, issues)
     end
 
     function Tr.StmtSet:typecheck_tree_stmt(input)
@@ -233,7 +305,12 @@ return function(T)
     end
 
     function Tr.SwitchVariantStmtArm:typecheck_tree_stmt_arm(input)
-        local body = input:typecheck_tree_stmt_body(self.body)
+        local scope = input.scope
+        for i, bind in ipairs(self.binds or {}) do
+            local b = B.Binding(C.Id("variant:stmt_switch:" .. tostring(self.variant_name) .. ":" .. tostring(bind.name)), bind.name, bind.ty, B.BindingRoleLocalValue)
+            scope = scope:typecheck_tree_add_value(B.ValueEntry(bind.name, b))
+        end
+        local body = input:typecheck_tree_with_scope(scope):typecheck_tree_stmt_body(self.body)
         return Tr.SwitchVariantStmtArm(self.variant_name, self.binds, body.stmts), body.issues
     end
 
@@ -291,14 +368,57 @@ return function(T)
         return args, issues
     end
 
+    function Tr.RegionWireTarget:typecheck_tree_wire_target(input)
+        return self, {}
+    end
+
+    local function typecheck_wire_args(args, input)
+        local out, issues = {}, {}
+        for i, arg in ipairs(args or {}) do
+            local value = arg.value:typecheck_tree_expr(input:typecheck_tree_expr_input())
+            out[i] = Tr.JumpArg(arg.name, value.expr)
+            append_all(issues, value.issues)
+        end
+        return out, issues
+    end
+
+    function Tr.RegionWireBlock:typecheck_tree_wire_target(input)
+        local args, issues = typecheck_wire_args(self.args or {}, input)
+        return Tr.RegionWireBlock(self.label, args), issues
+    end
+
+    function Tr.RegionWireCont:typecheck_tree_wire_target(input)
+        local args, issues = typecheck_wire_args(self.args or {}, input)
+        return Tr.RegionWireCont(self.cont, args), issues
+    end
+
+    function Tr.RegionContWire:typecheck_tree_wire(input)
+        local target, issues = self.target:typecheck_tree_wire_target(input)
+        return Tr.RegionContWire(self.name, target), issues
+    end
+
+    local function typecheck_region_wiring(wiring, input)
+        local out, issues = {}, {}
+        for i, wire in ipairs(wiring or {}) do
+            local typed, wire_issues = wire:typecheck_tree_wire(input)
+            out[i] = typed
+            append_all(issues, wire_issues)
+        end
+        return out, issues
+    end
+
     function Tr.StmtRegionEmit:typecheck_tree_stmt(input)
         local args, issues = typecheck_region_invoke_args(self, input)
-        return Tr.TypeStmtResult(input, { Tr.StmtRegionEmit(self.h, self.invoke_id, self.target, args, self.wiring) }, issues)
+        local wiring, wire_issues = typecheck_region_wiring(self.wiring, input)
+        append_all(issues, wire_issues)
+        return Tr.TypeStmtResult(input, { Tr.StmtRegionEmit(self.h, self.invoke_id, self.target, args, wiring) }, issues)
     end
 
     function Tr.StmtRegionCall:typecheck_tree_stmt(input)
         local args, issues = typecheck_region_invoke_args(self, input)
-        return Tr.TypeStmtResult(input, { Tr.StmtRegionCall(self.h, self.invoke_id, self.target, args, self.wiring) }, issues)
+        local wiring, wire_issues = typecheck_region_wiring(self.wiring, input)
+        append_all(issues, wire_issues)
+        return Tr.TypeStmtResult(input, { Tr.StmtRegionCall(self.h, self.invoke_id, self.target, args, wiring) }, issues)
     end
 
     local function entry_param_from_region_param(param, arg)
@@ -357,8 +477,159 @@ return function(T)
         return Tr.RegionInvokeExpanded(Tr.RegionInvokeSplice(Tr.StmtJump(self.h, entry_label, entry_args), blocks))
     end
 
+    local function find_region_seal(facts, target)
+        for i = 1, #(facts.region_seals or {}) do
+            if facts.region_seals[i].target:typecheck_tree_same_region_target(target) then return facts.region_seals[i] end
+        end
+        return nil
+    end
+
+    local function seal_payload_for_cont(seal, cont)
+        for i = 1, #(seal.protocol.payloads or {}) do
+            if seal.protocol.payloads[i].cont.name == cont.name then return seal.protocol.payloads[i] end
+        end
+        return nil
+    end
+
+    local function sanitize_region_call_name(s)
+        s = tostring(s or ""):gsub("[^%w_]", "_")
+        if s == "" then s = "region" end
+        if s:match("^%d") then s = "_" .. s end
+        return s
+    end
+
+    local function payload_field_expr(payload_name, field_name)
+        return Tr.ExprDot(Tr.ExprSurface, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(payload_name)), field_name)
+    end
+
+    local function typed_expr_ty(expr)
+        local h = expr and expr.h
+        if h ~= nil and h.typecheck_tree_typed_ty ~= nil then return h:typecheck_tree_typed_ty() end
+        return nil
+    end
+
+    local function is_void_ty(ty)
+        return ty ~= nil and asdl.classof(ty) == Ty.TScalar and ty.scalar == C.ScalarVoid
+    end
+
+    function Tr.RegionWireTarget:typecheck_tree_capture_call_wire_args(invoke_id, source_cont, wire_name, add_capture)
+        return self
+    end
+
+    local function cont_param_named(cont, name)
+        for i, p in ipairs((cont and cont.params) or {}) do if p.name == name then return true end end
+        return false
+    end
+
+    local function capture_jump_args(args, invoke_id, source_cont, wire_name, add_capture)
+        local out = {}
+        for i, arg in ipairs(args or {}) do
+            local ref_name = expr_ref_name(arg.value)
+            if ref_name ~= nil and cont_param_named(source_cont, ref_name) then
+                out[i] = arg
+            else
+                local name_part = arg.name ~= "" and arg.name or tostring(i)
+                local capture_name = "__region_call_wire_" .. sanitize_region_call_name(invoke_id) .. "_" .. sanitize_region_call_name(wire_name) .. "_" .. sanitize_region_call_name(name_part) .. "_" .. tostring(i)
+                add_capture(capture_name, typed_expr_ty(arg.value), arg.value)
+                out[i] = Tr.JumpArg(arg.name, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(capture_name)))
+            end
+        end
+        return out
+    end
+
+    function Tr.RegionWireBlock:typecheck_tree_capture_call_wire_args(invoke_id, source_cont, wire_name, add_capture)
+        return Tr.RegionWireBlock(self.label, capture_jump_args(self.args or {}, invoke_id, source_cont, wire_name, add_capture))
+    end
+
+    function Tr.RegionWireCont:typecheck_tree_capture_call_wire_args(invoke_id, source_cont, wire_name, add_capture)
+        return Tr.RegionWireCont(self.cont, capture_jump_args(self.args or {}, invoke_id, source_cont, wire_name, add_capture))
+    end
+
+    function Tr.RegionContWire:typecheck_tree_capture_call_wire_args(invoke_id, source_cont, add_capture)
+        return Tr.RegionContWire(self.name, self.target:typecheck_tree_capture_call_wire_args(invoke_id, source_cont, self.name, add_capture))
+    end
+
+    function Tr.RegionSeal:typecheck_tree_call_splice(stmt, input)
+        local region = self.region
+        if #(region.params or {}) ~= #(stmt.args or {}) then
+            return Tr.RegionInvokeRejected(Tr.RegionInvokeArgCount(stmt.target, #(region.params or {}), #(stmt.args or {})))
+        end
+        for i = 1, #(stmt.wiring or {}) do
+            if find_cont(region.conts or {}, stmt.wiring[i].name) == nil then
+                return Tr.RegionInvokeRejected(Tr.RegionInvokeExtraWire(stmt.target, stmt.wiring[i].name))
+            end
+            for j = i + 1, #(stmt.wiring or {}) do
+                if stmt.wiring[i].name == stmt.wiring[j].name then
+                    return Tr.RegionInvokeRejected(Tr.RegionInvokeDuplicateWire(stmt.target, stmt.wiring[i].name))
+                end
+            end
+        end
+        for i = 1, #(region.conts or {}) do
+            if find_wire(stmt.wiring or {}, region.conts[i]) == nil then
+                return Tr.RegionInvokeRejected(Tr.RegionInvokeMissingWire(stmt.target, region.conts[i]))
+            end
+        end
+
+        local result_ty = Ty.TNamed(Ty.TypeRefGlobal(input.scope.module_name, self.protocol.result_type_name))
+        local result_var = "__region_call_result_" .. sanitize_region_call_name(stmt.invoke_id)
+        local result_binding = B.Binding(C.Id("region-call-result:" .. tostring(stmt.invoke_id)), result_var, result_ty, B.BindingRoleLocalValue)
+        local dispatch_label = prefixed_label(stmt.invoke_id, Tr.BlockLabel("call_dispatch"))
+        local dispatch_params, dispatch_jump_args, call_args = {}, {}, {}
+        for i, p in ipairs(region.params or {}) do
+            local arg_name = "__region_call_arg_" .. sanitize_region_call_name(stmt.invoke_id) .. "_" .. sanitize_region_call_name(p.name)
+            dispatch_params[#dispatch_params + 1] = Tr.BlockParam(arg_name, p.ty)
+            dispatch_jump_args[#dispatch_jump_args + 1] = Tr.JumpArg(arg_name, stmt.args[i])
+            call_args[i] = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(arg_name))
+        end
+        local captured_wiring = {}
+        local function add_capture(name, ty, value)
+            local capture_value = value
+            local capture_ty = ty
+            local ref_name = expr_ref_name(value)
+            if (capture_ty == nil or is_void_ty(capture_ty)) and ref_name ~= nil then
+                local binding = input.scope:typecheck_tree_lookup_value(ref_name)
+                if binding ~= nil then capture_ty = binding.ty end
+            end
+            if capture_ty == nil or is_void_ty(capture_ty) then
+                local typed = value:typecheck_tree_expr(input.scope:typecheck_tree_expr_input())
+                capture_value = typed.expr
+                capture_ty = typed.ty
+            end
+            dispatch_params[#dispatch_params + 1] = Tr.BlockParam(name, capture_ty)
+            dispatch_jump_args[#dispatch_jump_args + 1] = Tr.JumpArg(name, capture_value)
+        end
+        for i, wire in ipairs(stmt.wiring or {}) do
+            captured_wiring[i] = wire:typecheck_tree_capture_call_wire_args(stmt.invoke_id, find_cont(region.conts or {}, wire.name), add_capture)
+        end
+        local call_expr = Tr.ExprCall(Tr.ExprSurface, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(self.function_name)), call_args)
+        local arms = {}
+        for i = 1, #(region.conts or {}) do
+            local cont = region.conts[i]
+            local wire = find_wire(captured_wiring or {}, cont)
+            local binds, args = {}, {}
+            local payload = seal_payload_for_cont(self, cont)
+            if payload ~= nil then
+                local payload_name = "__region_call_payload_" .. sanitize_region_call_name(stmt.invoke_id) .. "_" .. sanitize_region_call_name(cont.name)
+                binds[1] = Tr.VariantBind(payload_name, Ty.TNamed(Ty.TypeRefGlobal(input.scope.module_name, payload.type_name)))
+                for j, p in ipairs(cont.params or {}) do
+                    args[j] = Tr.JumpArg(p.name, payload_field_expr(payload_name, p.name))
+                end
+            end
+            arms[i] = Tr.SwitchVariantStmtArm(cont.name, binds, { wire.target:typecheck_tree_region_invoke_jump(args) })
+        end
+        local dispatch_block = Tr.ControlBlock(dispatch_label, dispatch_params, {
+            Tr.StmtLet(Tr.StmtSurface, result_binding, call_expr),
+            Tr.StmtSwitch(Tr.StmtSurface, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(result_var)), {}, arms, { Tr.StmtTrap(Tr.StmtSurface) }),
+        })
+        return Tr.RegionInvokeExpanded(Tr.RegionInvokeSplice(Tr.StmtJump(stmt.h, dispatch_label, dispatch_jump_args), { dispatch_block }))
+    end
+
     function Tr.StmtRegionCall:typecheck_tree_expand_region_invoke(input)
-        return Tr.RegionInvokeRejected(Tr.RegionInvokeCallFrameUnsupported(self.target))
+        local def = input.scope.facts:typecheck_tree_region_def_for(self.target)
+        if def == nil then return Tr.RegionInvokeRejected(Tr.RegionInvokeMissingTarget(self.target)) end
+        local seal = find_region_seal(input.scope.facts, self.target)
+        if seal == nil then return Tr.RegionInvokeRejected(Tr.RegionInvokeCallFrameUnsupported(self.target)) end
+        return seal:typecheck_tree_call_splice(self, input)
     end
 
     function Tr.TypeYieldResult:typecheck_tree_yield_void(stmt, input)
@@ -425,40 +696,88 @@ return function(T)
 
     local expand_control_body
 
-    local function append_splice_blocks(blocks, splice)
-        for i = 1, #(splice.blocks or {}) do blocks[#blocks + 1] = splice.blocks[i] end
+    local function expansion_scope_for_block_params(stmt_input, region_id, block, issues)
+        local out = stmt_input
+        for i = 1, #(block.params or {}) do
+            local next_input, _, param_issues = block.params[i]:typecheck_tree_add_to_scope(out, region_id or "region-invoke", block.label, i)
+            out = next_input
+            append_all(issues, param_issues)
+        end
+        return out
     end
 
-    local function expand_control_stmt(stmt, stmt_input, extra_blocks, issues)
+    local function append_splice_blocks(blocks, splice, stmt_input, extra_blocks, issues, region_id)
+        for i = 1, #(splice.blocks or {}) do
+            local block = splice.blocks[i]
+            local nested_blocks = {}
+            local body = expand_control_body(block.body or {}, expansion_scope_for_block_params(stmt_input, region_id, block, issues), nested_blocks, issues, region_id)
+            blocks[#blocks + 1] = Tr.ControlBlock(block.label, block.params, body)
+            for j = 1, #nested_blocks do blocks[#blocks + 1] = nested_blocks[j] end
+        end
+    end
+
+    local function expand_control_stmt(stmt, stmt_input, extra_blocks, issues, region_id)
         local cls = asdl.classof(stmt)
         if cls == Tr.StmtRegionEmit or cls == Tr.StmtRegionCall then
             local r = stmt:typecheck_tree_expand_region_invoke(Tr.RegionInvokeExpandInput(stmt_input.scope))
             if asdl.classof(r) == Tr.RegionInvokeExpanded then
-                append_splice_blocks(extra_blocks, r.splice)
+                append_splice_blocks(extra_blocks, r.splice, stmt_input, extra_blocks, issues, region_id)
                 return r.splice.entry_stmt
             end
             issues[#issues + 1] = Tr.TypeIssueRegionInvoke(r.reject)
             return Tr.StmtTrap(Tr.StmtSurface)
         elseif cls == Tr.StmtIf then
-            local then_body = expand_control_body(stmt.then_body or {}, stmt_input, extra_blocks, issues)
-            local else_body = expand_control_body(stmt.else_body or {}, stmt_input, extra_blocks, issues)
+            local then_body = expand_control_body(stmt.then_body or {}, stmt_input, extra_blocks, issues, region_id)
+            local else_body = expand_control_body(stmt.else_body or {}, stmt_input, extra_blocks, issues, region_id)
             return Tr.StmtIf(stmt.h, stmt.cond, then_body, else_body)
         elseif cls == Tr.StmtSwitch then
             local arms, variant_arms = {}, {}
             for i = 1, #(stmt.arms or {}) do
-                arms[i] = Tr.SwitchStmtArm(stmt.arms[i].key, expand_control_body(stmt.arms[i].body or {}, stmt_input, extra_blocks, issues))
+                arms[i] = Tr.SwitchStmtArm(stmt.arms[i].key, expand_control_body(stmt.arms[i].body or {}, stmt_input, extra_blocks, issues, region_id))
             end
             for i = 1, #(stmt.variant_arms or {}) do
-                variant_arms[i] = Tr.SwitchVariantStmtArm(stmt.variant_arms[i].variant_name, stmt.variant_arms[i].binds, expand_control_body(stmt.variant_arms[i].body or {}, stmt_input, extra_blocks, issues))
+                variant_arms[i] = Tr.SwitchVariantStmtArm(stmt.variant_arms[i].variant_name, stmt.variant_arms[i].binds, expand_control_body(stmt.variant_arms[i].body or {}, stmt_input, extra_blocks, issues, region_id))
             end
-            return Tr.StmtSwitch(stmt.h, stmt.value, arms, variant_arms, expand_control_body(stmt.default_body or {}, stmt_input, extra_blocks, issues))
+            return Tr.StmtSwitch(stmt.h, stmt.value, arms, variant_arms, expand_control_body(stmt.default_body or {}, stmt_input, extra_blocks, issues, region_id))
         end
         return stmt
     end
 
-    expand_control_body = function(body, stmt_input, extra_blocks, issues)
+    local function expansion_input_after_stmt(stmt_input, stmt)
+        local cls = asdl.classof(stmt)
+        if cls == Tr.StmtLet or cls == Tr.StmtVar then
+            return stmt_input:typecheck_tree_with_scope(stmt_input.scope:typecheck_tree_add_value(B.ValueEntry(stmt.binding.name, stmt.binding)))
+        end
+        return stmt_input
+    end
+
+    expand_control_body = function(body, stmt_input, extra_blocks, issues, region_id)
         local out = {}
-        for i = 1, #(body or {}) do out[i] = expand_control_stmt(body[i], stmt_input, extra_blocks, issues) end
+        local current_input = stmt_input
+        for i = 1, #(body or {}) do
+            out[i] = expand_control_stmt(body[i], current_input, extra_blocks, issues, region_id)
+            current_input = expansion_input_after_stmt(current_input, out[i])
+        end
+        return out
+    end
+
+    local function expansion_input_for_entry(stmt_input, region_id, entry, issues)
+        local out = stmt_input
+        for i = 1, #(entry.params or {}) do
+            local next_input, _, param_issues = entry.params[i]:typecheck_tree_add_to_scope(out, region_id, entry.label, i)
+            out = next_input
+            append_all(issues, param_issues)
+        end
+        return out
+    end
+
+    local function expansion_input_for_block(stmt_input, region_id, block, issues)
+        local out = stmt_input
+        for i = 1, #(block.params or {}) do
+            local next_input, _, param_issues = block.params[i]:typecheck_tree_add_to_scope(out, region_id, block.label, i)
+            out = next_input
+            append_all(issues, param_issues)
+        end
         return out
     end
 
@@ -466,10 +785,10 @@ return function(T)
         local stmt_input = input.stmt:typecheck_tree_with_yield(Tr.TypeYieldVoid)
         local expansion_issues = {}
         local expansion_blocks = {}
-        local expanded_entry = Tr.EntryControlBlock(self.entry.label, self.entry.params, expand_control_body(self.entry.body or {}, stmt_input, expansion_blocks, expansion_issues))
+        local expanded_entry = Tr.EntryControlBlock(self.entry.label, self.entry.params, expand_control_body(self.entry.body or {}, expansion_input_for_entry(stmt_input, self.region_id, self.entry, expansion_issues), expansion_blocks, expansion_issues, self.region_id))
         local expanded_blocks = {}
         for i = 1, #(self.blocks or {}) do
-            expanded_blocks[#expanded_blocks + 1] = Tr.ControlBlock(self.blocks[i].label, self.blocks[i].params, expand_control_body(self.blocks[i].body or {}, stmt_input, expansion_blocks, expansion_issues))
+            expanded_blocks[#expanded_blocks + 1] = Tr.ControlBlock(self.blocks[i].label, self.blocks[i].params, expand_control_body(self.blocks[i].body or {}, expansion_input_for_block(stmt_input, self.region_id, self.blocks[i], expansion_issues), expansion_blocks, expansion_issues, self.region_id))
         end
         for i = 1, #expansion_blocks do expanded_blocks[#expanded_blocks + 1] = expansion_blocks[i] end
 
@@ -491,10 +810,10 @@ return function(T)
         local stmt_input = input.stmt:typecheck_tree_with_yield(Tr.TypeYieldValue(self.result_ty))
         local expansion_issues = {}
         local expansion_blocks = {}
-        local expanded_entry = Tr.EntryControlBlock(self.entry.label, self.entry.params, expand_control_body(self.entry.body or {}, stmt_input, expansion_blocks, expansion_issues))
+        local expanded_entry = Tr.EntryControlBlock(self.entry.label, self.entry.params, expand_control_body(self.entry.body or {}, expansion_input_for_entry(stmt_input, self.region_id, self.entry, expansion_issues), expansion_blocks, expansion_issues, self.region_id))
         local expanded_blocks = {}
         for i = 1, #(self.blocks or {}) do
-            expanded_blocks[#expanded_blocks + 1] = Tr.ControlBlock(self.blocks[i].label, self.blocks[i].params, expand_control_body(self.blocks[i].body or {}, stmt_input, expansion_blocks, expansion_issues))
+            expanded_blocks[#expanded_blocks + 1] = Tr.ControlBlock(self.blocks[i].label, self.blocks[i].params, expand_control_body(self.blocks[i].body or {}, expansion_input_for_block(stmt_input, self.region_id, self.blocks[i], expansion_issues), expansion_blocks, expansion_issues, self.region_id))
         end
         for i = 1, #expansion_blocks do expanded_blocks[#expanded_blocks + 1] = expansion_blocks[i] end
 

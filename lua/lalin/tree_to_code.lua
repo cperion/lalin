@@ -64,17 +64,17 @@ local function bind_context(T)
         local variants = {}
         for i = 1, #self.variants do
             local name = variant_name_text(self.variants[i])
-            variants[name] = Tr.TreeCodeVariantEntry(name, Tr.TreeCodeVariant(name, i - 1, Ty.TScalar(Core.ScalarVoid), {}))
+            variants[#variants + 1] = Tr.TreeCodeVariantEntry(name, Tr.TreeCodeVariant(name, i - 1, Ty.TScalar(Core.ScalarVoid), {}))
         end
-        defs[self.name] = Tr.TreeCodeVariantDefEntry(self.name, Tr.TreeCodeVariantDef(Ty.TNamed(Ty.TypeRefGlobal(mod_name, self.name)), variants))
+        defs[#defs + 1] = Tr.TreeCodeVariantDefEntry(self.name, Tr.TreeCodeVariantDef(Ty.TNamed(Ty.TypeRefGlobal(mod_name, self.name)), variants))
     end
     function Tr.TypeDeclTaggedUnionSugar:tree_code_add_variant_defs(defs, mod_name)
         local variants = {}
         for i = 1, #self.variants do
             local v = self.variants[i]
-            variants[v.name] = Tr.TreeCodeVariantEntry(v.name, Tr.TreeCodeVariant(v.name, i - 1, v.payload, v.fields or {}))
+            variants[#variants + 1] = Tr.TreeCodeVariantEntry(v.name, Tr.TreeCodeVariant(v.name, i - 1, v.payload, v.fields or {}))
         end
-        defs[self.name] = Tr.TreeCodeVariantDefEntry(self.name, Tr.TreeCodeVariantDef(Ty.TNamed(Ty.TypeRefGlobal(mod_name, self.name)), variants))
+        defs[#defs + 1] = Tr.TreeCodeVariantDefEntry(self.name, Tr.TreeCodeVariantDef(Ty.TNamed(Ty.TypeRefGlobal(mod_name, self.name)), variants))
     end
     function Tr.Item:tree_code_add_variant_defs(defs, mod_name) end
     function Tr.ItemType:tree_code_add_variant_defs(defs, mod_name)
@@ -157,15 +157,34 @@ local function bind_context(T)
         return out
     end
 
+    local function entry_key(entry)
+        return entry and (entry.binding_name or entry.counter_name or entry.slot_name or entry.flag_name or entry.label_name or entry.func_name or entry.extern_name or entry.type_name or entry.variant_name or entry.sig_name)
+    end
+
+    local function map_get(t, key)
+        if t == nil then return nil end
+        local direct = rawget(t, key)
+        if direct ~= nil then return direct end
+        for i = 1, #t do
+            if entry_key(t[i]) == key then return t[i] end
+        end
+        return nil
+    end
+
     local function map_with(t, key, value)
-        local out = clone_map(t)
-        out[key] = value
+        local out = clone_array(t or {})
+        for i = 1, #out do
+            if entry_key(out[i]) == key then out[i] = value; return out end
+        end
+        out[#out + 1] = value
         return out
     end
 
     local function map_without(t, key)
-        local out = clone_map(t)
-        out[key] = nil
+        local out = {}
+        for i = 1, #(t or {}) do
+            if entry_key(t[i]) ~= key then out[#out + 1] = t[i] end
+        end
         return out
     end
 
@@ -209,7 +228,7 @@ local function bind_context(T)
         local key = binding:tree_code_binding_key()
         local suffix = self:tree_code_binding_alpha_suffix()
         local state = self
-        if self.alpha.renamed_by_key ~= nil and suffix ~= nil and self.alpha.renamed_by_key[key] == nil then
+        if self.alpha.renamed_by_key ~= nil and suffix ~= nil and map_get(self.alpha.renamed_by_key, key) == nil then
             local alpha = Tr.TreeCodeAlphaState(map_with(self.alpha.renamed_by_key, key, Tr.TreeCodeAlphaRenameEntry(key, key .. "@" .. suffix)), self.alpha.current_suffix_by_slot, self.alpha.seq)
             state = state_with(self, { alpha = alpha })
         end
@@ -233,14 +252,14 @@ local function bind_context(T)
         local key = binding:tree_code_binding_key()
         local scoped = self:tree_code_state():tree_code_scoped_binding_key(binding)
         local state = self:tree_code_state()
-        return (state.residence.addressed_by_key and (state.residence.addressed_by_key[key] or state.residence.addressed_by_key[scoped])) or false
+        return map_get(state.residence.addressed_by_key, key) ~= nil or map_get(state.residence.addressed_by_key, scoped) ~= nil
     end
 
     function Tr.TreeCodeInput:tree_code_binding_is_mutable(binding)
         local key = binding:tree_code_binding_key()
         local scoped = self:tree_code_state():tree_code_scoped_binding_key(binding)
         local state = self:tree_code_state()
-        return (state.residence.mutable_by_key and (state.residence.mutable_by_key[key] or state.residence.mutable_by_key[scoped])) or false
+        return map_get(state.residence.mutable_by_key, key) ~= nil or map_get(state.residence.mutable_by_key, scoped) ~= nil
     end
 
     source_access_base = function(ty)
@@ -403,8 +422,11 @@ local function bind_context(T)
 
     function Tr.TreeCodeInput:tree_code_variant_def(type_name)
         local module_facts = self:tree_code_module_facts()
-        local entry = module_facts.variant_defs and module_facts.variant_defs[type_name] or nil
-        return entry and entry.def or nil
+        for i = 1, #(module_facts.variant_defs or {}) do
+            local entry = module_facts.variant_defs[i]
+            if entry.type_name == type_name then return entry.def end
+        end
+        return nil
     end
 
     function Tr.TreeCodeVariant:tree_code_payload_type(input)
@@ -425,6 +447,13 @@ local function bind_context(T)
 
     function Tr.TreeCodeInput:tree_code_variant_ref(owner_ty, variant)
         return variant:tree_code_ref(self, owner_ty)
+    end
+
+    local function tree_code_variant_entry(def, variant_name)
+        for i = 1, #(def and def.variants or {}) do
+            if def.variants[i].variant_name == variant_name then return def.variants[i] end
+        end
+        return nil
     end
 
     function Tr.TreeCodeInput:tree_code_layout_of(ty)
@@ -466,7 +495,7 @@ local function bind_context(T)
     local label_key
 
     function Tr.TreeCodeFuncState:tree_code_next_counter(name)
-        local entry = self.counters.values_by_name[name]
+        local entry = map_get(self.counters.values_by_name, name)
         local next_value = ((entry and entry.next_value) or 0) + 1
         local counters = Tr.TreeCodeCounterState(map_with(self.counters.values_by_name, name, Tr.TreeCodeCounterEntry(name, next_value)))
         return Tr.TreeCodeCounterResult(next_value, state_with(self, { counters = counters }))
@@ -581,7 +610,7 @@ local function bind_context(T)
         local state = declared.state
         local input = Tr.TreeCodeStmtInput(facts, state)
         local key = declared.binding_name
-        local existing = state.bindings.locals_by_key[key]
+        local existing = map_get(state.bindings.locals_by_key, key)
         if existing ~= nil then return Tr.TreeCodeLocalResult(existing.binding.id, existing.binding.ty, state) end
         local cty = input:tree_code_type(source_ty or binding.ty)
         local id = input:tree_code_local_id_for_binding(binding)
@@ -1105,13 +1134,13 @@ local function bind_context(T)
     end
 
     function Ty.Type:tree_code_lower_field_base_place(tree_code_input, base)
-        return base:tree_code_as_place(tree_code_input), self
+        return base:tree_code_as_place_result(tree_code_input)
     end
     function Ty.TPtr:tree_code_lower_field_base_place(tree_code_input, base)
         local addr_result = base:lower_tree_expr_to_code(tree_code_input:tree_code_expr_input())
         tree_code_input = tree_code_input:tree_code_with_result_state(addr_result)
         local addr = addr_result.value
-        return Code.CodePlaceDeref(addr, tree_code_input:tree_code_type(self.elem), tree_code_input:tree_code_align_of(self.elem)), self.elem
+        return tree_code_input:tree_code_place_result(Code.CodePlaceDeref(addr, tree_code_input:tree_code_type(self.elem), tree_code_input:tree_code_align_of(self.elem)))
     end
     function Sem.FieldRef:tree_code_require_lowered_field(tree_code_input)
         unsupported(tree_code_input, self, "field access before sem_layout_resolve")
@@ -1138,7 +1167,11 @@ local function bind_context(T)
     end
 
     function Ty.Type:tree_code_lower_expr_index_base(tree_code_input, base, idx, elem_ty)
-        if tree_code_input:tree_code_type(self):tree_code_is_aggregate_type() then return Tr.TreeCodeIndexPlaceResult(base:tree_code_as_place(tree_code_input), idx, tree_code_input:tree_code_state()) end
+        if tree_code_input:tree_code_type(self):tree_code_is_aggregate_type() then
+            local base_result = base:tree_code_as_place_result(tree_code_input)
+            tree_code_input = tree_code_input:tree_code_with_result_state(base_result)
+            return Tr.TreeCodeIndexPlaceResult(base_result.place, idx, tree_code_input:tree_code_state())
+        end
         unsupported(tree_code_input, base, "index expression base type " .. class_name(self))
     end
     function Ty.TPtr:tree_code_lower_expr_index_base(tree_code_input, base, idx, elem_ty)
@@ -1175,7 +1208,9 @@ local function bind_context(T)
         return Tr.TreeCodeIndexPlaceResult(Code.CodePlaceDeref(data, tree_code_input:tree_code_type(elem_ty), tree_code_input:tree_code_align_of(elem_ty)), idx, tree_code_input:tree_code_state())
     end
     function Ty.TArray:tree_code_lower_expr_index_base(tree_code_input, base, idx, elem_ty)
-        return Tr.TreeCodeIndexPlaceResult(base:tree_code_as_place(tree_code_input), idx, tree_code_input:tree_code_state())
+        local base_result = base:tree_code_as_place_result(tree_code_input)
+        tree_code_input = tree_code_input:tree_code_with_result_state(base_result)
+        return Tr.TreeCodeIndexPlaceResult(base_result.place, idx, tree_code_input:tree_code_state())
     end
 
     function Ty.Type:tree_code_lower_place_index_base(tree_code_input, base, idx, elem_ty)
@@ -1213,40 +1248,44 @@ local function bind_context(T)
     end
 
     function Ty.Type:tree_code_lower_place_field_base(tree_code_input, base)
-        return base:lower_tree_place_to_code(Tr.TreeCodePlaceInput(tree_code_input:tree_code_func_facts(), tree_code_input:tree_code_state())).place
+        return base:lower_tree_place_to_code(Tr.TreeCodePlaceInput(tree_code_input:tree_code_func_facts(), tree_code_input:tree_code_state()))
     end
     function Ty.TPtr:tree_code_lower_place_field_base(tree_code_input, base)
         local ref = base:tree_code_ref_for_ptr_field()
-        if ref == nil then return base:lower_tree_place_to_code(Tr.TreeCodePlaceInput(tree_code_input:tree_code_func_facts(), tree_code_input:tree_code_state())).place end
+        if ref == nil then return base:lower_tree_place_to_code(Tr.TreeCodePlaceInput(tree_code_input:tree_code_func_facts(), tree_code_input:tree_code_state())) end
         local addr_result = Tr.ExprRef(Tr.ExprTyped(self), ref):lower_tree_expr_to_code(tree_code_input:tree_code_expr_input())
         tree_code_input = tree_code_input:tree_code_with_result_state(addr_result)
         local addr = addr_result.value
-        return Code.CodePlaceDeref(addr, tree_code_input:tree_code_type(self.elem), tree_code_input:tree_code_align_of(self.elem))
+        return tree_code_input:tree_code_place_result(Code.CodePlaceDeref(addr, tree_code_input:tree_code_type(self.elem), tree_code_input:tree_code_align_of(self.elem)))
     end
     function Tr.Place:tree_code_ref_for_ptr_field() return nil end
     function Tr.PlaceRef:tree_code_ref_for_ptr_field() return self.ref end
 
-    function Tr.Expr:tree_code_as_place(tree_code_input)
+    function Tr.Expr:tree_code_as_place_result(tree_code_input)
         unsupported(tree_code_input, self, "expression is not addressable " .. class_name(self))
     end
-    function Tr.ExprRef:tree_code_as_place(tree_code_input)
-        return Tr.PlaceRef(Tr.PlaceTyped(expr_type(self)), self.ref):lower_tree_place_to_code(Tr.TreeCodePlaceInput(tree_code_input:tree_code_func_facts(), tree_code_input:tree_code_state())).place
+    function Tr.Expr:tree_code_as_place(tree_code_input)
+        return self:tree_code_as_place_result(tree_code_input).place
     end
-    function Tr.ExprDeref:tree_code_as_place(tree_code_input)
+    function Tr.ExprRef:tree_code_as_place_result(tree_code_input)
+        return Tr.PlaceRef(Tr.PlaceTyped(expr_type(self)), self.ref):lower_tree_place_to_code(Tr.TreeCodePlaceInput(tree_code_input:tree_code_func_facts(), tree_code_input:tree_code_state()))
+    end
+    function Tr.ExprDeref:tree_code_as_place_result(tree_code_input)
         local value_result = self.value:lower_tree_expr_to_code(tree_code_input:tree_code_expr_input())
         tree_code_input = tree_code_input:tree_code_with_result_state(value_result)
         local value = value_result.value
-        return Code.CodePlaceDeref(value, tree_code_input:tree_code_type(expr_type(self)), tree_code_input:tree_code_align_of(expr_type(self)))
+        return tree_code_input:tree_code_place_result(Code.CodePlaceDeref(value, tree_code_input:tree_code_type(expr_type(self)), tree_code_input:tree_code_align_of(expr_type(self))))
     end
-    function Tr.ExprField:tree_code_as_place(tree_code_input)
+    function Tr.ExprField:tree_code_as_place_result(tree_code_input)
         self.field:tree_code_require_lowered_field(tree_code_input)
         local base_ty = source_access_base(expr_type(self.base))
-        local base_place = base_ty:tree_code_lower_field_base_place(tree_code_input, self.base)
+        local base_result = base_ty:tree_code_lower_field_base_place(tree_code_input, self.base)
+        tree_code_input = tree_code_input:tree_code_with_result_state(base_result)
         local field_layout = tree_code_input:tree_code_layout_of(self.field.ty)
-        return Code.CodePlaceField(base_place, self.field, tree_code_input:tree_code_type(self.field.ty), self.field.offset, field_layout and field_layout.size or nil, field_layout and field_layout.align or nil)
+        return tree_code_input:tree_code_place_result(Code.CodePlaceField(base_result.place, self.field, tree_code_input:tree_code_type(self.field.ty), self.field.offset, field_layout and field_layout.size or nil, field_layout and field_layout.align or nil))
     end
-    function Tr.ExprIndex:tree_code_as_place(tree_code_input)
-        return self.base:tree_code_lower_place(tree_code_input, self.index, expr_type(self)).place
+    function Tr.ExprIndex:tree_code_as_place_result(tree_code_input)
+        return self.base:tree_code_lower_place(tree_code_input, self.index, expr_type(self))
     end
 
     function Core.Literal:lower_tree_literal_to_code(tree_code_input, source_ty)
@@ -1310,11 +1349,11 @@ local function bind_context(T)
 
     function Bind.ValueRefBinding:tree_code_lookup_value(tree_code_input)
         local binding, key = self:tree_code_lookup_binding(tree_code_input)
-        local local_info = tree_code_input:tree_code_state().bindings.locals_by_key[key]
+        local local_info = map_get(tree_code_input:tree_code_state().bindings.locals_by_key, key)
         if local_info ~= nil then
             return tree_code_input:tree_code_load_place(Code.CodePlaceLocal(local_info.binding.id, local_info.binding.ty), binding.ty, "load_" .. binding.name)
         end
-        local value_entry = tree_code_input:tree_code_state().bindings.values_by_key[key]
+        local value_entry = map_get(tree_code_input:tree_code_state().bindings.values_by_key, key)
         if value_entry ~= nil then return tree_code_input:tree_code_expr_result(value_entry.value, tree_code_input:tree_code_type(binding.ty)) end
         return binding.role:tree_code_lookup_value(tree_code_input, binding, self)
     end
@@ -1338,11 +1377,11 @@ local function bind_context(T)
         local binding, key = self.ref:tree_code_lookup_binding(tree_code_input)
         local global_place = binding.role:tree_code_global_place(tree_code_input, binding)
         if global_place ~= nil then return tree_code_input:tree_code_place_result(global_place) end
-        local local_info = tree_code_input:tree_code_state().bindings.locals_by_key[key]
+        local local_info = map_get(tree_code_input:tree_code_state().bindings.locals_by_key, key)
         if local_info == nil then
-            if tree_code_input:tree_code_state().residence.addressed_by_key[key] or tree_code_input:tree_code_state().residence.mutable_by_key[key] or tree_code_input:tree_code_type(binding.ty):tree_code_is_aggregate_type() then
-                tree_code_input:tree_code_ensure_local(binding, binding.ty)
-                local_info = tree_code_input:tree_code_state().bindings.locals_by_key[key]
+            if map_get(tree_code_input:tree_code_state().residence.addressed_by_key, key) ~= nil or map_get(tree_code_input:tree_code_state().residence.mutable_by_key, key) ~= nil or tree_code_input:tree_code_type(binding.ty):tree_code_is_aggregate_type() then
+                tree_code_input = tree_code_input:tree_code_with_result_state(tree_code_input:tree_code_ensure_local(binding, binding.ty))
+                local_info = map_get(tree_code_input:tree_code_state().bindings.locals_by_key, key)
             else
                 unsupported(tree_code_input, self, "address/store of value-resident binding `" .. tostring(binding.name) .. "`")
             end
@@ -1363,9 +1402,10 @@ local function bind_context(T)
         local tree_code_input = input
         self.field:tree_code_require_lowered_field(tree_code_input)
         local base_ty = source_access_base(place_type(self.base))
-        local base_place = base_ty:tree_code_lower_place_field_base(tree_code_input, self.base)
+        local base_result = base_ty:tree_code_lower_place_field_base(tree_code_input, self.base)
+        tree_code_input = tree_code_input:tree_code_with_result_state(base_result)
         local field_layout = tree_code_input:tree_code_layout_of(self.field.ty)
-        return tree_code_input:tree_code_place_result(Code.CodePlaceField(base_place, self.field, tree_code_input:tree_code_type(self.field.ty), self.field.offset, field_layout and field_layout.size or nil, field_layout and field_layout.align or nil))
+        return tree_code_input:tree_code_place_result(Code.CodePlaceField(base_result.place, self.field, tree_code_input:tree_code_type(self.field.ty), self.field.offset, field_layout and field_layout.size or nil, field_layout and field_layout.align or nil))
     end
 
     function Tr.PlaceIndex:lower_tree_place_to_code(input)
@@ -1688,7 +1728,9 @@ local function bind_context(T)
 
     function Tr.ExprField:lower_tree_expr_to_code(input)
         local tree_code_input = input
-        local load = tree_code_input:tree_code_load_place(self:tree_code_as_place(tree_code_input), expr_type(self), "field")
+        local place_result = self:tree_code_as_place_result(tree_code_input)
+        tree_code_input = tree_code_input:tree_code_with_result_state(place_result)
+        local load = tree_code_input:tree_code_load_place(place_result.place, expr_type(self), "field")
         tree_code_input = tree_code_input:tree_code_with_result_state(load)
         return tree_code_input:tree_code_expr_result(load.value, load.ty)
     end
@@ -1768,7 +1810,7 @@ local function bind_context(T)
         local tree_code_input = input
             if #(self.args or {}) > 1 then unsupported(tree_code_input, self, "multi-argument variant constructor `" .. tostring(self.type_name) .. "." .. tostring(self.variant_name) .. "`") end
             local def = tree_code_input:tree_code_variant_def(self.type_name)
-            local variant_entry = def and def.variants[self.variant_name] or nil
+            local variant_entry = tree_code_variant_entry(def, self.variant_name)
             local variant = variant_entry and variant_entry.variant or nil
             if variant == nil then unsupported(tree_code_input, self, "unknown variant constructor `" .. tostring(self.type_name) .. "." .. tostring(self.variant_name) .. "`") end
             local owner_ty = expr_type(self)
@@ -1813,7 +1855,7 @@ local function bind_context(T)
     end
 
     function Tr.SwitchVariantStmtArm:tree_code_bind_variant_payload(tree_code_input, kind, owner_value, owner_ty, variant)
-        if #(self.binds or {}) == 0 then return end
+        if #(self.binds or {}) == 0 then return Tr.TreeCodeStateResult(tree_code_input:tree_code_state()) end
         if #(self.binds or {}) > 1 then unsupported(tree_code_input, self, "multi-bind variant arm `" .. tostring(variant.name) .. "`") end
         local payload_ty = tree_code_input:tree_code_variant_payload_type(variant)
         if payload_ty == nil then unsupported(tree_code_input, self, "payload bind for void variant `" .. tostring(variant.name) .. "`") end
@@ -1829,10 +1871,11 @@ local function bind_context(T)
         else
             tree_code_input = tree_code_input:tree_code_with_result_state(tree_code_input:tree_code_bind_alias(binding, payload, ty))
         end
+        return Tr.TreeCodeStateResult(tree_code_input:tree_code_state())
     end
 
     function Tr.SwitchVariantExprArm:tree_code_bind_variant_payload(tree_code_input, kind, owner_value, owner_ty, variant)
-        if #(self.binds or {}) == 0 then return end
+        if #(self.binds or {}) == 0 then return Tr.TreeCodeStateResult(tree_code_input:tree_code_state()) end
         if #(self.binds or {}) > 1 then unsupported(tree_code_input, self, "multi-bind variant arm `" .. tostring(variant.name) .. "`") end
         local payload_ty = tree_code_input:tree_code_variant_payload_type(variant)
         if payload_ty == nil then unsupported(tree_code_input, self, "payload bind for void variant `" .. tostring(variant.name) .. "`") end
@@ -1848,6 +1891,7 @@ local function bind_context(T)
         else
             tree_code_input = tree_code_input:tree_code_with_result_state(tree_code_input:tree_code_bind_alias(binding, payload, ty))
         end
+        return Tr.TreeCodeStateResult(tree_code_input:tree_code_state())
     end
 
     label_key = function(label)
@@ -1949,7 +1993,7 @@ local function bind_context(T)
             local cases = {}
             for i = 1, #(stmt.variant_arms or {}) do
                 local arm = stmt.variant_arms[i]
-                local variant_entry = def.variants[arm.variant_name]
+                local variant_entry = tree_code_variant_entry(def, arm.variant_name)
                 local variant = variant_entry and variant_entry.variant or nil
                 if variant == nil then unsupported(tree_code_input, stmt, "unknown variant arm `" .. tostring(arm.variant_name) .. "`") end
                 local bid_result = tree_code_input:tree_code_new_block("switch_variant_case")
@@ -1970,10 +2014,10 @@ local function bind_context(T)
             for i = 1, #(stmt.variant_arms or {}) do
                 tree_code_input = tree_code_input:tree_code_with_result_state(tree_code_input:tree_code_restore_bindings(saved))
                 local arm = stmt.variant_arms[i]
-                local variant_entry = def.variants[arm.variant_name]
+                local variant_entry = tree_code_variant_entry(def, arm.variant_name)
                 local variant = variant_entry and variant_entry.variant or nil
                 tree_code_input = tree_code_input:tree_code_with_result_state(tree_code_input:tree_code_start_block(case_ids[i], "switch.variant.case", {}, origin_generated("variant switch case")))
-                arm:tree_code_bind_variant_payload(tree_code_input, "stmt_switch", value, owner_ty, variant)
+                tree_code_input = tree_code_input:tree_code_with_result_state(arm:tree_code_bind_variant_payload(tree_code_input, "stmt_switch", value, owner_ty, variant))
                 tree_code_input = tree_code_input:tree_code_lower_stmt_body(arm.body or {})
                 if tree_code_input:tree_code_state():tree_code_has_current_block() then tree_code_input:tree_code_terminate(Code.CodeTermJump(join_id, {}), origin_generated("variant switch case fallthrough")); any_falls = true end
             end
@@ -2130,7 +2174,7 @@ local function bind_context(T)
             local cases = {}
             for i = 1, #(expr.variant_arms or {}) do
                 local arm = expr.variant_arms[i]
-                local variant_entry = def.variants[arm.variant_name]
+                local variant_entry = tree_code_variant_entry(def, arm.variant_name)
                 local variant = variant_entry and variant_entry.variant or nil
                 if variant == nil then unsupported(tree_code_input, expr, "unknown variant arm `" .. tostring(arm.variant_name) .. "`") end
                 local bid_result = tree_code_input:tree_code_new_block("expr_switch_variant_case")
@@ -2151,10 +2195,10 @@ local function bind_context(T)
             for i = 1, #(expr.variant_arms or {}) do
                 tree_code_input = tree_code_input:tree_code_with_result_state(tree_code_input:tree_code_restore_bindings(saved))
                 local arm = expr.variant_arms[i]
-                local variant_entry = def.variants[arm.variant_name]
+                local variant_entry = tree_code_variant_entry(def, arm.variant_name)
                 local variant = variant_entry and variant_entry.variant or nil
                 tree_code_input = tree_code_input:tree_code_with_result_state(tree_code_input:tree_code_start_block(case_ids[i], "expr.switch.variant.case", {}, origin_generated("variant switch expression case")))
-                arm:tree_code_bind_variant_payload(tree_code_input, "expr_switch", value, owner_ty, variant)
+                tree_code_input = tree_code_input:tree_code_with_result_state(arm:tree_code_bind_variant_payload(tree_code_input, "expr_switch", value, owner_ty, variant))
                 tree_code_input = tree_code_input:tree_code_lower_stmt_body(arm.body or {})
                 if tree_code_input:tree_code_state():tree_code_has_current_block() then
                     local arm_value_result = arm.result:lower_tree_expr_to_code(tree_code_input:tree_code_expr_input())

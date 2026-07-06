@@ -52,9 +52,31 @@ local borrow = seen["DeclRegion:TokenStore:borrow"]
 assert(borrow.blocks[1].body[1].payload[1].shorthand == true, "generated borrow should use jump shorthand")
 
 local module = lalin.syntax.to_module(decls, "StorePolicy", T)
+require("lalin.tree_typecheck")(T)
 local item_kinds = {}
 for _, item in ipairs(module.items) do item_kinds[tostring(asdl.classof(item))] = true end
 assert(asdl.classof(module.items[1]) == Tr.ItemType, "first item lowers to type")
 assert(asdl.classof(module.items[#module.items]) == Tr.ItemFunc, "last item lowers to function")
+local checked = module:typecheck_tree_module()
+assert(#checked.issues == 0, "generated arena store should satisfy Domain contract")
+
+local bad_decls = assert(lalin.loadstring([=[
+struct BadRecord
+  x [i32]
+end
+
+struct BadStore
+  records [ptr [BadRecord]]
+end
+
+handle BadStore.Ref [u32]
+  invalid = 0
+  domain [BadStore]
+  target [BadRecord]
+end
+]=], "@bad-domain.lln"))
+local bad_module = lalin.syntax.to_module(bad_decls, "BadDomain", T)
+local bad_checked = bad_module:typecheck_tree_module()
+assert(#bad_checked.issues == 1 and asdl.classof(bad_checked.issues[1]) == Tr.TypeIssueDomainContract, "handle domain without resolver should fail at declaration")
 
 io.write("lalin store policy ok\n")

@@ -1650,11 +1650,11 @@ function Decl:lower(opts)
     return require("lalin.compiler_driver").lower_module(module_ast_of(self), opts)
 end
 
-function Decl:emit_c_artifact(opts)
+function Decl:emit_c(opts)
     opts = merge_source_ctx(opts, self)
     opts.site = opts.site or "lalin.dsl c"
     opts.context = opts.context or T
-    local artifact = (package.loaded.lalin or require("lalin")).emit_c_artifact(self, opts)
+    local artifact = (package.loaded.lalin or require("lalin")).emit_c(self, opts)
     artifact.dsl_module = self
     artifact.module = self
     if getmetatable(artifact) == nil then
@@ -1663,9 +1663,13 @@ function Decl:emit_c_artifact(opts)
     return artifact
 end
 
+function Decl:emit_c_artifact(opts)
+    return self:emit_c(opts)
+end
+
 function Decl:compile(opts)
     opts = merge_source_ctx(opts, self)
-    if opts.backend == "c" or opts.codegen == "c" then return self:emit_c_artifact(opts) end
+    if opts.backend == "c" or opts.codegen == "c" then return self:emit_c(opts) end
     opts.name = opts.name or self.name or "lalin_luajit"
     return require("lalin").compile(self, opts)
 end

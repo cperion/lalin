@@ -433,6 +433,16 @@ return schema. LalinNative {
     },
   },
 
+  sum. NativeCodeSwitchStepShape {
+    NativeSwitchStepAtoms {
+      field. scalar [LalinNative.NativeMachineScalarRep],
+      field. key [LalinNative.NativeCodeExprAtomShape],
+    },
+    NativeSwitchStepImmKey {
+      field. scalar [LalinNative.NativeMachineScalarRep],
+    },
+  },
+
   sum. NativeCodeMemoryAddressShape {
     NativeMemoryAddressInput {
       field. ordinal [number],
@@ -522,6 +532,8 @@ return schema. LalinNative {
     interned,
     field. public_abi_shapes [many [LalinNative.NativeFastPublicAbiShape]],
     field. code_expr_shapes [many [LalinNative.NativeCodeExprRegionShape]],
+    field. compare_branch_shapes [many [LalinNative.NativeCodeCompareShape]],
+    field. switch_step_shapes [many [LalinNative.NativeCodeSwitchStepShape]],
     field. memory_shapes [many [LalinNative.NativeCodeMemoryRegionShape]],
     field. kernel_shapes [many [LalinNative.NativeKernelStepRegionShape]],
     field. stencil_shapes [many [LalinNative.NativeStencilPointRegionShape]],
@@ -581,6 +593,7 @@ return schema. LalinNative {
     },
     NativeRegionSwitch {
       field. key [LalinNative.NativeTemplateValueId],
+      field. step_shape [LalinNative.NativeCodeSwitchStepShape],
       field. cases [many [LalinNative.NativeRegionSwitchCase]],
       field. default [LalinNative.NativeFastRegionId],
     },
@@ -595,6 +608,10 @@ return schema. LalinNative {
   sum. NativeFastRegionBody {
     NativeFrameMicroOpRegion { field. family [LalinNative.NativeTemplateFamily], },
     NativeCodeExprRegion { field. shape [LalinNative.NativeCodeExprRegionShape], },
+    NativeFastPublicCodeExprRegion {
+      field. abi [LalinNative.NativeFastPublicAbiShape],
+      field. shape [LalinNative.NativeCodeExprRegionShape],
+    },
     NativeCodeCompareBranchRegion { field. compare [LalinNative.NativeCodeCompareShape], },
     NativeCodeLoadOpStoreRegion { field. shape [LalinNative.NativeCodeMemoryRegionShape], },
     NativeKernelStepRegion { field. shape [LalinNative.NativeKernelStepRegionShape], },
@@ -2259,6 +2276,14 @@ return schema. LalinNative {
       field. else_to [LalinNative.NativeTemplateNodeId],
       field. else_symbol [LalinNative.NativeContinuationSymbol],
     },
+    NativeBankSwitchStepEdge {
+      field. from [LalinNative.NativeTemplateNodeId],
+      field. case_to [LalinNative.NativeTemplateNodeId],
+      field. case_symbol [LalinNative.NativeContinuationSymbol],
+      field. default_to [LalinNative.NativeTemplateNodeId],
+      field. default_symbol [LalinNative.NativeContinuationSymbol],
+      field. key [LalinCore.Literal],
+    },
     NativeBankLoopBackedgeEdge {
       field. from [LalinNative.NativeTemplateNodeId],
       field. to [LalinNative.NativeTemplateNodeId],
@@ -2386,6 +2411,8 @@ return schema. LalinNative {
     NativeAxisCodeSig { field. sig [LalinCode.CodeSig], },
     NativeAxisCodeMicroOp { field. shape [LalinNative.NativeCodeMicroOpShape], },
     NativeAxisFastCodeExpr { field. shape [LalinNative.NativeCodeExprRegionShape], },
+    NativeAxisFastCodeCompareBranch { field. shape [LalinNative.NativeCodeCompareShape], },
+    NativeAxisFastCodeSwitchStep { field. shape [LalinNative.NativeCodeSwitchStepShape], },
     NativeAxisFastPublicAbi { field. shape [LalinNative.NativeFastPublicAbiShape], },
     NativeAxisAbiMicroOp { field. shape [LalinNative.NativeAbiMicroOpShape], },
     NativeAxisKernelMicroOp { field. shape [LalinNative.NativeKernelMicroOpShape], },
@@ -3414,6 +3441,14 @@ return schema. LalinNative {
       field. else_to [LalinNative.NativeTemplateNodeId],
       field. else_symbol [LalinNative.NativeContinuationSymbol],
       field. condition [LalinNative.NativeTemplateValueId],
+    },
+    NativeSwitchStepEdge {
+      field. from [LalinNative.NativeTemplateNodeId],
+      field. case_to [LalinNative.NativeTemplateNodeId],
+      field. case_symbol [LalinNative.NativeContinuationSymbol],
+      field. default_to [LalinNative.NativeTemplateNodeId],
+      field. default_symbol [LalinNative.NativeContinuationSymbol],
+      field. key [LalinCore.Literal],
     },
     NativeLoopBackedgeEdge {
       field. from [LalinNative.NativeTemplateNodeId],

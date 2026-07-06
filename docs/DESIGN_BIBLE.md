@@ -120,6 +120,12 @@ lease, and the invalidating methods on `Store` are checked against that lease
 origin. This is the object model and the memory model closing over the same
 owner.
 
+That closure is now a contract, not just a pattern. A handle with `domain Store`
+asserts that `Store` has a resolver region for that handle and that the resolver
+can grant a `lease("self", ptr(Target))`. Stores, LuaBridge registry handles,
+and generic resolver objects all satisfy the same `Domain(A, H)` shape instead
+of each receiving a bespoke language feature.
+
 There is a practical consequence. Lalin now has two matching ways to express the same discipline:
 
 ```text

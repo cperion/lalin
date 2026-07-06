@@ -2,6 +2,10 @@ LUAJIT    = .vendor/LuaJIT/src
 TINYCC    = deps/tinycc
 TCC_PREFIX = $(CURDIR)/$(TINYCC)/.local
 LIBTCC    = $(TINYCC)/.local/lib/libtcc.so
+GCC_SRC = .vendor/gcc
+GCC_BUILD = $(GCC_SRC)/build-lalin-c
+GCC_PREFIX = $(CURDIR)/$(GCC_SRC)/.local
+VENDORED_GCC = $(GCC_PREFIX)/bin/gcc
 LALIN_BIN_DIR = target/lalin_binary
 LALIN_BIN = target/lalin
 LALIN_BC_BANK_C = $(LALIN_BIN_DIR)/lalin_embedded_bc_bank.c
@@ -17,7 +21,7 @@ LALIN_COMPLETE_NATIVE_BANK_MANIFEST = tools/lalin_complete_native_bank_manifest.
 LALIN_BIN_OBJ_DIR = $(LALIN_BIN_DIR)/obj
 MAXPROCS ?= $(shell n=$$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1); if [ "$$n" -gt 0 ] 2>/dev/null; then echo "$$n"; else echo 1; fi)
 
-.PHONY: all luajit lalin-bin native-complete-bank clean bench libtcc
+.PHONY: all luajit lalin-bin native-complete-bank clean bench libtcc gcc
 
 all: luajit
 luajit: $(LUAJIT)/libluajit.a
@@ -73,6 +77,14 @@ $(LIBTCC): $(TINYCC)/configure
 	cd $(TINYCC) && ./configure --prefix="$(TCC_PREFIX)" --disable-static
 	$(MAKE) -C $(TINYCC) libtcc.so libtcc1.a tcc
 	$(MAKE) -C $(TINYCC) install
+
+gcc: $(VENDORED_GCC)
+
+$(VENDORED_GCC): $(GCC_SRC)/configure
+	@mkdir -p $(GCC_BUILD)
+	cd $(GCC_BUILD) && ../configure --prefix="$(GCC_PREFIX)" --enable-languages=c --disable-multilib --disable-bootstrap
+	$(MAKE) -C $(GCC_BUILD) -j$(MAXPROCS) all-gcc all-target-libgcc
+	$(MAKE) -C $(GCC_BUILD) install-gcc install-target-libgcc
 
 clean:
 	$(MAKE) -C $(LUAJIT) clean

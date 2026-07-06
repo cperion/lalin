@@ -59,7 +59,8 @@ local function declare_ffi()
           LALIN_NATIVE_INSTALL_EDGE_LOOP_BACKEDGE = 3,
           LALIN_NATIVE_INSTALL_EDGE_EXIT = 4,
           LALIN_NATIVE_INSTALL_EDGE_CONTINUATION = 5,
-          LALIN_NATIVE_INSTALL_EDGE_RUNTIME_CALL_RETURN = 6
+          LALIN_NATIVE_INSTALL_EDGE_RUNTIME_CALL_RETURN = 6,
+          LALIN_NATIVE_INSTALL_EDGE_SWITCH_STEP = 7
         } LalinNativeInstallControlEdgeKind;
 
         typedef enum LalinNativeModuleAddressKind {
@@ -648,28 +649,44 @@ local function bind_context(T)
         return Native.NativeScalarValueRepresentation(scalar)
     end
 
-    function Native.NativeRegionBoundaryResidence:native_fast_value_location(_binding)
+    function Native.NativeRegionBoundaryResidence:native_fast_value_location(_binding, _target)
         error("lalin.native_mc: fast-region residence cannot be projected to a graph value location: " .. tostring(asdl.class_basename(self)), 3)
     end
 
-    function Native.NativeResidenceFrameSlot:native_fast_value_location(_binding)
+    function Native.NativeResidencePublicParam:native_fast_value_location(binding, target)
+        return Native.NativeValueRegisterLocation(Support.param_register(target, binding.scalar, self.index))
+    end
+
+    function Native.NativeResidencePublicResult:native_fast_value_location(binding, target)
+        return Native.NativeValueRegisterLocation(Support.result_register(target, binding.scalar))
+    end
+
+    function Native.NativeResidenceFrameSlot:native_fast_value_location(_binding, _target)
         return Native.NativeValueFrameSlotLocation(self.slot)
     end
 
-    function Native.NativeResidenceImmediate:native_fast_value_location(_binding)
+    function Native.NativeResidenceImmediate:native_fast_value_location(_binding, _target)
         return Native.NativeValuePatchCoordinateLocation(self.coordinate)
     end
 
-    function Native.NativeResidenceConstantPool:native_fast_value_location(binding)
+    function Native.NativeResidenceConstantPool:native_fast_value_location(binding, _target)
         return Native.NativeValueConstantPoolLocation(self.entry, scalar_value_representation(binding.scalar))
     end
 
-    function Native.NativeResidenceRuntimeSymbol:native_fast_value_location(_binding)
+    function Native.NativeResidenceRuntimeSymbol:native_fast_value_location(_binding, _target)
         return Native.NativeValuePatchCoordinateLocation(Native.NativePatchCallTarget(self.symbol))
     end
 
     function Native.NativeRegionBoundaryResidence:native_fast_patch_coordinate(_binding)
         error("lalin.native_mc: fast-region residence cannot be projected to a patch coordinate: " .. tostring(asdl.class_basename(self)), 3)
+    end
+
+    function Native.NativeResidencePublicParam:native_fast_patch_coordinate(_binding)
+        return nil
+    end
+
+    function Native.NativeResidencePublicResult:native_fast_patch_coordinate(_binding)
+        return nil
     end
 
     function Native.NativeResidenceFrameSlot:native_fast_patch_coordinate(_binding)
@@ -688,8 +705,8 @@ local function bind_context(T)
         return nil
     end
 
-    function Native.NativeRegionValueBinding:native_fast_value_placement()
-        return Native.NativeValuePlacement(self.value, scalar_value_representation(self.scalar), self.residence:native_fast_value_location(self))
+    function Native.NativeRegionValueBinding:native_fast_value_placement(target)
+        return Native.NativeValuePlacement(self.value, scalar_value_representation(self.scalar), self.residence:native_fast_value_location(self, target))
     end
 
     local function append_fast_region_binding(out, node_id, instance, ordinal, binding)
@@ -707,6 +724,42 @@ local function bind_context(T)
         return out
     end
 
+    local function switch_step_node_id(first_node_id, index)
+        if index == 1 then return first_node_id end
+        return Native.NativeTemplateNodeId(first_node_id.text .. ".switch_step." .. tostring(index))
+    end
+
+    local function switch_case_value_id(node_id, index)
+        return Native.NativeTemplateValueId("native.fast.switch.case." .. node_id.text .. "." .. tostring(index))
+    end
+
+    local function switch_case_binding(node_id, index, scalar, literal)
+        return Native.NativeRegionValueBinding(
+            switch_case_value_id(node_id, index),
+            scalar,
+            Native.NativeResidenceImmediate(scalar, literal:native_patch_coordinate_for_scalar(scalar))
+        )
+    end
+
+    local function native_template_node_for_region(region, input, node_id, extra_inputs)
+        local instance = fast_region_instance_id(node_id)
+        local input_bindings = {}
+        for _, binding in ipairs(region.inputs or {}) do input_bindings[#input_bindings + 1] = binding end
+        for _, binding in ipairs(extra_inputs or {}) do input_bindings[#input_bindings + 1] = binding end
+        local inputs = {}
+        local outputs = {}
+        for _, binding in ipairs(input_bindings or {}) do inputs[#inputs + 1] = binding:native_fast_value_placement(input.target) end
+        for _, binding in ipairs(region.outputs or {}) do outputs[#outputs + 1] = binding:native_fast_value_placement(input.target) end
+        return Native.NativeTemplateNode(
+            node_id,
+            instance,
+            region.body:native_fast_template_family(input),
+            inputs,
+            outputs,
+            append_fast_region_bindings(node_id, instance, input_bindings, region.outputs)
+        )
+    end
+
     local function fast_code_expr_family(input, shape)
         local token = shape:native_fast_expr_token()
         return Native.NativeTemplateFamily(
@@ -716,6 +769,20 @@ local function bind_context(T)
                 Support.axis_target(input.target),
                 Support.axis_machine_scalar(shape:native_fast_expr_result_scalar()),
                 Support.axis_fast_code_expr(shape),
+            },
+            Support.protocol_void_none()
+        )
+    end
+
+    local function fast_code_compare_family(input, shape)
+        local token = shape:native_fast_compare_token()
+        return Native.NativeTemplateFamily(
+            Native.NativeTemplateFamilyId("native.fast.code.compare_branch." .. token),
+            Native.NativeRoleCodeTerm,
+            {
+                Support.axis_target(input.target),
+                Support.axis_machine_scalar(shape:native_fast_compare_scalar()),
+                Support.axis_fast_code_compare_branch(shape),
             },
             Support.protocol_void_none()
         )
@@ -733,25 +800,29 @@ local function bind_context(T)
         return fast_code_expr_family(input, self.shape)
     end
 
-    function Native.NativeCodeCompareBranchRegion:native_fast_template_family(_input)
-        error("lalin.native_mc: NativeCodeCompareBranchRegion graph lowering requires generated compare-branch template family ASDL axes/sources", 3)
+    function Native.NativeFastPublicCodeExprRegion:native_fast_template_family(input)
+        return Support.fast_public_code_expr_family(input.target, self.abi, self.shape)
+    end
+
+    function Native.NativeCodeCompareBranchRegion:native_fast_template_family(input)
+        return fast_code_compare_family(input, self.compare)
     end
 
     function Native.NativeFastRegion:native_template_node(input)
-        local node_id = fast_region_node_id(self.id)
-        local instance = fast_region_instance_id(node_id)
-        local inputs = {}
-        local outputs = {}
-        for _, binding in ipairs(self.inputs or {}) do inputs[#inputs + 1] = binding:native_fast_value_placement() end
-        for _, binding in ipairs(self.outputs or {}) do outputs[#outputs + 1] = binding:native_fast_value_placement() end
-        return Native.NativeTemplateNode(
-            node_id,
-            instance,
-            self.body:native_fast_template_family(input),
-            inputs,
-            outputs,
-            append_fast_region_bindings(node_id, instance, self.inputs, self.outputs)
-        )
+        return native_template_node_for_region(self, input, fast_region_node_id(self.id), {})
+    end
+
+    function Native.NativeRegionTransfer:append_native_fast_template_nodes(nodes, input, region)
+        nodes[#nodes + 1] = region:native_template_node(input)
+    end
+
+    function Native.NativeRegionSwitch:append_native_fast_template_nodes(nodes, input, region)
+        local first_node_id = fast_region_node_id(region.id)
+        local scalar = self.step_shape:native_fast_switch_step_scalar()
+        for index, case in ipairs(self.cases or {}) do
+            local node_id = switch_step_node_id(first_node_id, index)
+            nodes[#nodes + 1] = native_template_node_for_region(region, input, node_id, { switch_case_binding(node_id, index, scalar, case.key) })
+        end
     end
 
     function Native.NativeRegionTransfer:append_native_fast_control_edges(_edges, _from)
@@ -770,8 +841,20 @@ local function bind_context(T)
         edges[#edges + 1] = Native.NativeConditionalBranchEdge(from, fast_region_node_id(self.then_to), Support.then_continuation_symbol(), fast_region_node_id(self.else_to), Support.else_continuation_symbol(), self.condition)
     end
 
-    function Native.NativeRegionSwitch:append_native_fast_control_edges(_edges, _from)
-        error("lalin.native_mc: NativeRegionSwitch graph lowering requires a typed NativeSwitchEdge graph/install edge", 3)
+    function Native.NativeRegionSwitch:append_native_fast_control_edges(edges, from)
+        local cases = self.cases or {}
+        for index, case in ipairs(cases) do
+            local step_from = switch_step_node_id(from, index)
+            local default_to = index < #cases and switch_step_node_id(from, index + 1) or fast_region_node_id(self.default)
+            edges[#edges + 1] = Native.NativeSwitchStepEdge(
+                step_from,
+                fast_region_node_id(case.to),
+                Support.then_continuation_symbol(),
+                default_to,
+                Support.else_continuation_symbol(),
+                case.key
+            )
+        end
     end
 
     function Native.NativeRegionCallReturn:append_native_fast_control_edges(edges, from)
@@ -788,9 +871,9 @@ local function bind_context(T)
         local nodes = {}
         local edges = {}
         for _, region in ipairs(self.regions or {}) do
-            local node = region:native_template_node(self)
-            nodes[#nodes + 1] = node
-            region.transfer:append_native_fast_control_edges(edges, node.id)
+            local first_node_id = fast_region_node_id(region.id)
+            region.transfer:append_native_fast_template_nodes(nodes, self, region)
+            region.transfer:append_native_fast_control_edges(edges, first_node_id)
         end
         local exits = {}
         for _, exit in ipairs(self.exits or {}) do exits[#exits + 1] = fast_region_node_id(exit) end
@@ -817,6 +900,10 @@ local function bind_context(T)
 
     function Native.NativeConditionalBranchEdge:native_bank_install_control_edge()
         return Native.NativeBankConditionalBranchEdge(self.from, self.then_to, self.then_symbol, self.else_to, self.else_symbol)
+    end
+
+    function Native.NativeSwitchStepEdge:native_bank_install_control_edge()
+        return Native.NativeBankSwitchStepEdge(self.from, self.case_to, self.case_symbol, self.default_to, self.default_symbol, self.key)
     end
 
     function Native.NativeLoopBackedgeEdge:native_bank_install_control_edge()
@@ -893,6 +980,15 @@ local function bind_context(T)
         row.then_symbol = cstr(keepalive, symbol_name(self.then_symbol))
         row.else_node_id = cstr(keepalive, self.else_to.text)
         row.else_symbol = cstr(keepalive, symbol_name(self.else_symbol))
+    end
+
+    function Native.NativeBankSwitchStepEdge:native_c_control_edge(row, keepalive)
+        row.kind = 7
+        row.from_node_id = cstr(keepalive, self.from.text)
+        row.then_node_id = cstr(keepalive, self.case_to.text)
+        row.then_symbol = cstr(keepalive, symbol_name(self.case_symbol))
+        row.else_node_id = cstr(keepalive, self.default_to.text)
+        row.else_symbol = cstr(keepalive, symbol_name(self.default_symbol))
     end
 
     function Native.NativeBankLoopBackedgeEdge:native_c_control_edge(row, keepalive)

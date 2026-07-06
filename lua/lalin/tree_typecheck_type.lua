@@ -171,11 +171,21 @@ return function(T)
         return nil
     end
 
+    local function type_path_text(path)
+        local parts = {}
+        for i = 1, #(path and path.parts or {}) do parts[#parts + 1] = path.parts[i].text end
+        return table.concat(parts, ".")
+    end
+
     function Ty.TypeRefPath:typecheck_tree_resolve_env_type(env)
         if self.path == nil or #self.path.parts < 1 then return nil end
-        local name = self.path.parts[#self.path.parts].text
+        local full_name = type_path_text(self.path)
+        local leaf_name = self.path.parts[#self.path.parts].text
         for i = #env.types, 1, -1 do
-            if env.types[i].name == name then return env.types[i].ty end
+            if env.types[i].name == full_name then return env.types[i].ty end
+        end
+        for i = #env.types, 1, -1 do
+            if env.types[i].name == leaf_name then return env.types[i].ty end
         end
         return nil
     end

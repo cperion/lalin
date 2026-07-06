@@ -210,7 +210,7 @@ local function bind_context(T)
     end
 
     local function empty_type_module_facts()
-        return Tr.TypeModuleFacts({}, {}, {}, {})
+        return Tr.TypeModuleFacts({}, {}, {}, {}, {}, {}, {})
     end
 
     local function variant_name_text(v)
@@ -649,20 +649,197 @@ local function bind_context(T)
         return issues
     end
 
-    function Tr.TypeDeclHandle:typecheck_tree_item_issues()
+    local function path_text(path)
+        local parts = {}
+        for i = 1, #(path and path.parts or {}) do parts[#parts + 1] = path.parts[i].text end
+        return table.concat(parts, ".")
+    end
+
+    local function type_ref_name(ref)
+        local cls = schema.classof(ref)
+        if cls == Ty.TypeRefPath then return path_text(ref.path) end
+        if cls == Ty.TypeRefGlobal then return ref.type_name end
+        if cls == Ty.TypeRefLocal then return ref.sym and ref.sym.text or tostring(ref) end
+        return tostring(ref)
+    end
+
+    local function named_ref_name(ty)
+        local cls = schema.classof(ty)
+        if cls == Ty.TNamed or cls == Ty.THandle then return type_ref_name(ty.ref) end
+        return nil
+    end
+
+    local function ptr_elem_name(ty)
+        local cls = schema.classof(ty)
+        if cls == Ty.TPtr then return named_ref_name(ty.elem) end
+        if cls == Ty.TAccess then return ptr_elem_name(ty.base) end
+        return nil
+    end
+
+    local function is_preserving_access(ty)
+        local cls = schema.classof(ty)
+        if cls == Ty.TAccess then
+            local acls = schema.classof(ty.access)
+            return acls == Ty.TypeAccessReadonly or acls == Ty.TypeAccessPreserve
+        end
+        return false
+    end
+
+    local function is_invalidating_access(ty)
+        local cls = schema.classof(ty)
+        if cls == Ty.TAccess then
+            local acls = schema.classof(ty.access)
+            return acls == Ty.TypeAccessInvalidate or acls == Ty.TypeAccessWriteonly
+        end
+        if cls == Ty.TPtr or cls == Ty.TView then return true end
+        return false
+    end
+
+    local function handle_type_name_from_param(ty)
+        local cls = schema.classof(ty)
+        if cls == Ty.THandle then return type_ref_name(ty.ref) end
+        if cls == Ty.TNamed then return type_ref_name(ty.ref) end
+        return nil
+    end
+
+    local function lease_info(ty)
+        local cls = schema.classof(ty)
+        if cls ~= Ty.TLease then return nil end
+        local origin = schema.classof(ty.origin) == Ty.LeaseOriginParam and ty.origin.name or nil
+        return { origin = origin, target = ptr_elem_name(ty.base) }
+    end
+
+    local function region_domain_signature(region, domain_name, handle_name)
+        if #(region.params or {}) < 2 then return nil end
+        local self_param, handle_param = region.params[1], region.params[2]
+        if self_param.name ~= "self" then return nil end
+        if ptr_elem_name(self_param.ty) ~= domain_name then return nil end
+        if handle_type_name_from_param(handle_param.ty) ~= handle_name then return nil end
+        return self_param, handle_param
+    end
+
+    local function region_grants_domain_lease(region, target_name)
+        for _, cont in ipairs(region.conts or {}) do
+            for _, p in ipairs(cont.params or {}) do
+                local info = lease_info(p.ty)
+                if info and info.origin == "self" and (target_name == nil or info.target == target_name) then
+                    return true, cont.name
+                end
+            end
+        end
+        return false, nil
+    end
+
+    local function domain_regions_for(scope, domain_name, handle_name)
+        local out = {}
+        local facts = scope and scope.facts
+        for _, entry in ipairs(facts and facts.regions or {}) do
+            local r = entry.region
+            if r and tostring(r.name):match("^" .. domain_name:gsub("%.", "%%.") .. "%.") then
+                if region_domain_signature(r, domain_name, handle_name) then out[#out + 1] = r end
+            end
+        end
+        return out
+    end
+
+    local function check_domain_ops(scope, domain_name, issues)
+        local facts = scope and scope.facts
+        for _, effect in ipairs(facts and facts.effects or {}) do
+            if #(effect.params or {}) > 0 then
+                local first = effect.params[1]
+                if first.name == "self" and ptr_elem_name(first.ty) == domain_name then
+                    local has_contract_class = #(effect.readonly or {}) > 0 or #(effect.preserve or {}) > 0 or #(effect.invalidate or {}) > 0
+                    local preserving, invalidating
+                    if has_contract_class then
+                        preserving = #(effect.readonly or {}) > 0 or #(effect.preserve or {}) > 0
+                        invalidating = #(effect.invalidate or {}) > 0
+                    else
+                        preserving = is_preserving_access(first.ty)
+                        invalidating = is_invalidating_access(first.ty)
+                    end
+                    if preserving == invalidating then
+                        issues[#issues + 1] = Tr.TypeIssueDomainContract(effect.name, domain_name, "operation whose receiver is the domain must classify access as exactly preserving or invalidating")
+                    end
+                end
+            end
+        end
+    end
+
+    local function check_domain_contract_for_handle(handle_decl, scope, issues)
+        local domain_ref, target_ref = nil, nil
+        for _, fact in ipairs(handle_decl.facts or {}) do
+            domain_ref = fact:typecheck_tree_handle_domain() or domain_ref
+            target_ref = fact:typecheck_tree_handle_target() or target_ref
+        end
+        if domain_ref == nil then return end
+        local domain_name = type_ref_name(domain_ref)
+        local target_name = target_ref and type_ref_name(target_ref) or nil
+        local handle_name = handle_decl.name:find(".", 1, true) and handle_decl.name or (domain_name .. "." .. handle_decl.name)
+        local candidates = domain_regions_for(scope, domain_name, handle_name)
+        if #candidates == 0 then
+            issues[#issues + 1] = Tr.TypeIssueDomainContract(handle_name, domain_name, "missing domain resolver region taking `(self, handle)`")
+            return
+        end
+        local grants = false
+        for _, r in ipairs(candidates) do
+            local ok = region_grants_domain_lease(r, target_name)
+            grants = grants or ok
+        end
+        if not grants then
+            issues[#issues + 1] = Tr.TypeIssueDomainContract(handle_name, domain_name, "resolver region must grant `lease(\"self\", ptr(Target))` on a success continuation")
+        end
+        check_domain_ops(scope, domain_name, issues)
+    end
+
+    function Tr.TypeDeclHandle:typecheck_tree_item_issues(input)
         local issues = {}
         self.repr:typecheck_tree_check_handle_decl(self.name, issues)
+        if input and input.scope then check_domain_contract_for_handle(self, input.scope, issues) end
         return issues
     end
 
-    function Tr.ItemType:typecheck_tree_item()
-        local issues = self.t:typecheck_tree_item_issues()
-        return Tr.TypeItemResult({ self }, issues)
+    function Tr.TypeDecl:typecheck_tree_canonical_decl(scope)
+        return self
+    end
+
+    function Tr.TypeDeclStruct:typecheck_tree_canonical_decl(scope)
+        local fields = {}
+        for i, f in ipairs(self.fields or {}) do fields[i] = Ty.FieldDecl(f.field_name, canonical_type(scope, f.ty)) end
+        return Tr.TypeDeclStruct(self.name, fields)
+    end
+
+    function Tr.TypeDeclUnion:typecheck_tree_canonical_decl(scope)
+        local fields = {}
+        for i, f in ipairs(self.fields or {}) do fields[i] = Ty.FieldDecl(f.field_name, canonical_type(scope, f.ty)) end
+        return Tr.TypeDeclUnion(self.name, fields)
+    end
+
+    function Tr.TypeDeclTaggedUnionSugar:typecheck_tree_canonical_decl(scope)
+        local variants = {}
+        for i, v in ipairs(self.variants or {}) do
+            local fields = {}
+            for j, f in ipairs(v.fields or {}) do fields[j] = Ty.FieldDecl(f.field_name, canonical_type(scope, f.ty)) end
+            variants[i] = Ty.VariantDecl(v.name, canonical_type(scope, v.payload), fields)
+        end
+        return Tr.TypeDeclTaggedUnionSugar(self.name, variants)
+    end
+
+    function Tr.TypeDeclHandle:typecheck_tree_canonical_decl(scope)
+        return self
+    end
+
+    function Tr.ItemType:typecheck_tree_item(input)
+        local t = self.t:typecheck_tree_canonical_decl(input.scope)
+        local issues = t:typecheck_tree_item_issues(input)
+        return Tr.TypeItemResult({ Tr.ItemType(t) }, issues)
     end
 
     function Tr.ItemRegion:typecheck_tree_item(input)
         local region = canonical_region(input.scope, self.region)
         local issues = region:typecheck_tree_signature_issues(input)
+        if #(input.scope.facts.region_bundles or {}) > 0 then
+            return Tr.TypeItemResult({}, issues)
+        end
         local region_scope = input.scope:typecheck_tree_add_params("region:" .. tostring(region.name), region.params)
         local stmt_input = region_scope:typecheck_tree_stmt_input(Ty.TScalar(C.ScalarVoid), Tr.TypeYieldNone)
         local region_id = "region:" .. tostring(region.name)
@@ -920,6 +1097,15 @@ local function bind_context(T)
 
     function Tr.TypeIssueDuplicateVariant:typecheck_tree_explanation()
         return Tr.TypeIssueExplanation("E0203", "while checking declarations", "duplicate variant `" .. tostring(self.variant_name or "?") .. "`", {}, {})
+    end
+
+    function Tr.TypeIssueDomainContract:typecheck_tree_explanation()
+        return Tr.TypeIssueExplanation("E0410", "while checking handle domain contract", "handle `" .. tostring(self.handle or "?") .. "` declares domain `" .. tostring(self.domain or "?") .. "` but the domain contract is not satisfied", {
+            tostring(self.reason or "domain contract failed"),
+        }, {
+            "define a qualified resolver region on the domain taking `(self, handle)` and granting a `lease(\"self\", ptr(Target))` on its success exit",
+            "classify qualified domain operations with readonly/preserve or invalidate/writeonly receiver access",
+        })
     end
 
     function Tr.TypeIssueNotCallable:typecheck_tree_explanation()
@@ -1307,7 +1493,391 @@ local function bind_context(T)
         collector.analysis_ctx = saved
     end
 
+    local function type_ref_path(name)
+        return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(name) })))
+    end
+
+    function Tr.RegionInvokeTarget:typecheck_tree_region_target_key()
+        local parts = {}
+        for i, p in ipairs((self.path and self.path.parts) or {}) do parts[#parts + 1] = p.text end
+        return table.concat(parts, ".")
+    end
+
+    function Tr.RegionProtocol:payload_for_cont(cont)
+        for i = 1, #(self.payloads or {}) do
+            if self.payloads[i].cont.name == cont.name then return self.payloads[i] end
+        end
+        return nil
+    end
+
+    function Tr.RegionSeal:payload_for_cont(cont)
+        return self.protocol:payload_for_cont(cont)
+    end
+
+    local function find_jump_arg(args, param, index)
+        for i, arg in ipairs(args or {}) do
+            if arg.name == param.name then return arg end
+        end
+        return (args or {})[index]
+    end
+
+    function Tr.RegionSeal:return_label_for_cont(cont)
+        return Tr.BlockLabel("__seal_return_" .. tostring(cont.name))
+    end
+
+    function Tr.RegionSeal:sealed_return_for_cont_args(cont, args)
+        local payload = self:payload_for_cont(cont)
+        local ctor_args = {}
+        if payload ~= nil then
+            local fields = {}
+            for i, p in ipairs(cont.params or {}) do
+                local arg = find_jump_arg(args, p, i)
+                fields[#fields + 1] = Tr.FieldInit(p.name, arg and arg.value or Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(p.name)), 0)
+            end
+            ctor_args[1] = Tr.ExprAgg(Tr.ExprSurface, type_ref_path(payload.type_name), fields)
+        end
+        return Tr.StmtReturnValue(Tr.StmtSurface, Tr.ExprCtor(Tr.ExprSurface, self.protocol.result_type_name, cont.name, ctor_args))
+    end
+
+    function Tr.RegionSeal:sealed_return_for_jump(stmt)
+        return self:sealed_return_for_cont_args(stmt.cont, stmt.args)
+    end
+
+    function Tr.Stmt:rewrite_tree_region_seal_stmt(seal, all_seals)
+        return self
+    end
+
+    function Tr.StmtJumpCont:rewrite_tree_region_seal_stmt(seal, all_seals)
+        return seal:sealed_return_for_jump(self)
+    end
+
+    function Tr.StmtIf:rewrite_tree_region_seal_stmt(seal, all_seals)
+        local then_body, else_body = {}, {}
+        for i, s in ipairs(self.then_body or {}) do then_body[i] = s:rewrite_tree_region_seal_stmt(seal, all_seals) end
+        for i, s in ipairs(self.else_body or {}) do else_body[i] = s:rewrite_tree_region_seal_stmt(seal, all_seals) end
+        return Tr.StmtIf(self.h, self.cond, then_body, else_body)
+    end
+
+    function Tr.StmtSwitch:rewrite_tree_region_seal_stmt(seal, all_seals)
+        local arms, variant_arms, default_body = {}, {}, {}
+        for i, arm in ipairs(self.arms or {}) do
+            local body = {}
+            for j, s in ipairs(arm.body or {}) do body[j] = s:rewrite_tree_region_seal_stmt(seal, all_seals) end
+            arms[i] = Tr.SwitchStmtArm(arm.key, body)
+        end
+        for i, arm in ipairs(self.variant_arms or {}) do
+            local body = {}
+            for j, s in ipairs(arm.body or {}) do body[j] = s:rewrite_tree_region_seal_stmt(seal, all_seals) end
+            variant_arms[i] = Tr.SwitchVariantStmtArm(arm.variant_name, arm.binds, body)
+        end
+        for i, s in ipairs(self.default_body or {}) do default_body[i] = s:rewrite_tree_region_seal_stmt(seal, all_seals) end
+        return Tr.StmtSwitch(self.h, self.value, arms, variant_arms, default_body)
+    end
+
+    function Tr.RegionWireTarget:rewrite_tree_region_seal_wire_target(seal)
+        return self
+    end
+
+    function Tr.RegionWireCont:rewrite_tree_region_seal_wire_target(seal)
+        return Tr.RegionWireBlock(seal:return_label_for_cont(self.cont), self.args or {})
+    end
+
+    function Tr.RegionContWire:rewrite_tree_region_seal_wire(seal)
+        return Tr.RegionContWire(self.name, self.target:rewrite_tree_region_seal_wire_target(seal))
+    end
+
+    local function find_seal_for_target(seals, target)
+        for i = 1, #(seals or {}) do
+            if seals[i].target:typecheck_tree_same_region_target(target) then return seals[i] end
+        end
+        return nil
+    end
+
+    local function find_bundle_member(bundle, target)
+        for i = 1, #(bundle and bundle.members or {}) do
+            if bundle.members[i].seal.target:typecheck_tree_same_region_target(target) then return bundle.members[i] end
+        end
+        return nil
+    end
+
+    function Tr.RegionWireTarget:forwards_tree_region_cont_name(name)
+        return false
+    end
+
+    function Tr.RegionWireCont:forwards_tree_region_cont_name(name)
+        return self.cont.name == name
+    end
+
+    local function find_wire_by_name(wiring, name)
+        for i = 1, #(wiring or {}) do
+            if wiring[i].name == name then return wiring[i] end
+        end
+        return nil
+    end
+
+    function Tr.StmtRegionCall:forwards_tree_region_protocol_to(seal, all_seals)
+        local target_seal = find_seal_for_target(all_seals or {}, self.target)
+        if target_seal == nil or target_seal.protocol.key ~= seal.protocol.key then return nil end
+        for i, cont in ipairs(target_seal.region.conts or {}) do
+            local wire = find_wire_by_name(self.wiring, cont.name)
+            if wire == nil or not wire.target:forwards_tree_region_cont_name(cont.name) then return nil end
+        end
+        return target_seal
+    end
+
+    function Tr.StmtRegionCall:rewrite_tree_region_seal_stmt(seal, all_seals)
+        local tail_seal = self:forwards_tree_region_protocol_to(seal, all_seals)
+        if tail_seal ~= nil then
+            return Tr.StmtReturnValue(Tr.StmtSurface, Tr.ExprCall(Tr.ExprSurface, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(tail_seal.function_name)), self.args))
+        end
+        local wiring = {}
+        for i, wire in ipairs(self.wiring or {}) do wiring[i] = wire:rewrite_tree_region_seal_wire(seal) end
+        return Tr.StmtRegionCall(self.h, self.invoke_id, self.target, self.args, wiring)
+    end
+
+    function Tr.StmtRegionEmit:rewrite_tree_region_seal_stmt(seal, all_seals)
+        local wiring = {}
+        for i, wire in ipairs(self.wiring or {}) do wiring[i] = wire:rewrite_tree_region_seal_wire(seal) end
+        return Tr.StmtRegionEmit(self.h, self.invoke_id, self.target, self.args, wiring)
+    end
+
+    function Tr.RegionSeal:rewrite_body_for_sealed_function(body, all_seals)
+        local out = {}
+        for i, stmt in ipairs(body or {}) do out[i] = stmt:rewrite_tree_region_seal_stmt(self, all_seals) end
+        return out
+    end
+
+    function Tr.RegionProtocol:generated_type_items(all_seals)
+        local items = {}
+        for i, payload in ipairs(self.payloads or {}) do
+            local fields = {}
+            for j, p in ipairs(payload.cont.params or {}) do fields[j] = Ty.FieldDecl(p.name, p.ty) end
+            items[#items + 1] = Tr.ItemType(Tr.TypeDeclStruct(payload.type_name, fields))
+        end
+        local variants = {}
+        for i, payload in ipairs(self.payloads or {}) do
+            variants[#variants + 1] = Ty.VariantDecl(payload.cont.name, type_ref_path(payload.type_name), {})
+        end
+        local seen = {}
+        for i, payload in ipairs(self.payloads or {}) do seen[payload.cont.name] = true end
+        for i, seal in ipairs(all_seals or {}) do
+            if seal.protocol.key == self.key then
+                for j, cont in ipairs(seal.region.conts or {}) do
+                    if not seen[cont.name] then
+                        variants[#variants + 1] = Ty.VariantDecl(cont.name, Ty.TScalar(C.ScalarVoid), {})
+                        seen[cont.name] = true
+                    end
+                end
+            end
+        end
+        items[#items + 1] = Tr.ItemType(Tr.TypeDeclTaggedUnionSugar(self.result_type_name, variants))
+        return items
+    end
+
+    function Tr.RegionSeal:generated_func_item(all_seals)
+        local entry = Tr.EntryControlBlock(self.region.entry.label, self.region.entry.params, self:rewrite_body_for_sealed_function(self.region.entry.body, all_seals))
+        local blocks = {}
+        for i, block in ipairs(self.region.blocks or {}) do
+            blocks[i] = Tr.ControlBlock(block.label, block.params, self:rewrite_body_for_sealed_function(block.body, all_seals))
+        end
+        for i, cont in ipairs(self.region.conts or {}) do
+            local args = {}
+            for j, p in ipairs(cont.params or {}) do args[j] = Tr.JumpArg(p.name, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(p.name))) end
+            blocks[#blocks + 1] = Tr.ControlBlock(self:return_label_for_cont(cont), cont.params, { self:sealed_return_for_cont_args(cont, args) })
+        end
+        return Tr.ItemFunc(Tr.FuncLocal(self.function_name, self.region.params, type_ref_path(self.protocol.result_type_name), {
+            Tr.StmtControl(Tr.StmtSurface, Tr.ControlStmtRegion("region-seal:" .. tostring(self.region.name), entry, blocks)),
+        }))
+    end
+
+    function Tr.RegionSeal:generated_items(all_seals)
+        return { self:generated_func_item(all_seals) }
+    end
+
+    local function sanitize_bundle_label(s)
+        s = tostring(s or ""):gsub("[^%w_]", "_")
+        if s == "" then s = "region" end
+        if s:match("^%d") then s = "_" .. s end
+        return s
+    end
+
+    local function bundle_target_name(target)
+        local parts = {}
+        for i = 1, #(target.path.parts or {}) do parts[#parts + 1] = target.path.parts[i].text end
+        return table.concat(parts, "_")
+    end
+
+    function Tr.RegionBundleMember:label_for(label)
+        return Tr.BlockLabel("__bundle_" .. sanitize_bundle_label(bundle_target_name(self.seal.target)) .. "_" .. tostring(label.name))
+    end
+
+    local function block_params_from_region_params(params)
+        local out = {}
+        for i, p in ipairs(params or {}) do out[i] = Tr.BlockParam(p.name, p.ty) end
+        return out
+    end
+
+    local function jump_args_from_region_params(params)
+        local out = {}
+        for i, p in ipairs(params or {}) do out[i] = Tr.JumpArg(p.name, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(p.name))) end
+        return out
+    end
+
+    local function jump_args_for_region_call(params, args)
+        local out = {}
+        for i, p in ipairs(params or {}) do out[i] = Tr.JumpArg(p.name, (args or {})[i]) end
+        return out
+    end
+
+    function Tr.RegionWireTarget:rewrite_tree_region_bundle_wire_target(root, member)
+        return self
+    end
+
+    function Tr.RegionWireBlock:rewrite_tree_region_bundle_wire_target(root, member)
+        return Tr.RegionWireBlock(member:label_for(self.label), self.args or {})
+    end
+
+    function Tr.RegionWireCont:rewrite_tree_region_bundle_wire_target(root, member)
+        return Tr.RegionWireBlock(root:return_label_for_cont(self.cont), self.args or {})
+    end
+
+    function Tr.RegionContWire:rewrite_tree_region_bundle_wire(root, member)
+        return Tr.RegionContWire(self.name, self.target:rewrite_tree_region_bundle_wire_target(root, member))
+    end
+
+    local function bundle_member_binding(member, binding)
+        if binding == nil then return binding end
+        return B.Binding(C.Id(tostring(member.local_namespace) .. ":" .. tostring(binding.id and binding.id.text or binding.name)), binding.name, binding.ty, binding.role)
+    end
+
+    function Tr.Stmt:rewrite_tree_region_bundle_stmt(root, member, bundle)
+        return self
+    end
+
+    function Tr.StmtLet:rewrite_tree_region_bundle_stmt(root, member, bundle)
+        return Tr.StmtLet(self.h, bundle_member_binding(member, self.binding), self.init)
+    end
+
+    function Tr.StmtVar:rewrite_tree_region_bundle_stmt(root, member, bundle)
+        return Tr.StmtVar(self.h, bundle_member_binding(member, self.binding), self.init)
+    end
+
+    function Tr.StmtJump:rewrite_tree_region_bundle_stmt(root, member, bundle)
+        return Tr.StmtJump(self.h, member:label_for(self.target), self.args)
+    end
+
+    function Tr.StmtJumpCont:rewrite_tree_region_bundle_stmt(root, member, bundle)
+        return root:sealed_return_for_jump(self)
+    end
+
+    function Tr.StmtIf:rewrite_tree_region_bundle_stmt(root, member, bundle)
+        local then_body, else_body = {}, {}
+        for i, s in ipairs(self.then_body or {}) do then_body[i] = s:rewrite_tree_region_bundle_stmt(root, member, bundle) end
+        for i, s in ipairs(self.else_body or {}) do else_body[i] = s:rewrite_tree_region_bundle_stmt(root, member, bundle) end
+        return Tr.StmtIf(self.h, self.cond, then_body, else_body)
+    end
+
+    function Tr.StmtSwitch:rewrite_tree_region_bundle_stmt(root, member, bundle)
+        local arms, variant_arms, default_body = {}, {}, {}
+        for i, arm in ipairs(self.arms or {}) do
+            local body = {}
+            for j, s in ipairs(arm.body or {}) do body[j] = s:rewrite_tree_region_bundle_stmt(root, member, bundle) end
+            arms[i] = Tr.SwitchStmtArm(arm.key, body)
+        end
+        for i, arm in ipairs(self.variant_arms or {}) do
+            local body = {}
+            for j, s in ipairs(arm.body or {}) do body[j] = s:rewrite_tree_region_bundle_stmt(root, member, bundle) end
+            variant_arms[i] = Tr.SwitchVariantStmtArm(arm.variant_name, arm.binds, body)
+        end
+        for i, s in ipairs(self.default_body or {}) do default_body[i] = s:rewrite_tree_region_bundle_stmt(root, member, bundle) end
+        return Tr.StmtSwitch(self.h, self.value, arms, variant_arms, default_body)
+    end
+
+    function Tr.StmtRegionEmit:rewrite_tree_region_bundle_stmt(root, member, bundle)
+        local wiring = {}
+        for i, wire in ipairs(self.wiring or {}) do wiring[i] = wire:rewrite_tree_region_bundle_wire(root, member) end
+        return Tr.StmtRegionEmit(self.h, self.invoke_id, self.target, self.args, wiring)
+    end
+
+    function Tr.StmtRegionCall:rewrite_tree_region_bundle_stmt(root, member, bundle)
+        local target_member = find_bundle_member(bundle, self.target)
+        if target_member ~= nil and self:forwards_tree_region_protocol_to(member.seal, { target_member.seal }) ~= nil then
+            return Tr.StmtJump(self.h, target_member.entry_label, jump_args_for_region_call(target_member.seal.region.params, self.args))
+        end
+        local wiring = {}
+        for i, wire in ipairs(self.wiring or {}) do wiring[i] = wire:rewrite_tree_region_bundle_wire(root, member) end
+        if target_member ~= nil then
+            return Tr.StmtRegionEmit(self.h, self.invoke_id, self.target, self.args, wiring)
+        end
+        return Tr.StmtRegionCall(self.h, self.invoke_id, self.target, self.args, wiring)
+    end
+
+    function Tr.RegionBundleMember:generated_control_blocks(root, bundle)
+        local blocks = {}
+        local entry_member = schema.with(self, { local_namespace = tostring(self.local_namespace) .. ":entry" })
+        local entry_body = {}
+        for i, s in ipairs(self.seal.region.entry.body or {}) do entry_body[i] = s:rewrite_tree_region_bundle_stmt(root, entry_member, bundle) end
+        blocks[#blocks + 1] = Tr.ControlBlock(self.entry_label, block_params_from_region_params(self.seal.region.params), entry_body)
+        for i, block in ipairs(self.seal.region.blocks or {}) do
+            local block_member = schema.with(self, { local_namespace = tostring(self.local_namespace) .. ":block:" .. tostring(block.label.name) })
+            local body = {}
+            for j, s in ipairs(block.body or {}) do body[j] = s:rewrite_tree_region_bundle_stmt(root, block_member, bundle) end
+            blocks[#blocks + 1] = Tr.ControlBlock(self:label_for(block.label), block.params, body)
+        end
+        return blocks
+    end
+
+    function Tr.RegionBundle:generated_func_item()
+        local root_member = find_bundle_member(self, self.root.target)
+        local entry = Tr.EntryControlBlock(Tr.BlockLabel("__bundle_entry"), {}, {
+            Tr.StmtJump(Tr.StmtSurface, root_member.entry_label, jump_args_from_region_params(self.root.region.params)),
+        })
+        local blocks = {}
+        for i, member in ipairs(self.members or {}) do
+            local generated = member:generated_control_blocks(self.root, self)
+            for j = 1, #generated do blocks[#blocks + 1] = generated[j] end
+        end
+        for i, cont in ipairs(self.root.region.conts or {}) do
+            local args = {}
+            for j, p in ipairs(cont.params or {}) do args[j] = Tr.JumpArg(p.name, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(p.name))) end
+            blocks[#blocks + 1] = Tr.ControlBlock(self.root:return_label_for_cont(cont), cont.params, { self.root:sealed_return_for_cont_args(cont, args) })
+        end
+        return Tr.ItemFunc(Tr.FuncLocal(self.root.function_name, self.root.region.params, type_ref_path(self.root.protocol.result_type_name), {
+            Tr.StmtControl(Tr.StmtSurface, Tr.ControlStmtRegion("region-bundle:" .. tostring(self.root.region.name), entry, blocks)),
+        }))
+    end
+
+    function Tr.RegionBundle:generated_items()
+        return { self:generated_func_item() }
+    end
+
+    function Tr.Module:with_tree_region_seals(module_name)
+        local facts = self:typecheck_tree_module_facts(Tr.TypeModuleFactsInput(module_name or only(module_type_api.module_name(self.h))))
+        if #(facts.region_seals or {}) == 0 then return self end
+        local items = clone_values(self.items)
+        for i, protocol in ipairs(facts.region_protocols or {}) do
+            local generated = protocol:generated_type_items(facts.region_seals)
+            for j = 1, #generated do items[#items + 1] = generated[j] end
+        end
+        local bundled_by_target = {}
+        for i, bundle in ipairs(facts.region_bundles or {}) do
+            local generated = bundle:generated_items()
+            for j = 1, #generated do items[#items + 1] = generated[j] end
+            for j, member in ipairs(bundle.members or {}) do
+                bundled_by_target[member.seal.target:typecheck_tree_region_target_key()] = true
+            end
+        end
+        for i, seal in ipairs(facts.region_seals or {}) do
+            if not bundled_by_target[seal.target:typecheck_tree_region_target_key()] then
+                local generated = seal:generated_items(facts.region_seals)
+                for j = 1, #generated do items[#items + 1] = generated[j] end
+            end
+        end
+        return Tr.Module(self.h, items)
+    end
+
     local function type_module_with_layout_env(module, extra_layout_env, target, collector, analysis_ctx)
+        module = module:with_tree_region_seals(only(module_type_api.module_name(module.h)))
         local base_env = module_type_api.env(module, target)
         local facts = module:typecheck_tree_module_facts(Tr.TypeModuleFactsInput(base_env.module_name))
         local module_scope = Tr.TypeValueScope(base_env.module_name, base_env.values, base_env.types, base_env.layouts, facts)

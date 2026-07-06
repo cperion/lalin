@@ -42,6 +42,17 @@ local function stmt_return(expr)
   return Ast.node("StmtReturn", { values = expr and { expr } or {} }, origin())
 end
 
+local function stmt_requires_preserve_self()
+  return Ast.node("StmtRequires", {
+    exprs = {
+      Ast.node("Call", {
+        callee = Ast.node("Name", { name = "preserve" }, origin()),
+        args = { name_expr("self") },
+      }, origin()),
+    },
+  }, origin())
+end
+
 local function stmt_jump(target, fields)
   local payload = {}
   for i, name in ipairs(fields or {}) do
@@ -155,7 +166,7 @@ local function capacity_left_func(store)
     qualifier = { sname },
     params = { field("self", ptr_type(sname)) },
     result = type_host("index"),
-    body = { stmt_return(bin_expr("sub", capacity, count)) },
+    body = { stmt_requires_preserve_self(), stmt_return(bin_expr("sub", capacity, count)) },
     exotype_generated = "arena_store",
   }, origin())
 end
@@ -167,7 +178,7 @@ local function len_func(store)
     qualifier = { sname },
     params = { field("self", ptr_type(sname)) },
     result = type_host("index"),
-    body = { stmt_return(field_expr(name_expr("self"), "count")) },
+    body = { stmt_requires_preserve_self(), stmt_return(field_expr(name_expr("self"), "count")) },
     exotype_generated = "arena_store",
   }, origin())
 end

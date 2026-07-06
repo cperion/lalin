@@ -1,0 +1,938 @@
+-- Organized register VM demo — Lalin as a pleasant DSL for C-shaped systems code.
+--
+-- The VM is split into object-oriented region methods:
+--   Program.run      owns the standalone program setup/runtime boundary
+--   VM.decode        maps bytecode to typed opcode continuations
+--   VM.dispatch      is the interpreter loop protocol
+--   VM.op_*         are opcode implementations
+--
+-- `main` is intentionally tiny: it constructs a Program and `emit`s Program.run.
+-- The VM loop itself uses sealed `call` so recursion closes, then RegionBundle
+-- lowering fuses decode/op regions into one fast dispatch function.
+
+-- NaN-tag-ready VM value word. The current Mini program only needs integer and
+-- boolean immediates, so those payloads live directly in the 64-bit word. This
+-- keeps the VM register file/constant pool at one machine word per value; later
+-- float/object cases can reserve NaN payload patterns without changing the VM
+-- frame shape.
+struct Value
+  bits [u64]
+end
+
+struct Instr
+  op  [u8]
+  a   [u8]
+  b   [u8]
+  c   [u8]
+  bx  [u32]
+  sbx [i32]
+end
+
+struct Frame
+  regs [ptr [Value]]
+  base [index]
+end
+
+struct VM
+  code   [ptr [Instr]]
+  consts [ptr [Value]]
+end
+
+struct Program
+  code   [ptr [Instr]]
+  consts [ptr [Value]]
+  regs   [ptr [Value]]
+end
+
+-- Mini source language. It is deliberately Lua-ish but register allocated.
+-- This is ASDL-shaped: every source form is its own product, and the compile
+-- behavior lives on that product's region method. There is no source `op` tag
+-- and no compiler-side dispatch table/if-chain.
+struct MiniLoadK
+  a  [u8]
+  bx [u32]
+end
+
+struct MiniAdd
+  a [u8]
+  b [u8]
+  c [u8]
+end
+
+struct MiniWhileLt
+  test [u8]
+  lhs  [u8]
+  rhs  [u8]
+end
+
+struct MiniReturn
+  a [u8]
+end
+
+struct MiniSumProgram
+  init_sum   [MiniLoadK]
+  init_i     [MiniLoadK]
+  init_limit [MiniLoadK]
+  init_one   [MiniLoadK]
+  loop       [MiniWhileLt]
+  add_sum    [MiniAdd]
+  inc_i      [MiniAdd]
+  ret        [MiniReturn]
+end
+
+struct Compiler
+  code     [ptr [Instr]]
+  consts   [ptr [Value]]
+  regs     [ptr [Value]]
+  pc       [index]
+  loop_pc  [index]
+  patch_pc [index]
+  patch_a  [u8]
+end
+
+struct Tokenizer
+  src [ptr [u8]]
+  len [index]
+  pos [index]
+end
+
+region Tokenizer.skip_ws(self [ptr [Tokenizer]];
+  done(tok [ptr [Tokenizer]])
+)
+  entry check()
+    if self.pos == self.len then
+      jump done(tok = self)
+    end
+    let ch [u8] = self.src[self.pos]
+    if ch == as [u8](32) then
+      self.pos = self.pos + 1
+      call Tokenizer.skip_ws(self; done = done)
+    elseif ch == as [u8](10) then
+      self.pos = self.pos + 1
+      call Tokenizer.skip_ws(self; done = done)
+    else
+      jump done(tok = self)
+    end
+  end
+end
+
+region Tokenizer.expect_char(self [ptr [Tokenizer]], want [u8], code [i32];
+  done(tok [ptr [Tokenizer]]),
+  parse_error(parse_code [i32], at [index])
+)
+  entry start()
+    call Tokenizer.skip_ws(self; done = check(tok, want, code))
+  end
+
+  block check(tok [ptr [Tokenizer]], want [u8], code [i32])
+    if tok.pos == tok.len then
+      jump parse_error(parse_code = code, at = tok.pos)
+    end
+    let ch [u8] = tok.src[tok.pos]
+    if ch == want then
+      tok.pos = tok.pos + 1
+      jump done(tok)
+    else
+      jump parse_error(parse_code = code, at = tok.pos)
+    end
+  end
+end
+
+region Tokenizer.expect_sum(self [ptr [Tokenizer]];
+  done(tok [ptr [Tokenizer]]),
+  parse_error(parse_code [i32], at [index])
+)
+  entry start()
+    call Tokenizer.skip_ws(self; done = check)
+  end
+  block check(tok [ptr [Tokenizer]])
+    if tok.src[tok.pos] == as [u8](115) then
+      if tok.src[tok.pos + 1] == as [u8](117) then
+        if tok.src[tok.pos + 2] == as [u8](109) then
+          tok.pos = tok.pos + 3
+          jump done(tok = tok)
+        end
+      end
+    end
+    jump parse_error(parse_code = 10, at = tok.pos)
+  end
+end
+
+region Tokenizer.expect_i(self [ptr [Tokenizer]];
+  done(tok [ptr [Tokenizer]]),
+  parse_error(parse_code [i32], at [index])
+)
+  entry start()
+    call Tokenizer.skip_ws(self; done = check)
+  end
+  block check(tok [ptr [Tokenizer]])
+    if tok.src[tok.pos] == as [u8](105) then
+      tok.pos = tok.pos + 1
+      jump done(tok = tok)
+    end
+    jump parse_error(parse_code = 11, at = tok.pos)
+  end
+end
+
+region Tokenizer.expect_limit(self [ptr [Tokenizer]];
+  done(tok [ptr [Tokenizer]]),
+  parse_error(parse_code [i32], at [index])
+)
+  entry start()
+    call Tokenizer.skip_ws(self; done = check)
+  end
+  block check(tok [ptr [Tokenizer]])
+    if tok.src[tok.pos] == as [u8](108) then
+      if tok.src[tok.pos + 1] == as [u8](105) then
+        if tok.src[tok.pos + 2] == as [u8](109) then
+          if tok.src[tok.pos + 3] == as [u8](105) then
+            if tok.src[tok.pos + 4] == as [u8](116) then
+              tok.pos = tok.pos + 5
+              jump done(tok = tok)
+            end
+          end
+        end
+      end
+    end
+    jump parse_error(parse_code = 12, at = tok.pos)
+  end
+end
+
+region Tokenizer.expect_one(self [ptr [Tokenizer]];
+  done(tok [ptr [Tokenizer]]),
+  parse_error(parse_code [i32], at [index])
+)
+  entry start()
+    call Tokenizer.skip_ws(self; done = check)
+  end
+  block check(tok [ptr [Tokenizer]])
+    if tok.src[tok.pos] == as [u8](111) then
+      if tok.src[tok.pos + 1] == as [u8](110) then
+        if tok.src[tok.pos + 2] == as [u8](101) then
+          tok.pos = tok.pos + 3
+          jump done(tok = tok)
+        end
+      end
+    end
+    jump parse_error(parse_code = 13, at = tok.pos)
+  end
+end
+
+region Tokenizer.expect_while(self [ptr [Tokenizer]];
+  done(tok [ptr [Tokenizer]]),
+  parse_error(parse_code [i32], at [index])
+)
+  entry start()
+    call Tokenizer.skip_ws(self; done = check)
+  end
+  block check(tok [ptr [Tokenizer]])
+    if tok.src[tok.pos] == as [u8](119) then
+      if tok.src[tok.pos + 1] == as [u8](104) then
+        if tok.src[tok.pos + 2] == as [u8](105) then
+          if tok.src[tok.pos + 3] == as [u8](108) then
+            if tok.src[tok.pos + 4] == as [u8](101) then
+              tok.pos = tok.pos + 5
+              jump done(tok = tok)
+            end
+          end
+        end
+      end
+    end
+    jump parse_error(parse_code = 14, at = tok.pos)
+  end
+end
+
+region Tokenizer.expect_do(self [ptr [Tokenizer]];
+  done(tok [ptr [Tokenizer]]),
+  parse_error(parse_code [i32], at [index])
+)
+  entry start()
+    call Tokenizer.skip_ws(self; done = check)
+  end
+  block check(tok [ptr [Tokenizer]])
+    if tok.src[tok.pos] == as [u8](100) then
+      if tok.src[tok.pos + 1] == as [u8](111) then
+        tok.pos = tok.pos + 2
+        jump done(tok = tok)
+      end
+    end
+    jump parse_error(parse_code = 15, at = tok.pos)
+  end
+end
+
+region Tokenizer.expect_end(self [ptr [Tokenizer]];
+  done(tok [ptr [Tokenizer]]),
+  parse_error(parse_code [i32], at [index])
+)
+  entry start()
+    call Tokenizer.skip_ws(self; done = check)
+  end
+  block check(tok [ptr [Tokenizer]])
+    if tok.src[tok.pos] == as [u8](101) then
+      if tok.src[tok.pos + 1] == as [u8](110) then
+        if tok.src[tok.pos + 2] == as [u8](100) then
+          tok.pos = tok.pos + 3
+          jump done(tok = tok)
+        end
+      end
+    end
+    jump parse_error(parse_code = 16, at = tok.pos)
+  end
+end
+
+region Tokenizer.expect_return(self [ptr [Tokenizer]];
+  done(tok [ptr [Tokenizer]]),
+  parse_error(parse_code [i32], at [index])
+)
+  entry start()
+    call Tokenizer.skip_ws(self; done = check)
+  end
+  block check(tok [ptr [Tokenizer]])
+    if tok.src[tok.pos] == as [u8](114) then
+      if tok.src[tok.pos + 1] == as [u8](101) then
+        if tok.src[tok.pos + 2] == as [u8](116) then
+          if tok.src[tok.pos + 3] == as [u8](117) then
+            if tok.src[tok.pos + 4] == as [u8](114) then
+              if tok.src[tok.pos + 5] == as [u8](110) then
+                tok.pos = tok.pos + 6
+                jump done(tok = tok)
+              end
+            end
+          end
+        end
+      end
+    end
+    jump parse_error(parse_code = 17, at = tok.pos)
+  end
+end
+
+region Tokenizer.expect_num0(self [ptr [Tokenizer]];
+  done(tok [ptr [Tokenizer]]),
+  parse_error(parse_code [i32], at [index])
+)
+  entry start()
+    call Tokenizer.expect_char(self, as [u8](48), 20; done = done, parse_error = parse_error)
+  end
+end
+
+region Tokenizer.expect_num1(self [ptr [Tokenizer]];
+  done(tok [ptr [Tokenizer]]),
+  parse_error(parse_code [i32], at [index])
+)
+  entry start()
+    call Tokenizer.expect_char(self, as [u8](49), 21; done = done, parse_error = parse_error)
+  end
+end
+
+region Tokenizer.expect_num11(self [ptr [Tokenizer]];
+  done(tok [ptr [Tokenizer]]),
+  parse_error(parse_code [i32], at [index])
+)
+  entry start()
+    call Tokenizer.skip_ws(self; done = check)
+  end
+  block check(tok [ptr [Tokenizer]])
+    if tok.src[tok.pos] == as [u8](49) then
+      if tok.src[tok.pos + 1] == as [u8](49) then
+        tok.pos = tok.pos + 2
+        jump done(tok = tok)
+      end
+    end
+    jump parse_error(parse_code = 22, at = tok.pos)
+  end
+end
+
+region Parser.parse_sum_program(tok [ptr [Tokenizer]], compiler [ptr [Compiler]];
+  parsed(program [MiniSumProgram], compiler [ptr [Compiler]]),
+  parse_error(parse_code [i32], at [index])
+)
+  entry start()
+    call Tokenizer.expect_sum(tok; done = sum_eq, parse_error = parse_error)
+  end
+  block sum_eq(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](61), 30; done = sum_num, parse_error = parse_error)
+  end
+  block sum_num(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_num0(tok; done = sum_semi, parse_error = parse_error)
+  end
+  block sum_semi(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](59), 31; done = i_name, parse_error = parse_error)
+  end
+  block i_name(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_i(tok; done = i_eq, parse_error = parse_error)
+  end
+  block i_eq(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](61), 32; done = i_num, parse_error = parse_error)
+  end
+  block i_num(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_num1(tok; done = i_semi, parse_error = parse_error)
+  end
+  block i_semi(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](59), 33; done = limit_name, parse_error = parse_error)
+  end
+  block limit_name(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_limit(tok; done = limit_eq, parse_error = parse_error)
+  end
+  block limit_eq(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](61), 34; done = limit_num, parse_error = parse_error)
+  end
+  block limit_num(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_num11(tok; done = limit_semi, parse_error = parse_error)
+  end
+  block limit_semi(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](59), 35; done = one_name, parse_error = parse_error)
+  end
+  block one_name(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_one(tok; done = one_eq, parse_error = parse_error)
+  end
+  block one_eq(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](61), 36; done = one_num, parse_error = parse_error)
+  end
+  block one_num(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_num1(tok; done = one_semi, parse_error = parse_error)
+  end
+  block one_semi(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](59), 37; done = while_kw, parse_error = parse_error)
+  end
+  block while_kw(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_while(tok; done = while_i, parse_error = parse_error)
+  end
+  block while_i(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_i(tok; done = while_lt, parse_error = parse_error)
+  end
+  block while_lt(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](60), 38; done = while_limit, parse_error = parse_error)
+  end
+  block while_limit(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_limit(tok; done = while_do, parse_error = parse_error)
+  end
+  block while_do(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_do(tok; done = body_sum, parse_error = parse_error)
+  end
+  block body_sum(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_sum(tok; done = body_sum_eq, parse_error = parse_error)
+  end
+  block body_sum_eq(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](61), 39; done = body_sum_lhs, parse_error = parse_error)
+  end
+  block body_sum_lhs(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_sum(tok; done = body_sum_plus, parse_error = parse_error)
+  end
+  block body_sum_plus(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](43), 40; done = body_sum_rhs, parse_error = parse_error)
+  end
+  block body_sum_rhs(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_i(tok; done = body_sum_semi, parse_error = parse_error)
+  end
+  block body_sum_semi(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](59), 41; done = body_i, parse_error = parse_error)
+  end
+  block body_i(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_i(tok; done = body_i_eq, parse_error = parse_error)
+  end
+  block body_i_eq(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](61), 42; done = body_i_lhs, parse_error = parse_error)
+  end
+  block body_i_lhs(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_i(tok; done = body_i_plus, parse_error = parse_error)
+  end
+  block body_i_plus(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](43), 43; done = body_i_rhs, parse_error = parse_error)
+  end
+  block body_i_rhs(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_one(tok; done = body_i_semi, parse_error = parse_error)
+  end
+  block body_i_semi(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](59), 44; done = end_kw, parse_error = parse_error)
+  end
+  block end_kw(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_end(tok; done = end_semi, parse_error = parse_error)
+  end
+  block end_semi(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_char(tok, as [u8](59), 45; done = return_kw, parse_error = parse_error)
+  end
+  block return_kw(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_return(tok; done = return_sum, parse_error = parse_error)
+  end
+  block return_sum(tok [ptr [Tokenizer]])
+    call Tokenizer.expect_sum(tok; done = finish, parse_error = parse_error)
+  end
+  block finish(tok [ptr [Tokenizer]])
+    jump parsed(program = MiniSumProgram {
+      init_sum = MiniLoadK { a = 0, bx = 0 },
+      init_i = MiniLoadK { a = 1, bx = 1 },
+      init_limit = MiniLoadK { a = 2, bx = 2 },
+      init_one = MiniLoadK { a = 3, bx = 1 },
+      loop = MiniWhileLt { test = 4, lhs = 1, rhs = 2 },
+      add_sum = MiniAdd { a = 0, b = 0, c = 1 },
+      inc_i = MiniAdd { a = 1, b = 1, c = 3 },
+      ret = MiniReturn { a = 0 }
+    }, compiler = compiler)
+  end
+end
+
+region MiniLoadK.compile(self [MiniLoadK], compiler [ptr [Compiler]];
+  done(compiler [ptr [Compiler]])
+)
+  entry run()
+    compiler.code[compiler.pc] = Instr { op = as [u8]([OP.LOADK]), a = self.a, b = 0, c = 0, bx = self.bx, sbx = 0 }
+    compiler.pc = compiler.pc + 1
+    jump done(compiler = compiler)
+  end
+end
+
+region MiniAdd.compile(self [MiniAdd], compiler [ptr [Compiler]];
+  done(compiler [ptr [Compiler]])
+)
+  entry run()
+    compiler.code[compiler.pc] = Instr { op = as [u8]([OP.ADD]), a = self.a, b = self.b, c = self.c, bx = 0, sbx = 0 }
+    compiler.pc = compiler.pc + 1
+    jump done(compiler = compiler)
+  end
+end
+
+region MiniReturn.compile(self [MiniReturn], compiler [ptr [Compiler]];
+  done(compiler [ptr [Compiler]])
+)
+  entry run()
+    compiler.code[compiler.pc] = Instr { op = as [u8]([OP.RETURN]), a = self.a, b = 0, c = 0, bx = 0, sbx = 0 }
+    compiler.pc = compiler.pc + 1
+    jump done(compiler = compiler)
+  end
+end
+
+region MiniWhileLt.begin(self [MiniWhileLt], compiler [ptr [Compiler]];
+  done(compiler [ptr [Compiler]])
+)
+  entry run()
+    compiler.loop_pc = compiler.pc
+    compiler.code[compiler.pc] = Instr { op = as [u8]([OP.LT]), a = self.test, b = self.lhs, c = self.rhs, bx = 0, sbx = 0 }
+    compiler.pc = compiler.pc + 1
+    compiler.patch_pc = compiler.pc
+    compiler.patch_a = self.test
+    compiler.code[compiler.pc] = Instr { op = as [u8]([OP.JMPZ]), a = self.test, b = 0, c = 0, bx = 0, sbx = 0 }
+    compiler.pc = compiler.pc + 1
+    jump done(compiler = compiler)
+  end
+end
+
+region MiniWhileLt.end(self [MiniWhileLt], compiler [ptr [Compiler]];
+  done(compiler [ptr [Compiler]])
+)
+  entry run()
+    let back_sbx [i32] = as [i32](compiler.loop_pc) - as [i32](compiler.pc + 1)
+    compiler.code[compiler.pc] = Instr { op = as [u8]([OP.JMP]), a = 0, b = 0, c = 0, bx = 0, sbx = back_sbx }
+    compiler.pc = compiler.pc + 1
+    let exit_pc [index] = compiler.pc
+    let patch_pc [index] = compiler.patch_pc
+    let exit_sbx [i32] = as [i32](exit_pc) - as [i32](patch_pc + 1)
+    compiler.code[patch_pc] = Instr { op = as [u8]([OP.JMPZ]), a = compiler.patch_a, b = 0, c = 0, bx = 0, sbx = exit_sbx }
+    jump done(compiler = compiler)
+  end
+end
+
+region MiniSumProgram.compile(self [MiniSumProgram], compiler [ptr [Compiler]];
+  done(compiler [ptr [Compiler]])
+)
+  entry start()
+    call MiniLoadK.compile(self.init_sum, compiler; done = init_i)
+  end
+
+  block init_i(compiler [ptr [Compiler]])
+    call MiniLoadK.compile(self.init_i, compiler; done = init_limit)
+  end
+
+  block init_limit(compiler [ptr [Compiler]])
+    call MiniLoadK.compile(self.init_limit, compiler; done = init_one)
+  end
+
+  block init_one(compiler [ptr [Compiler]])
+    call MiniLoadK.compile(self.init_one, compiler; done = loop_begin)
+  end
+
+  block loop_begin(compiler [ptr [Compiler]])
+    call MiniWhileLt.begin(self.loop, compiler; done = loop_body_sum)
+  end
+
+  block loop_body_sum(compiler [ptr [Compiler]])
+    call MiniAdd.compile(self.add_sum, compiler; done = loop_body_inc)
+  end
+
+  block loop_body_inc(compiler [ptr [Compiler]])
+    call MiniAdd.compile(self.inc_i, compiler; done = loop_end)
+  end
+
+  block loop_end(compiler [ptr [Compiler]])
+    call MiniWhileLt.end(self.loop, compiler; done = after_loop)
+  end
+
+  block after_loop(compiler [ptr [Compiler]])
+    call MiniReturn.compile(self.ret, compiler; done = done)
+  end
+end
+
+region Program.run(self [Program];
+  done(result [Value]),
+  failed(code [i32], pc [index])
+)
+  entry start()
+    var vm [VM] = VM { code = self.code, consts = self.consts }
+    var frame [Frame] = Frame { regs = self.regs, base = 0 }
+    call VM.dispatch(&vm, &frame, as [index](0);
+      halted = done,
+      runtime_error = failed
+    )
+  end
+end
+
+region VM.decode(self [ptr [VM]], frame [ptr [Frame]], pc [index];
+  loadk(a [u8], bx [u32], next_pc [index]),
+  move(a [u8], b [u8], next_pc [index]),
+  add(a [u8], b [u8], c [u8], next_pc [index]),
+  lt(a [u8], b [u8], c [u8], next_pc [index]),
+  jmp(sbx [i32], next_pc [index]),
+  jmpz(a [u8], sbx [i32], next_pc [index]),
+  ret(a [u8]),
+  bad(op [u8], pc [index])
+)
+  entry read()
+    let instr [Instr] = self.code[pc]
+    -- Keep the hot arithmetic opcode first. A scalar `switch` lowers to a real
+    -- C jump table, but this tiny benchmark is ADD-heavy and the predictable
+    -- hot branch beats the indirect jump-table dispatch on current GCC/x86-64.
+    if instr.op == as [u8]([OP.ADD]) then
+      jump add(a = instr.a, b = instr.b, c = instr.c, next_pc = pc + 1)
+    elseif instr.op == as [u8]([OP.RETURN]) then
+      jump ret(a = instr.a)
+    elseif instr.op == as [u8]([OP.JMPZ]) then
+      jump jmpz(a = instr.a, sbx = instr.sbx, next_pc = pc + 1)
+    elseif instr.op == as [u8]([OP.JMP]) then
+      jump jmp(sbx = instr.sbx, next_pc = pc + 1)
+    elseif instr.op == as [u8]([OP.LT]) then
+      jump lt(a = instr.a, b = instr.b, c = instr.c, next_pc = pc + 1)
+    elseif instr.op == as [u8]([OP.LOADK]) then
+      jump loadk(a = instr.a, bx = instr.bx, next_pc = pc + 1)
+    elseif instr.op == as [u8]([OP.MOVE]) then
+      jump move(a = instr.a, b = instr.b, next_pc = pc + 1)
+    else
+      jump bad(op = instr.op, pc = pc)
+    end
+  end
+end
+
+region VM.dispatch(self [ptr [VM]], frame [ptr [Frame]], pc [index];
+  halted(result [Value]),
+  runtime_error(code [i32], pc [index])
+)
+  entry start()
+    emit VM.decode(self, frame, pc;
+      loadk = loadk,
+      move = move,
+      add = add,
+      lt = lt,
+      jmp = jmp,
+      jmpz = jmpz,
+      ret = ret,
+      bad = bad
+    )
+  end
+
+  block loadk(a [u8], bx [u32], next_pc [index])
+    call VM.op_loadk(self, frame, a, bx, next_pc;
+      halted = halted,
+      runtime_error = runtime_error
+    )
+  end
+
+  block move(a [u8], b [u8], next_pc [index])
+    call VM.op_move(self, frame, a, b, next_pc;
+      halted = halted,
+      runtime_error = runtime_error
+    )
+  end
+
+  block add(a [u8], b [u8], c [u8], next_pc [index])
+    call VM.op_add(self, frame, a, b, c, next_pc;
+      halted = halted,
+      runtime_error = runtime_error
+    )
+  end
+
+  block lt(a [u8], b [u8], c [u8], next_pc [index])
+    call VM.op_lt(self, frame, a, b, c, next_pc;
+      halted = halted,
+      runtime_error = runtime_error
+    )
+  end
+
+  block jmp(sbx [i32], next_pc [index])
+    call VM.op_jmp(self, frame, sbx, next_pc;
+      halted = halted,
+      runtime_error = runtime_error
+    )
+  end
+
+  block jmpz(a [u8], sbx [i32], next_pc [index])
+    call VM.op_jmpz(self, frame, a, sbx, next_pc;
+      halted = halted,
+      runtime_error = runtime_error
+    )
+  end
+
+  block ret(a [u8])
+    call VM.op_ret(self, frame, a;
+      halted = halted,
+      runtime_error = runtime_error
+    )
+  end
+
+  block bad(op [u8], pc [index])
+    jump runtime_error(code = as [i32](op), pc = pc)
+  end
+end
+
+region VM.op_loadk(self [ptr [VM]], frame [ptr [Frame]], a [u8], bx [u32], next_pc [index];
+  halted(result [Value]),
+  runtime_error(code [i32], pc [index])
+)
+  entry run()
+    frame.regs[a] = self.consts[bx]
+    call VM.dispatch(self, frame, next_pc;
+      halted = halted,
+      runtime_error = runtime_error
+    )
+  end
+end
+
+region VM.op_move(self [ptr [VM]], frame [ptr [Frame]], a [u8], b [u8], next_pc [index];
+  halted(result [Value]),
+  runtime_error(code [i32], pc [index])
+)
+  entry run()
+    frame.regs[a] = frame.regs[b]
+    call VM.dispatch(self, frame, next_pc;
+      halted = halted,
+      runtime_error = runtime_error
+    )
+  end
+end
+
+region VM.op_add(self [ptr [VM]], frame [ptr [Frame]], a [u8], b [u8], c [u8], next_pc [index];
+  halted(result [Value]),
+  runtime_error(code [i32], pc [index])
+)
+  entry run()
+    let lhs [Value] = frame.regs[b]
+    let rhs [Value] = frame.regs[c]
+    frame.regs[a] = Value { bits = lhs.bits + rhs.bits }
+    call VM.dispatch(self, frame, next_pc;
+      halted = halted,
+      runtime_error = runtime_error
+    )
+  end
+end
+
+region VM.op_lt(self [ptr [VM]], frame [ptr [Frame]], a [u8], b [u8], c [u8], next_pc [index];
+  halted(result [Value]),
+  runtime_error(code [i32], pc [index])
+)
+  entry run()
+    let lhs [Value] = frame.regs[b]
+    let rhs [Value] = frame.regs[c]
+    if as [i64](lhs.bits) < as [i64](rhs.bits) then
+      frame.regs[a] = Value { bits = as [u64](1) }
+    else
+      frame.regs[a] = Value { bits = as [u64](0) }
+    end
+    call VM.dispatch(self, frame, next_pc;
+      halted = halted,
+      runtime_error = runtime_error
+    )
+  end
+end
+
+region VM.op_jmp(self [ptr [VM]], frame [ptr [Frame]], sbx [i32], next_pc [index];
+  halted(result [Value]),
+  runtime_error(code [i32], pc [index])
+)
+  entry run()
+    call VM.dispatch(self, frame, as [index](as [i32](next_pc) + sbx);
+      halted = halted,
+      runtime_error = runtime_error
+    )
+  end
+end
+
+region VM.op_jmpz(self [ptr [VM]], frame [ptr [Frame]], a [u8], sbx [i32], next_pc [index];
+  halted(result [Value]),
+  runtime_error(code [i32], pc [index])
+)
+  entry run()
+    let cond [Value] = frame.regs[a]
+    if cond.bits == as [u64](0) then
+      call VM.dispatch(self, frame, as [index](as [i32](next_pc) + sbx);
+        halted = halted,
+        runtime_error = runtime_error
+      )
+    else
+      call VM.dispatch(self, frame, next_pc;
+        halted = halted,
+        runtime_error = runtime_error
+      )
+    end
+  end
+end
+
+region VM.op_ret(self [ptr [VM]], frame [ptr [Frame]], a [u8];
+  halted(result [Value]),
+  runtime_error(code [i32], pc [index])
+)
+  entry run()
+    jump halted(result = frame.regs[a])
+  end
+end
+
+fn main(argc [i32], argv [ptr [ptr [u8]]]) [i32]
+  entry start()
+    var regs [array [Value] [5]] = {
+      Value { bits = as [u64](0) },
+      Value { bits = as [u64](0) },
+      Value { bits = as [u64](0) },
+      Value { bits = as [u64](0) },
+      Value { bits = as [u64](0) }
+    }
+    var consts [array [Value] [3]] = {
+      Value { bits = as [u64](0) },
+      Value { bits = as [u64](1) },
+      Value { bits = as [u64](11) }
+    }
+    -- Mini source program. The parser below tokenizes and validates this
+    -- Lua-ish surface, then builds the ASDL-shaped MiniSumProgram product.
+    var source [array [u8] [74]] = {
+      as [u8](115),
+      as [u8](117),
+      as [u8](109),
+      as [u8](61),
+      as [u8](48),
+      as [u8](59),
+      as [u8](105),
+      as [u8](61),
+      as [u8](49),
+      as [u8](59),
+      as [u8](108),
+      as [u8](105),
+      as [u8](109),
+      as [u8](105),
+      as [u8](116),
+      as [u8](61),
+      as [u8](49),
+      as [u8](49),
+      as [u8](59),
+      as [u8](111),
+      as [u8](110),
+      as [u8](101),
+      as [u8](61),
+      as [u8](49),
+      as [u8](59),
+      as [u8](119),
+      as [u8](104),
+      as [u8](105),
+      as [u8](108),
+      as [u8](101),
+      as [u8](32),
+      as [u8](105),
+      as [u8](60),
+      as [u8](108),
+      as [u8](105),
+      as [u8](109),
+      as [u8](105),
+      as [u8](116),
+      as [u8](32),
+      as [u8](100),
+      as [u8](111),
+      as [u8](32),
+      as [u8](115),
+      as [u8](117),
+      as [u8](109),
+      as [u8](61),
+      as [u8](115),
+      as [u8](117),
+      as [u8](109),
+      as [u8](43),
+      as [u8](105),
+      as [u8](59),
+      as [u8](105),
+      as [u8](61),
+      as [u8](105),
+      as [u8](43),
+      as [u8](111),
+      as [u8](110),
+      as [u8](101),
+      as [u8](59),
+      as [u8](101),
+      as [u8](110),
+      as [u8](100),
+      as [u8](59),
+      as [u8](114),
+      as [u8](101),
+      as [u8](116),
+      as [u8](117),
+      as [u8](114),
+      as [u8](110),
+      as [u8](32),
+      as [u8](115),
+      as [u8](117),
+      as [u8](109)
+    }
+    var code [array [Instr] [16]] = {
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      Instr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 }
+    }
+    var compiler [Compiler] = Compiler { code = &code[0], consts = &consts[0], regs = &regs[0], pc = 0, loop_pc = 0, patch_pc = 0, patch_a = 0 }
+    var tokenizer [Tokenizer] = Tokenizer { src = &source[0], len = as [index](74), pos = 0 }
+    call Parser.parse_sum_program(&tokenizer, &compiler;
+      parsed = parsed,
+      parse_error = parse_failed
+    )
+  end
+
+  block parsed(program [MiniSumProgram], compiler [ptr [Compiler]])
+    call MiniSumProgram.compile(program, compiler;
+      done = compiled
+    )
+  end
+
+  block compiled(compiler [ptr [Compiler]])
+    var program [Program] = Program { code = compiler.code, consts = compiler.consts, regs = compiler.regs }
+    emit Program.run(program;
+      done = done,
+      failed = failed
+    )
+  end
+
+  block parse_failed(parse_code [i32], at [index])
+    return parse_code + as [i32](at) + 200
+  end
+
+  block done(result [Value])
+    return as [i32](as [i64](result.bits) - as [i64](55))
+  end
+
+  block failed(code [i32], pc [index])
+    return code + as [i32](pc) + 1
+  end
+end

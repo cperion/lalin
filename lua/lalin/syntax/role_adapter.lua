@@ -89,6 +89,13 @@ local function bind(T, callbacks)
     return Ty.HandleReprScalar(ty.scalar)
   end
 
+  local function path_from_decl(value)
+    local parts = {}
+    for _, part in ipairs(value.qualifier or {}) do parts[#parts + 1] = C.Name(part) end
+    parts[#parts + 1] = C.Name(value.name)
+    return C.Path(parts)
+  end
+
   function Adapter:type(value, ctx)
     local host
     value, host = self:value(value, "type", ctx)
@@ -97,18 +104,19 @@ local function bind(T, callbacks)
     local projected = TypeValue.type(value)
     if projected ~= nil then return projected end
     if asdl.classof(value) then return value end
-    if Exotype.is(value) then
-      return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(Exotype.typename(value)) })))
-    end
 
     if type(value) == "table" and value.tag then
       if (value.tag == "DeclStruct" or value.tag == "DeclUnion") and value.name ~= nil then
-        return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(value.name) })))
+        return Ty.TNamed(Ty.TypeRefPath(path_from_decl(value)))
       elseif value.tag == "DeclHandle" and value.name ~= nil then
-        return Ty.THandle(Ty.TypeRefPath(C.Path({ C.Name(value.name) })), self:handle_repr(value.repr))
+        return Ty.THandle(Ty.TypeRefPath(path_from_decl(value)), self:handle_repr(value.repr))
       end
       local lower = callback(self, "parsed_type") or callback(self, "type")
       if lower then return lower(value) end
+    end
+
+    if Exotype.is(value) then
+      return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(Exotype.typename(value)) })))
     end
 
     role_error("type", "type host-eval produced unsupported value " .. tostring(value), value, host)

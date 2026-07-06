@@ -57,9 +57,12 @@ local stencil_shape = N.NativeStencilPointUnaryRegionShape(
     Stencil.StencilUnaryNeg,
     N.NativeStencilValueScalarShape(scalar_i32)
 )
+local switch_shape = N.NativeSwitchStepAtoms(scalar_i32, input0)
 local capability = N.NativeFastRegionCapability(
     { N.NativeFastAbi2(abi_i32, abi_i32, abi_i32) },
     { expr_shape },
+    { compare_shape },
+    { switch_shape },
     { memory_shape },
     { kernel_shape },
     { stencil_shape }
@@ -96,9 +99,11 @@ local plan = N.NativeFastRegionPlan(
 )
 local switch = N.NativeRegionSwitch(
     N.NativeTemplateValueId("schema.native.fast.selector"),
+    switch_shape,
     { N.NativeRegionSwitchCase(Core.LitInt("0"), entry) },
     exit
 )
+local public_expr_body = N.NativeFastPublicCodeExprRegion(capability.public_abi_shapes[1], expr_shape)
 local branch_body = N.NativeCodeCompareBranchRegion(compare_shape)
 local memory_body = N.NativeCodeLoadOpStoreRegion(memory_shape)
 local kernel_body = N.NativeKernelStepRegion(kernel_shape)
@@ -111,6 +116,8 @@ assert(asdl.isa(memory_shape, N.NativeCodeMemoryRegionShape), "Code memory fast 
 assert(asdl.isa(kernel_shape, N.NativeKernelStepRegionShape), "kernel fast shape must be typed")
 assert(asdl.isa(stencil_shape, N.NativeStencilPointRegionShape), "stencil fast shape must be typed")
 assert(asdl.isa(capability.public_abi_shapes[1], N.NativeFastPublicAbiShape), "public ABI fast shape must be typed")
+assert(asdl.isa(public_expr_body, N.NativeFastRegionBody), "fused public expression body must be a fast region body leaf")
+assert(public_expr_body.abi == capability.public_abi_shapes[1] and public_expr_body.shape == expr_shape, "fused public expression body must carry ABI and expression shapes")
 assert(asdl.isa(branch_body, N.NativeFastRegionBody), "compare branch body must be a fast region body leaf")
 assert(asdl.isa(memory_body, N.NativeFastRegionBody), "memory body must be a fast region body leaf")
 assert(asdl.isa(kernel_body, N.NativeFastRegionBody), "kernel body must be a fast region body leaf")

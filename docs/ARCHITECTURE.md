@@ -7,8 +7,11 @@ bootstrap language used to define member dialects. It gives Lua values dialect
 meaning through heads, roles, fragments, namespaces, origins, diagnostics,
 formatting, indexing, regions, protocols, processes, and language composition.
 Lalin is the compiled dialect in that language. It consumes LLBL regions and typed
-values, checks native semantics, and lowers the resulting program into native
-copy-patch artifacts or explicitly selected LuaJIT bytecode artifacts.
+values, checks native semantics, lowers the resulting program into `CBackendUnit`,
+and emits C through `emit_c`. The main JIT-like execution path cooks that emitted
+C with GCC and loads the resulting shared object for LuaJIT FFI function pointers.
+The same emitted C is also the AOT artifact path. Native copy-patch is now an
+experimental backend track, not the main execution architecture.
 
 The main path is intentionally small:
 
@@ -62,7 +65,7 @@ Lalin has two surfaces that converge on the same ASDL:
 ```text
 ┌─ Hand-written source ─────────────────┐
 │                                        │
-│  fn add(a: i32, b: i32): i32          │
+│  fn add(a [i32], b [i32]) [i32] do    │
 │    return a + b                        │
 │  end                                   │
 │                                        │
@@ -144,29 +147,30 @@ LalinTree.Module
   │
   ▼
 ┌─────────────────────────────────────────┐
-│ 6. Native Template Planning             │
-│    Code/Kernel/Stencil leaf methods     │
-│    → NativeTemplateGraph + manifest use │
+│ 6. C Backend Lowering                   │
+│    LowerToC.module()                    │
+│    → CBackendUnit + C validation        │
 └─────────────────────────────────────────┘
   │
   ▼
 ┌─────────────────────────────────────────┐
-│ 7. Native Copy-Patch Install            │
-│    supplied NativeTemplateBank          │
-│      → select matching templates        │
-│      → copy bytes and constant pools    │
-│      → patch typed holes/relocations    │
-│      → install executable memory        │
-│    Runtime invokes no compiler/tools.   │
+│ 7. emit_c                               │
+│    CBackendUnit leaf methods            │
+│    → C implementation/header/support    │
 └─────────────────────────────────────────┘
   │
-  ▼
-┌─────────────────────────────────────────┐
-│ 8. Explicit LuaJIT Bytecode Mode        │
-│    selected only by explicit API/options│
-│    → LuaJIT IR / bytecode artifact      │
-│    → loadstring → chunk() → module      │
-└─────────────────────────────────────────┘
+  ├───────────────────────────────────────┐
+  ▼                                       ▼
+┌───────────────────────────────┐       ┌───────────────────────────────┐
+│ 8a. GCC C JIT                 │       │ 8b. C / AOT Artifact          │
+│     gcc -shared -O3           │       │     user/compiler-owned build │
+│     dlopen + dlsym            │       │     executable/library/object │
+│     LuaJIT FFI fn pointers    │       │                               │
+└───────────────────────────────┘       └───────────────────────────────┘
+
+Optional non-main paths:
+- explicit LuaJIT bytecode mode;
+- experimental native copy-patch template-bank install.
 ```
 
 ---
@@ -174,7 +178,7 @@ LalinTree.Module
 ## Concrete Example Trace
 
 How `lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] { lln.ret (a + b) }`
-becomes a native copy-patch artifact:
+becomes a GCC-cooked `emit_c` function pointer:
 
 ```
 1. LuaJIT evaluates lln.fn.add{...}
@@ -191,28 +195,26 @@ becomes a native copy-patch artifact:
    → LayoutResolve → tree_to_code → CodeValidate
    → CodeResult{ code_module = CodeModule{ funcs={...} } }
 
-5. Native backend planning on `LalinCode`
-   → deterministic ABI/frame/value/control facts
-   → leaf methods select closed C-stencil template families
-   → NativeTemplateGraph with node-scoped patch bindings
+5. Pipeline.code_result_to_c(code_result)
+   → graph/flow/value/memory/effect/kernel/schedule facts
+   → C lower plan
+   → CBackendUnit validation
 
-6. Resolve the supplied or embedded `NativeTemplateBank`
-   → verify target and `NativeTemplateSourceManifest`
-   → select matching compiled templates for graph nodes
-   → no C compiler, object tool, linker, or code generator is invoked by the
-     runtime native compile path
+6. emit_c over `CBackendUnit`
+   → generated C implementation/header/support
+   → ordinary C functions and helper definitions
 
-7. Copy-patch-install
-   → lay out copied code and constant-pool bytes
-   → patch typed hole ordinals, frame offsets, continuations, constants, and
-     runtime-symbol capabilities
-   → install executable memory and produce a typed native entry point
+7. GCC C JIT path
+   → write/cook the emitted C as a shared object with GCC/cc
+   → `dlopen` the shared object
+   → `dlsym` exported functions
+   → cast function pointers with LuaJIT FFI
 
-8. module.add(3, 4) calls the installed native entry through its ABI projection
+8. add_fn(3, 4) calls the GCC-compiled function pointer
 
-If the native bank is missing, stale, or cannot satisfy the manifest/target, the
-native path fails with an explicit diagnostic. LuaJIT bytecode is selected only
-by an explicit non-native API/option.
+The C source emitted by `emit_c` is the contract. JIT-like execution and AOT both
+consume that same C output. Native copy-patch and LuaJIT bytecode are selected
+only by explicit non-main APIs/options.
 ```
 
 ---
@@ -374,7 +376,7 @@ ASDL first; nullary variants also receive methods directly with normal
 
 | File | Role |
 |------|------|
-| `lua/lalin/init.lua` | Public facade — `.lln` declaration-document loading, `lalin.compile`, `lalin.emit_c_artifact`, etc. |
+| `lua/lalin/init.lua` | Public facade — `.lln` declaration-document loading, `lalin.compile`, `lalin.emit_c`, etc. |
 | `lua/lalin/loader.lua` | `.lln` loadfile/loadstring/searchpath/searcher integration returning declaration arrays. |
 | `lua/lalin/cli.lua` | CLI interface. |
 | `lua/lalin/ast.lua` | AST utility layer. |
@@ -431,12 +433,15 @@ the ASDL types for that domain:
 
 ---
 
-## Native Copy-Patch Direction
+## Experimental Native Copy-Patch Direction
 
-The fast native backend is a closed C-stencil copy-patch architecture. Semantic
-owners remain the `LalinCode`, `LalinKernel`, and `LalinStencil` ASDL leaves.
-Those leaves produce `NativeTemplateSource` C stencils and template graphs; they
-do not hand semantics to artifact-side tables or runtime probes.
+Native copy-patch is now an experimental backend track. It is retained for
+research into closed C-stencil template banks, typed patch coordinates, and
+micro-op graph composition, but it is not the main JIT or AOT path. Semantic
+owners remain the `LalinCode`, `LalinKernel`, and `LalinStencil` ASDL leaves;
+when this experimental path is selected, those leaves produce
+`NativeTemplateSource` C stencils and template graphs rather than handing
+semantics to artifact-side tables or runtime probes.
 
 The native bank boundary is explicit:
 
@@ -525,12 +530,14 @@ facts.
 
 ---
 
-## C / AOT Emission Path
+## GCC C JIT And C / AOT Emission Path
 
-`emit_c_artifact` is the whole-program C path. It is not the runtime native
-copy-patch path. It lowers the selected typed program to C so the user can
-compile the generated artifact with their chosen C compiler and link it into a
-program or library.
+`emit_c` is the whole-program semantic C backend path and the center of both the
+main JIT-like execution path and the AOT path. It lowers the selected typed
+program to C. The GCC C JIT path cooks that emitted C into a shared object,
+loads it with `dlopen`, and exposes symbols as LuaJIT FFI function pointers. The
+AOT path gives the same emitted C artifact to the user or build system to compile
+into a program or library.
 
 Conceptually:
 
@@ -538,29 +545,33 @@ Conceptually:
 LalinTree.Module
   -> typecheck
   -> LalinCode facts
-  -> kernel/stencil selection
-  -> fuse selected stencil-shaped work at C level
+  -> graph/flow/value/memory/effect facts
+  -> C lower plan
+  -> CBackendUnit validation
   -> emit C implementation + header/support
   -> user compiles the C artifact
 ```
 
-This path exists for AOT/native integration:
+This path exists for both JIT-like local execution and AOT/native integration:
 
 - The artifact is ordinary C source plus generated header/support pieces.
-- Selected stencil-shaped loops should become C-level fused code so the user's C
-  compiler sees the hot loop body directly.
-- The user owns the final compiler invocation, flags, linker inputs, and target
-  ABI choices.
-- `emit_c_artifact` compiles the whole program outside the Lua-hosted runtime;
-  native copy-patch loads and patches prebuilt template-bank entries.
+- High-level abstractions lower to ordinary C structs, functions, labels, and
+  helpers so GCC or another C compiler can inline, scalarize, and optimize them.
+- `lalin.compile_c_gcc` / `{ runner = "gcc" }` cook the emitted C as a shared
+  object and return a session whose symbols are LuaJIT FFI function pointers.
+- For AOT, the user owns the final compiler invocation, flags, linker inputs,
+  and target ABI choices.
+- Experimental native copy-patch remains separate and loads/patches prebuilt
+  template-bank entries only when explicitly selected.
 
 The ownership boundary is:
 
 | Path | Host | Compiler role | Output |
 |------|------|---------------|--------|
-| native copy-patch | Lua host/native allocator | offline bank build only | installed native executable from `NativeTemplateBank` |
+| GCC C JIT over `emit_c` | LuaJIT host + `dlopen` | runtime GCC/cc shared-object build | LuaJIT FFI function pointers |
+| `emit_c` AOT | user/build system | user compiles emitted program C | C source/header/support |
 | explicit LuaJIT bytecode | LuaJIT | none for native code | LuaJIT bytecode artifact/module |
-| `emit_c_artifact` | user/native program | user compiles emitted program C | C source/header/support |
+| experimental native copy-patch | Lua host/native allocator | offline bank build only | installed native executable from `NativeTemplateBank` |
 
 ---
 
@@ -708,8 +719,9 @@ Important boundaries:
 - Kernel facts describe recognized loop/control/dataflow structure.
 - Schedule facts describe execution policy such as vectorization and unroll.
 - Stencil plans select materializable execution descriptors.
-- Native copy-patch consumes explicit template-bank artifacts; LuaJIT bytecode is
-  an explicit non-native mode.
+- GCC C JIT and AOT consume `emit_c` output.
+- Experimental native copy-patch consumes explicit template-bank artifacts.
+- LuaJIT bytecode is an explicit non-main mode.
 
 Schedules are not semantics. They may choose lanes, tails, grouping, and
 compiler/materializer policy, but they may not invent effects, stores,
@@ -719,16 +731,19 @@ reductions, alias facts, or safety conditions.
 
 ## Backend Model
 
-The default executable backend is native copy-patch and requires a matching
-`NativeTemplateBank` or `NativeEmbeddedTemplateBank`. LuaJIT bytecode is a
-separate explicit mode.
+The main executable backend model is GCC over `emit_c` output. It is selected
+with `compile_c_gcc`, `{ runner = "gcc" }`, or `{ backend = "gcc" }`. The AOT
+path is the same `emit_c` output without the runtime `dlopen` step. LuaJIT
+bytecode and native copy-patch are separate explicit modes.
 
-| Path | Default for | Compiler needed at runtime | Build time |
+| Path | Selected by | Compiler needed at runtime | Build time |
 |------|-------------|----------------------------|-----------|
-| native copy-patch | `lalin.compile()` / `compile_native()` | None | Offline template-bank generation |
-| explicit LuaJIT bytecode | explicit `compile_luajit`/bytecode selection | None | In-process bytecode artifact construction |
+| GCC C JIT over `emit_c` | `compile_c_gcc` / `{ backend = "gcc" }` | GCC/cc | shared-object build + `dlopen` |
+| `emit_c` AOT | `emit_c` / `compile_c` source mode | user/build-system choice | user-owned C build |
+| explicit LuaJIT bytecode | explicit `compile_luajit`/bytecode selection | none for native code | in-process bytecode artifact construction |
+| experimental native copy-patch | `compile_native` with bank | none | offline template-bank generation |
 
-### Native Copy-Patch Path
+### Experimental Native Copy-Patch Path
 
 **Offline bank generation** (`tools/gen_lalin_mc_bank.lua`, run by `make` or an
 explicit prebuild step):

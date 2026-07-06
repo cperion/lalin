@@ -1,5 +1,3 @@
-local asdl = require("lalin.asdl")
-
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
     if s:match("^%d") then s = "_" .. s end
@@ -7,9 +5,8 @@ local function sanitize(s)
     return s
 end
 
-local function class_name(x)
-    local cls = asdl.classof(x) or x
-    return tostring(cls):match("Class%((.-)%)") or tostring(cls)
+local function node_name(x)
+    return tostring(x)
 end
 
 local function bind_context(T)
@@ -223,7 +220,7 @@ local function bind_context(T)
     end
 
     function Code.CodeConst:lower_code_const_to_c_atom(c_emission)
-        error("code_to_c: unsupported const " .. class_name(self), 2)
+        error("code_to_c: unsupported const " .. node_name(self), 2)
     end
     function Code.CodeConstLiteral:lower_code_const_to_c_atom(c_emission)
         return C.CBackendAtomLiteral(c_ty(c_emission, self.ty), self.literal)
@@ -241,7 +238,7 @@ local function bind_context(T)
 
     local place_to_c
     function Code.CodePlace:lower_code_place_to_c(c_emission)
-        error("code_to_c: unsupported place " .. class_name(self), 2)
+        error("code_to_c: unsupported place " .. node_name(self), 2)
     end
     function Code.CodePlace:code_to_c_is_deref()
         return false
@@ -293,7 +290,7 @@ local function bind_context(T)
     end
 
     function Code.CodeGlobalRef:lower_code_global_ref_to_c_name(c_emission)
-        error("code_to_c: unsupported global ref " .. class_name(self), 2)
+        error("code_to_c: unsupported global ref " .. node_name(self), 2)
     end
     function Code.CodeGlobalRefFunc:lower_code_global_ref_to_c_name(c_emission)
         return code_func_name(c_emission, self.func)
@@ -309,7 +306,7 @@ local function bind_context(T)
     end
 
     function Code.CodeGlobalRef:lower_code_global_ref_to_c_sig(c_emission)
-        error("code_to_c: non-code global ref has no function signature " .. class_name(self), 2)
+        error("code_to_c: non-code global ref has no function signature " .. node_name(self), 2)
     end
     function Code.CodeGlobalRefFunc:lower_code_global_ref_to_c_sig(c_emission)
             local f = c_emission.funcs[self.func.text]
@@ -367,7 +364,7 @@ local function bind_context(T)
     end
 
     function Code.CodeCallTarget:lower_code_call_target_to_c(c_emission)
-        error("code_to_c: unsupported call target " .. class_name(self), 2)
+        error("code_to_c: unsupported call target " .. node_name(self), 2)
     end
     function Code.CodeCallDirect:lower_code_call_target_to_c(c_emission)
         return C.CBackendCallDirect(code_func_name(c_emission, self.func))
@@ -386,7 +383,7 @@ local function bind_context(T)
         return self.op:lower_code_inst_to_c_stmts(c_emission, self)
     end
     function Code.CodeInstOp:lower_code_inst_to_c_stmts(c_emission, inst)
-        error("code_to_c: unsupported CodeInstOp " .. class_name(self), 2)
+        error("code_to_c: unsupported CodeInstOp " .. node_name(self), 2)
     end
     function Code.CodeInstConst:lower_code_inst_to_c_stmts(c_emission)
         local a = const_atom(c_emission, self.const)
@@ -561,7 +558,7 @@ local function bind_context(T)
         return self.op:lower_code_term_to_c(c_emission, self)
     end
     function Code.CodeTermOp:lower_code_term_to_c(c_emission, term)
-        error("code_to_c: unsupported CodeTermOp " .. class_name(self), 2)
+        error("code_to_c: unsupported CodeTermOp " .. node_name(self), 2)
     end
     function Code.CodeTermJump:lower_code_term_to_c(c_emission)
         return C.CBackendGoto(c_label(self.dest), atoms(self.args))
@@ -778,7 +775,7 @@ local function bind_context(T)
     end
 
     function Code.CodeGlobalRef:lower_code_global_ref_to_c_reloc()
-        error("code_to_c: unsupported reloc target " .. class_name(self), 2)
+        error("code_to_c: unsupported reloc target " .. node_name(self), 2)
     end
     function Code.CodeGlobalRefGlobal:lower_code_global_ref_to_c_reloc()
         return C.CBackendRelocGlobal(c_global_id(self.global))
@@ -794,7 +791,7 @@ local function bind_context(T)
     end
 
     function Code.CodeDataInit:lower_code_data_init_to_c(c_emission)
-        error("code_to_c: unsupported data init " .. class_name(self), 2)
+        error("code_to_c: unsupported data init " .. node_name(self), 2)
     end
     function Code.CodeDataZero:lower_code_data_init_to_c(c_emission)
         return C.CBackendDataZero(self.offset, self.size)
@@ -914,6 +911,7 @@ local function bind_context(T)
             local lf = self.fields[i]
             local fty = CodeType.type_to_c(lf.ty, c_emission.c_type_projection)
             local sz, al = c_type_size_align(c_emission, fty)
+            if lf.field_name == "__payload" and self.align ~= nil and self.align > al then al = self.align end
             fields[#fields + 1] = C.CBackendField(C.CBackendName(lf.field_name), fty, lf.offset, sz, al)
         end
         out[#out + 1] = C.CBackendStructDecl(id, fields, self.size, self.align)

@@ -1,0 +1,545 @@
+-- Milestone 3 Lua-ish VM skeleton.
+--
+-- This is intentionally not Lua-compatible yet. It is the runtime spine:
+-- compact tagged value words, proto/frame products, one opcode consumer region,
+-- and a sealed/bundled dispatch loop. Lua 5.x bytecode importers can target this
+-- internal representation later.
+
+struct LuaValue
+  bits [u64]
+end
+
+struct LuaString
+  hash  [u64]
+  len   [index]
+  bytes [ptr [u8]]
+end
+
+struct LuaInternEntry
+  hash [u64]
+  str  [ptr [LuaString]]
+end
+
+struct LuaHashEntry
+  occupied [u8]
+  hash     [u64]
+  key      [LuaValue]
+  value    [LuaValue]
+end
+
+struct LuaTable
+  array     [ptr [LuaValue]]
+  array_len [index]
+  hash      [ptr [LuaHashEntry]]
+  hash_len  [index]
+end
+
+region LuaString.eq(lhs [ptr [LuaString]], rhs [ptr [LuaString]];
+  yes,
+  no
+)
+  entry start()
+    if lhs.len ~= rhs.len then
+      jump no
+    end
+    jump loop(i = as [index](0))
+  end
+
+  block loop(i [index])
+    if i == lhs.len then
+      jump yes
+    end
+    if lhs.bytes[i] == rhs.bytes[i] then
+      jump loop(i = i + 1)
+    else
+      jump no
+    end
+  end
+end
+
+struct LuaInstr
+  op  [u8]
+  a   [u8]
+  b   [u8]
+  c   [u8]
+  bx  [u32]
+  sbx [i32]
+end
+
+struct LuaProto
+  code    [ptr [LuaInstr]]
+  consts  [ptr [LuaValue]]
+  strings [ptr [LuaString]]
+end
+
+struct LuaFrame
+  proto [ptr [LuaProto]]
+  regs  [ptr [LuaValue]]
+end
+
+struct LuaVM
+  root   [ptr [LuaProto]]
+  tables [ptr [LuaTable]]
+end
+
+region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
+  returned(result [LuaValue]),
+  runtime_error(code [i32], pc [index])
+)
+  entry start()
+    let dispatch_proto [ptr [LuaProto]] = frame.proto
+    let instr [LuaInstr] = dispatch_proto.code[pc]
+    -- M3 benchmark workload is arithmetic-heavy, so keep ADD first. A source `switch`
+    -- exists and lowers to C switch/jump-table, but predictable hot branches are
+    -- faster for this tiny benchmark.
+    if instr.op == as [u8]([LuaOP.ADD]) then
+      jump add(a = instr.a, b = instr.b, c = instr.c, next_pc = pc + 1)
+    elseif instr.op == as [u8]([LuaOP.RETURN]) then
+      jump ret(a = instr.a)
+    elseif instr.op == as [u8]([LuaOP.JMPZ]) then
+      jump jmpz(a = instr.a, sbx = instr.sbx, next_pc = pc + 1)
+    elseif instr.op == as [u8]([LuaOP.JMP]) then
+      jump jmp(sbx = instr.sbx, next_pc = pc + 1)
+    elseif instr.op == as [u8]([LuaOP.LT]) then
+      jump lt(a = instr.a, b = instr.b, c = instr.c, next_pc = pc + 1)
+    elseif instr.op == as [u8]([LuaOP.LOADK]) then
+      jump loadk(a = instr.a, bx = instr.bx, next_pc = pc + 1)
+    elseif instr.op == as [u8]([LuaOP.MOVE]) then
+      jump move(a = instr.a, b = instr.b, next_pc = pc + 1)
+    elseif instr.op == as [u8]([LuaOP.LOADS]) then
+      jump loads(a = instr.a, bx = instr.bx, next_pc = pc + 1)
+    elseif instr.op == as [u8]([LuaOP.EQ]) then
+      jump eq(a = instr.a, b = instr.b, c = instr.c, next_pc = pc + 1)
+    elseif instr.op == as [u8]([LuaOP.NEWTABLE]) then
+      jump newtable(a = instr.a, bx = instr.bx, next_pc = pc + 1)
+    elseif instr.op == as [u8]([LuaOP.SETI]) then
+      jump seti(table_reg = instr.a, index_reg = instr.b, value_reg = instr.c, next_pc = pc + 1)
+    elseif instr.op == as [u8]([LuaOP.GETI]) then
+      jump geti(a = instr.a, table_reg = instr.b, index_reg = instr.c, next_pc = pc + 1)
+    elseif instr.op == as [u8]([LuaOP.SETS]) then
+      jump sets(table_reg = instr.a, key_reg = instr.b, value_reg = instr.c, next_pc = pc + 1)
+    elseif instr.op == as [u8]([LuaOP.GETS]) then
+      jump gets(a = instr.a, table_reg = instr.b, key_reg = instr.c, next_pc = pc + 1)
+    else
+      jump bad(op = instr.op, pc = pc)
+    end
+  end
+
+  block loadk(a [u8], bx [u32], next_pc [index])
+    let loadk_proto [ptr [LuaProto]] = frame.proto
+    frame.regs[a] = loadk_proto.consts[bx]
+    call LuaVM.dispatch(self, frame, next_pc;
+      returned,
+      runtime_error
+    )
+  end
+
+  block move(a [u8], b [u8], next_pc [index])
+    frame.regs[a] = frame.regs[b]
+    call LuaVM.dispatch(self, frame, next_pc;
+      returned,
+      runtime_error
+    )
+  end
+
+  block loads(a [u8], bx [u32], next_pc [index])
+    -- String values carry an index into proto.strings for M2. Later object/GC
+    -- work can replace this payload with pointer/compressed-pointer bits while
+    -- keeping the one-word LuaValue register shape.
+    frame.regs[a] = LuaValue { bits = (as [u64](bx) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.STRING]) }
+    call LuaVM.dispatch(self, frame, next_pc;
+      returned,
+      runtime_error
+    )
+  end
+
+  block newtable(a [u8], bx [u32], next_pc [index])
+    frame.regs[a] = LuaValue { bits = (as [u64](bx) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.TABLE]) }
+    call LuaVM.dispatch(self, frame, next_pc;
+      returned,
+      runtime_error
+    )
+  end
+
+  block table_error(code [i32], next_pc [index])
+    jump runtime_error(code = code, pc = next_pc)
+  end
+
+  block seti(table_reg [u8], index_reg [u8], value_reg [u8], next_pc [index])
+    let seti_table_value [LuaValue] = frame.regs[table_reg]
+    let seti_index_value [LuaValue] = frame.regs[index_reg]
+    let seti_value [LuaValue] = frame.regs[value_reg]
+    let seti_table_tag [u64] = seti_table_value.bits & as [u64]([LuaTag.MASK])
+    let seti_index_tag [u64] = seti_index_value.bits & as [u64]([LuaTag.MASK])
+    if seti_table_tag ~= as [u64]([LuaTag.TABLE]) then
+      jump table_error(code = [LuaErr.EXPECT_TABLE], next_pc = next_pc)
+    end
+    if seti_index_tag ~= as [u64]([LuaTag.INT]) then
+      jump table_error(code = [LuaErr.EXPECT_INT_INDEX], next_pc = next_pc)
+    end
+    let seti_table_index [index] = as [index](seti_table_value.bits >> as [u64]([LuaTag.SHIFT]))
+    let seti_slot_one [u64] = seti_index_value.bits >> as [u64]([LuaTag.SHIFT])
+    if seti_slot_one == as [u64](0) then
+      jump table_error(code = [LuaErr.INDEX_OOB], next_pc = next_pc)
+    end
+    let seti_slot [index] = as [index](seti_slot_one - as [u64](1))
+    let seti_table [ptr [LuaTable]] = &self.tables[seti_table_index]
+    if seti_slot < seti_table.array_len then
+      seti_table.array[seti_slot] = seti_value
+      call LuaVM.dispatch(self, frame, next_pc;
+        returned = returned,
+        runtime_error = runtime_error
+      )
+    else
+      jump table_error(code = [LuaErr.INDEX_OOB], next_pc = next_pc)
+    end
+  end
+
+  block geti(a [u8], table_reg [u8], index_reg [u8], next_pc [index])
+    let geti_table_value [LuaValue] = frame.regs[table_reg]
+    let geti_index_value [LuaValue] = frame.regs[index_reg]
+    let geti_table_tag [u64] = geti_table_value.bits & as [u64]([LuaTag.MASK])
+    let geti_index_tag [u64] = geti_index_value.bits & as [u64]([LuaTag.MASK])
+    if geti_table_tag ~= as [u64]([LuaTag.TABLE]) then
+      jump table_error(code = [LuaErr.EXPECT_TABLE], next_pc = next_pc)
+    end
+    if geti_index_tag ~= as [u64]([LuaTag.INT]) then
+      jump table_error(code = [LuaErr.EXPECT_INT_INDEX], next_pc = next_pc)
+    end
+    let geti_table_index [index] = as [index](geti_table_value.bits >> as [u64]([LuaTag.SHIFT]))
+    let geti_slot_one [u64] = geti_index_value.bits >> as [u64]([LuaTag.SHIFT])
+    if geti_slot_one == as [u64](0) then
+      jump table_error(code = [LuaErr.INDEX_OOB], next_pc = next_pc)
+    end
+    let geti_slot [index] = as [index](geti_slot_one - as [u64](1))
+    let geti_table [ptr [LuaTable]] = &self.tables[geti_table_index]
+    if geti_slot < geti_table.array_len then
+      frame.regs[a] = geti_table.array[geti_slot]
+      call LuaVM.dispatch(self, frame, next_pc;
+        returned = returned,
+        runtime_error = runtime_error
+      )
+    else
+      jump table_error(code = [LuaErr.INDEX_OOB], next_pc = next_pc)
+    end
+  end
+
+  block sets(table_reg [u8], key_reg [u8], value_reg [u8], next_pc [index])
+    let sets_table_value [LuaValue] = frame.regs[table_reg]
+    let sets_key [LuaValue] = frame.regs[key_reg]
+    let sets_value [LuaValue] = frame.regs[value_reg]
+    let sets_table_tag [u64] = sets_table_value.bits & as [u64]([LuaTag.MASK])
+    let sets_key_tag [u64] = sets_key.bits & as [u64]([LuaTag.MASK])
+    if sets_table_tag ~= as [u64]([LuaTag.TABLE]) then
+      jump table_error(code = [LuaErr.EXPECT_TABLE], next_pc = next_pc)
+    end
+    if sets_key_tag ~= as [u64]([LuaTag.STRING]) then
+      jump table_error(code = [LuaErr.EXPECT_STRING_KEY], next_pc = next_pc)
+    end
+    let sets_table_index [index] = as [index](sets_table_value.bits >> as [u64]([LuaTag.SHIFT]))
+    let sets_key_index [index] = as [index](sets_key.bits >> as [u64]([LuaTag.SHIFT]))
+    let sets_proto [ptr [LuaProto]] = frame.proto
+    let sets_hash [u64] = sets_proto.strings[sets_key_index].hash
+    let sets_table [ptr [LuaTable]] = &self.tables[sets_table_index]
+    jump sets_loop(table = sets_table, key = sets_key, hash = sets_hash, value = sets_value, slot = as [index](0), next_pc = next_pc)
+  end
+
+  block sets_loop(table [ptr [LuaTable]], key [LuaValue], hash [u64], value [LuaValue], slot [index], next_pc [index])
+    if slot == table.hash_len then
+      jump table_error(code = [LuaErr.HASH_FULL], next_pc = next_pc)
+    end
+    let sets_entry [ptr [LuaHashEntry]] = &table.hash[slot]
+    if sets_entry.occupied == as [u8](0) then
+      sets_entry.occupied = as [u8](1)
+      sets_entry.hash = hash
+      sets_entry.key = key
+      sets_entry.value = value
+      call LuaVM.dispatch(self, frame, next_pc;
+        returned = returned,
+        runtime_error = runtime_error
+      )
+    end
+    if sets_entry.hash == hash then
+      let sets_entry_key [LuaValue] = sets_entry.key
+      if sets_entry_key.bits == key.bits then
+        jump sets_store(entry = sets_entry, value = value, next_pc = next_pc)
+      end
+      let sets_proto [ptr [LuaProto]] = frame.proto
+      let sets_entry_key_index [index] = as [index](sets_entry_key.bits >> as [u64]([LuaTag.SHIFT]))
+      let sets_key_index [index] = as [index](key.bits >> as [u64]([LuaTag.SHIFT]))
+      call LuaString.eq(&sets_proto.strings[sets_entry_key_index], &sets_proto.strings[sets_key_index];
+        yes = sets_store(entry = sets_entry, value = value, next_pc = next_pc),
+        no = sets_next(table, key, hash, value, slot, next_pc)
+      )
+    else
+      jump sets_next(table, key, hash, value, slot, next_pc)
+    end
+  end
+
+  block sets_store(entry [ptr [LuaHashEntry]], value [LuaValue], next_pc [index])
+    entry.value = value
+    call LuaVM.dispatch(self, frame, next_pc;
+      returned,
+      runtime_error
+    )
+  end
+
+  block sets_next(table [ptr [LuaTable]], key [LuaValue], hash [u64], value [LuaValue], slot [index], next_pc [index])
+    jump sets_loop(table = table, key = key, hash = hash, value = value, slot = slot + 1, next_pc = next_pc)
+  end
+
+  block gets(a [u8], table_reg [u8], key_reg [u8], next_pc [index])
+    let gets_table_value [LuaValue] = frame.regs[table_reg]
+    let gets_key [LuaValue] = frame.regs[key_reg]
+    let gets_table_tag [u64] = gets_table_value.bits & as [u64]([LuaTag.MASK])
+    let gets_key_tag [u64] = gets_key.bits & as [u64]([LuaTag.MASK])
+    if gets_table_tag ~= as [u64]([LuaTag.TABLE]) then
+      jump table_error(code = [LuaErr.EXPECT_TABLE], next_pc = next_pc)
+    end
+    if gets_key_tag ~= as [u64]([LuaTag.STRING]) then
+      jump table_error(code = [LuaErr.EXPECT_STRING_KEY], next_pc = next_pc)
+    end
+    let gets_table_index [index] = as [index](gets_table_value.bits >> as [u64]([LuaTag.SHIFT]))
+    let gets_key_index [index] = as [index](gets_key.bits >> as [u64]([LuaTag.SHIFT]))
+    let gets_proto [ptr [LuaProto]] = frame.proto
+    let gets_hash [u64] = gets_proto.strings[gets_key_index].hash
+    let gets_table [ptr [LuaTable]] = &self.tables[gets_table_index]
+    jump gets_loop(a = a, table = gets_table, key = gets_key, hash = gets_hash, slot = as [index](0), next_pc = next_pc)
+  end
+
+  block gets_loop(a [u8], table [ptr [LuaTable]], key [LuaValue], hash [u64], slot [index], next_pc [index])
+    if slot == table.hash_len then
+      jump gets_missing(a, next_pc)
+    end
+    let gets_entry [ptr [LuaHashEntry]] = &table.hash[slot]
+    if gets_entry.occupied == as [u8](0) then
+      jump gets_missing(a, next_pc)
+    end
+    if gets_entry.hash == hash then
+      let gets_entry_key [LuaValue] = gets_entry.key
+      if gets_entry_key.bits == key.bits then
+        jump gets_found(a = a, entry = gets_entry, next_pc = next_pc)
+      end
+      let gets_proto [ptr [LuaProto]] = frame.proto
+      let gets_entry_key_index [index] = as [index](gets_entry_key.bits >> as [u64]([LuaTag.SHIFT]))
+      let gets_key_index [index] = as [index](key.bits >> as [u64]([LuaTag.SHIFT]))
+      call LuaString.eq(&gets_proto.strings[gets_entry_key_index], &gets_proto.strings[gets_key_index];
+        yes = gets_found(a = a, entry = gets_entry, next_pc = next_pc),
+        no = gets_next(a, table, key, hash, slot, next_pc)
+      )
+    else
+      jump gets_next(a, table, key, hash, slot, next_pc)
+    end
+  end
+
+  block gets_found(a [u8], entry [ptr [LuaHashEntry]], next_pc [index])
+    frame.regs[a] = entry.value
+    call LuaVM.dispatch(self, frame, next_pc;
+      returned,
+      runtime_error
+    )
+  end
+
+  block gets_missing(a [u8], next_pc [index])
+    frame.regs[a] = LuaValue { bits = as [u64]([LuaTag.NIL]) }
+    call LuaVM.dispatch(self, frame, next_pc;
+      returned,
+      runtime_error
+    )
+  end
+
+  block gets_next(a [u8], table [ptr [LuaTable]], key [LuaValue], hash [u64], slot [index], next_pc [index])
+    jump gets_loop(a = a, table = table, key = key, hash = hash, slot = slot + 1, next_pc = next_pc)
+  end
+
+  block eq(a [u8], b [u8], c [u8], next_pc [index])
+    let eq_lhs [LuaValue] = frame.regs[b]
+    let eq_rhs [LuaValue] = frame.regs[c]
+    if eq_lhs.bits == eq_rhs.bits then
+      jump eq_true(a, next_pc)
+    end
+    let eq_lhs_tag [u64] = eq_lhs.bits & as [u64]([LuaTag.MASK])
+    let eq_rhs_tag [u64] = eq_rhs.bits & as [u64]([LuaTag.MASK])
+    if eq_lhs_tag == as [u64]([LuaTag.STRING]) and eq_rhs_tag == as [u64]([LuaTag.STRING]) then
+      let eq_proto [ptr [LuaProto]] = frame.proto
+      let eq_lhs_idx [index] = as [index](eq_lhs.bits >> as [u64]([LuaTag.SHIFT]))
+      let eq_rhs_idx [index] = as [index](eq_rhs.bits >> as [u64]([LuaTag.SHIFT]))
+      call LuaString.eq(&eq_proto.strings[eq_lhs_idx], &eq_proto.strings[eq_rhs_idx];
+        yes = eq_true(a, next_pc),
+        no = eq_false(a, next_pc)
+      )
+    else
+      jump eq_false(a, next_pc)
+    end
+  end
+
+  block eq_true(a [u8], next_pc [index])
+    frame.regs[a] = LuaValue { bits = as [u64]([LuaTag.TRUE]) }
+    call LuaVM.dispatch(self, frame, next_pc;
+      returned,
+      runtime_error
+    )
+  end
+
+  block eq_false(a [u8], next_pc [index])
+    frame.regs[a] = LuaValue { bits = as [u64]([LuaTag.FALSE]) }
+    call LuaVM.dispatch(self, frame, next_pc;
+      returned,
+      runtime_error
+    )
+  end
+
+  block add(a [u8], b [u8], c [u8], next_pc [index])
+    let add_lhs [LuaValue] = frame.regs[b]
+    let add_rhs [LuaValue] = frame.regs[c]
+    let add_lhs_i [i64] = as [i64](add_lhs.bits >> as [u64]([LuaTag.SHIFT]))
+    let add_rhs_i [i64] = as [i64](add_rhs.bits >> as [u64]([LuaTag.SHIFT]))
+    let add_sum [i64] = add_lhs_i + add_rhs_i
+    frame.regs[a] = LuaValue { bits = (as [u64](add_sum) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) }
+    call LuaVM.dispatch(self, frame, next_pc;
+      returned,
+      runtime_error
+    )
+  end
+
+  block lt(a [u8], b [u8], c [u8], next_pc [index])
+    let lt_lhs [LuaValue] = frame.regs[b]
+    let lt_rhs [LuaValue] = frame.regs[c]
+    let lt_lhs_i [i64] = as [i64](lt_lhs.bits >> as [u64]([LuaTag.SHIFT]))
+    let lt_rhs_i [i64] = as [i64](lt_rhs.bits >> as [u64]([LuaTag.SHIFT]))
+    if lt_lhs_i < lt_rhs_i then
+      frame.regs[a] = LuaValue { bits = as [u64]([LuaTag.TRUE]) }
+    else
+      frame.regs[a] = LuaValue { bits = as [u64]([LuaTag.FALSE]) }
+    end
+    call LuaVM.dispatch(self, frame, next_pc;
+      returned,
+      runtime_error
+    )
+  end
+
+  block jmp(sbx [i32], next_pc [index])
+    call LuaVM.dispatch(self, frame, as [index](as [i32](next_pc) + sbx);
+      returned,
+      runtime_error
+    )
+  end
+
+  block jmpz(a [u8], sbx [i32], next_pc [index])
+    let cond [LuaValue] = frame.regs[a]
+    if cond.bits == as [u64]([LuaTag.NIL]) or cond.bits == as [u64]([LuaTag.FALSE]) then
+      call LuaVM.dispatch(self, frame, as [index](as [i32](next_pc) + sbx);
+        returned = returned,
+        runtime_error = runtime_error
+      )
+    else
+      call LuaVM.dispatch(self, frame, next_pc;
+        returned = returned,
+        runtime_error = runtime_error
+      )
+    end
+  end
+
+  block ret(a [u8])
+    jump returned(result = frame.regs[a])
+  end
+
+  block bad(op [u8], pc [index])
+    jump runtime_error(code = as [i32](op), pc = pc)
+  end
+end
+
+region LuaProgram_run(proto [ptr [LuaProto]], regs [ptr [LuaValue]], tables [ptr [LuaTable]];
+  done(result [LuaValue]),
+  failed(code [i32], pc [index])
+)
+  entry start()
+    var vm [LuaVM] = LuaVM { root = proto, tables = tables }
+    var frame [LuaFrame] = LuaFrame { proto = proto, regs = regs }
+    call LuaVM.dispatch(&vm, &frame, as [index](0);
+      returned = done,
+      runtime_error = failed
+    )
+  end
+end
+
+fn main() [i32]
+  entry start()
+    var code [array [LuaInstr] [22]] = {
+    LuaInstr { op = as [u8]([LuaOP.LOADS]), a = 5, b = 0, c = 0, bx = 0, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.LOADS]), a = 6, b = 0, c = 0, bx = 1, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.EQ]),    a = 7, b = 5, c = 6, bx = 0, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.JMPZ]),  a = 7, b = 0, c = 0, bx = 0, sbx = 13 },
+    LuaInstr { op = as [u8]([LuaOP.NEWTABLE]), a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.LOADK]), a = 1, b = 0, c = 0, bx = 0, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.LOADK]), a = 2, b = 0, c = 0, bx = 1, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.SETI]),  a = 0, b = 1, c = 2, bx = 0, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.LOADK]), a = 3, b = 0, c = 0, bx = 2, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.SETI]),  a = 0, b = 3, c = 1, bx = 0, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.GETI]),  a = 4, b = 0, c = 1, bx = 0, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.GETI]),  a = 5, b = 0, c = 3, bx = 0, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.ADD]),   a = 6, b = 4, c = 5, bx = 0, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.LOADS]), a = 7, b = 0, c = 0, bx = 2, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.SETS]),  a = 0, b = 7, c = 6, bx = 0, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.GETS]),  a = 0, b = 0, c = 7, bx = 0, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.RETURN]), a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.LOADK]), a = 0, b = 0, c = 0, bx = 3, sbx = 0 },
+    LuaInstr { op = as [u8]([LuaOP.RETURN]), a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+    LuaInstr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+    LuaInstr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+    LuaInstr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 }
+  }
+  var hello_bytes_a [array [u8] [5]] = { as [u8](104), as [u8](101), as [u8](108), as [u8](108), as [u8](111) }
+  var hello_bytes_b [array [u8] [5]] = { as [u8](104), as [u8](101), as [u8](108), as [u8](108), as [u8](111) }
+  var answer_bytes [array [u8] [6]] = { as [u8](97), as [u8](110), as [u8](115), as [u8](119), as [u8](101), as [u8](114) }
+  var strings [array [LuaString] [3]] = {
+    LuaString { hash = as [u64](210714636441), len = as [index](5), bytes = &hello_bytes_a[0] },
+    LuaString { hash = as [u64](210714636441), len = as [index](5), bytes = &hello_bytes_b[0] },
+    LuaString { hash = as [u64](6953313585153), len = as [index](6), bytes = &answer_bytes[0] }
+  }
+  var consts [array [LuaValue] [4]] = {
+    LuaValue { bits = (as [u64](1) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) },
+    LuaValue { bits = (as [u64](41) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) },
+    LuaValue { bits = (as [u64](2) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) },
+    LuaValue { bits = (as [u64](999) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) }
+  }
+  var regs [array [LuaValue] [8]] = {
+    LuaValue { bits = as [u64]([LuaTag.NIL]) },
+    LuaValue { bits = as [u64]([LuaTag.NIL]) },
+    LuaValue { bits = as [u64]([LuaTag.NIL]) },
+    LuaValue { bits = as [u64]([LuaTag.NIL]) },
+    LuaValue { bits = as [u64]([LuaTag.NIL]) },
+    LuaValue { bits = as [u64]([LuaTag.NIL]) },
+    LuaValue { bits = as [u64]([LuaTag.NIL]) },
+    LuaValue { bits = as [u64]([LuaTag.NIL]) }
+  }
+    var table0_array [array [LuaValue] [4]] = {
+      LuaValue { bits = as [u64]([LuaTag.NIL]) },
+      LuaValue { bits = as [u64]([LuaTag.NIL]) },
+      LuaValue { bits = as [u64]([LuaTag.NIL]) },
+      LuaValue { bits = as [u64]([LuaTag.NIL]) }
+    }
+    var table0_hash [array [LuaHashEntry] [4]] = {
+      LuaHashEntry { occupied = as [u8](0), hash = as [u64](0), key = LuaValue { bits = as [u64]([LuaTag.NIL]) }, value = LuaValue { bits = as [u64]([LuaTag.NIL]) } },
+      LuaHashEntry { occupied = as [u8](0), hash = as [u64](0), key = LuaValue { bits = as [u64]([LuaTag.NIL]) }, value = LuaValue { bits = as [u64]([LuaTag.NIL]) } },
+      LuaHashEntry { occupied = as [u8](0), hash = as [u64](0), key = LuaValue { bits = as [u64]([LuaTag.NIL]) }, value = LuaValue { bits = as [u64]([LuaTag.NIL]) } },
+      LuaHashEntry { occupied = as [u8](0), hash = as [u64](0), key = LuaValue { bits = as [u64]([LuaTag.NIL]) }, value = LuaValue { bits = as [u64]([LuaTag.NIL]) } }
+    }
+    var tables [array [LuaTable] [1]] = {
+      LuaTable { array = &table0_array[0], array_len = as [index](4), hash = &table0_hash[0], hash_len = as [index](4) }
+    }
+    var proto [LuaProto] = LuaProto { code = &code[0], consts = &consts[0], strings = &strings[0] }
+    emit LuaProgram_run(&proto, &regs[0], &tables[0];
+      done = done,
+      failed = failed
+    )
+  end
+
+  block done(result [LuaValue])
+    return as [i32](as [i64](result.bits >> as [u64]([LuaTag.SHIFT])) - as [i64](42))
+  end
+
+  block failed(code [i32], pc [index])
+    return code + as [i32](pc) + 1000
+  end
+end

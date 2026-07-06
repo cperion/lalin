@@ -32,7 +32,7 @@ local invoke_region = Tr.ControlStmtRegion(
       "test.emit.1",
       Tr.RegionInvokeTarget(C.Path({ C.Name("R"), C.Name("Target") })),
       { lit("41") },
-      { Tr.RegionContWire("done", Tr.RegionWireBlock(Tr.BlockLabel("done"))) }),
+      { Tr.RegionContWire("done", Tr.RegionWireBlock(Tr.BlockLabel("done"), {})) }),
   }),
   {
     Tr.ControlBlock(Tr.BlockLabel("done"), { Tr.BlockParam("v", i32) }, {

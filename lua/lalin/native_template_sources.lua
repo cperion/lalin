@@ -1292,6 +1292,178 @@ local function bind_context(T)
         return self.result:native_fast_mul_add_imm_c_expr(lhs, rhs, imm)
     end
 
+    function Native.NativeCodeCompareShape:native_fast_compare_token()
+        internal_error("unsupported native fast compare-branch token")
+    end
+
+    function Native.NativeCompareBranchAtoms:native_fast_compare_token()
+        return "compare_branch." .. self.scalar:native_scalar_token() .. "." .. self.cmp:native_compare_family_name() .. "." .. self.lhs:native_fast_atom_token() .. "." .. self.rhs:native_fast_atom_token()
+    end
+
+    function Native.NativeCompareBranchImmRhs:native_fast_compare_token()
+        return "compare_branch_imm_rhs." .. self.scalar:native_scalar_token() .. "." .. self.cmp:native_compare_family_name() .. "." .. self.lhs:native_fast_atom_token()
+    end
+
+    function Native.NativeCodeCompareShape:native_fast_compare_scalar()
+        internal_error("unsupported native fast compare-branch scalar")
+    end
+
+    function Native.NativeCompareBranchAtoms:native_fast_compare_scalar() return self.scalar end
+    function Native.NativeCompareBranchImmRhs:native_fast_compare_scalar() return self.scalar end
+
+    local function fast_code_compare_family(input, shape, token)
+        return Native.NativeTemplateFamily(
+            Native.NativeTemplateFamilyId("native.fast.code.compare_branch." .. token),
+            Native.NativeRoleCodeTerm,
+            {
+                Support.axis_target(input.target),
+                Support.axis_machine_scalar(shape:native_fast_compare_scalar()),
+                Support.axis_fast_code_compare_branch(shape),
+            },
+            Support.protocol_void_none()
+        )
+    end
+
+    local function append_fast_code_compare_source(out, input, shape, atom_builder)
+        local token = shape:native_fast_compare_token()
+        local scalar = shape:native_fast_compare_scalar()
+        local holes = {}
+        local operands = {}
+        local atom_holes = atom_builder(operands, holes, "native.hole.fast.code.compare_branch." .. token)
+        local then_symbol, else_symbol = Support.then_continuation_symbol(), Support.else_continuation_symbol()
+        local then_ordinal, else_ordinal = Support.then_continuation_ordinal(), Support.else_continuation_ordinal()
+        local then_signature = Support.stencil_continuation_signature(then_ordinal, {})
+        local else_signature = Support.stencil_continuation_signature(else_ordinal, {})
+        local signature = Support.spill_all_stencil_signature(scalar, operands, { then_signature, else_signature })
+        local family = fast_code_compare_family(input, shape, token)
+        local entry = "lalin_native_fast_code_compare_branch_" .. symbol_fragment(token)
+        local lines = c_prelude()
+        append_hole_externs(lines, holes)
+        lines[#lines + 1] = continuation_extern(then_symbol, then_signature)
+        lines[#lines + 1] = continuation_extern(else_symbol, else_signature)
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        lines[#lines + 1] = "    if (" .. shape:native_fast_compare_c_expr(atom_holes) .. ") { " .. then_symbol.name .. "(frame); } else { " .. else_symbol.name .. "(frame); }"
+        lines[#lines + 1] = "}"
+        append_manifest_source(out, "fast.code.compare_branch." .. token, family, Native.NativeChunkControlOp, signature, Native.NativeExtractContinuationFragment({ then_symbol, else_symbol }), entry, lines, holes, { then_ordinal, else_ordinal })
+    end
+
+    function Native.NativeCodeCompareShape:native_fast_compare_c_expr(_atom_holes)
+        internal_error("unsupported native fast compare-branch C expression")
+    end
+
+    function Native.NativeCompareBranchAtoms:append_native_template_sources(out, input)
+        append_fast_code_compare_source(out, input, self, function(operands, holes, id_base)
+            return {
+                lhs = append_fast_expr_atom(operands, holes, id_base .. ".lhs", self.lhs, 0),
+                rhs = append_fast_expr_atom(operands, holes, id_base .. ".rhs", self.rhs, 1),
+            }
+        end)
+    end
+
+    function Native.NativeCompareBranchAtoms:native_fast_compare_c_expr(atom_holes)
+        local lhs = self.lhs:native_fast_atom_c_expr(atom_holes.lhs)
+        local rhs = self.rhs:native_fast_atom_c_expr(atom_holes.rhs)
+        return self.cmp:native_c_compare_expr(self.scalar, lhs, rhs)
+    end
+
+    function Native.NativeCompareBranchImmRhs:append_native_template_sources(out, input)
+        append_fast_code_compare_source(out, input, self, function(operands, holes, id_base)
+            local imm = Native.NativeExprImmediate(self.scalar)
+            return {
+                lhs = append_fast_expr_atom(operands, holes, id_base .. ".lhs", self.lhs, 0),
+                rhs = append_fast_expr_atom(operands, holes, id_base .. ".rhs", imm, 1),
+            }
+        end)
+    end
+
+    function Native.NativeCompareBranchImmRhs:native_fast_compare_c_expr(atom_holes)
+        local lhs = self.lhs:native_fast_atom_c_expr(atom_holes.lhs)
+        local rhs = Native.NativeExprImmediate(self.scalar):native_fast_atom_c_expr(atom_holes.rhs)
+        return self.cmp:native_c_compare_expr(self.scalar, lhs, rhs)
+    end
+
+    function Native.NativeCodeSwitchStepShape:native_fast_switch_step_token()
+        internal_error("unsupported native fast switch-step token")
+    end
+
+    function Native.NativeSwitchStepAtoms:native_fast_switch_step_token()
+        return "switch_step." .. self.scalar:native_scalar_token() .. "." .. self.key:native_fast_atom_token()
+    end
+
+    function Native.NativeSwitchStepImmKey:native_fast_switch_step_token()
+        return "switch_step_imm_key." .. self.scalar:native_scalar_token()
+    end
+
+    function Native.NativeCodeSwitchStepShape:native_fast_switch_step_scalar()
+        internal_error("unsupported native fast switch-step scalar")
+    end
+
+    function Native.NativeSwitchStepAtoms:native_fast_switch_step_scalar() return self.scalar end
+    function Native.NativeSwitchStepImmKey:native_fast_switch_step_scalar() return self.scalar end
+
+    local function fast_code_switch_step_family(input, shape, token)
+        return Native.NativeTemplateFamily(
+            Native.NativeTemplateFamilyId("native.fast.code.switch_step." .. token),
+            Native.NativeRoleCodeTerm,
+            {
+                Support.axis_target(input.target),
+                Support.axis_machine_scalar(shape:native_fast_switch_step_scalar()),
+                Support.axis_fast_code_switch_step(shape),
+            },
+            Support.protocol_void_none()
+        )
+    end
+
+    local function append_fast_code_switch_step_source(out, input, shape, atom_builder)
+        local token = shape:native_fast_switch_step_token()
+        local scalar = shape:native_fast_switch_step_scalar()
+        local holes = {}
+        local operands = {}
+        local atom_holes = atom_builder(operands, holes, "native.hole.fast.code.switch_step." .. token)
+        local case_atom = Native.NativeExprImmediate(scalar)
+        local case_holes = append_fast_expr_atom(operands, holes, "native.hole.fast.code.switch_step." .. token .. ".case", case_atom, #operands)
+        local case_symbol, default_symbol = Support.then_continuation_symbol(), Support.else_continuation_symbol()
+        local case_ordinal, default_ordinal = Support.then_continuation_ordinal(), Support.else_continuation_ordinal()
+        local case_signature = Support.stencil_continuation_signature(case_ordinal, {})
+        local default_signature = Support.stencil_continuation_signature(default_ordinal, {})
+        local signature = Support.spill_all_stencil_signature(scalar, operands, { case_signature, default_signature })
+        local family = fast_code_switch_step_family(input, shape, token)
+        local entry = "lalin_native_fast_code_switch_step_" .. symbol_fragment(token)
+        local lines = c_prelude()
+        append_hole_externs(lines, holes)
+        lines[#lines + 1] = continuation_extern(case_symbol, case_signature)
+        lines[#lines + 1] = continuation_extern(default_symbol, default_signature)
+        lines[#lines + 1] = "void " .. entry .. "(uint8_t *frame) {"
+        lines[#lines + 1] = "    if (" .. shape:native_fast_switch_step_key_c_expr(atom_holes) .. " == " .. case_atom:native_fast_atom_c_expr(case_holes) .. ") { " .. case_symbol.name .. "(frame); } else { " .. default_symbol.name .. "(frame); }"
+        lines[#lines + 1] = "}"
+        append_manifest_source(out, "fast.code.switch_step." .. token, family, Native.NativeChunkControlOp, signature, Native.NativeExtractContinuationFragment({ case_symbol, default_symbol }), entry, lines, holes, { case_ordinal, default_ordinal })
+    end
+
+    function Native.NativeCodeSwitchStepShape:native_fast_switch_step_key_c_expr(_atom_holes)
+        internal_error("unsupported native fast switch-step key C expression")
+    end
+
+    function Native.NativeSwitchStepAtoms:append_native_template_sources(out, input)
+        append_fast_code_switch_step_source(out, input, self, function(operands, holes, id_base)
+            return { key = append_fast_expr_atom(operands, holes, id_base .. ".key", self.key, 0) }
+        end)
+    end
+
+    function Native.NativeSwitchStepAtoms:native_fast_switch_step_key_c_expr(atom_holes)
+        return self.key:native_fast_atom_c_expr(atom_holes.key)
+    end
+
+    function Native.NativeSwitchStepImmKey:append_native_template_sources(out, input)
+        append_fast_code_switch_step_source(out, input, self, function(operands, holes, id_base)
+            local key = Native.NativeExprImmediate(self.scalar)
+            return { key = append_fast_expr_atom(operands, holes, id_base .. ".key", key, 0) }
+        end)
+    end
+
+    function Native.NativeSwitchStepImmKey:native_fast_switch_step_key_c_expr(atom_holes)
+        return Native.NativeExprImmediate(self.scalar):native_fast_atom_c_expr(atom_holes.key)
+    end
+
     function Native.NativeAbiProjection:native_fast_public_result_scalar(target)
         return Support.scalar_pointer(target.pointer_bits)
     end
@@ -1446,9 +1618,249 @@ local function bind_context(T)
         append_manifest_source(out, "fast.public_abi." .. token, family, Native.NativeChunkPublicAbiAdapter, signature, Native.NativeExtractStandaloneCallable, entry, lines, holes, {})
     end
 
+    function Native.NativeAbiProjection:native_fast_public_operand_scalar(_target)
+        return nil
+    end
+
+    function Native.NativeAbiScalarValue:native_fast_public_operand_scalar(_target)
+        return self.scalar
+    end
+
+    function Native.NativeAbiPointerValue:native_fast_public_operand_scalar(_target)
+        return self.scalar
+    end
+
+    function Native.NativeFastPublicAbiShape:native_fast_public_param_at(_ordinal)
+        return nil
+    end
+
+    function Native.NativeFastAbi1:native_fast_public_param_at(ordinal)
+        if ordinal == 0 then return self.p0 end
+    end
+
+    function Native.NativeFastAbi2:native_fast_public_param_at(ordinal)
+        if ordinal == 0 then return self.p0 end
+        if ordinal == 1 then return self.p1 end
+    end
+
+    function Native.NativeFastAbi3:native_fast_public_param_at(ordinal)
+        if ordinal == 0 then return self.p0 end
+        if ordinal == 1 then return self.p1 end
+        if ordinal == 2 then return self.p2 end
+    end
+
+    function Native.NativeCodeExprAtomShape:native_fast_public_abi_supported(_abi, _target)
+        return false
+    end
+
+    function Native.NativeExprInput:native_fast_public_abi_supported(abi, target)
+        local param = abi:native_fast_public_param_at(self.ordinal)
+        return param ~= nil and param:native_fast_public_operand_scalar(target) == self.scalar
+    end
+
+    function Native.NativeExprImmediate:native_fast_public_abi_supported(_abi, _target)
+        return true
+    end
+
+    function Native.NativeExprConstPool:native_fast_public_abi_supported(_abi, _target)
+        return true
+    end
+
+    function Native.NativeCodeExprRegionShape:native_fast_public_abi_supported(_abi, _target)
+        return false
+    end
+
+    function Native.NativeExprReturnAtom:native_fast_public_abi_supported(abi, target)
+        return self.result == abi:native_fast_public_result():native_fast_public_result_scalar(target)
+            and self.atom:native_fast_public_abi_supported(abi, target)
+    end
+
+    function Native.NativeExprReturnUnary:native_fast_public_abi_supported(abi, target)
+        return self.result == abi:native_fast_public_result():native_fast_public_result_scalar(target)
+            and self.src:native_fast_public_abi_supported(abi, target)
+    end
+
+    function Native.NativeExprReturnBinary:native_fast_public_abi_supported(abi, target)
+        return self.result == abi:native_fast_public_result():native_fast_public_result_scalar(target)
+            and self.lhs:native_fast_public_abi_supported(abi, target)
+            and self.rhs:native_fast_public_abi_supported(abi, target)
+    end
+
+    function Native.NativeExprReturnBinaryImmRhs:native_fast_public_abi_supported(abi, target)
+        return self.result == abi:native_fast_public_result():native_fast_public_result_scalar(target)
+            and self.lhs:native_fast_public_abi_supported(abi, target)
+    end
+
+    function Native.NativeExprReturnMulAddImm:native_fast_public_abi_supported(abi, target)
+        return self.result == abi:native_fast_public_result():native_fast_public_result_scalar(target)
+            and self.mul_lhs:native_fast_public_abi_supported(abi, target)
+            and self.mul_rhs:native_fast_public_abi_supported(abi, target)
+    end
+
+    function Native.NativeCodeExprAtomShape:append_native_fast_public_atom_holes(_holes, _id_base)
+        internal_error("unsupported native fast public expression atom holes")
+    end
+
+    function Native.NativeExprInput:append_native_fast_public_atom_holes(_holes, _id_base)
+        return {}
+    end
+
+    function Native.NativeExprImmediate:append_native_fast_public_atom_holes(holes, id_base)
+        return self:append_native_fast_atom_holes(holes, id_base)
+    end
+
+    function Native.NativeExprConstPool:append_native_fast_public_atom_holes(holes, id_base)
+        return self:append_native_fast_atom_holes(holes, id_base)
+    end
+
+    function Native.NativeCodeExprAtomShape:append_native_fast_public_atom_operand(_operands, _operand_index)
+    end
+
+    function Native.NativeExprImmediate:append_native_fast_public_atom_operand(operands, operand_index)
+        self:append_native_fast_atom_operand(operands, operand_index)
+    end
+
+    function Native.NativeExprConstPool:append_native_fast_public_atom_operand(operands, operand_index)
+        self:append_native_fast_atom_operand(operands, operand_index)
+    end
+
+    function Native.NativeCodeExprAtomShape:native_fast_public_atom_c_expr(_holes)
+        internal_error("unsupported native fast public expression atom C expression")
+    end
+
+    function Native.NativeExprInput:native_fast_public_atom_c_expr(_holes)
+        return "p" .. tostring(self.ordinal)
+    end
+
+    function Native.NativeExprImmediate:native_fast_public_atom_c_expr(holes)
+        return self:native_fast_atom_c_expr(holes)
+    end
+
+    function Native.NativeExprConstPool:native_fast_public_atom_c_expr(holes)
+        return self:native_fast_atom_c_expr(holes)
+    end
+
+    local function append_fast_public_expr_atom(operands, holes, id_base, atom, operand_index)
+        atom:append_native_fast_public_atom_operand(operands, operand_index)
+        return atom:append_native_fast_public_atom_holes(holes, id_base)
+    end
+
+    function Native.NativeCodeExprRegionShape:native_fast_public_expr_c_expr(_atom_holes)
+        internal_error("unsupported native fast public Code expression C expression")
+    end
+
+    function Native.NativeExprReturnAtom:native_fast_public_expr_c_expr(atom_holes)
+        return self.atom:native_fast_public_atom_c_expr(atom_holes.atom)
+    end
+
+    function Native.NativeExprReturnUnary:native_fast_public_expr_c_expr(atom_holes)
+        local src = self.src:native_fast_public_atom_c_expr(atom_holes.src)
+        return self.result:native_fast_unary_c_expr(self.op, src)
+    end
+
+    function Native.NativeExprReturnBinary:native_fast_public_expr_c_expr(atom_holes)
+        local lhs = self.lhs:native_fast_public_atom_c_expr(atom_holes.lhs)
+        local rhs = self.rhs:native_fast_public_atom_c_expr(atom_holes.rhs)
+        return self.result:native_fast_binary_c_expr(self.op, lhs, rhs)
+    end
+
+    function Native.NativeExprReturnBinaryImmRhs:native_fast_public_expr_c_expr(atom_holes)
+        local lhs = self.lhs:native_fast_public_atom_c_expr(atom_holes.lhs)
+        local rhs = Native.NativeExprImmediate(self.result):native_fast_public_atom_c_expr(atom_holes.rhs)
+        return self.result:native_fast_binary_c_expr(self.op, lhs, rhs)
+    end
+
+    function Native.NativeExprReturnMulAddImm:native_fast_public_expr_c_expr(atom_holes)
+        local lhs = self.mul_lhs:native_fast_public_atom_c_expr(atom_holes.lhs)
+        local rhs = self.mul_rhs:native_fast_public_atom_c_expr(atom_holes.rhs)
+        local imm = Native.NativeExprImmediate(self.result):native_fast_public_atom_c_expr(atom_holes.imm)
+        return self.result:native_fast_mul_add_imm_c_expr(lhs, rhs, imm)
+    end
+
+    function Native.NativeCodeExprRegionShape:append_native_fast_public_code_expr_source(_out, _input, _abi)
+        internal_error("unsupported native fast public Code expression source")
+    end
+
+    local function append_fast_public_code_expr_source(out, input, abi, shape, expr_builder)
+        if not shape:native_fast_public_abi_supported(abi, input.target) then return nil end
+        local abi_token = abi:native_fast_public_abi_token(input.target)
+        local expr_token = shape:native_fast_expr_token()
+        local token = abi_token .. "." .. expr_token
+        local holes = {}
+        local operands = {}
+        local atom_holes = expr_builder(operands, holes, "native.hole.fast.public_code_expr." .. token)
+        local result = abi:native_fast_public_result()
+        local result_scalar = shape:native_fast_expr_result_scalar()
+        local family = Support.fast_public_code_expr_family(input.target, abi, shape)
+        local signature = Support.spill_all_stencil_signature(result_scalar, operands, {})
+        local entry = "lalin_native_fast_public_code_expr_" .. symbol_fragment(token)
+        local public_params = abi:native_fast_public_params()
+        local params = {}
+        for i, param in ipairs(public_params) do
+            params[#params + 1] = param:native_c_boundary_type() .. " p" .. tostring(i - 1)
+        end
+        if #params == 0 then params[#params + 1] = "void" end
+        local lines = c_prelude()
+        result:append_native_c_declarations(lines, {})
+        for _, param in ipairs(public_params) do param:append_native_c_declarations(lines, {}) end
+        append_hole_externs(lines, holes)
+        lines[#lines + 1] = result:native_c_boundary_type() .. " " .. entry .. "(" .. table.concat(params, ", ") .. ") {"
+        lines[#lines + 1] = "    " .. result_scalar:native_c_scalar_type() .. " result = " .. shape:native_fast_public_expr_c_expr(atom_holes) .. ";"
+        lines[#lines + 1] = "    return (" .. result:native_c_boundary_type() .. ")result;"
+        lines[#lines + 1] = "}"
+        append_manifest_source(out, "fast.public_code_expr." .. token, family, Native.NativeChunkPublicAbiAdapter, signature, Native.NativeExtractStandaloneCallable, entry, lines, holes, {})
+    end
+
+    function Native.NativeExprReturnAtom:append_native_fast_public_code_expr_source(out, input, abi)
+        append_fast_public_code_expr_source(out, input, abi, self, function(operands, holes, id_base)
+            return { atom = append_fast_public_expr_atom(operands, holes, id_base .. ".atom", self.atom, 0) }
+        end)
+    end
+
+    function Native.NativeExprReturnUnary:append_native_fast_public_code_expr_source(out, input, abi)
+        append_fast_public_code_expr_source(out, input, abi, self, function(operands, holes, id_base)
+            return { src = append_fast_public_expr_atom(operands, holes, id_base .. ".src", self.src, 0) }
+        end)
+    end
+
+    function Native.NativeExprReturnBinary:append_native_fast_public_code_expr_source(out, input, abi)
+        append_fast_public_code_expr_source(out, input, abi, self, function(operands, holes, id_base)
+            return {
+                lhs = append_fast_public_expr_atom(operands, holes, id_base .. ".lhs", self.lhs, 0),
+                rhs = append_fast_public_expr_atom(operands, holes, id_base .. ".rhs", self.rhs, 1),
+            }
+        end)
+    end
+
+    function Native.NativeExprReturnBinaryImmRhs:append_native_fast_public_code_expr_source(out, input, abi)
+        append_fast_public_code_expr_source(out, input, abi, self, function(operands, holes, id_base)
+            local imm = Native.NativeExprImmediate(self.result)
+            return {
+                lhs = append_fast_public_expr_atom(operands, holes, id_base .. ".lhs", self.lhs, 0),
+                rhs = append_fast_public_expr_atom(operands, holes, id_base .. ".rhs", imm, 1),
+            }
+        end)
+    end
+
+    function Native.NativeExprReturnMulAddImm:append_native_fast_public_code_expr_source(out, input, abi)
+        append_fast_public_code_expr_source(out, input, abi, self, function(operands, holes, id_base)
+            local imm = Native.NativeExprImmediate(self.result)
+            return {
+                lhs = append_fast_public_expr_atom(operands, holes, id_base .. ".mul_lhs", self.mul_lhs, 0),
+                rhs = append_fast_public_expr_atom(operands, holes, id_base .. ".mul_rhs", self.mul_rhs, 1),
+                imm = append_fast_public_expr_atom(operands, holes, id_base .. ".imm", imm, 2),
+            }
+        end)
+    end
+
     function Native.NativeFastRegionCapability:append_native_template_sources(out, input)
         for _, shape in ipairs(self.public_abi_shapes or {}) do shape:append_native_template_sources(out, input) end
         for _, shape in ipairs(self.code_expr_shapes or {}) do shape:append_native_template_sources(out, input) end
+        for _, abi in ipairs(self.public_abi_shapes or {}) do
+            for _, shape in ipairs(self.code_expr_shapes or {}) do shape:append_native_fast_public_code_expr_source(out, input, abi) end
+        end
+        for _, shape in ipairs(self.compare_branch_shapes or {}) do shape:append_native_template_sources(out, input) end
+        for _, shape in ipairs(self.switch_step_shapes or {}) do shape:append_native_template_sources(out, input) end
     end
 
     local function append_hole_relocation_markers(lines, holes)

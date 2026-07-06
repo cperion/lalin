@@ -1213,20 +1213,6 @@ local function bind_context(T)
         return table.concat(out, "\n") .. "\n"
     end
 
-    local function emit_c_artifact(module, artifacts, opts)
-        local source = emit_c_module(module, artifacts, opts)
-        local header = emit_c_header(module, opts)
-        return {
-            kind = "LuaJITCSourceArtifact",
-            source = source,
-            header = header,
-            support = "",
-            combined = source,
-            lj_module = module,
-            artifacts = artifacts or {},
-        }
-    end
-
     local function emit_module(module, opts)
         opts = opts or {}
         local out = {}
@@ -1296,7 +1282,6 @@ local function bind_context(T)
     api.emit_module = emit_module
     api.emit_c_module = emit_c_module
     api.emit_c_header = emit_c_header
-    api.emit_c_artifact = emit_c_artifact
     api.compile_module = compile_module
     api.expr = expr
 

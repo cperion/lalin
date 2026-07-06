@@ -382,6 +382,8 @@ local function bind_context(T)
     function api.axis_code_type(ty) return Native.NativeAxisCodeType(require_value(ty, "CodeType")) end
     function api.axis_code_micro_op(shape) return Native.NativeAxisCodeMicroOp(require_value(shape, "NativeCodeMicroOpShape")) end
     function api.axis_fast_code_expr(shape) return Native.NativeAxisFastCodeExpr(require_value(shape, "NativeCodeExprRegionShape")) end
+    function api.axis_fast_code_compare_branch(shape) return Native.NativeAxisFastCodeCompareBranch(require_value(shape, "NativeCodeCompareShape")) end
+    function api.axis_fast_code_switch_step(shape) return Native.NativeAxisFastCodeSwitchStep(require_value(shape, "NativeCodeSwitchStepShape")) end
     function api.axis_fast_public_abi(shape) return Native.NativeAxisFastPublicAbi(require_value(shape, "NativeFastPublicAbiShape")) end
     function api.axis_abi_micro_op(shape) return Native.NativeAxisAbiMicroOp(require_value(shape, "NativeAbiMicroOpShape")) end
     function api.axis_kernel_micro_op(shape) return Native.NativeAxisKernelMicroOp(require_value(shape, "NativeKernelMicroOpShape")) end
@@ -395,6 +397,24 @@ local function bind_context(T)
     function api.axis_stencil_schedule(axis) return Native.NativeAxisStencilSchedule(require_value(axis, "NativeStencilScheduleAxis")) end
     function api.axis_abi(protocol) return Native.NativeAxisAbi(require_value(protocol, "NativeCallProtocol")) end
     function api.axis_register_protocol(protocol) return Native.NativeAxisRegisterProtocol(require_value(protocol, "NativeRegisterProtocol")) end
+
+    function api.fast_public_code_expr_family(target, abi_shape, expr_shape)
+        target = require_value(target, "NativeTarget")
+        abi_shape = require_value(abi_shape, "NativeFastPublicAbiShape")
+        expr_shape = require_value(expr_shape, "NativeCodeExprRegionShape")
+        local result = abi_shape:native_fast_public_result()
+        return Native.NativeTemplateFamily(
+            Native.NativeTemplateFamilyId("native.fast.public_code_expr." .. abi_shape:native_fast_public_abi_token(target) .. "." .. expr_shape:native_fast_expr_token()),
+            Native.NativeRoleCodeFunc,
+            {
+                api.axis_target(target),
+                api.axis_machine_scalar(expr_shape:native_fast_expr_result_scalar()),
+                api.axis_fast_public_abi(abi_shape),
+                api.axis_fast_code_expr(expr_shape),
+            },
+            api.protocol(result:native_fast_public_call_protocol(target), api.register_none())
+        )
+    end
     function api.axis_machine_scalar(scalar) return Native.NativeAxisMachineScalar(require_value(scalar, "NativeMachineScalarRep")) end
     function api.axis_register_class(class) return Native.NativeAxisRegisterClass(require_value(class, "NativeRegisterClass")) end
     function api.axis_value_placement(placement) return Native.NativeAxisValuePlacement(require_value(placement, "NativeValuePlacement")) end

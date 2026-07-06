@@ -309,6 +309,339 @@ return function(T)
         return { Tr.TypeRegionDef(Tr.RegionInvokeTarget(region_path(self.region.name)), self.region) }
     end
 
+    local function path_text(path)
+        local parts = {}
+        for i = 1, #(path and path.parts or {}) do parts[#parts + 1] = path.parts[i].text end
+        return table.concat(parts, ".")
+    end
+
+    local function target_eq(a, b)
+        return path_text(a and a.path) == path_text(b and b.path)
+    end
+
+    local function sanitize_name(s)
+        s = tostring(s or ""):gsub("[^%w_]", "_")
+        if s == "" then s = "region" end
+        if s:match("^%d") then s = "_" .. s end
+        return s
+    end
+
+    local function seal_base_for_target(target)
+        return "__lalin_region_call_" .. sanitize_name(path_text(target.path))
+    end
+
+    local function find_region_def(regions, target)
+        for i = 1, #(regions or {}) do
+            if target_eq(regions[i].target, target) then return regions[i] end
+        end
+        return nil
+    end
+
+    local function has_region_call_target(targets, target)
+        for i = 1, #(targets or {}) do
+            if target_eq(targets[i], target) then return true end
+        end
+        return false
+    end
+
+    function Tr.Stmt:typecheck_tree_collect_region_call_targets(out) end
+
+    function Tr.StmtRegionCall:typecheck_tree_collect_region_call_targets(out)
+        if not has_region_call_target(out, self.target) then out[#out + 1] = self.target end
+    end
+
+    function Tr.Stmt:typecheck_tree_collect_region_root_call_targets(out) end
+
+    function Tr.StmtRegionCall:typecheck_tree_collect_region_root_call_targets(out)
+        if not has_region_call_target(out, self.target) then out[#out + 1] = self.target end
+    end
+
+    function Tr.Stmt:typecheck_tree_collect_region_emit_targets(out) end
+
+    function Tr.StmtRegionEmit:typecheck_tree_collect_region_emit_targets(out)
+        if not has_region_call_target(out, self.target) then out[#out + 1] = self.target end
+    end
+
+    function Tr.StmtIf:typecheck_tree_collect_region_call_targets(out)
+        for i = 1, #(self.then_body or {}) do self.then_body[i]:typecheck_tree_collect_region_call_targets(out) end
+        for i = 1, #(self.else_body or {}) do self.else_body[i]:typecheck_tree_collect_region_call_targets(out) end
+    end
+
+    function Tr.StmtIf:typecheck_tree_collect_region_root_call_targets(out)
+        for i = 1, #(self.then_body or {}) do self.then_body[i]:typecheck_tree_collect_region_root_call_targets(out) end
+        for i = 1, #(self.else_body or {}) do self.else_body[i]:typecheck_tree_collect_region_root_call_targets(out) end
+    end
+
+    function Tr.StmtIf:typecheck_tree_collect_region_emit_targets(out)
+        for i = 1, #(self.then_body or {}) do self.then_body[i]:typecheck_tree_collect_region_emit_targets(out) end
+        for i = 1, #(self.else_body or {}) do self.else_body[i]:typecheck_tree_collect_region_emit_targets(out) end
+    end
+
+    function Tr.StmtSwitch:typecheck_tree_collect_region_call_targets(out)
+        for i = 1, #(self.arms or {}) do
+            for j = 1, #(self.arms[i].body or {}) do self.arms[i].body[j]:typecheck_tree_collect_region_call_targets(out) end
+        end
+        for i = 1, #(self.variant_arms or {}) do
+            for j = 1, #(self.variant_arms[i].body or {}) do self.variant_arms[i].body[j]:typecheck_tree_collect_region_call_targets(out) end
+        end
+        for i = 1, #(self.default_body or {}) do self.default_body[i]:typecheck_tree_collect_region_call_targets(out) end
+    end
+
+    function Tr.StmtSwitch:typecheck_tree_collect_region_root_call_targets(out)
+        for i = 1, #(self.arms or {}) do
+            for j = 1, #(self.arms[i].body or {}) do self.arms[i].body[j]:typecheck_tree_collect_region_root_call_targets(out) end
+        end
+        for i = 1, #(self.variant_arms or {}) do
+            for j = 1, #(self.variant_arms[i].body or {}) do self.variant_arms[i].body[j]:typecheck_tree_collect_region_root_call_targets(out) end
+        end
+        for i = 1, #(self.default_body or {}) do self.default_body[i]:typecheck_tree_collect_region_root_call_targets(out) end
+    end
+
+    function Tr.StmtSwitch:typecheck_tree_collect_region_emit_targets(out)
+        for i = 1, #(self.arms or {}) do
+            for j = 1, #(self.arms[i].body or {}) do self.arms[i].body[j]:typecheck_tree_collect_region_emit_targets(out) end
+        end
+        for i = 1, #(self.variant_arms or {}) do
+            for j = 1, #(self.variant_arms[i].body or {}) do self.variant_arms[i].body[j]:typecheck_tree_collect_region_emit_targets(out) end
+        end
+        for i = 1, #(self.default_body or {}) do self.default_body[i]:typecheck_tree_collect_region_emit_targets(out) end
+    end
+
+    function Tr.StmtControl:typecheck_tree_collect_region_call_targets(out)
+        for i = 1, #(self.region.entry.body or {}) do self.region.entry.body[i]:typecheck_tree_collect_region_call_targets(out) end
+        for i = 1, #(self.region.blocks or {}) do
+            for j = 1, #(self.region.blocks[i].body or {}) do self.region.blocks[i].body[j]:typecheck_tree_collect_region_call_targets(out) end
+        end
+    end
+
+    function Tr.StmtControl:typecheck_tree_collect_region_root_call_targets(out)
+        for i = 1, #(self.region.entry.body or {}) do self.region.entry.body[i]:typecheck_tree_collect_region_root_call_targets(out) end
+        for i = 1, #(self.region.blocks or {}) do
+            for j = 1, #(self.region.blocks[i].body or {}) do self.region.blocks[i].body[j]:typecheck_tree_collect_region_root_call_targets(out) end
+        end
+    end
+
+    function Tr.StmtControl:typecheck_tree_collect_region_emit_targets(out)
+        for i = 1, #(self.region.entry.body or {}) do self.region.entry.body[i]:typecheck_tree_collect_region_emit_targets(out) end
+        for i = 1, #(self.region.blocks or {}) do
+            for j = 1, #(self.region.blocks[i].body or {}) do self.region.blocks[i].body[j]:typecheck_tree_collect_region_emit_targets(out) end
+        end
+    end
+
+    function Tr.Func:typecheck_tree_collect_region_call_targets(out)
+        for i = 1, #(self.body or {}) do self.body[i]:typecheck_tree_collect_region_call_targets(out) end
+    end
+
+    function Tr.Func:typecheck_tree_collect_region_root_call_targets(out)
+        for i = 1, #(self.body or {}) do self.body[i]:typecheck_tree_collect_region_root_call_targets(out) end
+    end
+
+    function Tr.Func:typecheck_tree_collect_region_emit_targets(out)
+        for i = 1, #(self.body or {}) do self.body[i]:typecheck_tree_collect_region_emit_targets(out) end
+    end
+
+    function Tr.Item:typecheck_tree_collect_region_call_targets(out) end
+    function Tr.Item:typecheck_tree_collect_region_root_call_targets(out) end
+    function Tr.Item:typecheck_tree_collect_region_emit_targets(out) end
+
+    function Tr.ItemFunc:typecheck_tree_collect_region_call_targets(out)
+        self.func:typecheck_tree_collect_region_call_targets(out)
+    end
+
+    function Tr.ItemFunc:typecheck_tree_collect_region_root_call_targets(out)
+        self.func:typecheck_tree_collect_region_root_call_targets(out)
+    end
+
+    function Tr.ItemFunc:typecheck_tree_collect_region_emit_targets(out)
+        self.func:typecheck_tree_collect_region_emit_targets(out)
+    end
+
+    function Tr.ItemRegion:typecheck_tree_collect_region_call_targets(out)
+        for i = 1, #(self.region.entry.body or {}) do self.region.entry.body[i]:typecheck_tree_collect_region_call_targets(out) end
+        for i = 1, #(self.region.blocks or {}) do
+            for j = 1, #(self.region.blocks[i].body or {}) do self.region.blocks[i].body[j]:typecheck_tree_collect_region_call_targets(out) end
+        end
+    end
+
+    local function protocol_key_for_region(region)
+        local parts = {}
+        for i, cont in ipairs(region.conts or {}) do
+            parts[#parts + 1] = cont.name
+            for j, param in ipairs(cont.params or {}) do
+                parts[#parts + 1] = param.name .. ":" .. tostring(param.ty)
+            end
+        end
+        return table.concat(parts, "__")
+    end
+
+    local function protocol_type_base(key)
+        return "__lalin_region_protocol_" .. sanitize_name(key)
+    end
+
+    local function find_protocol(protocols, key)
+        for i = 1, #(protocols or {}) do
+            if protocols[i].key == key then return protocols[i] end
+        end
+        return nil
+    end
+
+    local function region_protocol_for(region)
+        local key = protocol_key_for_region(region)
+        local base = protocol_type_base(key)
+        local payloads = {}
+        for i = 1, #(region.conts or {}) do
+            local cont = region.conts[i]
+            if #(cont.params or {}) > 0 then
+                payloads[#payloads + 1] = Tr.RegionSealPayload(cont, base .. "_" .. sanitize_name(cont.name) .. "_payload")
+            end
+        end
+        return Tr.RegionProtocol(key, base .. "_result", payloads)
+    end
+
+    local function region_seal_for_def(def, protocol)
+        return Tr.RegionSeal(def.target, def.region, seal_base_for_target(def.target), protocol)
+    end
+
+    function Tr.Module:typecheck_tree_region_call_seals(input, regions)
+        local targets, protocols, seals = {}, {}, {}
+        for i = 1, #self.items do self.items[i]:typecheck_tree_collect_region_call_targets(targets) end
+        for i = 1, #targets do
+            local def = find_region_def(regions, targets[i])
+            if def ~= nil then
+                local candidate = region_protocol_for(def.region)
+                local protocol = find_protocol(protocols, candidate.key)
+                if protocol == nil then
+                    protocol = candidate
+                    protocols[#protocols + 1] = protocol
+                end
+                seals[#seals + 1] = region_seal_for_def(def, protocol)
+            end
+        end
+        return protocols, seals
+    end
+
+    local function find_seal(seals, target)
+        for i = 1, #(seals or {}) do
+            if target_eq(seals[i].target, target) then return seals[i] end
+        end
+        return nil
+    end
+
+    local function wire_forwards_cont_name(wire, name)
+        return wire ~= nil and wire.target ~= nil and wire.target.cont ~= nil and wire.target.cont.name == name
+    end
+
+    local function find_wire(wiring, name)
+        for i = 1, #(wiring or {}) do
+            if wiring[i].name == name then return wiring[i] end
+        end
+        return nil
+    end
+
+    local function call_forwards_protocol(stmt, source_seal, target_seal)
+        if target_seal == nil or target_seal.protocol.key ~= source_seal.protocol.key then return false end
+        for i, cont in ipairs(target_seal.region.conts or {}) do
+            if not wire_forwards_cont_name(find_wire(stmt.wiring or {}, cont.name), cont.name) then return false end
+        end
+        return true
+    end
+
+    function Tr.Stmt:typecheck_tree_collect_forward_region_targets(source_seal, seals, out) end
+
+    function Tr.StmtRegionCall:typecheck_tree_collect_forward_region_targets(source_seal, seals, out)
+        local target_seal = find_seal(seals, self.target)
+        if target_seal ~= nil and target_seal.protocol.key == source_seal.protocol.key and not has_region_call_target(out, self.target) then
+            out[#out + 1] = self.target
+        end
+    end
+
+    function Tr.StmtIf:typecheck_tree_collect_forward_region_targets(source_seal, seals, out)
+        for i = 1, #(self.then_body or {}) do self.then_body[i]:typecheck_tree_collect_forward_region_targets(source_seal, seals, out) end
+        for i = 1, #(self.else_body or {}) do self.else_body[i]:typecheck_tree_collect_forward_region_targets(source_seal, seals, out) end
+    end
+
+    function Tr.StmtSwitch:typecheck_tree_collect_forward_region_targets(source_seal, seals, out)
+        for i = 1, #(self.arms or {}) do
+            for j = 1, #(self.arms[i].body or {}) do self.arms[i].body[j]:typecheck_tree_collect_forward_region_targets(source_seal, seals, out) end
+        end
+        for i = 1, #(self.variant_arms or {}) do
+            for j = 1, #(self.variant_arms[i].body or {}) do self.variant_arms[i].body[j]:typecheck_tree_collect_forward_region_targets(source_seal, seals, out) end
+        end
+        for i = 1, #(self.default_body or {}) do self.default_body[i]:typecheck_tree_collect_forward_region_targets(source_seal, seals, out) end
+    end
+
+    function Tr.StmtControl:typecheck_tree_collect_forward_region_targets(source_seal, seals, out)
+        for i = 1, #(self.region.entry.body or {}) do self.region.entry.body[i]:typecheck_tree_collect_forward_region_targets(source_seal, seals, out) end
+        for i = 1, #(self.region.blocks or {}) do
+            for j = 1, #(self.region.blocks[i].body or {}) do self.region.blocks[i].body[j]:typecheck_tree_collect_forward_region_targets(source_seal, seals, out) end
+        end
+    end
+
+    local function bundle_entry_label(target)
+        return Tr.BlockLabel("__bundle_entry_" .. sanitize_name(path_text(target.path)))
+    end
+
+    local function member_in_list(members, seal)
+        for i = 1, #(members or {}) do
+            if target_eq(members[i].seal.target, seal.target) then return true end
+        end
+        return false
+    end
+
+    local function bundle_member_namespace(target)
+        return "region_bundle_member:" .. sanitize_name(path_text(target.path))
+    end
+
+    local function add_bundle_member(members, seal)
+        if not member_in_list(members, seal) then members[#members + 1] = Tr.RegionBundleMember(seal, bundle_entry_label(seal.target), bundle_member_namespace(seal.target)) end
+    end
+
+    local function collect_region_body_call_targets(region, out)
+        for i = 1, #(region.entry.body or {}) do region.entry.body[i]:typecheck_tree_collect_region_call_targets(out) end
+        for i = 1, #(region.blocks or {}) do
+            for j = 1, #(region.blocks[i].body or {}) do region.blocks[i].body[j]:typecheck_tree_collect_region_call_targets(out) end
+        end
+    end
+
+    function Tr.Module:typecheck_tree_region_bundles(input, regions, seals)
+        local root_targets, emit_targets, bundles = {}, {}, {}
+        for i = 1, #self.items do
+            self.items[i]:typecheck_tree_collect_region_root_call_targets(root_targets)
+            self.items[i]:typecheck_tree_collect_region_emit_targets(emit_targets)
+        end
+        for i = 1, #emit_targets do
+            local emitted = find_region_def(regions, emit_targets[i])
+            if emitted ~= nil then collect_region_body_call_targets(emitted.region, root_targets) end
+        end
+        for i = 1, #root_targets do
+            local root = find_seal(seals, root_targets[i])
+            if root ~= nil then
+                local members, scan = {}, {}
+                add_bundle_member(members, root)
+                scan[1] = root
+                local scan_index = 1
+                while scan_index <= #scan do
+                    local seal = scan[scan_index]
+                    scan_index = scan_index + 1
+                    local forward_targets = {}
+                    for j = 1, #(seal.region.entry.body or {}) do seal.region.entry.body[j]:typecheck_tree_collect_forward_region_targets(seal, seals, forward_targets) end
+                    for j = 1, #(seal.region.blocks or {}) do
+                        for k = 1, #(seal.region.blocks[j].body or {}) do seal.region.blocks[j].body[k]:typecheck_tree_collect_forward_region_targets(seal, seals, forward_targets) end
+                    end
+                    for j = 1, #forward_targets do
+                        local target_seal = find_seal(seals, forward_targets[j])
+                        if target_seal ~= nil and not member_in_list(members, target_seal) then
+                            add_bundle_member(members, target_seal)
+                            scan[#scan + 1] = target_seal
+                        end
+                    end
+                end
+                bundles[#bundles + 1] = Tr.RegionBundle(root, members)
+            end
+        end
+        return bundles
+    end
+
     function Tr.Item:typecheck_tree_effect_defs(input)
         return {}
     end
@@ -334,6 +667,8 @@ return function(T)
             local item_regions = item:typecheck_tree_region_defs(input)
             for j = 1, #item_regions do regions[#regions + 1] = item_regions[j] end
         end
-        return Tr.TypeModuleFacts(variants, handles, effects, regions)
+        local region_protocols, region_seals = self:typecheck_tree_region_call_seals(input, regions)
+        local region_bundles = self:typecheck_tree_region_bundles(input, regions, region_seals)
+        return Tr.TypeModuleFacts(variants, handles, effects, regions, region_protocols, region_seals, region_bundles)
     end
 end

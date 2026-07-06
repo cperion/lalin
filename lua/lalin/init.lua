@@ -12,7 +12,8 @@
 -- Lua builder source loading lives under lalin.dsl.
 --
 -- Object emission (hosted pipeline):
---   lalin.emit_c_artifact(decl [, opts])
+--   lalin.emit_c(decl [, opts])          — semantic C backend artifact (.c/.h)
+--   lalin.emit_c_artifact(decl [, opts]) — compatibility alias for emit_c
 --   lalin.emit_luajit_artifact(decl [, path_or_opts [, name [, opts]]])
 --
 -- Low-level modules are exposed for direct use.
@@ -63,6 +64,7 @@ M.c_validate = require("lalin.c_validate")
 M.c_emit = require("lalin.c_emit")
 M.c_helpers = require("lalin.c_helpers")
 M.c_tcc = require("lalin.c_tcc")
+M.c_gcc = require("lalin.c_gcc")
 M.native = require("lalin.native")
 M.native_mc = require("lalin.native_mc")
 M.native_backend = require("lalin.native_backend")
@@ -667,6 +669,13 @@ function M.compile(name_or_decls, decls_or_opts, maybe_opts)
     if opts.luajit == true or opts.bytecode == true then
         return M.compile_luajit(name, decls, opts)
     end
+    if opts.gcc == true or opts.runner == "gcc" or opts.backend == "gcc" or opts.backend == "c_gcc" then
+        opts.runner = "gcc"
+        return M.compile_c(decls, opts)
+    end
+    if opts.c == true or opts.backend == "c" or opts.codegen == "c" then
+        return M.compile_c(decls, opts)
+    end
     return M.compile_native(name, decls, opts)
 end
 
@@ -686,28 +695,10 @@ function M.compile_luajit(name_or_decls, decls_or_opts, maybe_opts)
 end
 
 local prepare_luajit_artifact
+local prepare_c_artifact
 local prepare_native_compile
 
-function M.emit_c_artifact(decl, path_or_opts, name, opts)
-    if type(path_or_opts) == "table" and opts == nil then
-        opts = path_or_opts
-        path_or_opts = nil
-    end
-    opts = opts or {}
-    name = name or opts.name or "lalin_c"
-    local plan = prepare_luajit_artifact(decl, name, opts)
-    local Emit = require("lalin.luajit_emit")(plan.context)
-    local artifact = Emit.emit_c_artifact(plan.lj_module, plan.artifacts, opts)
-    artifact.name = name
-    artifact.unit = plan.lj_module
-    artifact.module_ast = plan.module_ast
-    artifact.checked = plan.checked
-    artifact.code_result = plan.code_result
-    artifact.facts = plan.facts
-    artifact.stencil_plan = plan.stencil_plan
-    artifact.luajit_stencil_machines = plan.luajit_stencil_machines
-    artifact.exec_plan = plan.exec_plan
-    artifact.rejects = plan.rejects
+local function attach_c_artifact_writer(artifact)
     function artifact:write(write_opts)
         write_opts = write_opts or {}
         if type(write_opts) == "string" then write_opts = { c_path = write_opts } end
@@ -727,11 +718,101 @@ function M.emit_c_artifact(decl, path_or_opts, name, opts)
         if write_opts.combined_path or write_opts.single_path then write(write_opts.combined_path or write_opts.single_path, self.combined) end
         return self
     end
+    return artifact
+end
+
+local function prepare_c_backend(decl, name, opts)
+    opts = opts or {}
+    name = name or opts.name or "lalin_c"
+
+    local asdl = require("lalin.asdl")
+    local A2 = require("lalin.schema_projection")
+    local module_ast = module_ast_from(decl, name)
+    local cls = asdl.classof(module_ast)
+    local T = (cls and asdl.context_of(cls)) or asdl.context()
+    if T.LalinCompiler == nil or T.LalinCode == nil or T.LalinLower == nil or T.LalinC == nil then A2(T) end
+
+    local Pipeline = require("lalin.frontend_pipeline")(T)
+    local checked = Pipeline.typecheck_module(module_ast, {
+        context = T,
+        site = "emit_c:typecheck",
+        name = name,
+        layout_env = opts.layout_env,
+        target = opts.target or opts.c_target,
+        c_target = opts.c_target,
+    })
+    local code_result = Pipeline.checked_to_code_result(checked, {
+        context = T,
+        site = "emit_c:code",
+        root = "emit_c",
+        name = name,
+        target = opts.target,
+        c_target = opts.c_target,
+    })
+    local c_result = Pipeline.code_result_to_c(code_result, {
+        context = T,
+        site = "emit_c:c",
+        name = name,
+        target = opts.target,
+        c_target = opts.c_target,
+        c_opts = opts.c_opts,
+        target_model = opts.target_model,
+        back_target_model = opts.back_target_model,
+    })
+    if opts.reject_on_c_issues ~= false and c_result.c_report and c_result.c_report.issues and #c_result.c_report.issues ~= 0 then
+        local messages = {}
+        for i = 1, #c_result.c_report.issues do messages[#messages + 1] = tostring(c_result.c_report.issues[i]) end
+        error("emit_c validation failed: " .. table.concat(messages, "\n"), 2)
+    end
+    return {
+        kind = "CBackendPlan",
+        name = name,
+        context = T,
+        module_ast = module_ast,
+        checked = checked,
+        code_result = code_result,
+        c_result = c_result,
+        c_unit = c_result.c_unit,
+        c_report = c_result.c_report,
+        unit = c_result.c_unit,
+    }
+end
+
+function prepare_c_artifact(decl, name, opts)
+    opts = opts or {}
+    local plan = prepare_c_backend(decl, name, opts)
+    local Emit = require("lalin.c_emit")(plan.context)
+    local artifact = Emit.emit_artifact(plan.c_unit, opts)
+    artifact.kind = "CBackendArtifact"
+    artifact.name = plan.name
+    artifact.context = plan.context
+    artifact.module_ast = plan.module_ast
+    artifact.checked = plan.checked
+    artifact.code_result = plan.code_result
+    artifact.c_result = plan.c_result
+    artifact.c_unit = plan.c_unit
+    artifact.c_report = plan.c_report
+    artifact.unit = plan.c_unit
+    return attach_c_artifact_writer(artifact)
+end
+
+function M.emit_c(decl, path_or_opts, name, opts)
+    if type(path_or_opts) == "table" and opts == nil then
+        opts = path_or_opts
+        path_or_opts = nil
+    end
+    opts = opts or {}
+    name = name or opts.name or "lalin_c"
+    local artifact = prepare_c_artifact(decl, name, opts)
     if path_or_opts then artifact:write(path_or_opts) end
     if opts.c_path or opts.source_path or opts.h_path or opts.header_path or opts.support_path or opts.combined_path or opts.single_path then
         artifact:write(opts)
     end
     return artifact
+end
+
+function M.emit_c_artifact(decl, path_or_opts, name, opts)
+    return M.emit_c(decl, path_or_opts, name, opts)
 end
 
 function prepare_luajit_artifact(decl, name, opts)
@@ -971,9 +1052,10 @@ function M.emit_luajit_artifact(decl, path_or_opts, name, opts)
 end
 
 
+
 function M.compile_c(decl, opts)
     opts = opts or {}
-    local artifact = M.emit_c_artifact(decl, opts)
+    local artifact = M.emit_c(decl, opts)
     if opts.c_path or opts.source_path or opts.h_path or opts.header_path or opts.support_path or opts.combined_path or opts.single_path then
         artifact:write(opts)
     end
@@ -982,9 +1064,27 @@ function M.compile_c(decl, opts)
     if opts.runner == "libtcc" or opts.use_libtcc or os.getenv("LALIN_C_USE_LIBTCC") == "1" then
         local session, err = CTcc.compile(c_src, opts.libtcc_opts or { libraries = { "m" } })
         if not session then error(err and err.message or "libtcc compile failed", 2) end
+        session.artifact = artifact
+        return session, c_src
+    end
+    if opts.runner == "gcc" or opts.use_gcc or os.getenv("LALIN_C_USE_GCC") == "1" then
+        local CGcc = require("lalin.c_gcc")
+        local gcc_opts = {}
+        for k, v in pairs(opts.gcc_opts or opts.c_gcc_opts or opts) do gcc_opts[k] = v end
+        gcc_opts.name = gcc_opts.name or opts.name or artifact.name
+        local session, err = CGcc.compile(c_src, gcc_opts)
+        if not session then error(err and err.message or "gcc C compile failed", 2) end
+        session.artifact = artifact
         return session, c_src
     end
     return c_src
+end
+
+function M.compile_c_gcc(name_or_decls, decls_or_opts, maybe_opts)
+    local name, decls, opts = compile_args(name_or_decls, decls_or_opts, maybe_opts)
+    opts.runner = "gcc"
+    opts.name = opts.name or name
+    return M.compile_c(decls, opts)
 end
 
 function M.context(opts)

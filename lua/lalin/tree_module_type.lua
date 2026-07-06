@@ -79,29 +79,68 @@ local function bind_context(T)
         end
     end
 
-    local function params_type(params, result)
+    local function path_type_name(path)
+        if path and #(path.parts or {}) == 1 then return path.parts[1].text end
+        return nil
+    end
+
+    local function canonical_local_type(mod_name, ty)
+        local cls = schema.classof(ty)
+        if cls == Ty.TNamed and schema.classof(ty.ref) == Ty.TypeRefPath then
+            local name = path_type_name(ty.ref.path)
+            if name ~= nil then return Ty.TNamed(Ty.TypeRefGlobal(mod_name, name)) end
+        elseif cls == Ty.THandle and schema.classof(ty.ref) == Ty.TypeRefPath then
+            local name = path_type_name(ty.ref.path)
+            if name ~= nil then return Ty.THandle(Ty.TypeRefGlobal(mod_name, name), ty.repr) end
+        elseif cls == Ty.TPtr then
+            return Ty.TPtr(canonical_local_type(mod_name, ty.elem))
+        elseif cls == Ty.TArray then
+            return Ty.TArray(ty.count, canonical_local_type(mod_name, ty.elem))
+        elseif cls == Ty.TSlice then
+            return Ty.TSlice(canonical_local_type(mod_name, ty.elem))
+        elseif cls == Ty.TView then
+            return Ty.TView(canonical_local_type(mod_name, ty.elem))
+        elseif cls == Ty.TLease then
+            return Ty.TLease(canonical_local_type(mod_name, ty.base), ty.origin)
+        elseif cls == Ty.TOwned then
+            return Ty.TOwned(canonical_local_type(mod_name, ty.base))
+        elseif cls == Ty.TAccess then
+            return Ty.TAccess(ty.access, canonical_local_type(mod_name, ty.base))
+        elseif cls == Ty.TFunc then
+            local params = {}
+            for i = 1, #(ty.params or {}) do params[i] = canonical_local_type(mod_name, ty.params[i]) end
+            return Ty.TFunc(params, canonical_local_type(mod_name, ty.result))
+        elseif cls == Ty.TClosure then
+            local params = {}
+            for i = 1, #(ty.params or {}) do params[i] = canonical_local_type(mod_name, ty.params[i]) end
+            return Ty.TClosure(params, canonical_local_type(mod_name, ty.result))
+        end
+        return ty
+    end
+
+    local function params_type(params, result, mod_name)
         local tys = {}
-        for i = 1, #params do tys[#tys + 1] = params[i].ty end
-        return Ty.TFunc(tys, result)
+        for i = 1, #params do tys[#tys + 1] = canonical_local_type(mod_name or "", params[i].ty) end
+        return Ty.TFunc(tys, canonical_local_type(mod_name or "", result))
     end
 
     function func_entry(node, ...)
         local cls = schema.classof(node)
         if schema.isa(node, Tr.FuncLocal) then
             return (function(self, mod_name)
- return single(B.ValueEntry(self.name, B.Binding(C.Id("func:" .. mod_name .. ":" .. self.name), self.name, params_type(self.params, self.result), B.BindingRoleGlobalFunc(mod_name, self.name))))
+ return single(B.ValueEntry(self.name, B.Binding(C.Id("func:" .. mod_name .. ":" .. self.name), self.name, params_type(self.params, self.result, mod_name), B.BindingRoleGlobalFunc(mod_name, self.name))))
             end)(node, ...)
         elseif schema.isa(node, Tr.FuncExport) then
             return (function(self, mod_name)
- return single(B.ValueEntry(self.name, B.Binding(C.Id("func:" .. mod_name .. ":" .. self.name), self.name, params_type(self.params, self.result), B.BindingRoleGlobalFunc(mod_name, self.name))))
+ return single(B.ValueEntry(self.name, B.Binding(C.Id("func:" .. mod_name .. ":" .. self.name), self.name, params_type(self.params, self.result, mod_name), B.BindingRoleGlobalFunc(mod_name, self.name))))
             end)(node, ...)
         elseif schema.isa(node, Tr.FuncLocalContract) then
             return (function(self, mod_name)
- return single(B.ValueEntry(self.name, B.Binding(C.Id("func:" .. mod_name .. ":" .. self.name), self.name, params_type(self.params, self.result), B.BindingRoleGlobalFunc(mod_name, self.name))))
+ return single(B.ValueEntry(self.name, B.Binding(C.Id("func:" .. mod_name .. ":" .. self.name), self.name, params_type(self.params, self.result, mod_name), B.BindingRoleGlobalFunc(mod_name, self.name))))
             end)(node, ...)
         elseif schema.isa(node, Tr.FuncExportContract) then
             return (function(self, mod_name)
- return single(B.ValueEntry(self.name, B.Binding(C.Id("func:" .. mod_name .. ":" .. self.name), self.name, params_type(self.params, self.result), B.BindingRoleGlobalFunc(mod_name, self.name))))
+ return single(B.ValueEntry(self.name, B.Binding(C.Id("func:" .. mod_name .. ":" .. self.name), self.name, params_type(self.params, self.result, mod_name), B.BindingRoleGlobalFunc(mod_name, self.name))))
             end)(node, ...)
         else
             error("phase lalin_tree_func_value_entry: no handler for " .. tostring(cls or type(node)), 2)
@@ -112,7 +151,7 @@ local function bind_context(T)
         local cls = schema.classof(node)
         if schema.isa(node, Tr.ExternFunc) then
             return (function(self)
- return single(B.ValueEntry(self.name, B.Binding(C.Id("extern:" .. self.name), self.name, params_type(self.params, self.result), B.BindingRoleExtern(self.symbol))))
+ return single(B.ValueEntry(self.name, B.Binding(C.Id("extern:" .. self.name), self.name, params_type(self.params, self.result, ""), B.BindingRoleExtern(self.symbol))))
             end)(node, ...)
         else
             error("phase lalin_tree_extern_value_entry: no handler for " .. tostring(cls or type(node)), 2)

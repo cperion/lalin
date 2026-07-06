@@ -2005,6 +2005,73 @@ local function bind_context(T)
         return frame_binding_for_code_value(input, value)
     end
 
+    local function native_fast_public_result_residence_binding(input, value, scalar)
+        return Native.NativeRegionValueBinding(
+            native_value_id(value),
+            scalar,
+            Native.NativeResidencePublicResult(input.lowering.active_func.abi.result.abi)
+        )
+    end
+
+    local function native_fast_public_param_binding(input, func, value)
+        for i, param in ipairs(func.params or {}) do
+            if param.value == value then
+                local projection = input.lowering.active_func.abi.params[i]
+                if projection == nil then return nil end
+                local scalar = projection.abi:native_fast_public_operand_scalar(input.plan.target)
+                if scalar == nil then return nil end
+                return Native.NativeRegionValueBinding(
+                    native_value_id(value),
+                    scalar,
+                    Native.NativeResidencePublicParam(projection.param_index, projection.abi)
+                )
+            end
+        end
+    end
+
+    local function append_native_fast_public_param_atom(bindings, binding)
+        bindings[#bindings + 1] = binding
+        return Native.NativeExprInput(binding.residence.index, binding.scalar)
+    end
+
+    local function native_fast_public_atom_for_value(input, func, block, value, max_index, bindings)
+        local producer = find_native_fast_producer(block, value, max_index)
+        local immediate, scalar = native_fast_immediate_from_inst(input, producer)
+        if immediate ~= nil then
+            bindings[#bindings + 1] = immediate
+            return Native.NativeExprImmediate(scalar), producer
+        end
+        local public = native_fast_public_param_binding(input, func, value)
+        if public ~= nil then return append_native_fast_public_param_atom(bindings, public), nil end
+        return nil, nil
+    end
+
+    local function native_fast_public_abi_shape_for_func(func, projection, target)
+        if #(func.params or {}) ~= #(projection.params or {}) then return nil end
+        if projection.result.abi:native_fast_public_operand_scalar(target) == nil then return nil end
+        local params = {}
+        for i, param in ipairs(projection.params or {}) do
+            if param.param_index ~= i - 1 then return nil end
+            if param.abi:native_fast_public_operand_scalar(target) == nil then return nil end
+            params[#params + 1] = param.abi
+        end
+        if #params == 0 then return Native.NativeFastAbi0(projection.result.abi) end
+        if #params == 1 then return Native.NativeFastAbi1(params[1], projection.result.abi) end
+        if #params == 2 then return Native.NativeFastAbi2(params[1], params[2], projection.result.abi) end
+        if #params == 3 then return Native.NativeFastAbi3(params[1], params[2], params[3], projection.result.abi) end
+        return nil
+    end
+
+    local function loaded_bank_has_template_family(bank, family)
+        local manifest = bank and bank.artifact and bank.artifact.manifest
+        for _, group in ipairs((manifest and manifest.groups) or {}) do
+            for _, entry in ipairs(group.entries or {}) do
+                if entry.family.id == family.id then return true end
+            end
+        end
+        return false
+    end
+
     function Code.CodeIntOverflow:native_fast_wrapping_overflow()
         return false
     end
@@ -2123,6 +2190,20 @@ local function bind_context(T)
         )
     end
 
+    function Code.CodeInstConst:native_fast_return_expr_region(input, func, block, inst, term, result_scalar)
+        local immediate, scalar = native_fast_immediate_from_inst(input, inst)
+        if immediate == nil then return nil end
+        local shape = Native.NativeExprReturnAtom(result_scalar, Native.NativeExprImmediate(scalar))
+        return native_fast_region(
+            native_fast_term_region_id(func, term, "return_const"),
+            native_fast_code_region_origin(func, block, inst, inst),
+            Native.NativeCodeExprRegion(shape),
+            { immediate },
+            { native_fast_public_result_binding(input, self.dst, result_scalar) },
+            Native.NativeRegionReturn
+        ), #block.insts
+    end
+
     function Code.CodeInstUnary:native_fast_return_expr_region(input, func, block, inst, term, result_scalar)
         local inputs = {}
         local atom = native_fast_atom_for_value(input, block, self.value, nil, inputs)
@@ -2228,6 +2309,108 @@ local function bind_context(T)
         return nil
     end
 
+    function Code.CodeInstOp:native_fast_public_return_expr_region(_input, _func, _block, _inst, _term, _result_scalar, _abi_shape)
+        return nil
+    end
+
+    local function native_fast_public_code_expr_region(input, func, block, first_inst, last_inst, term, abi_shape, shape, inputs, result_value, result_scalar, suffix)
+        return native_fast_region(
+            native_fast_term_region_id(func, term, suffix),
+            native_fast_code_region_origin(func, block, first_inst, last_inst),
+            Native.NativeFastPublicCodeExprRegion(abi_shape, shape),
+            inputs,
+            { native_fast_public_result_residence_binding(input, result_value, result_scalar) },
+            Native.NativeRegionReturn
+        )
+    end
+
+    function Code.CodeInstConst:native_fast_public_return_expr_region(input, func, block, inst, term, result_scalar, abi_shape)
+        local immediate, scalar = native_fast_immediate_from_inst(input, inst)
+        if immediate == nil then return nil end
+        local shape = Native.NativeExprReturnAtom(result_scalar, Native.NativeExprImmediate(scalar))
+        return native_fast_public_code_expr_region(input, func, block, inst, inst, term, abi_shape, shape, { immediate }, self.dst, result_scalar, "public_return_const"), #block.insts
+    end
+
+    function Code.CodeInstUnary:native_fast_public_return_expr_region(input, func, block, inst, term, result_scalar, abi_shape)
+        local inputs = {}
+        local atom = native_fast_public_atom_for_value(input, func, block, self.value, nil, inputs)
+        if atom == nil then return nil end
+        local shape = Native.NativeExprReturnUnary(result_scalar, self.op, atom)
+        return native_fast_public_code_expr_region(input, func, block, inst, inst, term, abi_shape, shape, inputs, self.dst, result_scalar, "public_return_unary"), #block.insts
+    end
+
+    function Code.CodeInstFloatBinary:native_fast_public_return_expr_region(input, func, block, inst, term, result_scalar, abi_shape)
+        local inputs = {}
+        local lhs = native_fast_public_atom_for_value(input, func, block, self.lhs, nil, inputs)
+        local rhs = native_fast_public_atom_for_value(input, func, block, self.rhs, nil, inputs)
+        if lhs == nil or rhs == nil then return nil end
+        local shape = Native.NativeExprReturnBinary(result_scalar, self.op, lhs, rhs)
+        return native_fast_public_code_expr_region(input, func, block, inst, inst, term, abi_shape, shape, inputs, self.dst, result_scalar, "public_return_float_binary"), #block.insts
+    end
+
+    local function native_fast_public_binary_immediate_region(input, func, block, inst, term, result_scalar, abi_shape, const_inst, first_index)
+        local op = inst.op
+        local immediate = native_fast_immediate_from_inst(input, const_inst)
+        if immediate == nil then return nil end
+        local inputs = {}
+        local lhs = native_fast_public_atom_for_value(input, func, block, op.lhs, first_index - 1, inputs)
+        if lhs == nil then return nil end
+        inputs[#inputs + 1] = immediate
+        local shape = Native.NativeExprReturnBinaryImmRhs(result_scalar, op.op, lhs)
+        return native_fast_public_code_expr_region(input, func, block, const_inst, inst, term, abi_shape, shape, inputs, op.dst, result_scalar, "public_return_binary_imm_rhs"), first_index
+    end
+
+    local function native_fast_public_mul_add_immediate_region(input, func, block, inst, term, result_scalar, abi_shape, mul_inst, const_inst, first_index)
+        local add = inst.op
+        local mul = mul_inst.op
+        if not add.op:native_fast_add_op_supported() or not mul.op:native_fast_mul_op_supported() then return nil end
+        if not mul.semantics:native_fast_wrap_mask_semantics() then return nil end
+        local immediate = native_fast_immediate_from_inst(input, const_inst)
+        if immediate == nil then return nil end
+        local inputs = {}
+        local lhs = native_fast_public_atom_for_value(input, func, block, mul.lhs, first_index - 1, inputs)
+        local rhs = native_fast_public_atom_for_value(input, func, block, mul.rhs, first_index - 1, inputs)
+        if lhs == nil or rhs == nil then return nil end
+        inputs[#inputs + 1] = immediate
+        local shape = Native.NativeExprReturnMulAddImm(result_scalar, lhs, rhs)
+        return native_fast_public_code_expr_region(input, func, block, block.insts[first_index], inst, term, abi_shape, shape, inputs, add.dst, result_scalar, "public_return_mul_add_imm"), first_index
+    end
+
+    function Code.CodeInstBinary:native_fast_public_return_expr_region(input, func, block, inst, term, result_scalar, abi_shape)
+        if not self.op:native_fast_int_binary_supported(self.semantics) then return nil end
+        local inst_index = #block.insts
+        local left_producer, left_index = find_native_fast_producer(block, self.lhs, inst_index - 1)
+        local right_producer, right_index = find_native_fast_producer(block, self.rhs, inst_index - 1)
+        if left_producer ~= nil and asdl.isa(left_producer.op, Code.CodeInstBinary) and right_producer ~= nil and asdl.isa(right_producer.op, Code.CodeInstConst) then
+            local fused, first = native_fast_public_mul_add_immediate_region(input, func, block, inst, term, result_scalar, abi_shape, left_producer, right_producer, math.min(left_index, right_index))
+            if fused ~= nil then return fused, first end
+        end
+        if right_producer ~= nil and asdl.isa(right_producer.op, Code.CodeInstBinary) and left_producer ~= nil and asdl.isa(left_producer.op, Code.CodeInstConst) then
+            local fused, first = native_fast_public_mul_add_immediate_region(input, func, block, inst, term, result_scalar, abi_shape, right_producer, left_producer, math.min(left_index, right_index))
+            if fused ~= nil then return fused, first end
+        end
+        local previous = block.insts[inst_index - 1]
+        if previous ~= nil and self.rhs == previous:native_fast_output_value() then
+            local imm_region, imm_first = native_fast_public_binary_immediate_region(input, func, block, inst, term, result_scalar, abi_shape, previous, inst_index - 1)
+            if imm_region ~= nil then return imm_region, imm_first end
+        end
+        local inputs = {}
+        local lhs = native_fast_public_atom_for_value(input, func, block, self.lhs, inst_index - 1, inputs)
+        local rhs = native_fast_public_atom_for_value(input, func, block, self.rhs, inst_index - 1, inputs)
+        if lhs == nil or rhs == nil then return nil end
+        local shape = Native.NativeExprReturnBinary(result_scalar, self.op, lhs, rhs)
+        return native_fast_public_code_expr_region(input, func, block, inst, inst, term, abi_shape, shape, inputs, self.dst, result_scalar, "public_return_binary"), inst_index
+    end
+
+    local function native_fast_public_return_atom_region(input, func, block, term, result_value, result_scalar, abi_shape)
+        local inputs = {}
+        local atom, producer = native_fast_public_atom_for_value(input, func, block, result_value, #block.insts, inputs)
+        if atom == nil then return nil end
+        if producer ~= nil and producer ~= block.insts[1] then return nil end
+        local shape = Native.NativeExprReturnAtom(result_scalar, atom)
+        return native_fast_public_code_expr_region(input, func, block, producer, producer, term, abi_shape, shape, inputs, result_value, result_scalar, "public_return_atom"), producer and 1 or nil
+    end
+
     local function native_fast_return_atom_region(input, func, block, term, result_value, result_scalar)
         local inputs = {}
         local atom = native_fast_atom_for_value(input, block, result_value, #block.insts, inputs)
@@ -2294,6 +2477,29 @@ local function bind_context(T)
         return native_fast_return_atom_region(input, func, block, term, result_value, result_scalar)
     end
 
+    function Code.CodeTermOp:native_fast_public_terminal_region(_input, _func, _block, _term, _abi_shape)
+        return nil
+    end
+
+    function Code.CodeTermReturn:native_fast_public_terminal_region(input, func, block, term, abi_shape)
+        if #(self.values or {}) ~= 1 then return nil end
+        local result_scalar = input.lowering.active_func.abi.result.abi:native_fast_public_operand_scalar(input.plan.target)
+        if result_scalar == nil then return nil end
+        local result_value = self.values[1]
+        local last_inst = block.insts[#block.insts]
+        if last_inst ~= nil and last_inst:native_fast_output_value() == result_value then
+            local region, first_index = last_inst.op:native_fast_public_return_expr_region(input, func, block, last_inst, term, result_scalar, abi_shape)
+            if region ~= nil and first_index == 1 then return region end
+            return nil
+        end
+        if #(block.insts or {}) > 1 then return nil end
+        return native_fast_public_return_atom_region(input, func, block, term, result_value, result_scalar, abi_shape)
+    end
+
+    function Code.CodeTerm:native_fast_public_terminal_region(input, func, block, abi_shape)
+        return self.op:native_fast_public_terminal_region(input, func, block, self, abi_shape)
+    end
+
     function Code.CodeTermJump:native_fast_terminal_region(input, func, block, term)
         local family = Support.code_term_family("jump.next", input.plan.target, Native.NativeCodeTermJumpAxis, Support.protocol_void_none())
         return native_fast_region(
@@ -2332,13 +2538,40 @@ local function bind_context(T)
         ), nil
     end
 
+    local function native_fast_switch_step_family(input, shape)
+        local scalar = shape:native_fast_switch_step_scalar()
+        return Native.NativeTemplateFamily(
+            Native.NativeTemplateFamilyId("native.fast.code.switch_step." .. shape:native_fast_switch_step_token()),
+            Native.NativeRoleCodeTerm,
+            {
+                Support.axis_target(input.plan.target),
+                Support.axis_machine_scalar(scalar),
+                Support.axis_fast_code_switch_step(shape),
+            },
+            Support.protocol_void_none()
+        )
+    end
+
     function Code.CodeTermSwitch:native_fast_terminal_region(input, func, block, term)
         local key = frame_binding_for_code_value(input, self.value)
         local scalar = key.scalar
-        local family = Support.code_term_family("switch_step." .. scalar_token(scalar) .. ".slot.imm", input.plan.target, Native.NativeCodeTermSwitchAxis, Support.protocol_void_none())
+        local key_atom = Native.NativeExprInput(0, scalar)
+        local step_shape = Native.NativeSwitchStepAtoms(scalar, key_atom)
+        local family = native_fast_switch_step_family(input, step_shape)
         local cases = {}
         for _, case in ipairs(self.cases or {}) do
             cases[#cases + 1] = Native.NativeRegionSwitchCase(case.literal, native_fast_block_entry_region_id(func, case.dest))
+        end
+        if #cases == 0 then
+            local jump_family = Support.code_term_family("jump.next", input.plan.target, Native.NativeCodeTermJumpAxis, Support.protocol_void_none())
+            return native_fast_region(
+                native_fast_term_region_id(func, term, "switch_empty"),
+                native_fast_code_region_origin(func, block, nil, nil),
+                Native.NativeFrameMicroOpRegion(jump_family),
+                {},
+                {},
+                Native.NativeRegionJump(native_fast_block_entry_region_id(func, self.default_dest))
+            ), nil
         end
         return native_fast_region(
             native_fast_term_region_id(func, term, "switch_baseline"),
@@ -2346,17 +2579,30 @@ local function bind_context(T)
             Native.NativeFrameMicroOpRegion(family),
             { key },
             {},
-            Native.NativeRegionSwitch(key.value, cases, native_fast_block_entry_region_id(func, self.default_dest))
+            Native.NativeRegionSwitch(key.value, step_shape, cases, native_fast_block_entry_region_id(func, self.default_dest))
         ), nil
     end
 
     function Code.CodeTermVariantSwitch:native_fast_terminal_region(input, func, block, term)
         local key = frame_binding_for_code_value(input, self.tag)
         local scalar = key.scalar
-        local family = Support.code_term_family("variant_switch_step." .. scalar_token(scalar) .. ".slot.imm", input.plan.target, Native.NativeCodeTermVariantSwitchAxis, Support.protocol_void_none())
+        local key_atom = Native.NativeExprInput(0, scalar)
+        local step_shape = Native.NativeSwitchStepAtoms(scalar, key_atom)
+        local family = native_fast_switch_step_family(input, step_shape)
         local cases = {}
         for _, case in ipairs(self.cases or {}) do
             cases[#cases + 1] = Native.NativeRegionSwitchCase(Core.LitInt(tostring(case.variant.tag_value)), native_fast_block_entry_region_id(func, case.dest))
+        end
+        if #cases == 0 then
+            local jump_family = Support.code_term_family("jump.next", input.plan.target, Native.NativeCodeTermJumpAxis, Support.protocol_void_none())
+            return native_fast_region(
+                native_fast_term_region_id(func, term, "variant_switch_empty"),
+                native_fast_code_region_origin(func, block, nil, nil),
+                Native.NativeFrameMicroOpRegion(jump_family),
+                {},
+                {},
+                Native.NativeRegionJump(native_fast_block_entry_region_id(func, self.default_dest))
+            ), nil
         end
         return native_fast_region(
             native_fast_term_region_id(func, term, "variant_switch_baseline"),
@@ -2364,7 +2610,7 @@ local function bind_context(T)
             Native.NativeFrameMicroOpRegion(family),
             { key },
             {},
-            Native.NativeRegionSwitch(key.value, cases, native_fast_block_entry_region_id(func, self.default_dest))
+            Native.NativeRegionSwitch(key.value, step_shape, cases, native_fast_block_entry_region_id(func, self.default_dest))
         ), nil
     end
 
@@ -2476,8 +2722,53 @@ local function bind_context(T)
         )
     end
 
+    local function initialize_native_fast_public_code_build(func, plan, lowering, signature)
+        if lowering == nil and signature == nil then internal_error("native CodeFunc fast public projection requires an ASDL CodeSig, not only CodeFunc.sig id") end
+        local lowering_input = lowering or native_code_lowering_for_single_function(func, signature, plan)
+        local state = Native.NativeCodeGraphBuilderState(
+            Native.NativeValueLocationPlan({}, lowering_input.module.addresses),
+            Native.NativeFrameLayoutPlan({}, {}, {}, {}, 0),
+            Native.NativeControlPlan({}, {}, {}, {}),
+            Native.NativeEdgeCopyPlan({}),
+            {}
+        )
+        return Native.NativeCodeGraphBuildInput(plan, lowering_input, state)
+    end
+
+    local function plan_native_fast_public_code_expr_graph(func, plan, lowering, signature)
+        local build = initialize_native_fast_public_code_build(func, plan, lowering, signature)
+        local projection = build.lowering.active_func.abi
+        local abi_shape = native_fast_public_abi_shape_for_func(func, projection, plan.target)
+        if abi_shape == nil then return nil end
+        if #(func.blocks or {}) ~= 1 then return nil end
+        local block = func.blocks[1]
+        if block.id ~= func.entry or #(block.params or {}) ~= 0 then return nil end
+        if #(func.locals or {}) ~= 0 then return nil end
+        local region = block.term:native_fast_public_terminal_region(build, func, block, abi_shape)
+        if region == nil then return nil end
+        local family = region.body:native_fast_template_family(Native.NativeFastRegionPlan(
+            plan.target,
+            Support.native_call_code_sig(projection),
+            { region },
+            region.id,
+            { region.id },
+            frame_layout_from_state(plan.target, build.state)
+        ))
+        if not loaded_bank_has_template_family(plan.bank, family) then return nil end
+        return Native.NativeFastRegionPlan(
+            plan.target,
+            Support.native_call_code_sig(projection),
+            { region },
+            region.id,
+            { region.id },
+            frame_layout_from_state(plan.target, build.state)
+        ):lower_native_template_graph(build.lowering.module.addresses)
+    end
+
     function Code.CodeFunc:plan_native_copy(plan, lowering, signature)
         if lowering == nil and signature == nil then internal_error("native CodeFunc compilation requires an ASDL CodeSig, not only CodeFunc.sig id") end
+        local fast_public_graph = plan_native_fast_public_code_expr_graph(self, plan, lowering, signature)
+        if fast_public_graph ~= nil then return fast_public_graph end
         local lowering_input = lowering or native_code_lowering_for_single_function(self, signature, plan)
         local state = Native.NativeCodeGraphBuilderState(
             Native.NativeValueLocationPlan({}, lowering_input.module.addresses),

@@ -209,6 +209,32 @@ function Stmt.parse(lex, ctx)
     lex:expect("end")
     return Ast.node("StmtIf", { cond = cond, then_body = then_body, elseif_blocks = elseif_blocks, else_body = else_body }, Ast.origin(lex, start, lex.last, "parsed:if"))
 
+  elseif t.value == "switch" then
+    local start = lex:next()
+    local value = Expr.parse(lex, ctx)
+    lex:expect("do")
+    lex:skip_separators()
+    local arms = {}
+    local default_body = nil
+    while not lex:at_eof() and lex:peek().value ~= "end" do
+      if lex:peek().value == "case" then
+        local ctok = lex:next()
+        local key = Expr.parse(lex, ctx)
+        lex:expect("then")
+        local body = Stmt.parse_block(lex, ctx, { "case", "default", "end" })
+        arms[#arms + 1] = Ast.node("SwitchCase", { key = key, body = body }, Ast.origin(lex, ctok, lex.last, "parsed:switch_case"))
+      elseif lex:peek().value == "default" then
+        lex:next()
+        lex:expect("then")
+        default_body = Stmt.parse_block(lex, ctx, { "end" })
+      else
+        lex:error_at(lex:peek(), "expected `case`, `default`, or `end` in switch")
+      end
+      lex:skip_separators()
+    end
+    lex:expect("end")
+    return Ast.node("StmtSwitch", { value = value, arms = arms, default_body = default_body or {} }, Ast.origin(lex, start, lex.last, "parsed:switch"))
+
   elseif t.value == "for" then
     lex:error_at(t, "source loops use `loop`, not `for`")
 
@@ -299,9 +325,13 @@ function Stmt.parse(lex, ctx)
       if lex:next_if(";") then
         repeat
           local cname = lex:expect_name("continuation name").value
-          lex:expect("=")
-          local target = lex:expect_name("continuation block")
-          cont_wiring[#cont_wiring + 1] = { name = cname, target = target.value }
+          local target = cname
+          if lex:next_if("=") then
+            target = lex:expect_name("continuation block").value
+          end
+          local payload = {}
+          if lex:peek().value == "(" then payload = parse_named_payload(lex, ctx) end
+          cont_wiring[#cont_wiring + 1] = { name = cname, target = target, payload = payload }
         until not lex:next_if(",")
       end
       lex:expect(")")

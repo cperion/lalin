@@ -6,9 +6,11 @@ LLBL is the center of the system: the extensible language workbench and bootstra
 language for defining member dialects. It turns evaluated Lua values into
 dialect objects with heads, roles, fragments, namespaces, origins, diagnostics,
 formatting, indexing, and generic regions. Region is the shared control algebra
-that composes the language. Lalin is the compiled dialect: it consumes LLBL regions
-and typed values, checks them, and lowers them into native C-stencil copy-patch
-artifacts or explicitly selected LuaJIT bytecode artifacts.
+that composes the language. Lalin is the compiled dialect: it consumes LLBL regions and typed values,
+checks them, lowers them through the semantic `emit_c`/`CBackendUnit` path, and
+cooks that C with GCC for the main JIT-like execution path or as an AOT C
+artifact. Copy-patch native templates are now experimental research machinery,
+not the main backend story.
 
 ```text
 Lua source
@@ -17,9 +19,10 @@ Lua source
   -> Lalin ASDL
   -> typecheck
   -> LalinCode facts
-  -> NativeTemplateGraph or explicit LuaJIT bytecode plan
-  -> supplied NativeTemplateBank copy/patch/install, or bytecode artifact
-  -> loaded module
+  -> CBackendUnit
+  -> emit_c C source
+  -> gcc -shared/-O3 + dlopen for JIT-like execution, or user-owned AOT build
+  -> LuaJIT FFI function pointers / native C artifact
 ```
 
 There is no Cranelift/Rust runtime path in the active architecture.
@@ -36,34 +39,35 @@ semantic meaning of those bindings.
 
 ## Quick Start
 
-The default `lalin.compile` path is native copy-patch and requires a supplied
-native template bank. The quickstart uses explicit LuaJIT bytecode mode so it can
-run without a prebuilt bank:
+The recommended execution path is GCC over `emit_c` output. It produces a shared
+object, loads it with `dlopen`, and exposes function pointers through LuaJIT FFI:
 
 ```lua
 local lalin = require("lalin")
-lalin.language.use()
+local lln = lalin.lln
 
 local add = lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
   lln.ret (a + b),
 }
 
-local module = lalin.compile("demo", { add }, { bytecode = true })
-print(module.add(3, 4)) -- 7
+local session = lalin.compile_c_gcc("demo", { add }, {
+  gcc_opts = { opt = 3, out_dir = "target/demo" },
+})
+local add_fn = assert(session:symbol("add", "int32_t (*)(int32_t, int32_t)"))
+print(add_fn(3, 4)) -- 7
+session:free()
 ```
 
-For isolated loading:
+For parsed `.lln` loading:
 
 ```lua
 local lalin = require("lalin")
 
-local unit = lalin.loadstring([[
-  return {
-    lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
-      lln.ret (a + b),
-    },
-  }
-]], "demo.lua")()
+local decls = assert(lalin.loadstring([[
+fn add(a [i32], b [i32]) [i32] do
+  return a + b
+end
+]], "@demo.lln"))
 ```
 
 ## Build
@@ -74,14 +78,15 @@ make
 
 `make` builds the repository-local LuaJIT archive if needed.
 
-Native runtime compilation does not require Cargo, Rust, Cranelift, TCC,
-readelf, or a system C compiler. It does require a prebuilt
-`NativeTemplateBank`/`NativeEmbeddedTemplateBank`; the offline bank build is the
-only step that compiles generated C stencils. The offline generator verifies
-objects through Lalin's internal ELF/object parser and typed native verifier.
+The main JIT-like path requires GCC or a compatible C compiler. `make gcc` can
+build the vendored GCC under `.vendor/gcc/.local`; otherwise Lalin uses `CC` or
+`gcc` from the host. Runtime execution cooks `emit_c` output into a shared object
+and loads it with `dlopen`.
 
-The default `lalin.compile` path is native copy-patch. Select LuaJIT bytecode
-explicitly with `compile_luajit` or `{ bytecode = true }`.
+The native copy-patch template-bank path is experimental. It still requires a
+prebuilt `NativeTemplateBank`/`NativeEmbeddedTemplateBank` and is selected
+explicitly through native APIs/options. LuaJIT bytecode remains an explicit
+non-main mode selected with `compile_luajit` or `{ bytecode = true }`.
 
 ## Test
 

@@ -1158,6 +1158,8 @@ local function emit_header()
         "  const char *instance_id;",
         "  const char *hole_id;",
         "  const char *hole_ordinal_id;",
+        "  int has_hole_ordinal_index;",
+        "  size_t hole_ordinal_index;",
         "  LalinNativePatchCoordinate coordinate;",
         "} LalinNativeInstallBinding;",
         "",
@@ -1176,7 +1178,8 @@ local function emit_header()
         "  LALIN_NATIVE_INSTALL_EDGE_LOOP_BACKEDGE = 3,",
         "  LALIN_NATIVE_INSTALL_EDGE_EXIT = 4,",
         "  LALIN_NATIVE_INSTALL_EDGE_CONTINUATION = 5,",
-        "  LALIN_NATIVE_INSTALL_EDGE_RUNTIME_CALL_RETURN = 6",
+        "  LALIN_NATIVE_INSTALL_EDGE_RUNTIME_CALL_RETURN = 6,",
+        "  LALIN_NATIVE_INSTALL_EDGE_SWITCH_STEP = 7",
         "} LalinNativeInstallControlEdgeKind;",
         "",
         "typedef struct LalinNativeInstallControlEdge {",
@@ -1227,8 +1230,15 @@ local function emit_header()
         "  void *allocator_userdata;",
         "} LalinNativeInstallRequest;",
         "",
+        "typedef enum LalinNativeInstallRejectKind {",
+        "  LALIN_NATIVE_INSTALL_REJECT_GENERIC = 0,",
+        "  LALIN_NATIVE_INSTALL_REJECT_FALLTHROUGH_LAYOUT = 1",
+        "} LalinNativeInstallRejectKind;",
+        "",
         "typedef struct LalinNativeInstallReject {",
+        "  LalinNativeInstallRejectKind kind;",
         "  const char *node_id;",
+        "  const char *to_node_id;",
         "  const char *hole_id;",
         "  const char *reason;",
         "} LalinNativeInstallReject;",
@@ -1556,10 +1566,26 @@ static LalinNativeInstallReject lalin_native_install_last_reject;
 static LalinNativeInstallResult lalin_native_install_result_reject(LalinNativeInstallStatus status, const char *node_id, const char *hole_id, const char *reason) {
   LalinNativeInstallResult result;
   memset(&result, 0, sizeof(result));
+  lalin_native_install_last_reject.kind = LALIN_NATIVE_INSTALL_REJECT_GENERIC;
   lalin_native_install_last_reject.node_id = node_id;
+  lalin_native_install_last_reject.to_node_id = NULL;
   lalin_native_install_last_reject.hole_id = hole_id;
   lalin_native_install_last_reject.reason = reason;
   result.status = status;
+  result.rejects = &lalin_native_install_last_reject;
+  result.reject_count = 1;
+  return result;
+}
+
+static LalinNativeInstallResult lalin_native_install_result_fallthrough_reject(const char *from_node_id, const char *to_node_id, const char *reason) {
+  LalinNativeInstallResult result;
+  memset(&result, 0, sizeof(result));
+  lalin_native_install_last_reject.kind = LALIN_NATIVE_INSTALL_REJECT_FALLTHROUGH_LAYOUT;
+  lalin_native_install_last_reject.node_id = from_node_id;
+  lalin_native_install_last_reject.to_node_id = to_node_id;
+  lalin_native_install_last_reject.hole_id = NULL;
+  lalin_native_install_last_reject.reason = reason;
+  result.status = LALIN_NATIVE_INSTALL_REJECTED;
   result.rejects = &lalin_native_install_last_reject;
   result.reject_count = 1;
   return result;
@@ -1688,12 +1714,12 @@ static const char *lalin_native_continuation_target(const LalinNativeInstallRequ
     const LalinNativeInstallControlEdge *edge = &request->control_edges[i];
     if (lalin_native_cstr_cmp(edge->from_node_id, from_node_id) != 0) continue;
     switch (edge->kind) {
-      case LALIN_NATIVE_INSTALL_EDGE_FALLTHROUGH:
       case LALIN_NATIVE_INSTALL_EDGE_LOOP_BACKEDGE:
       case LALIN_NATIVE_INSTALL_EDGE_CONTINUATION:
         if (lalin_native_cstr_cmp(edge->symbol, symbol) == 0) return edge->to_node_id;
         break;
       case LALIN_NATIVE_INSTALL_EDGE_CONDITIONAL_BRANCH:
+      case LALIN_NATIVE_INSTALL_EDGE_SWITCH_STEP:
         if (lalin_native_cstr_cmp(edge->then_symbol, symbol) == 0) return edge->then_node_id;
         if (lalin_native_cstr_cmp(edge->else_symbol, symbol) == 0) return edge->else_node_id;
         break;
@@ -1713,6 +1739,7 @@ static int lalin_native_binding_matches(const LalinNativeInstallBinding *binding
   if (binding->instance_id != NULL && node->instance_id != NULL && lalin_native_cstr_cmp(binding->instance_id, node->instance_id) != 0) return 0;
   if (binding->hole_id != NULL && lalin_native_cstr_cmp(binding->hole_id, hole->id) == 0) return 1;
   if (ordinal != NULL && binding->hole_ordinal_id != NULL && lalin_native_cstr_cmp(binding->hole_ordinal_id, ordinal->id) == 0) return 1;
+  if (ordinal != NULL && binding->has_hole_ordinal_index && binding->hole_ordinal_index == ordinal->ordinal) return 1;
   return 0;
 }
 
@@ -1867,6 +1894,25 @@ static const char *lalin_native_apply_coordinate_patch(uint64_t patch_address, L
   }
 }
 
+static LalinNativeInstallResult lalin_native_validate_fallthrough_layout(const LalinNativeInstallRequest *request, const LalinNativeInstallNodeLayout *layouts, size_t layout_count) {
+  size_t i;
+  if (request == NULL) return lalin_native_install_result_reject(LALIN_NATIVE_INSTALL_REJECTED, NULL, NULL, "invalid fallthrough validation request");
+  for (i = 0; i < request->control_edge_count; i++) {
+    const LalinNativeInstallControlEdge *edge = &request->control_edges[i];
+    const LalinNativeInstallNodeLayout *from_layout;
+    const LalinNativeInstallNodeLayout *to_layout;
+    size_t expected;
+    if (edge->kind != LALIN_NATIVE_INSTALL_EDGE_FALLTHROUGH) continue;
+    from_layout = lalin_native_find_layout(layouts, layout_count, edge->from_node_id);
+    to_layout = lalin_native_find_layout(layouts, layout_count, edge->to_node_id);
+    if (from_layout == NULL || to_layout == NULL) return lalin_native_install_result_fallthrough_reject(edge->from_node_id, edge->to_node_id, "fallthrough endpoint is missing");
+    if (lalin_native_cstr_cmp(from_layout->template_entry->extraction_kind, "NativeExtractFallthroughFragment") != 0) return lalin_native_install_result_fallthrough_reject(edge->from_node_id, edge->to_node_id, "fallthrough source template is not fallthrough-extractable");
+    expected = from_layout->code_offset + from_layout->template_entry->text_size;
+    if (to_layout->code_offset != expected) return lalin_native_install_result_fallthrough_reject(edge->from_node_id, edge->to_node_id, "fallthrough successor is not adjacent in executable layout");
+  }
+  return lalin_native_install_result_ok(NULL, NULL, 0);
+}
+
 static LalinNativeInstallResult lalin_native_apply_relocation(const LalinNativeInstallRequest *request, const LalinNativeInstallNodeLayout *layouts, size_t layout_count, const LalinNativeInstallPoolLayout *pools, size_t pool_count, const LalinNativeInstallNodeLayout *layout, const LalinNativeRelocation *relocation, uint64_t base) {
   const LalinNativeSymbol *symbol;
   const LalinNativeInstallNodeLayout *target_layout;
@@ -1982,6 +2028,12 @@ LalinNativeInstallResult lalin_native_bank_install(const LalinNativeBankArtifact
     layouts[i].code_offset = offset;
     offset += selection.handle.template_entry->text_size;
     pool_count += selection.handle.template_entry->constant_pool_entry_count;
+  }
+
+  step = lalin_native_validate_fallthrough_layout(request, layouts, request->node_count);
+  if (step.status != LALIN_NATIVE_INSTALL_OK) {
+    free(layouts);
+    return step;
   }
 
   code_size = offset;

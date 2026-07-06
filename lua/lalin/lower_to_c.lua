@@ -1,5 +1,3 @@
-local asdl = require("lalin.asdl")
-
 local function sanitize(s)
     s = tostring(s or "x"):gsub("[^%w_]", "_")
     if s:match("^%d") then s = "_" .. s end
@@ -48,7 +46,7 @@ local function bind_context(T)
     end
 
     function Lower.LowerStrategy:lower_emit_candidate(schedule)
-        return Lower.LowerEmitUnsupportedCandidate("unsupported LowerStrategy for C emission " .. tostring(asdl.class_basename(self) or self))
+        return Lower.LowerEmitUnsupportedCandidate("unsupported LowerStrategy for C emission " .. tostring(self))
     end
     function Lower.LowerStrategyCode:lower_emit_candidate(schedule)
         return Lower.LowerEmitCodeCandidate
@@ -62,7 +60,7 @@ local function bind_context(T)
     end
 
     function Lower.LowerEmitCandidate:select_lower_emit()
-        return Lower.LowerEmitUnsupported("unsupported lower emit candidate " .. tostring(asdl.class_basename(self) or self))
+        return Lower.LowerEmitUnsupported("unsupported lower emit candidate " .. tostring(self))
     end
     function Lower.LowerEmitCodeCandidate:select_lower_emit()
         return Lower.LowerEmitCode
@@ -85,10 +83,7 @@ local function bind_context(T)
     local function cid(id) return C.CBackendLocalId(sanitize(id.text)) end
     local function atom(id) return C.CBackendAtomLocal(cid(id)) end
 
-    local function class_name(x)
-        local cls = asdl.classof(x) or x
-        return tostring(cls):match("Class%((.-)%)") or tostring(cls)
-    end
+    local function node_name(x) return tostring(x) end
 
     local function make_c_type_projection(code_module)
         local c_type_projection = { code_sigs = {}, code_sig_order = {} }
@@ -127,23 +122,31 @@ local function bind_context(T)
     end
 
     local function value_ty(c_emission, id) return id and c_emission.value_types[id.text] or nil end
+    function Code.CodeType:lower_c_without_lease() return self end
+    function Code.CodeTyLease:lower_c_without_lease() return self.base end
+    function Code.CodeType:lower_c_view_elem_type() return nil end
+    function Code.CodeTyView:lower_c_view_elem_type() return self.elem end
+    function Code.CodeType:lower_c_slice_elem_type() return nil end
+    function Code.CodeTySlice:lower_c_slice_elem_type() return self.elem end
+    function Code.CodeType:lower_c_is_descriptor_like() return false end
+    function Code.CodeTyView:lower_c_is_descriptor_like() return true end
+    function Code.CodeTySlice:lower_c_is_descriptor_like() return true end
+    function Code.CodeTyByteSpan:lower_c_is_descriptor_like() return true end
+
     local function view_type(c_emission, id)
         local ty = value_ty(c_emission, id)
-        if asdl.classof(ty) == Code.CodeTyLease then ty = ty.base end
-        return ty
+        return ty and ty:lower_c_without_lease() or nil
     end
     local function view_elem_type(c_emission, id)
         local ty = view_type(c_emission, id)
-        if asdl.classof(ty) == Code.CodeTyView then return ty.elem end
-        return nil
+        return ty and ty:lower_c_view_elem_type() or nil
     end
     local function view_data_type(c_emission, id)
         return Code.CodeTyDataPtr(view_elem_type(c_emission, id))
     end
     local function slice_elem_type(c_emission, id)
         local ty = view_type(c_emission, id)
-        if asdl.classof(ty) == Code.CodeTySlice then return ty.elem end
-        return nil
+        return ty and ty:lower_c_slice_elem_type() or nil
     end
     local function slice_data_type(c_emission, id)
         return Code.CodeTyDataPtr(slice_elem_type(c_emission, id))
@@ -159,13 +162,21 @@ local function bind_context(T)
         return id
     end
 
-    local function const_atom(c_emission, const)
-        local cls = asdl.classof(const)
-        if cls == Code.CodeConstLiteral then return C.CBackendAtomLiteral(c_ty(c_emission, const.ty), const.literal), const.ty end
-        if cls == Code.CodeConstNull then return C.CBackendAtomNull(c_ty(c_emission, const.ty)), const.ty end
-        if cls == Code.CodeConstUndef then return C.CBackendAtomLiteral(c_ty(c_emission, const.ty), Core.LitInt("0")), const.ty end
-        error("lower_to_c: unsupported semantic const " .. class_name(const), 3)
-    end
+    function Code.CodeConst:lower_c_const_atom(c_emission) error("lower_to_c: unsupported semantic const " .. node_name(self), 3) end
+    function Code.CodeConstLiteral:lower_c_const_atom(c_emission) return C.CBackendAtomLiteral(c_ty(c_emission, self.ty), self.literal), self.ty end
+    function Code.CodeConstNull:lower_c_const_atom(c_emission) return C.CBackendAtomNull(c_ty(c_emission, self.ty)), self.ty end
+    function Code.CodeConstUndef:lower_c_const_atom(c_emission) return C.CBackendAtomLiteral(c_ty(c_emission, self.ty), Core.LitInt("0")), self.ty end
+    function Code.CodeConst:lower_c_literal_int_raw() return nil end
+    function Code.CodeConstLiteral:lower_c_literal_int_raw() return self.literal:lower_c_literal_int_raw(self.ty) end
+    function Core.Literal:lower_c_literal_int_raw(ty) return nil end
+    function Core.LitInt:lower_c_literal_int_raw(ty) return self.raw, ty end
+    function Code.CodeConst:lower_c_literal_bool_value() return nil end
+    function Code.CodeConstLiteral:lower_c_literal_bool_value() return self.literal:lower_c_literal_bool_value() end
+    function Core.Literal:lower_c_literal_bool_value() return nil end
+    function Core.LitBool:lower_c_literal_bool_value() return self.value end
+    function Core.LitInt:lower_c_literal_bool_value() return self.raw ~= "0" end
+
+    local function const_atom(c_emission, const) return const:lower_c_const_atom(c_emission) end
 
     local function assign(c_emission, dst, rhs)
         c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(dst, rhs)
@@ -178,173 +189,99 @@ local function bind_context(T)
         return C.CBackendAtomLocal(dst), dst_ty
     end
 
-    local function overflow_mode(sem)
-        if sem and sem.overflow == Code.CodeIntTrapOnOverflow then return C.CBackendIntTrapOnOverflow end
-        if sem and asdl.classof(sem.overflow) == Code.CodeIntAssumeNoOverflow then return C.CBackendIntAssumeNoOverflow end
-        return C.CBackendIntWrap
-    end
+    function Code.CodeIntOverflow:lower_c_overflow_mode() return C.CBackendIntWrap end
+    function Code.CodeIntWrap:lower_c_overflow_mode() return C.CBackendIntWrap end
+    function Code.CodeIntTrapOnOverflow:lower_c_overflow_mode() return C.CBackendIntTrapOnOverflow end
+    function Code.CodeIntAssumeNoOverflow:lower_c_overflow_mode() return C.CBackendIntAssumeNoOverflow end
+    function Code.CodeDivPolicy:lower_c_div_mode() return C.CBackendDivTrapOnZero end
+    function Code.CodeDivTrapOnZero:lower_c_div_mode() return C.CBackendDivTrapOnZero end
+    function Code.CodeDivTrapOnZeroOrOverflow:lower_c_div_mode() return C.CBackendDivTrapOnZeroOrOverflow end
+
+    local function overflow_mode(sem) return sem and sem.overflow and sem.overflow:lower_c_overflow_mode() or C.CBackendIntWrap end
 
     local function binary_helper(c_emission, op, ty, sem)
-        if op == Core.BinDiv or op == Core.BinRem then
-            local mode = (sem and sem.div == Code.CodeDivTrapOnZeroOrOverflow) and C.CBackendDivTrapOnZeroOrOverflow or C.CBackendDivTrapOnZero
+        if op:lower_c_is_div_or_rem() then
+            local mode = sem and sem.div and sem.div:lower_c_div_mode() or C.CBackendDivTrapOnZero
             return add_helper(c_emission, C.CBackendHelperDivRem(op, c_ty(c_emission, ty), mode))
         end
         return add_helper(c_emission, C.CBackendHelperIntBinary(op, c_ty(c_emission, ty), overflow_mode(sem)))
     end
+    function Core.BinaryOp:lower_c_is_div_or_rem() return false end
+    function Core.BinDiv:lower_c_is_div_or_rem() return true end
+    function Core.BinRem:lower_c_is_div_or_rem() return true end
 
-    local simplify_value_expr
-    local function literal_int_raw(expr)
-        if asdl.classof(expr) ~= Value.ValueExprConst then return nil end
-        if asdl.classof(expr.const) ~= Code.CodeConstLiteral then return nil end
-        if asdl.classof(expr.const.literal) ~= Core.LitInt then return nil end
-        return expr.const.literal.raw, expr.const.ty
-    end
-    local function literal_bool_value(expr)
-        if asdl.classof(expr) ~= Value.ValueExprConst then return nil end
-        if asdl.classof(expr.const) ~= Code.CodeConstLiteral then return nil end
-        local lcls = asdl.classof(expr.const.literal)
-        if lcls == Core.LitBool then return expr.const.literal.value end
-        if lcls == Core.LitInt then return expr.const.literal.raw ~= "0" end
-        return nil
-    end
-    local function int_const(ty, raw)
-        return Value.ValueExprConst(Code.CodeConstLiteral(ty, Core.LitInt(tostring(raw))))
-    end
+    local simplify_value_expr, lower_value_expr, lower_value_expr_lane
+    local function literal_int_raw(expr) return expr:lower_c_literal_int_raw() end
+    local function literal_bool_value(expr) return expr:lower_c_literal_bool_value() end
+    local function int_const(ty, raw) return Value.ValueExprConst(Code.CodeConstLiteral(ty, Core.LitInt(tostring(raw)))) end
     local function is_raw(raw, want) return raw ~= nil and tostring(raw) == tostring(want) end
-    simplify_value_expr = function(expr)
-        local cls = asdl.classof(expr)
-        if cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
-            local a = simplify_value_expr(expr.a)
-            local b = simplify_value_expr(expr.b)
-            local ar = literal_int_raw(a)
-            local br = literal_int_raw(b)
-            if cls == Value.ValueExprAdd then
-                if is_raw(ar, "0") then return b end
-                if is_raw(br, "0") then return a end
-            elseif cls == Value.ValueExprSub then
-                if is_raw(br, "0") then return a end
-            elseif cls == Value.ValueExprMul then
-                if is_raw(ar, "0") or is_raw(br, "0") then return int_const(expr.ty, "0") end
-                if is_raw(ar, "1") then return b end
-                if is_raw(br, "1") then return a end
-            elseif cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
-                if is_raw(br, "1") then return a end
-            end
-            if ar ~= nil and br ~= nil then
-                local av, bv = tonumber(ar), tonumber(br)
-                if av ~= nil and bv ~= nil and av == math.floor(av) and bv == math.floor(bv) then
-                    if cls == Value.ValueExprAdd then return int_const(expr.ty, av + bv) end
-                    if cls == Value.ValueExprSub then return int_const(expr.ty, av - bv) end
-                    if cls == Value.ValueExprMul then return int_const(expr.ty, av * bv) end
-                    if cls == Value.ValueExprDiv and bv ~= 0 then return int_const(expr.ty, math.floor(av / bv)) end
-                    if cls == Value.ValueExprRem and bv ~= 0 then return int_const(expr.ty, av % bv) end
-                end
-            end
-            if cls == Value.ValueExprAdd then return Value.ValueExprAdd(a, b, expr.ty, expr.sem) end
-            if cls == Value.ValueExprSub then return Value.ValueExprSub(a, b, expr.ty, expr.sem) end
-            if cls == Value.ValueExprMul then return Value.ValueExprMul(a, b, expr.ty, expr.sem) end
-            if cls == Value.ValueExprDiv then return Value.ValueExprDiv(a, b, expr.ty, expr.sem) end
-            return Value.ValueExprRem(a, b, expr.ty, expr.sem)
-        elseif cls == Value.ValueExprBinary then
-            return Value.ValueExprBinary(expr.op, simplify_value_expr(expr.a), simplify_value_expr(expr.b), expr.ty, expr.sem)
-        elseif cls == Value.ValueExprCmp then
-            local a = simplify_value_expr(expr.a)
-            local b = simplify_value_expr(expr.b)
-            local ar = literal_int_raw(a)
-            local br = literal_int_raw(b)
-            if ar ~= nil and br ~= nil then
-                local av, bv = tonumber(ar), tonumber(br)
-                if av ~= nil and bv ~= nil then
-                    local r = (expr.op == Core.CmpEq and av == bv) or (expr.op == Core.CmpNe and av ~= bv)
-                        or (expr.op == Core.CmpLt and av < bv) or (expr.op == Core.CmpLe and av <= bv)
-                        or (expr.op == Core.CmpGt and av > bv) or (expr.op == Core.CmpGe and av >= bv) or false
-                    return Value.ValueExprConst(Code.CodeConstLiteral(Code.CodeTyBool8, Core.LitBool(r)))
-                end
-            end
-            return Value.ValueExprCmp(expr.op, expr.ty, a, b)
-        elseif cls == Value.ValueExprSelect then
-            local cnd = simplify_value_expr(expr.cond)
-            local bv = literal_bool_value(cnd)
-            if bv == true then return simplify_value_expr(expr.t) end
-            if bv == false then return simplify_value_expr(expr.f) end
-            return Value.ValueExprSelect(cnd, simplify_value_expr(expr.t), simplify_value_expr(expr.f))
-        elseif cls == Value.ValueExprAffine then
-            if expr.affine.constant == "0" and #(expr.affine.terms or {}) == 1 and expr.affine.terms[1].coeff == "1" then
-                return Value.ValueExprValue(expr.affine.terms[1].value)
-            end
-        end
-        return expr
-    end
 
-    local lower_value_expr
-    lower_value_expr = function(c_emission, expr)
-        expr = simplify_value_expr(expr)
-        local cls = asdl.classof(expr)
-        if cls == Value.ValueExprConst then
-            return const_atom(c_emission, expr.const)
-        elseif cls == Value.ValueExprValue then
-            local ty = value_ty(c_emission, expr.value)
-            if ty == nil then error("lower_to_c: semantic expression references unknown value " .. expr.value.text, 3) end
-            return atom(expr.value), ty
-        elseif cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
-            local a, aty = lower_value_expr(c_emission, expr.a)
-            local b, bty = lower_value_expr(c_emission, expr.b)
-            a = cast_to(c_emission, a, aty, expr.ty, "bin_lhs")
-            b = cast_to(c_emission, b, bty, expr.ty, "bin_rhs")
-            local dst = tmp(c_emission, "bin", expr.ty)
-            local op = (cls == Value.ValueExprAdd and Core.BinAdd) or (cls == Value.ValueExprSub and Core.BinSub) or (cls == Value.ValueExprMul and Core.BinMul) or (cls == Value.ValueExprRem and Core.BinRem) or Core.BinDiv
-            c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(dst, binary_helper(c_emission, op, expr.ty, expr.sem), { a, b })
-            return C.CBackendAtomLocal(dst), expr.ty
-        elseif cls == Value.ValueExprBinary then
-            local a, aty = lower_value_expr(c_emission, expr.a)
-            local b, bty = lower_value_expr(c_emission, expr.b)
-            a = cast_to(c_emission, a, aty, expr.ty, "bin_lhs")
-            b = cast_to(c_emission, b, bty, expr.ty, "bin_rhs")
-            local dst = tmp(c_emission, "bin", expr.ty)
-            c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(dst, binary_helper(c_emission, expr.op, expr.ty, expr.sem), { a, b })
-            return C.CBackendAtomLocal(dst), expr.ty
-        elseif cls == Value.ValueExprCmp then
-            local a, aty = lower_value_expr(c_emission, expr.a)
-            local b, bty = lower_value_expr(c_emission, expr.b)
-            a = cast_to(c_emission, a, aty, expr.ty, "cmp_lhs")
-            b = cast_to(c_emission, b, bty, expr.ty, "cmp_rhs")
-            local dst = tmp(c_emission, "cmp", Code.CodeTyBool8)
-            assign(c_emission, dst, C.CBackendRCompare(expr.op, c_ty(c_emission, expr.ty), a, b))
-            return C.CBackendAtomLocal(dst), Code.CodeTyBool8
-        elseif cls == Value.ValueExprSelect then
-            local cnd = lower_value_expr(c_emission, expr.cond)
-            local t, tty = lower_value_expr(c_emission, expr.t)
-            local f, fty = lower_value_expr(c_emission, expr.f)
-            local ty = tty or fty
-            f = cast_to(c_emission, f, fty, ty, "sel_f")
-            t = cast_to(c_emission, t, tty, ty, "sel_t")
-            local dst = tmp(c_emission, "select", ty)
-            assign(c_emission, dst, C.CBackendRSelect(c_ty(c_emission, ty), cnd, t, f))
-            return C.CBackendAtomLocal(dst), ty
-        elseif cls == Value.ValueExprAffine then
-            local ty = expr.affine.ty
-            local acc, acc_ty = nil, nil
-            if expr.affine.constant ~= "0" then acc, acc_ty = lower_value_expr(c_emission, Value.ValueExprConst(Code.CodeConstLiteral(ty, Core.LitInt(expr.affine.constant)))) end
-            for _, term in ipairs(expr.affine.terms or {}) do
-                local tv, tty = lower_value_expr(c_emission, Value.ValueExprValue(term.value))
-                tv = cast_to(c_emission, tv, tty, ty, "affine_cast")
-                if term.coeff ~= "1" then
-                    local cv = C.CBackendAtomLiteral(c_ty(c_emission, ty), Core.LitInt(term.coeff))
-                    local mul = tmp(c_emission, "affine_mul", ty)
-                    c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(mul, binary_helper(c_emission, Core.BinMul, ty, expr.affine.sem), { tv, cv })
-                    tv = C.CBackendAtomLocal(mul)
-                end
-                if acc == nil then acc, acc_ty = tv, ty else
-                    local sum = tmp(c_emission, "affine_add", ty)
-                    c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(sum, binary_helper(c_emission, Core.BinAdd, ty, expr.affine.sem), { acc, tv })
-                    acc, acc_ty = C.CBackendAtomLocal(sum), ty
-                end
-            end
-            if acc == nil then return C.CBackendAtomLiteral(c_ty(c_emission, ty), Core.LitInt("0")), ty end
-            return acc, acc_ty
-        end
-        error("lower_to_c: unsupported semantic ValueExpr " .. class_name(expr), 3)
+    function Value.ValueExpr:lower_c_literal_int_raw() return nil end
+    function Value.ValueExprConst:lower_c_literal_int_raw() return self.const:lower_c_literal_int_raw() end
+    function Value.ValueExpr:lower_c_literal_bool_value() return nil end
+    function Value.ValueExprConst:lower_c_literal_bool_value() return self.const:lower_c_literal_bool_value() end
+    function Value.ValueExpr:lower_c_simplify() return self end
+    function Value.ValueExprAdd:lower_c_rebuild(a, b) return Value.ValueExprAdd(a, b, self.ty, self.sem) end
+    function Value.ValueExprSub:lower_c_rebuild(a, b) return Value.ValueExprSub(a, b, self.ty, self.sem) end
+    function Value.ValueExprMul:lower_c_rebuild(a, b) return Value.ValueExprMul(a, b, self.ty, self.sem) end
+    function Value.ValueExprDiv:lower_c_rebuild(a, b) return Value.ValueExprDiv(a, b, self.ty, self.sem) end
+    function Value.ValueExprRem:lower_c_rebuild(a, b) return Value.ValueExprRem(a, b, self.ty, self.sem) end
+    function Value.ValueExpr:lower_c_arith_op() return nil end
+    function Value.ValueExprAdd:lower_c_arith_op() return Core.BinAdd end
+    function Value.ValueExprSub:lower_c_arith_op() return Core.BinSub end
+    function Value.ValueExprMul:lower_c_arith_op() return Core.BinMul end
+    function Value.ValueExprDiv:lower_c_arith_op() return Core.BinDiv end
+    function Value.ValueExprRem:lower_c_arith_op() return Core.BinRem end
+    function Value.ValueExprAdd:lower_c_simplify_binary_identity(a, b, ar, br) if is_raw(ar, "0") then return b end; if is_raw(br, "0") then return a end end
+    function Value.ValueExprSub:lower_c_simplify_binary_identity(a, b, ar, br) if is_raw(br, "0") then return a end end
+    function Value.ValueExprMul:lower_c_simplify_binary_identity(a, b, ar, br) if is_raw(ar, "0") or is_raw(br, "0") then return int_const(self.ty, "0") end; if is_raw(ar, "1") then return b end; if is_raw(br, "1") then return a end end
+    function Value.ValueExprDiv:lower_c_simplify_binary_identity(a, b, ar, br) if is_raw(br, "1") then return a end end
+    function Value.ValueExprRem:lower_c_simplify_binary_identity(a, b, ar, br) if is_raw(br, "1") then return a end end
+    function Core.BinaryOp:lower_c_fold_int(ty, av, bv) return nil end
+    function Core.BinAdd:lower_c_fold_int(ty, av, bv) return int_const(ty, av + bv) end
+    function Core.BinSub:lower_c_fold_int(ty, av, bv) return int_const(ty, av - bv) end
+    function Core.BinMul:lower_c_fold_int(ty, av, bv) return int_const(ty, av * bv) end
+    function Core.BinDiv:lower_c_fold_int(ty, av, bv) if bv ~= 0 then return int_const(ty, math.floor(av / bv)) end end
+    function Core.BinRem:lower_c_fold_int(ty, av, bv) if bv ~= 0 then return int_const(ty, av % bv) end end
+    function Value.ValueExprAdd:lower_c_simplify() local a,b=simplify_value_expr(self.a),simplify_value_expr(self.b); local ar,br=literal_int_raw(a),literal_int_raw(b); local r=self:lower_c_simplify_binary_identity(a,b,ar,br); if r then return r end; if ar and br then local av,bv=tonumber(ar),tonumber(br); if av and bv and av==math.floor(av) and bv==math.floor(bv) then local f=self:lower_c_arith_op():lower_c_fold_int(self.ty,av,bv); if f then return f end end end; return self:lower_c_rebuild(a,b) end
+    function Value.ValueExprSub:lower_c_simplify() return Value.ValueExprAdd.lower_c_simplify(self) end
+    function Value.ValueExprMul:lower_c_simplify() return Value.ValueExprAdd.lower_c_simplify(self) end
+    function Value.ValueExprDiv:lower_c_simplify() return Value.ValueExprAdd.lower_c_simplify(self) end
+    function Value.ValueExprRem:lower_c_simplify() return Value.ValueExprAdd.lower_c_simplify(self) end
+    function Value.ValueExprBinary:lower_c_simplify() return Value.ValueExprBinary(self.op, simplify_value_expr(self.a), simplify_value_expr(self.b), self.ty, self.sem) end
+    function Core.CmpOp:lower_c_eval_int(av, bv) return false end
+    function Core.CmpEq:lower_c_eval_int(av, bv) return av == bv end
+    function Core.CmpNe:lower_c_eval_int(av, bv) return av ~= bv end
+    function Core.CmpLt:lower_c_eval_int(av, bv) return av < bv end
+    function Core.CmpLe:lower_c_eval_int(av, bv) return av <= bv end
+    function Core.CmpGt:lower_c_eval_int(av, bv) return av > bv end
+    function Core.CmpGe:lower_c_eval_int(av, bv) return av >= bv end
+    function Value.ValueExprCmp:lower_c_simplify() local a,b=simplify_value_expr(self.a),simplify_value_expr(self.b); local ar,br=literal_int_raw(a),literal_int_raw(b); if ar and br then local av,bv=tonumber(ar),tonumber(br); if av and bv then return Value.ValueExprConst(Code.CodeConstLiteral(Code.CodeTyBool8, Core.LitBool(self.op:lower_c_eval_int(av,bv)))) end end; return Value.ValueExprCmp(self.op,self.ty,a,b) end
+    function Value.ValueExprSelect:lower_c_simplify() local cnd=simplify_value_expr(self.cond); local bv=literal_bool_value(cnd); if bv==true then return simplify_value_expr(self.t) end; if bv==false then return simplify_value_expr(self.f) end; return Value.ValueExprSelect(cnd, simplify_value_expr(self.t), simplify_value_expr(self.f)) end
+    function Value.ValueExprAffine:lower_c_simplify() if self.affine.constant == "0" and #(self.affine.terms or {}) == 1 and self.affine.terms[1].coeff == "1" then return Value.ValueExprValue(self.affine.terms[1].value) end; return self end
+    simplify_value_expr = function(expr) return expr:lower_c_simplify() end
+
+    function Value.ValueExpr:lower_c_value(c_emission) error("lower_to_c: unsupported semantic ValueExpr " .. node_name(self), 3) end
+    function Value.ValueExprConst:lower_c_value(c_emission) return const_atom(c_emission, self.const) end
+    function Value.ValueExprValue:lower_c_value(c_emission) local ty=value_ty(c_emission,self.value); if ty==nil then error("lower_to_c: semantic expression references unknown value " .. self.value.text, 3) end; return atom(self.value), ty end
+    local function lower_binary_value(c_emission, expr, op, lane, index_ty)
+        local lower = lane == nil and lower_value_expr or lower_value_expr_lane
+        local a, aty = lower(c_emission, expr.a, lane, index_ty); local b, bty = lower(c_emission, expr.b, lane, index_ty)
+        a = cast_to(c_emission, a, aty, expr.ty, lane == nil and "bin_lhs" or "vec_bin_lhs"); b = cast_to(c_emission, b, bty, expr.ty, lane == nil and "bin_rhs" or "vec_bin_rhs")
+        local dst = tmp(c_emission, lane == nil and "bin" or "vec_bin", expr.ty)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(dst, binary_helper(c_emission, op, expr.ty, expr.sem), { a, b })
+        return C.CBackendAtomLocal(dst), expr.ty
     end
+    function Value.ValueExprAdd:lower_c_value(c_emission) return lower_binary_value(c_emission,self,Core.BinAdd) end
+    function Value.ValueExprSub:lower_c_value(c_emission) return lower_binary_value(c_emission,self,Core.BinSub) end
+    function Value.ValueExprMul:lower_c_value(c_emission) return lower_binary_value(c_emission,self,Core.BinMul) end
+    function Value.ValueExprDiv:lower_c_value(c_emission) return lower_binary_value(c_emission,self,Core.BinDiv) end
+    function Value.ValueExprRem:lower_c_value(c_emission) return lower_binary_value(c_emission,self,Core.BinRem) end
+    function Value.ValueExprBinary:lower_c_value(c_emission) return lower_binary_value(c_emission,self,self.op) end
+    function Value.ValueExprCmp:lower_c_value(c_emission) local a,aty=lower_value_expr(c_emission,self.a); local b,bty=lower_value_expr(c_emission,self.b); a=cast_to(c_emission,a,aty,self.ty,"cmp_lhs"); b=cast_to(c_emission,b,bty,self.ty,"cmp_rhs"); local dst=tmp(c_emission,"cmp",Code.CodeTyBool8); assign(c_emission,dst,C.CBackendRCompare(self.op,c_ty(c_emission,self.ty),a,b)); return C.CBackendAtomLocal(dst),Code.CodeTyBool8 end
+    function Value.ValueExprSelect:lower_c_value(c_emission) local cnd=lower_value_expr(c_emission,self.cond); local t,tty=lower_value_expr(c_emission,self.t); local f,fty=lower_value_expr(c_emission,self.f); local ty=tty or fty; f=cast_to(c_emission,f,fty,ty,"sel_f"); t=cast_to(c_emission,t,tty,ty,"sel_t"); local dst=tmp(c_emission,"select",ty); assign(c_emission,dst,C.CBackendRSelect(c_ty(c_emission,ty),cnd,t,f)); return C.CBackendAtomLocal(dst),ty end
+    function Value.ValueExprAffine:lower_c_value(c_emission) local ty=self.affine.ty; local acc,acc_ty=nil,nil; if self.affine.constant ~= "0" then acc,acc_ty=lower_value_expr(c_emission,Value.ValueExprConst(Code.CodeConstLiteral(ty,Core.LitInt(self.affine.constant)))) end; for _,term in ipairs(self.affine.terms or {}) do local tv,tty=lower_value_expr(c_emission,Value.ValueExprValue(term.value)); tv=cast_to(c_emission,tv,tty,ty,"affine_cast"); if term.coeff ~= "1" then local cv=C.CBackendAtomLiteral(c_ty(c_emission,ty),Core.LitInt(term.coeff)); local mul=tmp(c_emission,"affine_mul",ty); c_emission.stmts[#c_emission.stmts+1]=C.CBackendHelperCall(mul,binary_helper(c_emission,Core.BinMul,ty,self.affine.sem),{tv,cv}); tv=C.CBackendAtomLocal(mul) end; if acc==nil then acc,acc_ty=tv,ty else local sum=tmp(c_emission,"affine_add",ty); c_emission.stmts[#c_emission.stmts+1]=C.CBackendHelperCall(sum,binary_helper(c_emission,Core.BinAdd,ty,self.affine.sem),{acc,tv}); acc,acc_ty=C.CBackendAtomLocal(sum),ty end end; if acc==nil then return C.CBackendAtomLiteral(c_ty(c_emission,ty),Core.LitInt("0")),ty end; return acc,acc_ty end
+    lower_value_expr = function(c_emission, expr) return simplify_value_expr(expr):lower_c_value(c_emission) end
 
     function Mem.MemAccessOp:lower_c_read_access(access) return nil end
     function Mem.MemLoad:lower_c_read_access(access) return access end
@@ -379,20 +316,19 @@ local function bind_context(T)
         return first_lane_access(c_emission, lane, "lower_c_write_access")
     end
 
-    local function base_atom(c_emission, base)
-        local cls = asdl.classof(base)
-        if cls == Mem.MemBaseValue or cls == Mem.MemBaseArgument then return atom(base.value) end
-        if cls == Mem.MemBaseGlobal then return C.CBackendAtomGlobal(C.CBackendGlobalId(base.global.text)) end
-        if cls == Mem.MemBaseData then return C.CBackendAtomGlobal(C.CBackendGlobalId(base.data.text)) end
-        if cls == Mem.MemBaseProjection then
-            local b = base_atom(c_emission, base.base)
-            local zero = C.CBackendAtomLiteral(C.CBackendIndex, Core.LitInt("0"))
-            local dst = tmp(c_emission, "base_projection", Code.CodeTyDataPtr(nil))
-            assign(c_emission, dst, C.CBackendRPtrOffset(b, zero, 1, base.byte_offset or 0))
-            return C.CBackendAtomLocal(dst)
-        end
-        error("lower_to_c: unsupported KernelLane base " .. class_name(base), 3)
+    function Mem.MemBase:lower_c_base_atom(c_emission) error("lower_to_c: unsupported KernelLane base " .. node_name(self), 3) end
+    function Mem.MemBaseValue:lower_c_base_atom(c_emission) return atom(self.value) end
+    function Mem.MemBaseArgument:lower_c_base_atom(c_emission) return atom(self.value) end
+    function Mem.MemBaseGlobal:lower_c_base_atom(c_emission) return C.CBackendAtomGlobal(C.CBackendGlobalId(self.global.text)) end
+    function Mem.MemBaseData:lower_c_base_atom(c_emission) return C.CBackendAtomGlobal(C.CBackendGlobalId(self.data.text)) end
+    function Mem.MemBaseProjection:lower_c_base_atom(c_emission)
+        local b = self.base:lower_c_base_atom(c_emission)
+        local zero = C.CBackendAtomLiteral(C.CBackendIndex, Core.LitInt("0"))
+        local dst = tmp(c_emission, "base_projection", Code.CodeTyDataPtr(nil))
+        assign(c_emission, dst, C.CBackendRPtrOffset(b, zero, 1, self.byte_offset or 0))
+        return C.CBackendAtomLocal(dst)
     end
+    local function base_atom(c_emission, base) return base:lower_c_base_atom(c_emission) end
 
     local function address_index_atom(c_emission, index_expr)
         local idx, ity = lower_value_expr(c_emission, index_expr)
@@ -400,14 +336,17 @@ local function bind_context(T)
         return idx
     end
 
+    function Mem.MemIndex:lower_c_elem_size() return 1 end
+    function Mem.MemIndex:lower_c_const_offset() return 0 end
+    function Mem.MemIndexValue:lower_c_elem_size() return self.elem_size or 1 end
+    function Mem.MemIndexValue:lower_c_const_offset() return self.const_offset or 0 end
+    function Mem.MemIndexInduction:lower_c_elem_size() return self.elem_size or 1 end
+    function Mem.MemIndexInduction:lower_c_const_offset() return self.const_offset or 0 end
+
     local function place_for_access(c_emission, lane, access, index_expr)
-        local elem_size = 1
-        local const_offset = 0
-        local icls = access and asdl.classof(access.index) or nil
-        if icls == Mem.MemIndexValue or icls == Mem.MemIndexInduction then
-            elem_size = access.index.elem_size or 1
-            const_offset = access.index.const_offset or 0
-        end
+        local index = access and access.index or nil
+        local elem_size = index and index:lower_c_elem_size() or 1
+        local const_offset = index and index:lower_c_const_offset() or 0
         local base = base_atom(c_emission, lane.base)
         local idx = address_index_atom(c_emission, index_expr)
         local base_place = C.CBackendPlaceDeref(base, c_ty(c_emission, lane.elem_ty), nil)
@@ -419,13 +358,8 @@ local function bind_context(T)
         return C.CBackendPlaceIndex(base_place, idx, c_ty(c_emission, lane.elem_ty), elem_size)
     end
 
-    local function place_for_read_lane(c_emission, lane, index_expr)
-        return place_for_access(c_emission, lane, first_read_access(c_emission, lane), index_expr)
-    end
-
-    local function place_for_write_lane(c_emission, lane, index_expr)
-        return place_for_access(c_emission, lane, first_write_access(c_emission, lane), index_expr)
-    end
+    local function place_for_read_lane(c_emission, lane, index_expr) return place_for_access(c_emission, lane, first_read_access(c_emission, lane), index_expr) end
+    local function place_for_write_lane(c_emission, lane, index_expr) return place_for_access(c_emission, lane, first_write_access(c_emission, lane), index_expr) end
 
     local function kernel_value_atom(c_emission, kid)
         local mapped = c_emission.kernel_value_local[kid.text]
@@ -434,19 +368,17 @@ local function bind_context(T)
     end
 
     local lower_kernel_expr
-    lower_kernel_expr = function(c_emission, expr)
-        local cls = asdl.classof(expr)
-        if cls == Kernel.KernelExprValue then return atom(expr.value), value_ty(c_emission, expr.value) end
-        if cls == Kernel.KernelExprKernelValue then return kernel_value_atom(c_emission, expr.value) end
-        if cls == Kernel.KernelExprAlgebra then return lower_value_expr(c_emission, expr.expr) end
-        if cls == Kernel.KernelExprLaneLoad then
-            local dst = tmp(c_emission, "load", expr.lane.elem_ty)
-            local place = place_for_read_lane(c_emission, expr.lane, expr.index)
-            c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceLoad(dst, place)
-            return C.CBackendAtomLocal(dst), expr.lane.elem_ty
-        end
-        error("lower_to_c: unsupported KernelExpr " .. class_name(expr), 3)
+    function Kernel.KernelExpr:lower_c_kernel_expr(c_emission) error("lower_to_c: unsupported KernelExpr " .. node_name(self), 3) end
+    function Kernel.KernelExprValue:lower_c_kernel_expr(c_emission) return atom(self.value), value_ty(c_emission, self.value) end
+    function Kernel.KernelExprKernelValue:lower_c_kernel_expr(c_emission) return kernel_value_atom(c_emission, self.value) end
+    function Kernel.KernelExprAlgebra:lower_c_kernel_expr(c_emission) return lower_value_expr(c_emission, self.expr) end
+    function Kernel.KernelExprLaneLoad:lower_c_kernel_expr(c_emission)
+        local dst = tmp(c_emission, "load", self.lane.elem_ty)
+        local place = place_for_read_lane(c_emission, self.lane, self.index)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceLoad(dst, place)
+        return C.CBackendAtomLocal(dst), self.lane.elem_ty
     end
+    lower_kernel_expr = function(c_emission, expr) return expr:lower_c_kernel_expr(c_emission) end
 
     local function bind_kernel_value(c_emission, binding)
         local dst = c_emission.kernel_value_local[binding.id.text]
@@ -461,42 +393,32 @@ local function bind_context(T)
         c_emission.kernel_value_types[binding.id.text] = binding.ty
     end
 
-    local function emit_kernel_effect(c_emission, effect)
-        local cls = asdl.classof(effect)
-        if cls == Kernel.KernelEffectStore then
-            local value, vty = lower_kernel_expr(c_emission, effect.value)
-            value = cast_to(c_emission, value, vty, effect.dst.elem_ty, "store_cast")
-            local place = place_for_write_lane(c_emission, effect.dst, effect.index)
-            c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceStore(place, value)
-        elseif cls == Kernel.KernelEffectFold then
-            return
-        else
-            error("lower_to_c: unsupported KernelEffect " .. class_name(effect), 3)
-        end
+    function Kernel.KernelEffect:lower_c_emit_effect(c_emission) error("lower_to_c: unsupported KernelEffect " .. node_name(self), 3) end
+    function Kernel.KernelEffectStore:lower_c_emit_effect(c_emission)
+        local value, vty = lower_kernel_expr(c_emission, self.value)
+        value = cast_to(c_emission, value, vty, self.dst.elem_ty, "store_cast")
+        local place = place_for_write_lane(c_emission, self.dst, self.index)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceStore(place, value)
     end
+    function Kernel.KernelEffectFold:lower_c_emit_effect(c_emission) end
+    local function emit_kernel_effect(c_emission, effect) return effect:lower_c_emit_effect(c_emission) end
 
-    local function term_to_c(c_emission, term)
-        local k = term.op
-        local cls = asdl.classof(k)
-        local function args(xs)
-            local out = {}
-            for i = 1, #(xs or {}) do out[i] = atom(xs[i]) end
-            return out
-        end
-        if cls == Code.CodeTermJump then return C.CBackendGoto(clabel(k.dest), args(k.args)) end
-        if cls == Code.CodeTermBranch then return C.CBackendIfGoto(atom(k.cond), clabel(k.then_dest), args(k.then_args), clabel(k.else_dest), args(k.else_args)) end
-        if cls == Code.CodeTermSwitch then
-            local cases = {}; for i = 1, #k.cases do cases[i] = C.CBackendSwitchCase(k.cases[i].literal, clabel(k.cases[i].dest), args(k.cases[i].args)) end
-            return C.CBackendSwitchGoto(atom(k.value), cases, clabel(k.default_dest), args(k.default_args))
-        end
-        if cls == Code.CodeTermVariantSwitch then
-            local cases = {}; for i = 1, #k.cases do cases[i] = C.CBackendSwitchCase(Core.LitInt(tostring(k.cases[i].variant.tag_value)), clabel(k.cases[i].dest), args(k.cases[i].args)) end
-            return C.CBackendSwitchGoto(atom(k.tag), cases, clabel(k.default_dest), args(k.default_args))
-        end
-        if cls == Code.CodeTermReturn then return (#k.values == 0) and C.CBackendReturnVoid or C.CBackendReturn(atom(k.values[1])) end
-        if cls == Code.CodeTermTrap or cls == Code.CodeTermUnreachable then return C.CBackendTrap end
-        error("lower_to_c: unsupported CodeTermOp " .. class_name(k), 2)
+    local function term_args(xs)
+        local out = {}
+        for i = 1, #(xs or {}) do out[i] = atom(xs[i]) end
+        return out
     end
+    function Code.CodeTermOp:lower_c_term(c_emission) error("lower_to_c: unsupported CodeTermOp " .. node_name(self), 2) end
+    function Code.CodeTermJump:lower_c_term(c_emission) return C.CBackendGoto(clabel(self.dest), term_args(self.args)) end
+    function Code.CodeTermBranch:lower_c_term(c_emission) return C.CBackendIfGoto(atom(self.cond), clabel(self.then_dest), term_args(self.then_args), clabel(self.else_dest), term_args(self.else_args)) end
+    function Code.CodeTermSwitch:lower_c_term(c_emission) local cases={}; for i=1,#self.cases do cases[i]=C.CBackendSwitchCase(self.cases[i].literal, clabel(self.cases[i].dest), term_args(self.cases[i].args)) end; return C.CBackendSwitchGoto(atom(self.value), cases, clabel(self.default_dest), term_args(self.default_args)) end
+    function Code.CodeTermVariantSwitch:lower_c_term(c_emission) local cases={}; for i=1,#self.cases do cases[i]=C.CBackendSwitchCase(Core.LitInt(tostring(self.cases[i].variant.tag_value)), clabel(self.cases[i].dest), term_args(self.cases[i].args)) end; return C.CBackendSwitchGoto(atom(self.tag), cases, clabel(self.default_dest), term_args(self.default_args)) end
+    function Code.CodeTermReturn:lower_c_term(c_emission) return (#self.values == 0) and C.CBackendReturnVoid or C.CBackendReturn(atom(self.values[1])) end
+    function Code.CodeTermTrap:lower_c_term(c_emission) return C.CBackendTrap end
+    function Code.CodeTermUnreachable:lower_c_term(c_emission) return C.CBackendTrap end
+    function Code.CodeTermOp:lower_c_jump_dest() return nil end
+    function Code.CodeTermJump:lower_c_jump_dest() return self.dest end
+    local function term_to_c(c_emission, term) return term.op:lower_c_term(c_emission) end
 
     local function graph_loop_by_id(graph)
         local out = {}
@@ -510,15 +432,19 @@ local function bind_context(T)
         return out
     end
 
+    function Kernel.KernelPlan:lower_c_index_plan(out) end
+    function Kernel.KernelPlanned:lower_c_index_plan(out) out[self.id.text] = self end
     local function kernel_by_id(kernels)
         local out = {}
-        for _, kp in ipairs(kernels and kernels.plans or {}) do if asdl.classof(kp) == Kernel.KernelPlanned then out[kp.id.text] = kp end end
+        for _, kp in ipairs(kernels and kernels.plans or {}) do kp:lower_c_index_plan(out) end
         return out
     end
 
+    function Schedule.KernelSchedule:lower_c_index_schedule(out) end
+    function Schedule.SchedulePlanned:lower_c_index_schedule(out) out[self.id.text] = self end
     local function schedule_by_id(schedules)
         local out = {}
-        for _, s in ipairs(schedules and schedules.schedules or {}) do if asdl.classof(s) == Schedule.SchedulePlanned then out[s.id.text] = s end end
+        for _, sp in ipairs(schedules and schedules.schedules or {}) do sp:lower_c_index_schedule(out) end
         return out
     end
 
@@ -550,8 +476,8 @@ local function bind_context(T)
         local jump_dest = exit.to.block
         local jump_fact = edge_facts[exit.from.block.text .. "\0" .. exit.to.block.text]
         for _, block in ipairs(c_emission.code_func.blocks or {}) do
-            if block.id == exit.to.block and asdl.classof(block.term.op) == Code.CodeTermJump then
-                jump_dest = block.term.op.dest
+            if block.id == exit.to.block and block.term.op:lower_c_jump_dest() ~= nil then
+                jump_dest = block.term.op:lower_c_jump_dest()
                 jump_fact = edge_facts[block.id.text .. "\0" .. block.term.op.dest.text] or jump_fact
             end
         end
@@ -588,21 +514,20 @@ local function bind_context(T)
         return loop, body_set, edge_facts, exit_edge, latch_edge, body_successor, cond, loop_fact
     end
 
+    function Kernel.KernelEffect:lower_c_place_effect(c_emission, effects_by_block) error("lower_to_c: unsupported KernelEffect in planned kernel", 2) end
+    function Kernel.KernelEffectFold:lower_c_place_effect(c_emission, effects_by_block) end
+    function Kernel.KernelEffectStore:lower_c_place_effect(c_emission, effects_by_block)
+        local access = first_write_access(c_emission, self.dst)
+        local block = access and access.block and access.block.block
+        if block ~= nil then effects_by_block[block.text] = effects_by_block[block.text] or {}; effects_by_block[block.text][#effects_by_block[block.text] + 1] = self end
+    end
     local function place_bindings_effects(c_emission, kplan)
         local bindings_by_block, effects_by_block = {}, {}
         for _, binding in ipairs(kplan.body.bindings or {}) do
             local block = c_emission.kernel_value_block[binding.id.text]
             if block ~= nil then bindings_by_block[block.text] = bindings_by_block[block.text] or {}; bindings_by_block[block.text][#bindings_by_block[block.text] + 1] = binding end
         end
-        for _, effect in ipairs(kplan.body.effects or {}) do
-            if asdl.classof(effect) == Kernel.KernelEffectStore then
-                local access = first_write_access(c_emission, effect.dst)
-                local block = access and access.block and access.block.block
-                if block ~= nil then effects_by_block[block.text] = effects_by_block[block.text] or {}; effects_by_block[block.text][#effects_by_block[block.text] + 1] = effect end
-            elseif asdl.classof(effect) ~= Kernel.KernelEffectFold then
-                error("lower_to_c: unsupported KernelEffect in planned kernel", 2)
-            end
-        end
+        for _, effect in ipairs(kplan.body.effects or {}) do effect:lower_c_place_effect(c_emission, effects_by_block) end
         return bindings_by_block, effects_by_block
     end
 
@@ -649,13 +574,9 @@ local function bind_context(T)
             c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(dst, binary_helper(c_emission, Core.BinAdd, counter_ty, nil), { atom(c_emission.vector_counter), C.CBackendAtomLiteral(c_ty(c_emission, counter_ty), Core.LitInt(tostring(lane))) })
             idx = C.CBackendAtomLocal(dst)
         end
-        local elem_size = 1
-        local const_offset = 0
-        local icls = access and asdl.classof(access.index) or nil
-        if icls == Mem.MemIndexValue or icls == Mem.MemIndexInduction then
-            elem_size = access.index.elem_size or 1
-            const_offset = access.index.const_offset or 0
-        end
+        local index = access and access.index or nil
+        local elem_size = index and index:lower_c_elem_size() or 1
+        local const_offset = index and index:lower_c_const_offset() or 0
         local base = base_atom(c_emission, lane_desc.base)
         if const_offset ~= 0 then
             local ptr = tmp(c_emission, "vec_lane_ptr", Code.CodeTyDataPtr(lane_desc.elem_ty))
@@ -673,123 +594,63 @@ local function bind_context(T)
         return vector_lane_place_for_access(c_emission, lane_desc, first_write_access(c_emission, lane_desc), lane, counter_ty)
     end
 
-    local lower_value_expr_lane, lower_kernel_expr_lane
-
-    lower_value_expr_lane = function(c_emission, expr, lane, index_ty)
-        local cls = asdl.classof(expr)
-        if cls == Value.ValueExprValue then
-            local cached = c_emission.lane_value_by_code and c_emission.lane_value_by_code[expr.value.text]
-            if cached ~= nil then return cached.atom, cached.ty end
-            return lower_value_expr(c_emission, expr)
-        elseif cls == Value.ValueExprConst then
-            return const_atom(c_emission, expr.const)
-        elseif cls == Value.ValueExprAdd or cls == Value.ValueExprSub or cls == Value.ValueExprMul or cls == Value.ValueExprDiv or cls == Value.ValueExprRem then
-            local a, aty = lower_value_expr_lane(c_emission, expr.a, lane, index_ty)
-            local b, bty = lower_value_expr_lane(c_emission, expr.b, lane, index_ty)
-            a = cast_to(c_emission, a, aty, expr.ty, "vec_bin_lhs")
-            b = cast_to(c_emission, b, bty, expr.ty, "vec_bin_rhs")
-            local dst = tmp(c_emission, "vec_bin", expr.ty)
-            local op = (cls == Value.ValueExprAdd and Core.BinAdd) or (cls == Value.ValueExprSub and Core.BinSub) or (cls == Value.ValueExprMul and Core.BinMul) or (cls == Value.ValueExprRem and Core.BinRem) or Core.BinDiv
-            c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(dst, binary_helper(c_emission, op, expr.ty, expr.sem), { a, b })
-            return C.CBackendAtomLocal(dst), expr.ty
-        elseif cls == Value.ValueExprBinary then
-            local a, aty = lower_value_expr_lane(c_emission, expr.a, lane, index_ty)
-            local b, bty = lower_value_expr_lane(c_emission, expr.b, lane, index_ty)
-            a = cast_to(c_emission, a, aty, expr.ty, "vec_bin_lhs")
-            b = cast_to(c_emission, b, bty, expr.ty, "vec_bin_rhs")
-            local dst = tmp(c_emission, "vec_bin", expr.ty)
-            c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(dst, binary_helper(c_emission, expr.op, expr.ty, expr.sem), { a, b })
-            return C.CBackendAtomLocal(dst), expr.ty
-        elseif cls == Value.ValueExprCmp then
-            local a, aty = lower_value_expr_lane(c_emission, expr.a, lane, index_ty)
-            local b, bty = lower_value_expr_lane(c_emission, expr.b, lane, index_ty)
-            a = cast_to(c_emission, a, aty, expr.ty, "vec_cmp_lhs")
-            b = cast_to(c_emission, b, bty, expr.ty, "vec_cmp_rhs")
-            local dst = tmp(c_emission, "vec_cmp", Code.CodeTyBool8)
-            assign(c_emission, dst, C.CBackendRCompare(expr.op, c_ty(c_emission, expr.ty), a, b))
-            return C.CBackendAtomLocal(dst), Code.CodeTyBool8
-        elseif cls == Value.ValueExprSelect then
-            local cnd = lower_value_expr_lane(c_emission, expr.cond, lane, index_ty)
-            local t, tty = lower_value_expr_lane(c_emission, expr.t, lane, index_ty)
-            local f, fty = lower_value_expr_lane(c_emission, expr.f, lane, index_ty)
-            local ty = tty or fty
-            t = cast_to(c_emission, t, tty, ty, "vec_sel_t")
-            f = cast_to(c_emission, f, fty, ty, "vec_sel_f")
-            local dst = tmp(c_emission, "vec_select", ty)
-            assign(c_emission, dst, C.CBackendRSelect(c_ty(c_emission, ty), cnd, t, f))
-            return C.CBackendAtomLocal(dst), ty
-        elseif cls == Value.ValueExprAffine then
-            local ty = expr.affine.ty
-            local acc, acc_ty = nil, nil
-            if expr.affine.constant ~= "0" then acc, acc_ty = const_atom(c_emission, Code.CodeConstLiteral(ty, Core.LitInt(expr.affine.constant))) end
-            for _, term in ipairs(expr.affine.terms or {}) do
-                local tv, tty = lower_value_expr_lane(c_emission, Value.ValueExprValue(term.value), lane, index_ty)
-                tv = cast_to(c_emission, tv, tty, ty, "vec_affine_cast")
-                if term.coeff ~= "1" then
-                    local cv = C.CBackendAtomLiteral(c_ty(c_emission, ty), Core.LitInt(term.coeff))
-                    local mul = tmp(c_emission, "vec_affine_mul", ty)
-                    c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(mul, binary_helper(c_emission, Core.BinMul, ty, expr.affine.sem), { tv, cv })
-                    tv = C.CBackendAtomLocal(mul)
-                end
-                if acc == nil then acc, acc_ty = tv, ty else
-                    local sum = tmp(c_emission, "vec_affine_add", ty)
-                    c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(sum, binary_helper(c_emission, Core.BinAdd, ty, expr.affine.sem), { acc, tv })
-                    acc, acc_ty = C.CBackendAtomLocal(sum), ty
-                end
-            end
-            if acc == nil then return C.CBackendAtomLiteral(c_ty(c_emission, ty), Core.LitInt("0")), ty end
-            return acc, acc_ty
-        end
-        return lower_value_expr(c_emission, expr)
+    function Value.ValueExpr:lower_c_value_lane(c_emission, lane, index_ty) return self:lower_c_value(c_emission) end
+    function Value.ValueExprValue:lower_c_value_lane(c_emission, lane, index_ty)
+        local cached = c_emission.lane_value_by_code and c_emission.lane_value_by_code[self.value.text]
+        if cached ~= nil then return cached.atom, cached.ty end
+        return self:lower_c_value(c_emission)
     end
+    function Value.ValueExprConst:lower_c_value_lane(c_emission, lane, index_ty) return const_atom(c_emission, self.const) end
+    function Value.ValueExprAdd:lower_c_value_lane(c_emission, lane, index_ty) return lower_binary_value(c_emission,self,Core.BinAdd,lane,index_ty) end
+    function Value.ValueExprSub:lower_c_value_lane(c_emission, lane, index_ty) return lower_binary_value(c_emission,self,Core.BinSub,lane,index_ty) end
+    function Value.ValueExprMul:lower_c_value_lane(c_emission, lane, index_ty) return lower_binary_value(c_emission,self,Core.BinMul,lane,index_ty) end
+    function Value.ValueExprDiv:lower_c_value_lane(c_emission, lane, index_ty) return lower_binary_value(c_emission,self,Core.BinDiv,lane,index_ty) end
+    function Value.ValueExprRem:lower_c_value_lane(c_emission, lane, index_ty) return lower_binary_value(c_emission,self,Core.BinRem,lane,index_ty) end
+    function Value.ValueExprBinary:lower_c_value_lane(c_emission, lane, index_ty) return lower_binary_value(c_emission,self,self.op,lane,index_ty) end
+    function Value.ValueExprCmp:lower_c_value_lane(c_emission, lane, index_ty) local a,aty=lower_value_expr_lane(c_emission,self.a,lane,index_ty); local b,bty=lower_value_expr_lane(c_emission,self.b,lane,index_ty); a=cast_to(c_emission,a,aty,self.ty,"vec_cmp_lhs"); b=cast_to(c_emission,b,bty,self.ty,"vec_cmp_rhs"); local dst=tmp(c_emission,"vec_cmp",Code.CodeTyBool8); assign(c_emission,dst,C.CBackendRCompare(self.op,c_ty(c_emission,self.ty),a,b)); return C.CBackendAtomLocal(dst),Code.CodeTyBool8 end
+    function Value.ValueExprSelect:lower_c_value_lane(c_emission, lane, index_ty) local cnd=lower_value_expr_lane(c_emission,self.cond,lane,index_ty); local t,tty=lower_value_expr_lane(c_emission,self.t,lane,index_ty); local f,fty=lower_value_expr_lane(c_emission,self.f,lane,index_ty); local ty=tty or fty; t=cast_to(c_emission,t,tty,ty,"vec_sel_t"); f=cast_to(c_emission,f,fty,ty,"vec_sel_f"); local dst=tmp(c_emission,"vec_select",ty); assign(c_emission,dst,C.CBackendRSelect(c_ty(c_emission,ty),cnd,t,f)); return C.CBackendAtomLocal(dst),ty end
+    function Value.ValueExprAffine:lower_c_value_lane(c_emission, lane, index_ty) local ty=self.affine.ty; local acc,acc_ty=nil,nil; if self.affine.constant ~= "0" then acc,acc_ty=const_atom(c_emission,Code.CodeConstLiteral(ty,Core.LitInt(self.affine.constant))) end; for _,term in ipairs(self.affine.terms or {}) do local tv,tty=lower_value_expr_lane(c_emission,Value.ValueExprValue(term.value),lane,index_ty); tv=cast_to(c_emission,tv,tty,ty,"vec_affine_cast"); if term.coeff ~= "1" then local cv=C.CBackendAtomLiteral(c_ty(c_emission,ty),Core.LitInt(term.coeff)); local mul=tmp(c_emission,"vec_affine_mul",ty); c_emission.stmts[#c_emission.stmts+1]=C.CBackendHelperCall(mul,binary_helper(c_emission,Core.BinMul,ty,self.affine.sem),{tv,cv}); tv=C.CBackendAtomLocal(mul) end; if acc==nil then acc,acc_ty=tv,ty else local sum=tmp(c_emission,"vec_affine_add",ty); c_emission.stmts[#c_emission.stmts+1]=C.CBackendHelperCall(sum,binary_helper(c_emission,Core.BinAdd,ty,self.affine.sem),{acc,tv}); acc,acc_ty=C.CBackendAtomLocal(sum),ty end end; if acc==nil then return C.CBackendAtomLiteral(c_ty(c_emission,ty),Core.LitInt("0")),ty end; return acc,acc_ty end
+    lower_value_expr_lane = function(c_emission, expr, lane, index_ty) return expr:lower_c_value_lane(c_emission, lane, index_ty) end
 
-    lower_kernel_expr_lane = function(c_emission, expr, lane, index_ty)
-        local cls = asdl.classof(expr)
-        if cls == Kernel.KernelExprValue then
-            local cached = c_emission.lane_value_by_code and c_emission.lane_value_by_code[expr.value.text]
-            if cached ~= nil then return cached.atom, cached.ty end
-            return atom(expr.value), value_ty(c_emission, expr.value)
-        elseif cls == Kernel.KernelExprKernelValue then
-            local cached = c_emission.lane_value_by_kernel and c_emission.lane_value_by_kernel[expr.value.text]
-            if cached ~= nil then return cached.atom, cached.ty end
-            local binding = c_emission.kernel_binding_by_id[expr.value.text]
-            if binding == nil then return kernel_value_atom(c_emission, expr.value) end
-            local v, ty = lower_kernel_expr_lane(c_emission, binding.expr, lane, index_ty)
-            c_emission.lane_value_by_kernel[expr.value.text] = { atom = v, ty = ty }
-            local code_id = c_emission.kernel_value_code_id and c_emission.kernel_value_code_id[expr.value.text]
-            if code_id ~= nil then c_emission.lane_value_by_code[code_id.text] = { atom = v, ty = ty } end
-            return v, ty
-        elseif cls == Kernel.KernelExprAlgebra then
-            return lower_value_expr_lane(c_emission, expr.expr, lane, index_ty)
-        elseif cls == Kernel.KernelExprLaneLoad then
-            local dst = tmp(c_emission, "vec_lane_load", expr.lane.elem_ty)
-            local place = vector_read_lane_place(c_emission, expr.lane, lane, index_ty)
-            c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceLoad(dst, place)
-            return C.CBackendAtomLocal(dst), expr.lane.elem_ty
-        end
-        error("lower_to_c: unsupported vector KernelExpr " .. class_name(expr), 3)
+    function Kernel.KernelExpr:lower_c_kernel_expr_lane(c_emission, lane, index_ty) error("lower_to_c: unsupported vector KernelExpr " .. node_name(self), 3) end
+    function Kernel.KernelExprValue:lower_c_kernel_expr_lane(c_emission, lane, index_ty) local cached=c_emission.lane_value_by_code and c_emission.lane_value_by_code[self.value.text]; if cached ~= nil then return cached.atom,cached.ty end; return atom(self.value), value_ty(c_emission,self.value) end
+    function Kernel.KernelExprKernelValue:lower_c_kernel_expr_lane(c_emission, lane, index_ty)
+        local cached = c_emission.lane_value_by_kernel and c_emission.lane_value_by_kernel[self.value.text]
+        if cached ~= nil then return cached.atom, cached.ty end
+        local binding = c_emission.kernel_binding_by_id[self.value.text]
+        if binding == nil then return kernel_value_atom(c_emission, self.value) end
+        local v, ty = lower_kernel_expr_lane(c_emission, binding.expr, lane, index_ty)
+        c_emission.lane_value_by_kernel[self.value.text] = { atom = v, ty = ty }
+        local code_id = c_emission.kernel_value_code_id and c_emission.kernel_value_code_id[self.value.text]
+        if code_id ~= nil then c_emission.lane_value_by_code[code_id.text] = { atom = v, ty = ty } end
+        return v, ty
     end
+    function Kernel.KernelExprAlgebra:lower_c_kernel_expr_lane(c_emission, lane, index_ty) return lower_value_expr_lane(c_emission, self.expr, lane, index_ty) end
+    function Kernel.KernelExprLaneLoad:lower_c_kernel_expr_lane(c_emission, lane, index_ty) local dst=tmp(c_emission,"vec_lane_load",self.lane.elem_ty); local place=vector_read_lane_place(c_emission,self.lane,lane,index_ty); c_emission.stmts[#c_emission.stmts+1]=C.CBackendPlaceLoad(dst,place); return C.CBackendAtomLocal(dst),self.lane.elem_ty end
+    lower_kernel_expr_lane = function(c_emission, expr, lane, index_ty) return expr:lower_c_kernel_expr_lane(c_emission, lane, index_ty) end
 
-    local function emit_vector_lane_effect(c_emission, effect, lane, index_ty)
-        if asdl.classof(effect) ~= Kernel.KernelEffectStore then return end
+    function Kernel.KernelEffect:lower_c_emit_vector_lane(c_emission, lane, index_ty) end
+    function Kernel.KernelEffectStore:lower_c_emit_vector_lane(c_emission, lane, index_ty)
         c_emission.lane_value_by_code = {}
         c_emission.lane_value_by_kernel = {}
-        for _, binding in ipairs(c_emission.current_kernel_bindings or {}) do
-            lower_kernel_expr_lane(c_emission, Kernel.KernelExprKernelValue(binding.id), lane, index_ty)
-        end
-        local value, vty = lower_kernel_expr_lane(c_emission, effect.value, lane, index_ty)
-        value = cast_to(c_emission, value, vty, effect.dst.elem_ty, "vec_store_cast")
-        local place = vector_write_lane_place(c_emission, effect.dst, lane, index_ty)
+        for _, binding in ipairs(c_emission.current_kernel_bindings or {}) do lower_kernel_expr_lane(c_emission, Kernel.KernelExprKernelValue(binding.id), lane, index_ty) end
+        local value, vty = lower_kernel_expr_lane(c_emission, self.value, lane, index_ty)
+        value = cast_to(c_emission, value, vty, self.dst.elem_ty, "vec_store_cast")
+        local place = vector_write_lane_place(c_emission, self.dst, lane, index_ty)
         c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceStore(place, value)
     end
+    local function emit_vector_lane_effect(c_emission, effect, lane, index_ty) return effect:lower_c_emit_vector_lane(c_emission, lane, index_ty) end
+
+    function Schedule.ScheduleForm:lower_c_vector_lanes() return nil end
+    function Schedule.ScheduleVector:lower_c_vector_lanes() return self.lanes:lower_c_lane_count() end
+    function Schedule.LaneShape:lower_c_lane_count() return nil end
+    function Schedule.LaneVector:lower_c_lane_count() return self.lanes end
 
     local function emit_vector_kernel_fragment(c_emission, graph, flow, kernels, schedules, fragment)
         local kplan = kernel_by_id(kernels)[fragment.strategy.kernel.text]
         local sched = schedule_by_id(schedules)[fragment.strategy.schedule.text]
-        if kplan == nil or sched == nil or asdl.classof(sched.form) ~= Schedule.ScheduleVector then error("lower_to_c: vector kernel strategy requires ScheduleVector", 2) end
-        local lane_shape = sched.form.lanes
-        if asdl.classof(lane_shape) ~= Schedule.LaneVector then error("lower_to_c: vector schedule requires LaneVector", 2) end
-        local lanes = lane_shape.lanes
+        if kplan == nil or sched == nil or sched.form:lower_c_vector_lanes() == nil then error("lower_to_c: vector kernel strategy requires ScheduleVector", 2) end
+        local lanes = sched.form:lower_c_vector_lanes()
         local loop, body_set, edge_facts, exit_edge, latch_edge, body_successor, scalar_cond, loop_fact = loop_partition(c_emission, graph, flow, kplan)
         if loop_fact == nil or loop_fact.counted == nil or kplan.body.domain.counter == nil then error("lower_to_c: vector kernel requires counted loop", 2) end
         c_emission.current_kernel_bindings = kplan.body.bindings or {}
@@ -849,21 +710,15 @@ local function bind_context(T)
         end
     end
 
+    function Lower.LowerCover:lower_c_cover_blocks(func, graph_loops, add) end
+    function Lower.LowerCoverFunction:lower_c_cover_blocks(func, graph_loops, add) for _, b in ipairs(func.blocks or {}) do add(b) end end
+    function Lower.LowerCoverBlock:lower_c_cover_blocks(func, graph_loops, add) for _, b in ipairs(func.blocks or {}) do if b.id == self.block then add(b) end end end
+    function Lower.LowerCoverLoop:lower_c_cover_blocks(func, graph_loops, add) local loop=graph_loops[self.loop.text]; local body={}; for _,gb in ipairs(loop and loop.body or {}) do body[gb.block.text]=true end; for _,b in ipairs(func.blocks or {}) do if body[b.id.text] then add(b) end end end
+    function Lower.LowerCoverBlockRange:lower_c_cover_blocks(func, graph_loops, add) local active=false; for _,b in ipairs(func.blocks or {}) do if b.id == self.entry then active=true end; if active then add(b) end; if b.id == self.exit then break end end end
     local function cover_blocks(fragment, func, graph_loops)
-        local cover = fragment.cover
-        local cls = asdl.classof(cover)
         local out, set = {}, {}
         local function add(block) if block and not set[block.id.text] then set[block.id.text] = true; out[#out + 1] = block end end
-        if cls == Lower.LowerCoverFunction then for _, b in ipairs(func.blocks or {}) do add(b) end
-        elseif cls == Lower.LowerCoverBlock then for _, b in ipairs(func.blocks or {}) do if b.id == cover.block then add(b) end end
-        elseif cls == Lower.LowerCoverLoop then
-            local loop = graph_loops[cover.loop.text]
-            local body = {}; for _, gb in ipairs(loop and loop.body or {}) do body[gb.block.text] = true end
-            for _, b in ipairs(func.blocks or {}) do if body[b.id.text] then add(b) end end
-        elseif cls == Lower.LowerCoverBlockRange then
-            local active = false
-            for _, b in ipairs(func.blocks or {}) do if b.id == cover.entry then active = true end; if active then add(b) end; if b.id == cover.exit then break end end
-        end
+        fragment.cover:lower_c_cover_blocks(func, graph_loops, add)
         return out, set
     end
 
@@ -904,77 +759,41 @@ local function bind_context(T)
             c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceLoad(cid(dst), C.CBackendPlaceField(C.CBackendPlaceLocal(cid(view), c_ty(c_emission, vty)), C.CBackendName(field), c_ty(c_emission, ty), 0, nil, nil))
         end
 
+        function Code.CodeInstOp:lower_c_descriptor_collect() end
+        function Code.CodeInstViewMake:lower_c_descriptor_collect()
+            note_value(c_emission, self.dst, Code.CodeTyView(self.elem_ty))
+            components[self.dst.text] = { data = ref(self.data, Code.CodeTyDataPtr(self.elem_ty)), len = ref(self.len, Code.CodeTyIndex), stride = ref(self.stride, Code.CodeTyIndex) }
+        end
+        function Code.CodeInstSliceMake:lower_c_descriptor_collect()
+            note_value(c_emission, self.dst, Code.CodeTySlice(self.elem_ty))
+            components[self.dst.text] = { data = ref(self.data, Code.CodeTyDataPtr(self.elem_ty)), len = ref(self.len, Code.CodeTyIndex) }
+        end
+        function Code.CodeInstByteSpanMake:lower_c_descriptor_collect()
+            note_value(c_emission, self.dst, Code.CodeTyByteSpan)
+            components[self.dst.text] = { data = ref(self.data, Code.CodeTyDataPtr(byte_ty())), len = ref(self.len, Code.CodeTyIndex) }
+        end
+        function Code.CodeInstAlias:lower_c_descriptor_collect()
+            local ty = value_ty(c_emission, self.dst)
+            if ty == nil or not ty:lower_c_is_descriptor_like() then return end
+            local src = resolve_view(self.src)
+            if src ~= nil then aliases[self.dst.text] = src end
+            if src ~= nil and components[src.text] ~= nil then components[self.dst.text] = components[src.text] end
+        end
+        function Code.CodeInstOp:lower_c_descriptor_emit() end
+        function Code.CodeInstViewData:lower_c_descriptor_emit() local src = component(self.view, "data"); if src ~= nil then emit_assign_once(self.dst, src) else emit_field_load(self.dst, resolve_view(self.view), "data", view_data_type(c_emission, self.view)) end end
+        function Code.CodeInstViewLen:lower_c_descriptor_emit() local src = component(self.view, "len"); if src ~= nil then emit_assign_once(self.dst, src) else emit_field_load(self.dst, resolve_view(self.view), "len", Code.CodeTyIndex) end end
+        function Code.CodeInstViewStride:lower_c_descriptor_emit() local src = component(self.view, "stride"); if src ~= nil then emit_assign_once(self.dst, src) else emit_field_load(self.dst, resolve_view(self.view), "stride", Code.CodeTyIndex) end end
+        function Code.CodeInstSliceData:lower_c_descriptor_emit() local src = component(self.slice, "data"); if src ~= nil then emit_assign_once(self.dst, src) else emit_field_load(self.dst, resolve_view(self.slice), "data", slice_data_type(c_emission, self.slice)) end end
+        function Code.CodeInstSliceLen:lower_c_descriptor_emit() local src = component(self.slice, "len"); if src ~= nil then emit_assign_once(self.dst, src) else emit_field_load(self.dst, resolve_view(self.slice), "len", Code.CodeTyIndex) end end
+        function Code.CodeInstByteSpanData:lower_c_descriptor_emit() local src = component(self.span, "data"); if src ~= nil then emit_assign_once(self.dst, src) else emit_field_load(self.dst, resolve_view(self.span), "data", Code.CodeTyDataPtr(byte_ty())) end end
+        function Code.CodeInstByteSpanLen:lower_c_descriptor_emit() local src = component(self.span, "len"); if src ~= nil then emit_assign_once(self.dst, src) else emit_field_load(self.dst, resolve_view(self.span), "len", Code.CodeTyIndex) end end
+
         for _, block in ipairs(c_emission.code_func.blocks or {}) do
-            if covered[block.id.text] then
-                for _, inst in ipairs(block.insts or {}) do
-                    local k = inst.op
-                    local cls = asdl.classof(k)
-                    if cls == Code.CodeInstViewMake then
-                        local vty = Code.CodeTyView(k.elem_ty)
-                        note_value(c_emission, k.dst, vty)
-                        components[k.dst.text] = {
-                            data = ref(k.data, Code.CodeTyDataPtr(k.elem_ty)),
-                            len = ref(k.len, Code.CodeTyIndex),
-                            stride = ref(k.stride, Code.CodeTyIndex),
-                        }
-                    elseif cls == Code.CodeInstSliceMake then
-                        local sty = Code.CodeTySlice(k.elem_ty)
-                        note_value(c_emission, k.dst, sty)
-                        components[k.dst.text] = {
-                            data = ref(k.data, Code.CodeTyDataPtr(k.elem_ty)),
-                            len = ref(k.len, Code.CodeTyIndex),
-                        }
-                    elseif cls == Code.CodeInstByteSpanMake then
-                        note_value(c_emission, k.dst, Code.CodeTyByteSpan)
-                        components[k.dst.text] = {
-                            data = ref(k.data, Code.CodeTyDataPtr(byte_ty())),
-                            len = ref(k.len, Code.CodeTyIndex),
-                        }
-                    elseif cls == Code.CodeInstAlias and (asdl.classof(value_ty(c_emission, k.dst)) == Code.CodeTyView or asdl.classof(value_ty(c_emission, k.dst)) == Code.CodeTySlice or value_ty(c_emission, k.dst) == Code.CodeTyByteSpan or asdl.classof(value_ty(c_emission, k.dst)) == Code.CodeTyByteSpan) then
-                        local src = resolve_view(k.src)
-                        if src ~= nil then aliases[k.dst.text] = src end
-                        if src ~= nil and components[src.text] ~= nil then components[k.dst.text] = components[src.text] end
-                    end
-                end
-            end
+            if covered[block.id.text] then for _, inst in ipairs(block.insts or {}) do inst.op:lower_c_descriptor_collect() end end
         end
 
         for _, block in ipairs(c_emission.code_func.blocks or {}) do
-            if covered[block.id.text] and (only_block == nil or only_block == block.id) then
-                for _, inst in ipairs(block.insts or {}) do
-                    local k = inst.op
-                    local cls = asdl.classof(k)
-                    if cls == Code.CodeInstViewData then
-                        local src = component(k.view, "data")
-                        if src ~= nil then emit_assign_once(k.dst, src)
-                        else emit_field_load(k.dst, resolve_view(k.view), "data", view_data_type(c_emission, k.view)) end
-                    elseif cls == Code.CodeInstViewLen then
-                        local src = component(k.view, "len")
-                        if src ~= nil then emit_assign_once(k.dst, src)
-                        else emit_field_load(k.dst, resolve_view(k.view), "len", Code.CodeTyIndex) end
-                    elseif cls == Code.CodeInstViewStride then
-                        local src = component(k.view, "stride")
-                        if src ~= nil then emit_assign_once(k.dst, src)
-                        else emit_field_load(k.dst, resolve_view(k.view), "stride", Code.CodeTyIndex) end
-                    elseif cls == Code.CodeInstSliceData then
-                        local src = component(k.slice, "data")
-                        if src ~= nil then emit_assign_once(k.dst, src)
-                        else emit_field_load(k.dst, resolve_view(k.slice), "data", slice_data_type(c_emission, k.slice)) end
-                    elseif cls == Code.CodeInstSliceLen then
-                        local src = component(k.slice, "len")
-                        if src ~= nil then emit_assign_once(k.dst, src)
-                        else emit_field_load(k.dst, resolve_view(k.slice), "len", Code.CodeTyIndex) end
-                    elseif cls == Code.CodeInstByteSpanData then
-                        local src = component(k.span, "data")
-                        if src ~= nil then emit_assign_once(k.dst, src)
-                        else emit_field_load(k.dst, resolve_view(k.span), "data", Code.CodeTyDataPtr(byte_ty())) end
-                    elseif cls == Code.CodeInstByteSpanLen then
-                        local src = component(k.span, "len")
-                        if src ~= nil then emit_assign_once(k.dst, src)
-                        else emit_field_load(k.dst, resolve_view(k.span), "len", Code.CodeTyIndex) end
-                    end
-                end
-            end
+            if covered[block.id.text] and (only_block == nil or only_block == block.id) then for _, inst in ipairs(block.insts or {}) do inst.op:lower_c_descriptor_emit() end end
         end
     end
 
@@ -997,10 +816,10 @@ local function bind_context(T)
         return ordered
     end
 
-    local function semantic_strategy(fragment)
-        local cls = asdl.classof(fragment.strategy)
-        return cls == Lower.LowerStrategyKernel or cls == Lower.LowerStrategyClosedForm
-    end
+    function Lower.LowerStrategy:lower_c_is_semantic_strategy() return false end
+    function Lower.LowerStrategyKernel:lower_c_is_semantic_strategy() return true end
+    function Lower.LowerStrategyClosedForm:lower_c_is_semantic_strategy() return true end
+    local function semantic_strategy(fragment) return fragment.strategy:lower_c_is_semantic_strategy() end
 
     local function lower_emit_candidate(fragment, schedules_by_id)
         return fragment.strategy:lower_emit_candidate(fragment.strategy:lower_emit_schedule(schedules_by_id))
@@ -1068,25 +887,7 @@ local function bind_context(T)
         c_emission.local_seen = {}
         for _, p in ipairs(c_func.params or {}) do c_emission.local_seen[p.id.text] = true end
         for _, l in ipairs(c_func.locals or {}) do c_emission.local_seen[l.id.text] = true end
-        local function note_inst_dst(block, k)
-            local cls = asdl.classof(k)
-            local dst, ty = nil, nil
-            if cls == Code.CodeInstConst then dst, ty = k.dst, k.const.ty; c_emission.const_by_value[k.dst.text] = k.const
-            elseif cls == Code.CodeInstAlias or cls == Code.CodeInstUnary or cls == Code.CodeInstBinary or cls == Code.CodeInstFloatBinary or cls == Code.CodeInstSelect then dst, ty = k.dst, k.ty
-            elseif cls == Code.CodeInstCompare then dst, ty = k.dst, Code.CodeTyBool8
-            elseif cls == Code.CodeInstCast then dst, ty = k.dst, k.to
-            elseif cls == Code.CodeInstAddrOf or cls == Code.CodeInstGlobalRef or cls == Code.CodeInstPtrOffset then dst, ty = k.dst, k.ptr_ty
-            elseif cls == Code.CodeInstLoad or cls == Code.CodeInstAtomicLoad or cls == Code.CodeInstAtomicRmw then dst, ty = k.dst, k.access.ty
-            elseif cls == Code.CodeInstViewMake then dst, ty = k.dst, Code.CodeTyView(k.elem_ty)
-            elseif cls == Code.CodeInstViewData then dst, ty = k.dst, Code.CodeTyDataPtr(nil)
-            elseif cls == Code.CodeInstViewLen or cls == Code.CodeInstViewStride then dst, ty = k.dst, Code.CodeTyIndex
-            elseif cls == Code.CodeInstSliceMake then dst, ty = k.dst, Code.CodeTySlice(k.elem_ty)
-            elseif cls == Code.CodeInstSliceData then dst, ty = k.dst, Code.CodeTyDataPtr(nil)
-            elseif cls == Code.CodeInstSliceLen then dst, ty = k.dst, Code.CodeTyIndex
-            elseif cls == Code.CodeInstByteSpanMake then dst, ty = k.dst, Code.CodeTyByteSpan
-            elseif cls == Code.CodeInstByteSpanData then dst, ty = k.dst, Code.CodeTyDataPtr(byte_ty())
-            elseif cls == Code.CodeInstByteSpanLen then dst, ty = k.dst, Code.CodeTyIndex
-            elseif cls == Code.CodeInstCall then dst = rawget(k, "dst") end
+        local function record_dst(block, dst, ty)
             if dst ~= nil and ty ~= nil then
                 note_value(c_emission, dst, ty)
                 local kid = Kernel.KernelValueId("kval:" .. dst.text)
@@ -1096,6 +897,33 @@ local function bind_context(T)
                 c_emission.kernel_value_code_id[kid.text] = dst
             end
         end
+        function Code.CodeInstOp:lower_c_note_dst(block) end
+        function Code.CodeInstConst:lower_c_note_dst(block) c_emission.const_by_value[self.dst.text] = self.const; record_dst(block, self.dst, self.const.ty) end
+        function Code.CodeInstAlias:lower_c_note_dst(block) record_dst(block, self.dst, self.ty) end
+        function Code.CodeInstUnary:lower_c_note_dst(block) record_dst(block, self.dst, self.ty) end
+        function Code.CodeInstBinary:lower_c_note_dst(block) record_dst(block, self.dst, self.ty) end
+        function Code.CodeInstFloatBinary:lower_c_note_dst(block) record_dst(block, self.dst, self.ty) end
+        function Code.CodeInstSelect:lower_c_note_dst(block) record_dst(block, self.dst, self.ty) end
+        function Code.CodeInstCompare:lower_c_note_dst(block) record_dst(block, self.dst, Code.CodeTyBool8) end
+        function Code.CodeInstCast:lower_c_note_dst(block) record_dst(block, self.dst, self.to) end
+        function Code.CodeInstAddrOf:lower_c_note_dst(block) record_dst(block, self.dst, self.ptr_ty) end
+        function Code.CodeInstGlobalRef:lower_c_note_dst(block) record_dst(block, self.dst, self.ptr_ty) end
+        function Code.CodeInstPtrOffset:lower_c_note_dst(block) record_dst(block, self.dst, self.ptr_ty) end
+        function Code.CodeInstLoad:lower_c_note_dst(block) record_dst(block, self.dst, self.access.ty) end
+        function Code.CodeInstAtomicLoad:lower_c_note_dst(block) record_dst(block, self.dst, self.access.ty) end
+        function Code.CodeInstAtomicRmw:lower_c_note_dst(block) record_dst(block, self.dst, self.access.ty) end
+        function Code.CodeInstViewMake:lower_c_note_dst(block) record_dst(block, self.dst, Code.CodeTyView(self.elem_ty)) end
+        function Code.CodeInstViewData:lower_c_note_dst(block) record_dst(block, self.dst, Code.CodeTyDataPtr(nil)) end
+        function Code.CodeInstViewLen:lower_c_note_dst(block) record_dst(block, self.dst, Code.CodeTyIndex) end
+        function Code.CodeInstViewStride:lower_c_note_dst(block) record_dst(block, self.dst, Code.CodeTyIndex) end
+        function Code.CodeInstSliceMake:lower_c_note_dst(block) record_dst(block, self.dst, Code.CodeTySlice(self.elem_ty)) end
+        function Code.CodeInstSliceData:lower_c_note_dst(block) record_dst(block, self.dst, Code.CodeTyDataPtr(nil)) end
+        function Code.CodeInstSliceLen:lower_c_note_dst(block) record_dst(block, self.dst, Code.CodeTyIndex) end
+        function Code.CodeInstByteSpanMake:lower_c_note_dst(block) record_dst(block, self.dst, Code.CodeTyByteSpan) end
+        function Code.CodeInstByteSpanData:lower_c_note_dst(block) record_dst(block, self.dst, Code.CodeTyDataPtr(byte_ty())) end
+        function Code.CodeInstByteSpanLen:lower_c_note_dst(block) record_dst(block, self.dst, Code.CodeTyIndex) end
+        function Code.CodeInstCall:lower_c_note_dst(block) record_dst(block, rawget(self, "dst"), nil) end
+        local function note_inst_dst(block, k) k:lower_c_note_dst(block) end
         for _, param in ipairs(code_func.params or {}) do note_value(c_emission, param.value, param.ty) end
         for _, b in ipairs(code_func.blocks or {}) do
             for _, param in ipairs(b.params or {}) do note_value(c_emission, param.value, param.ty) end
@@ -1134,10 +962,11 @@ local function bind_context(T)
         local out = {}; for _, f in ipairs(code_module.funcs or {}) do out[f.id.text] = f end; return out
     end
 
+    function C.CBackendFuncBody:lower_c_canonical_blocks() error("lower_to_c: semantic lowering requires canonical C block body", 3) end
+    function C.CBackendBodyBlocks:lower_c_canonical_blocks() return self.blocks end
     local function c_block_body(func)
         local body = assert(func and func.body, "lower_to_c: expected C function with body")
-        if asdl.classof(body) ~= C.CBackendBodyBlocks then error("lower_to_c: semantic lowering requires canonical C block body", 3) end
-        return body.blocks
+        return body:lower_c_canonical_blocks()
     end
 
     local function graph_indexes(graph)
@@ -1146,9 +975,11 @@ local function bind_context(T)
         return loops
     end
 
+    function Lower.LowerModule:lower_c_is_lower_module() return true end
+
     local function normalize_args(code_module, lower_module, opts)
         opts = opts or {}
-        if lower_module ~= nil and asdl.classof(lower_module) == Lower.LowerModule then
+        if lower_module ~= nil and lower_module.lower_c_is_lower_module and lower_module:lower_c_is_lower_module() then
             local graph = CodeGraph.graph(code_module)
             local flow = lower_module.kernels and lower_module.kernels.flow or CodeFlowFacts.facts(code_module, graph)
             local value = lower_module.kernels and lower_module.kernels.value or CodeValueFacts.facts(code_module, graph, flow)

@@ -195,7 +195,7 @@ function LalinSyntax.to_module(parsed_decls, name, T)
     local ty = parsed_type(ptype)
     local cls = asdl.classof(ty)
     if cls == Ty.TNamed or cls == Ty.THandle then return ty.ref end
-    error("parsed_to_module: " .. (site or "handle fact") .. " must be a named type such as `[named(\"Store\")]`", 2)
+    error("parsed_to_module: " .. (site or "handle fact") .. " must be a named type such as `[Store]` or `[Store.Ref]`", 2)
   end
 
   local function handle_invalid(raw)
@@ -236,7 +236,7 @@ function LalinSyntax.to_module(parsed_decls, name, T)
       local wiring = {}
       for i, wire in ipairs(lowered.wiring or {}) do
         local cont = cont_by_name[wire.target.label.name]
-        wiring[i] = cont and Tr.RegionContWire(wire.name, Tr.RegionWireCont(cont)) or wire
+        wiring[i] = cont and Tr.RegionContWire(wire.name, Tr.RegionWireCont(cont, wire.target.args or {})) or wire
       end
       if stmt.tag == "StmtEmit" then
         return Tr.StmtRegionEmit(lowered.h, lowered.invoke_id, lowered.target, lowered.args, wiring)
@@ -258,6 +258,12 @@ function LalinSyntax.to_module(parsed_decls, name, T)
         }
       end
       return Tr.StmtIf(Tr.StmtSurface, to_tree.expr(stmt.cond), then_body, else_body)
+    elseif stmt.tag == "StmtSwitch" then
+      local arms = {}
+      for i, arm in ipairs(stmt.arms or {}) do
+        arms[i] = Tr.SwitchStmtArm(to_tree.switch_key(arm.key), region_stmts(arm.body or {}, cont_by_name))
+      end
+      return Tr.StmtSwitch(Tr.StmtSurface, to_tree.expr(stmt.value), arms, {}, region_stmts(stmt.default_body or {}, cont_by_name))
     end
     return to_tree.stmt(stmt)
   end
@@ -365,14 +371,14 @@ function LalinSyntax.to_module(parsed_decls, name, T)
         for i, f in ipairs(to_tree.product_fields(v.fields or {})) do
           fields[i] = T.LalinType.FieldDecl(f.name, parsed_type(f.type))
         end
-        variants[#variants + 1] = Tr.VariantDecl(v.name, fields)
+        variants[#variants + 1] = Ty.VariantDecl(v.name, Ty.TScalar(C.ScalarVoid), fields)
       end
       return Tr.ItemType(Tr.TypeDeclTaggedUnionSugar(parsed.name, variants))
     elseif parsed.tag == "DeclHandle" then
       local facts = {}
       if parsed.domain ~= nil then facts[#facts + 1] = Ty.HandleDomain(handle_type_ref(parsed.domain, "handle domain")) end
       if parsed.target ~= nil then facts[#facts + 1] = Ty.HandleTarget(handle_type_ref(parsed.target, "handle target")) end
-      return Tr.ItemType(Tr.TypeDeclHandle(parsed.name, handle_repr(parsed.repr), handle_invalid(parsed.invalid), facts))
+      return Tr.ItemType(Tr.TypeDeclHandle(qualified_compiler_name(parsed), handle_repr(parsed.repr), handle_invalid(parsed.invalid), facts))
     elseif parsed.tag == "DeclRegion" then
       local rname = qualified_compiler_name(parsed)
       local params = {}

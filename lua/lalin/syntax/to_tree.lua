@@ -92,10 +92,18 @@ local function bind_context(T)
     error("parsed_to_tree: region invocation requires a callee path", 2)
   end
 
+  local function jump_args_from_payload(payload)
+    local out = {}
+    for _, f in ipairs(payload or {}) do
+      out[#out + 1] = Tr.JumpArg(f.key or "", ToTree.expr(f.value))
+    end
+    return out
+  end
+
   local function region_wiring(items)
     local out = {}
     for i, wire in ipairs(items or {}) do
-      out[i] = Tr.RegionContWire(wire.name, Tr.RegionWireBlock(Tr.BlockLabel(wire.target)))
+      out[i] = Tr.RegionContWire(wire.name, Tr.RegionWireBlock(Tr.BlockLabel(wire.target), jump_args_from_payload(wire.payload)))
     end
     return out
   end
@@ -149,6 +157,11 @@ local function bind_context(T)
       end
 
     elseif tag == "UnOp" then
+      if parsed.op == "addr" then
+        return Tr.ExprAddrOf(Tr.ExprSurface, ToTree.place(parsed.value))
+      elseif parsed.op == "deref" then
+        return Tr.ExprDeref(Tr.ExprSurface, ToTree.expr(parsed.value))
+      end
       local op = unop_map[parsed.op]
       if op then
         return Tr.ExprUnary(Tr.ExprSurface, op, ToTree.expr(parsed.value))
@@ -296,6 +309,32 @@ local function bind_context(T)
     return adapter:stmt(value)
   end
 
+  function ToTree.switch_key(parsed)
+    if type(parsed) ~= "table" then
+      if type(parsed) == "number" then return Tr.SwitchKeyInt(tostring(parsed)) end
+      if type(parsed) == "boolean" then return Tr.SwitchKeyBool(parsed) end
+    end
+    local cls = asdl.classof(parsed)
+    if cls == Tr.SwitchKeyInt or cls == Tr.SwitchKeyBool or cls == Tr.SwitchKeyName or cls == Tr.SwitchKeyExpr then return parsed end
+    if llbl.is(parsed, "HostEval") or (type(parsed) == "table" and parsed.tag == "HostEscape") then
+      local expr = ToTree.expr(parsed)
+      local ecls = asdl.classof(expr)
+      if ecls == Tr.ExprLit then
+        local lcls = asdl.classof(expr.value)
+        if lcls == C.LitInt then return Tr.SwitchKeyInt(expr.value.raw) end
+        if lcls == C.LitBool then return Tr.SwitchKeyBool(expr.value.value) end
+      end
+      return Tr.SwitchKeyExpr(expr)
+    end
+    if type(parsed) == "table" and parsed.tag == "Literal" then
+      if parsed.kind == "number" then return Tr.SwitchKeyInt(tostring(parsed.source or parsed.value or "0")) end
+      if parsed.kind == "boolean" then return Tr.SwitchKeyBool(parsed.value) end
+    elseif type(parsed) == "table" and parsed.tag == "Name" then
+      return Tr.SwitchKeyName(parsed.name)
+    end
+    return Tr.SwitchKeyExpr(ToTree.expr(parsed))
+  end
+
   --- Convert a parsed statement node to a LalinTree.Stmt.
   function ToTree.stmt(parsed)
     if type(parsed) ~= "table" then
@@ -359,16 +398,19 @@ local function bind_context(T)
       end
       return cond
 
+    elseif tag == "StmtSwitch" then
+      local arms = {}
+      for i, arm in ipairs(parsed.arms or {}) do
+        arms[i] = Tr.SwitchStmtArm(ToTree.switch_key(arm.key), ToTree.stmts(arm.body or {}))
+      end
+      return Tr.StmtSwitch(Tr.StmtSurface, ToTree.expr(parsed.value), arms, {}, ToTree.stmts(parsed.default_body or {}))
+
     elseif tag == "StmtForRange" then
       local loop_lower = require("lalin.syntax.for_to_loop")(T)
       return loop_lower.lower(parsed)
 
     elseif tag == "StmtJump" then
-      local payload = {}
-      for _, f in ipairs(parsed.payload or {}) do
-        payload[#payload + 1] = Tr.JumpArg(f.key or "", ToTree.expr(f.value))
-      end
-      return Tr.StmtJump(Tr.StmtSurface, Tr.BlockLabel(parsed.target), payload)
+      return Tr.StmtJump(Tr.StmtSurface, Tr.BlockLabel(parsed.target), jump_args_from_payload(parsed.payload))
 
     elseif tag == "StmtEmit" then
       local args = {}
@@ -379,6 +421,26 @@ local function bind_context(T)
       local args = {}
       for i, arg in ipairs(parsed.data_args or {}) do args[i] = ToTree.expr(arg) end
       return Tr.StmtRegionCall(Tr.StmtSurface, next_region_invoke_id("call"), region_target(parsed), args, region_wiring(parsed.cont_wiring))
+
+    elseif tag == "StmtControlRegion" then
+      local function block_params(fields)
+        local out = {}
+        for i, f in ipairs(ToTree.product_fields(fields or {})) do
+          out[i] = Tr.BlockParam(f.name, ToTree.parsed_type(f.type))
+        end
+        return out
+      end
+      local entry_src, block_src = nil, {}
+      for _, b in ipairs(parsed.blocks or {}) do
+        if b.tag == "RegionEntry" and entry_src == nil then entry_src = b else block_src[#block_src + 1] = b end
+      end
+      if entry_src == nil then error("parsed_to_tree: function control region requires an entry block", 2) end
+      local blocks = {}
+      for i, b in ipairs(block_src) do
+        blocks[i] = Tr.ControlBlock(Tr.BlockLabel(b.name), block_params(b.state or {}), ToTree.stmts(b.body or {}))
+      end
+      local entry = Tr.EntryControlBlock(Tr.BlockLabel(entry_src.name), block_params(entry_src.state or {}), ToTree.stmts(entry_src.body or {}))
+      return Tr.StmtControl(Tr.StmtSurface, Tr.ControlStmtRegion(parsed.region_id or next_region_invoke_id("function_control"), entry, blocks))
 
     elseif tag == "StmtFragment" then
       return stmt_list(ToTree.stmts(parsed.body))

@@ -360,6 +360,51 @@ return function(T)
         return Tr.TypeExprResult(Tr.ExprCall(Tr.ExprTyped(result_ty), callee.expr, args), result_ty, issues)
     end
 
+    local function find_variant_def(scope, type_name)
+        for i = 1, #(scope.facts and scope.facts.variants or {}) do
+            if scope.facts.variants[i].type_name == type_name then return scope.facts.variants[i] end
+        end
+        return nil
+    end
+
+    local function find_variant_case(def, variant_name)
+        for i = 1, #(def and def.variants or {}) do
+            if def.variants[i].name == variant_name then return def.variants[i] end
+        end
+        return nil
+    end
+
+    local function variant_payload_type(variant)
+        if variant == nil then return nil end
+        if #(variant.fields or {}) == 1 then return variant.fields[1].ty end
+        if #(variant.fields or {}) > 1 then return nil end
+        if variant.payload == nil or variant.payload:typecheck_tree_is_void_type() then return nil end
+        return variant.payload
+    end
+
+    function Tr.ExprCtor:typecheck_tree_expr(input)
+        local def = find_variant_def(input.scope, self.type_name)
+        local variant = find_variant_case(def, self.variant_name)
+        local result_ty = def and def.ty or void_ty()
+        local payload_ty = variant_payload_type(variant)
+        if payload_ty ~= nil then payload_ty = canonical_type(input.scope, payload_ty) end
+        local expected_args = payload_ty and 1 or 0
+        local args, issues = {}, {}
+        if def == nil or variant == nil then
+            issues[#issues + 1] = Tr.TypeIssueUnresolvedPath(C.Path({ C.Name(tostring(self.type_name)), C.Name(tostring(self.variant_name)) }))
+        end
+        if #(self.args or {}) ~= expected_args then
+            issues[#issues + 1] = Tr.TypeIssueArgCount("variant constructor", expected_args, #(self.args or {}))
+        end
+        if payload_ty ~= nil and #(self.args or {}) >= 1 then
+            local arg = self.args[1]:typecheck_tree_expr_expected(Tr.TypeExpectedExprInput(input.scope, payload_ty))
+            append_all(issues, arg.issues)
+            if not type_eq(payload_ty, arg.ty) then issues[#issues + 1] = Tr.TypeIssueExpected("variant payload", payload_ty, arg.ty) end
+            args[1] = arg.expr
+        end
+        return Tr.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(result_ty), self.type_name, self.variant_name, args), result_ty, issues)
+    end
+
     function Tr.ExprLoad:typecheck_tree_expr(input)
         local addr = self.addr:typecheck_tree_expr_expected(Tr.TypeExpectedExprInput(input.scope, Ty.TPtr(self.ty)))
         local issues = {}
@@ -531,6 +576,7 @@ return function(T)
     end
 
     function Tr.ExprAgg:typecheck_tree_expr(input)
+        local ty = canonical_type(input.scope, self.ty)
         local fields = {}
         local issues = {}
         for i = 1, #(self.fields or {}) do
@@ -539,7 +585,7 @@ return function(T)
             append_all(issues, value.issues)
             fields[#fields + 1] = Tr.FieldInit(field.name, value.expr, field.offset)
         end
-        return Tr.TypeExprResult(Tr.ExprAgg(Tr.ExprTyped(self.ty), self.ty, fields), self.ty, issues)
+        return Tr.TypeExprResult(Tr.ExprAgg(Tr.ExprTyped(ty), ty, fields), ty, issues)
     end
 
     function Ty.Type:typecheck_tree_expr_agg_expected(expr, input)

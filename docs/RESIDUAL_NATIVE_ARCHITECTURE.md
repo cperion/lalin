@@ -1,12 +1,15 @@
-# Native Copy-Patch Architecture
+# Experimental Native Copy-Patch Architecture
 
-This document is the binding architecture for Lalin native compilation.
+This document records the experimental C-stencil copy-patch architecture. It is
+not the main Lalin JIT or AOT path. The main path is `CBackendUnit -> emit_c`,
+then either GCC-cooked shared-object loading for JIT-like execution or a
+user-owned AOT C build.
 
 The filename still contains `RESIDUAL` for historical path stability. The
 architecture is residualless. Residual meant undefined compiler work hidden
 behind a bag name. That concept is deleted from the native compiler.
 
-The native backend is a C-stencil copy-patch compiler:
+The experimental native backend is a C-stencil copy-patch compiler:
 
 ```text
 LalinCode / LalinKernel / LalinStencil ASDL
@@ -44,6 +47,8 @@ memory, call protocols, and build results.
 
 ## Hard Decisions
 
+0. This is an experimental backend track. It must not be documented or treated as
+   the main JIT/AOT path; `emit_c` and GCC-owned C compilation are the main path.
 1. `LalinCode`, `LalinKernel`, and `LalinStencil` own semantic compiler shape.
 2. `LalinNative` owns artifact shape.
 3. A native family is the machine-template projection of an existing semantic
@@ -1124,9 +1129,10 @@ sum NativeRegionTransfer {
     else_to   NativeFastRegionId
   }
   NativeRegionSwitch      {
-    key      NativeTemplateValueId
-    cases    many NativeRegionSwitchCase
-    default  NativeFastRegionId
+    key        NativeTemplateValueId
+    step_shape NativeCodeSwitchStepShape
+    cases      many NativeRegionSwitchCase
+    default    NativeFastRegionId
   }
   NativeRegionCallReturn  {
     call_symbol    NativeRuntimeSymbolId
@@ -1153,6 +1159,11 @@ sum NativeFastRegionBody {
   }
 
   NativeCodeExprRegion {
+    shape NativeCodeExprRegionShape
+  }
+
+  NativeFastPublicCodeExprRegion {
+    abi   NativeFastPublicAbiShape
     shape NativeCodeExprRegionShape
   }
 
@@ -1242,17 +1253,22 @@ sum NativeFastPublicAbiShape {
 
 product NativeFastRegionCapability {
   public_abi_shapes many NativeFastPublicAbiShape
-  code_expr_shapes  many NativeCodeExprRegionShape
-  memory_shapes     many NativeCodeMemoryRegionShape
-  kernel_shapes     many NativeKernelStepRegionShape
-  stencil_shapes    many NativeStencilPointRegionShape
+  code_expr_shapes      many NativeCodeExprRegionShape
+  compare_branch_shapes many NativeCodeCompareShape
+  switch_step_shapes    many NativeCodeSwitchStepShape
+  memory_shapes         many NativeCodeMemoryRegionShape
+  kernel_shapes         many NativeKernelStepRegionShape
+  stencil_shapes        many NativeStencilPointRegionShape
 }
 ```
 
 A complete bank may include bounded fast public ABI shapes such as scalar
 arity-0/1/2/3 returns. These are closed capability classes. They are not a return
 of arbitrary full `CodeSig` as a bank axis: only the finite ABI class tuple is an
-axis. Larger or aggregate signatures use the baseline public ABI adapter graph.
+axis. A tiny scalar expression may be selected as `NativeFastPublicCodeExprRegion`,
+which combines that bounded ABI tuple with a bounded expression shape so the C
+stencil has the real public C signature and computes the expression directly.
+Larger or aggregate signatures use the baseline public ABI adapter graph.
 
 The lowering pipeline becomes:
 

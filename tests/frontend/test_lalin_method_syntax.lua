@@ -258,6 +258,30 @@ assert(#stmt13.cont_wiring == 3, "emit continuation wiring parsed")
 assert(stmt13.cont_wiring[1].name == "borrowed" and stmt13.cont_wiring[1].target == "on_borrowed", "borrowed = on_borrowed")
 print("Test 13: emit Region(args; cont = block) parses OK")
 
+-- Test 13b: continuation wire target application shorthand
+local lex13b = Lexer.new("call Tokenizer.skip_ws(self; done = check(tok, want, code))", "@test13b")
+local stmt13b = Stmt.parse(lex13b, { add_ref = function() end })
+assert(stmt13b.tag == "StmtCall", "wire target application parses as region call")
+assert(#stmt13b.cont_wiring == 1 and stmt13b.cont_wiring[1].target == "check", "done = check(...) target parsed")
+assert(#stmt13b.cont_wiring[1].payload == 3, "wire target args parsed")
+assert(stmt13b.cont_wiring[1].payload[1].key == "tok" and stmt13b.cont_wiring[1].payload[1].value.name == "tok", "tok shorthand parsed")
+local lowered13b = ToTree.stmt(stmt13b)
+assert(#lowered13b.wiring[1].target.args == 3, "wire target args lower to ASDL JumpArg list")
+assert(lowered13b.wiring[1].target.args[2].name == "want", "want shorthand lowers as JumpArg(want = want)")
+print("Test 13b: continuation target application shorthand parses and lowers OK")
+
+-- Test 13c: continuation wiring same-name shorthand
+local lex13c = Lexer.new("call LuaVM.dispatch(vm, frame, pc; returned, runtime_error, yielded(tok))", "@test13c")
+local stmt13c = Stmt.parse(lex13c, { add_ref = function() end })
+assert(#stmt13c.cont_wiring == 3, "same-name continuation shorthand parses")
+assert(stmt13c.cont_wiring[1].name == "returned" and stmt13c.cont_wiring[1].target == "returned", "returned means returned=returned")
+assert(stmt13c.cont_wiring[2].name == "runtime_error" and stmt13c.cont_wiring[2].target == "runtime_error", "runtime_error means runtime_error=runtime_error")
+assert(stmt13c.cont_wiring[3].name == "yielded" and stmt13c.cont_wiring[3].target == "yielded" and #stmt13c.cont_wiring[3].payload == 1, "yielded(tok) means yielded=yielded(tok)")
+local lowered13c = ToTree.stmt(stmt13c)
+assert(lowered13c.wiring[1].name == "returned" and lowered13c.wiring[1].target.label.name == "returned", "same-name shorthand lowers to RegionWireBlock")
+assert(#lowered13c.wiring[3].target.args == 1 and lowered13c.wiring[3].target.args[1].name == "tok", "same-name target application lowers args")
+print("Test 13c: same-name continuation wiring shorthand parses and lowers OK")
+
 -- Test 14: region invocation lowers to explicit ASDL leaves
 local lowered12 = ToTree.stmt(stmt12)
 assert(asdl.classof(lowered12) == Tr.StmtRegionCall, "call region should lower to StmtRegionCall")
@@ -297,5 +321,36 @@ local module16 = lalin_syntax.to_module(doc16, "jump_shorthand_doc", T)
 local args16 = module16.items[1].region.entry.body[1].args
 assert(args16[1].name == "pos" and args16[2].name == "code", "jump shorthand lowers to named JumpArg")
 print("Test 16: jump failed(pos, code) -> failed(pos=pos, code=code) OK")
+
+-- Test 17: parsed scalar switch lowers to ASDL switch and retargets continuation jumps in regions
+local lex17 = Lexer.new([=[switch op do
+case 3 then
+  jump add(a)
+default then
+  jump bad(op)
+end]=], "@test17")
+local stmt17 = Stmt.parse(lex17, { add_ref = function() end })
+assert(stmt17.tag == "StmtSwitch" and #stmt17.arms == 1, "switch statement parsed")
+local lowered17 = ToTree.stmt(stmt17)
+assert(asdl.classof(lowered17) == Tr.StmtSwitch and asdl.classof(lowered17.arms[1].key) == Tr.SwitchKeyInt, "switch lowers to scalar StmtSwitch")
+local doc17_src = [=[
+region VM.decode(op [u8]; add(a [u8]), bad(op [u8]))
+  entry start()
+    switch op do
+    case 3 then
+      jump add(a = op)
+    default then
+      jump bad(op)
+    end
+  end
+end
+]=]
+local doc17 = Document.parse(doc17_src, "@test17.lln")
+local module17 = lalin_syntax.to_module(doc17, "switch_region_doc", T)
+local switch17 = module17.items[1].region.entry.body[1]
+assert(asdl.classof(switch17) == Tr.StmtSwitch, "region switch lowers to StmtSwitch")
+assert(asdl.classof(switch17.arms[1].body[1]) == Tr.StmtJumpCont, "switch arm jump to continuation retargeted")
+assert(asdl.classof(switch17.default_body[1]) == Tr.StmtJumpCont, "switch default jump to continuation retargeted")
+print("Test 17: scalar switch parses, lowers, and retargets region continuations OK")
 
 print("\nAll method syntax tests passed!")

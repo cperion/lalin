@@ -1,13 +1,15 @@
 # Copy-Patch Template Enumeration Notes
 
-This note records the historical research pass for redesigning the Lalin native
-bank from first principles. It is not the binding implementation contract;
-`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` is. The current native backend is the
-residualless C-stencil copy-patch architecture. A complete language bank is
-produced from the closed micro-op capability vocabulary defined in
-`docs/RESIDUAL_NATIVE_ARCHITECTURE.md`; subset support domains are only tests or
-target subsets. The offline generator builds verified native template banks, and
-runtime compilation only copies, patches, and installs bank entries.
+This note records the historical research pass for redesigning the experimental
+Lalin native bank from first principles. It is not the main implementation
+contract. The main JIT/AOT path is `emit_c`: GCC cooks emitted C into a shared
+object for JIT-like execution, and the same C output is the AOT artifact. The
+copy-patch architecture is documented in `docs/RESIDUAL_NATIVE_ARCHITECTURE.md`
+as an experimental backend track. A complete experimental language bank is
+produced from the closed micro-op capability vocabulary defined there; subset
+support domains are only tests or target subsets. The offline generator builds
+verified native template banks, and runtime compilation only copies, patches,
+and installs bank entries when that experimental path is explicitly selected.
 
 ## Sources Read
 

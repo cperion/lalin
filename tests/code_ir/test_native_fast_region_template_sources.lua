@@ -26,10 +26,16 @@ local input1 = Native.NativeExprInput(1, i32)
 local binary_imm = Native.NativeExprReturnBinaryImmRhs(i32, Core.BinAdd, input0)
 local mul_add_imm = Native.NativeExprReturnMulAddImm(i32, input0, input1)
 local fast_abi = Native.NativeFastAbi2(abi_i32, abi_i32, abi_i32)
+local compare_branch = Native.NativeCompareBranchAtoms(Core.CmpLt, i32, input0, input1)
+local switch_step = Native.NativeSwitchStepAtoms(i32, input0)
 local capability = Native.NativeFastRegionCapability(
     { fast_abi },
     { binary_imm, mul_add_imm },
-    {}, {}, {}
+    { compare_branch },
+    { switch_step },
+    {},
+    {},
+    {}
 )
 
 local request = Sources.bank_request_for_fast_region_capability(
@@ -42,7 +48,7 @@ local request = Sources.bank_request_for_fast_region_capability(
 Sources.assert_manifest_matches_sources(request.manifest, request.sources)
 Sources.assert_unique_source_ids(request.sources)
 Sources.assert_unique_family_ids(request.sources)
-assert(#request.sources == 3, "fast region capability should produce one source per requested fast shape")
+assert(#request.sources == 7, "fast region capability should produce scalar, public ABI, and fused public/expression sources for requested fast shapes")
 
 local by_family = {}
 for _, source in ipairs(request.sources) do
@@ -65,6 +71,17 @@ assert(#mul_add_source.declared_holes == 4, "mul-add-imm source should bind two 
 assert(mul_add_source.declared_holes[3].hole == Native.NativePatchImm32, "mul-add immediate must be a typed immediate hole")
 assert(mul_add_source.c_text:find("%*", 1, false) and mul_add_source.c_text:find("%+", 1, false), "mul-add source should compile the fused multiply/add expression")
 
+local compare_source = assert(by_family["native.fast.code.compare_branch.compare_branch.i32.lt.input0.i32.input1.i32"], "compare-branch fast source missing")
+assert(asdl.isa(compare_source.extraction, Native.NativeExtractContinuationFragment), "compare-branch source must expose real branch continuations")
+assert(asdl.isa(compare_source.family.axes[3], Native.NativeAxisFastCodeCompareBranch), "compare-branch family must carry the typed compare axis")
+assert(#compare_source.declared_continuation_ordinals == 2, "compare-branch source should declare then/else continuations")
+
+local switch_source = assert(by_family["native.fast.code.switch_step.switch_step.i32.input0.i32"], "switch-step fast source missing")
+assert(asdl.isa(switch_source.extraction, Native.NativeExtractContinuationFragment), "switch-step source must expose case/default continuations")
+assert(asdl.isa(switch_source.family.axes[3], Native.NativeAxisFastCodeSwitchStep), "switch-step family must carry the typed switch-step axis")
+assert(#switch_source.declared_holes == 2, "switch-step source should bind key frame input and per-case immediate")
+assert(switch_source.declared_holes[2].hole == Native.NativePatchImm32, "switch case key must be a typed immediate hole, not a family axis")
+
 local abi_source = assert(by_family["native.fast.public_abi.abi2.pi32_i32.ri32"], "bounded fast public ABI source missing")
 assert(asdl.isa(abi_source.extraction, Native.NativeExtractStandaloneCallable), "bounded fast public ABI source should expose a standalone C ABI entry")
 assert(asdl.isa(abi_source.family.axes[3], Native.NativeAxisFastPublicAbi), "fast public ABI family must carry the bounded ABI shape axis")
@@ -75,5 +92,14 @@ for _, axis in ipairs(abi_source.family.axes or {}) do
     assert(not asdl.isa(axis, Native.NativeAxisCodeType), "bounded fast public ABI source must not use full CodeType axes")
 end
 assert(abi_source.c_text:find("int32_t p0, int32_t p1", 1, true), "fast public ABI C source should expose the bounded public C signature")
+
+local public_mul_add_source = assert(by_family["native.fast.public_code_expr.abi2.pi32_i32.ri32.return_mul_add_imm.i32.input0.i32.input1.i32"], "fused public ABI + mul-add source missing")
+assert(asdl.isa(public_mul_add_source.extraction, Native.NativeExtractStandaloneCallable), "fused public expression source should be directly callable")
+assert(asdl.isa(public_mul_add_source.family.axes[3], Native.NativeAxisFastPublicAbi), "fused public expression family must carry the bounded ABI axis")
+assert(asdl.isa(public_mul_add_source.family.axes[4], Native.NativeAxisFastCodeExpr), "fused public expression family must carry the expression axis")
+assert(#public_mul_add_source.declared_holes == 1 and public_mul_add_source.declared_holes[1].hole == Native.NativePatchImm32, "fused public mul-add should only patch the immediate operand")
+assert(public_mul_add_source.c_text:find("int32_t p0, int32_t p1", 1, true), "fused public expression source should expose public scalar params")
+assert(public_mul_add_source.c_text:find("p0", 1, true) and public_mul_add_source.c_text:find("p1", 1, true), "fused public expression should consume public params directly")
+assert(public_mul_add_source.c_text:find("return", 1, true), "fused public expression should return through the public ABI")
 
 print("native fast region template sources ok")

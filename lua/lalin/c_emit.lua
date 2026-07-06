@@ -1,5 +1,3 @@
-local asdl = require("lalin.asdl")
-
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
     if T._lalin_api_cache.c_emit ~= nil then return T._lalin_api_cache.c_emit end
@@ -7,73 +5,13 @@ local function bind_context(T)
     local Core = T.LalinCore
     local C = T.LalinC
     local Exec = T.LalinExec
-    local Helpers = require("lalin.c_helpers")(T)
-
     local function append_all(out, xs) for i = 1, #(xs or {}) do out[#out + 1] = xs[i] end end
-    local function class_name(x)
-        return asdl.class_name(x) or tostring(x)
-    end
 
     local function sanitize(s)
         s = tostring(s or "x"):gsub("[^%w_]", "_")
         if s:match("^%d") then s = "_" .. s end
         if s == "" then s = "x" end
         return s
-    end
-
-    local function closure_type_name(ty)
-        return "ml_closure_" .. sanitize(ty.sig.text)
-    end
-
-    local function descriptor_type_name(kind, ty)
-        if kind == "bytespan" then return "ml_bytespan" end
-        local elem = ty and ty.elem and sanitize(asdl.class_basename(ty.elem) or ty.elem) or "any"
-        if ty and ty.elem then
-            local elem_class = asdl.class_basename(ty.elem)
-            if elem_class then
-                elem = sanitize(elem_class .. "_" .. tostring(ty.elem.scalar and asdl.class_basename(ty.elem.scalar) or ty.elem.id and ty.elem.id.spelling or "elem"))
-            end
-        end
-        return "ml_" .. kind .. "_" .. elem
-    end
-
-    local function scalar_name(s)
-        if s == Core.ScalarBool then return "uint8_t" end
-        if s == Core.ScalarI8 then return "int8_t" end
-        if s == Core.ScalarI16 then return "int16_t" end
-        if s == Core.ScalarI32 then return "int32_t" end
-        if s == Core.ScalarI64 then return "int64_t" end
-        if s == Core.ScalarU8 then return "uint8_t" end
-        if s == Core.ScalarU16 then return "uint16_t" end
-        if s == Core.ScalarU32 then return "uint32_t" end
-        if s == Core.ScalarU64 then return "uint64_t" end
-        if s == Core.ScalarF32 then return "float" end
-        if s == Core.ScalarF64 then return "double" end
-        if s == Core.ScalarRawPtr then return "void*" end
-        if s == Core.ScalarIndex then return "intptr_t" end
-        if s == Core.ScalarVoid then return "void" end
-        error("c_emit: unsupported scalar " .. class_name(s), 2)
-    end
-
-    local emit_type
-    emit_type = function(ty)
-        local cls = asdl.classof(ty)
-        if ty == C.CBackendVoid or cls == C.CBackendVoid then return "void" end
-        if ty == C.CBackendBool8 or cls == C.CBackendBool8 then return "uint8_t" end
-        if cls == C.CBackendScalar then return scalar_name(ty.scalar) end
-        if ty == C.CBackendIndex or cls == C.CBackendIndex then return "ml_index" end
-        if cls == C.CBackendDataPtr then return ty.pointee and (emit_type(ty.pointee) .. "*") or "void*" end
-        if cls == C.CBackendCodePtr then return ty.sig.text end
-        if cls == C.CBackendImportedCodePtr then return "void (*)(void)" end
-        if cls == C.CBackendNamed then return (ty.id.module_name .. "_" .. ty.id.spelling):gsub("[^%w_]", "_") end
-        if cls == C.CBackendArray then return emit_type(ty.elem) end
-        if cls == C.CBackendSliceDescriptor then return descriptor_type_name("slice", ty) end
-        if cls == C.CBackendByteSpanDescriptor or ty == C.CBackendByteSpanDescriptor then return "ml_bytespan" end
-        if cls == C.CBackendViewDescriptor then return descriptor_type_name("view", ty) end
-        if cls == C.CBackendClosureDescriptor then return closure_type_name(ty) end
-        if cls == C.CBackendAbiHiddenOutPtr then return emit_type(C.CBackendDataPtr(ty.result)) end
-        if cls == C.CBackendVector then return emit_type(ty.elem) end
-        error("c_emit: unsupported CBackendType " .. class_name(ty), 2)
     end
 
     local function c_string_literal(bytes)
@@ -92,717 +30,803 @@ local function bind_context(T)
         return table.concat(out)
     end
 
-    local function literal(lit)
-        local cls = asdl.classof(lit)
-        if cls == Core.LitInt or cls == Core.LitFloat then return lit.raw end
-        if cls == Core.LitBool then return lit.value and "1" or "0" end
-        if cls == Core.LitNil then return "0" end
-        if cls == Core.LitString then return c_string_literal(lit.bytes) end
-        error("c_emit: unsupported literal " .. class_name(lit), 2)
-    end
+    local function c_type_name(ty) return ty:c_emit_type() end
+    local function decl(ty, name) return ty:c_emit_decl(name) end
+    local function atom(a) return a:c_emit_atom() end
+    local function place(p) return p:c_emit_place() end
+    local function rvalue(rv) return rv:c_emit_rvalue() end
+    local function literal(lit) return lit:c_emit_literal() end
 
-    local function atom(a)
-        local cls = asdl.classof(a)
-        if cls == C.CBackendAtomLocal then return a.local_id.text end
-        if cls == C.CBackendAtomGlobal then return a.global.text end
-        if cls == C.CBackendAtomLiteral then return "(" .. emit_type(a.ty) .. ")" .. literal(a.literal) end
-        if cls == C.CBackendAtomNull then return "NULL" end
-        error("c_emit: unsupported CBackendAtom " .. class_name(a), 2)
-    end
+    function Core.Scalar:c_emit_scalar_name() error("missing c_emit_scalar_name leaf method", 2) end
+    function Core.ScalarBool:c_emit_scalar_name() return "uint8_t" end
+    function Core.ScalarI8:c_emit_scalar_name() return "int8_t" end
+    function Core.ScalarI16:c_emit_scalar_name() return "int16_t" end
+    function Core.ScalarI32:c_emit_scalar_name() return "int32_t" end
+    function Core.ScalarI64:c_emit_scalar_name() return "int64_t" end
+    function Core.ScalarU8:c_emit_scalar_name() return "uint8_t" end
+    function Core.ScalarU16:c_emit_scalar_name() return "uint16_t" end
+    function Core.ScalarU32:c_emit_scalar_name() return "uint32_t" end
+    function Core.ScalarU64:c_emit_scalar_name() return "uint64_t" end
+    function Core.ScalarF32:c_emit_scalar_name() return "float" end
+    function Core.ScalarF64:c_emit_scalar_name() return "double" end
+    function Core.ScalarRawPtr:c_emit_scalar_name() return "void*" end
+    function Core.ScalarIndex:c_emit_scalar_name() return "intptr_t" end
+    function Core.ScalarVoid:c_emit_scalar_name() return "void" end
 
-    local place
-    place = function(p)
-        local cls = asdl.classof(p)
-        if cls == C.CBackendPlaceLocal then return p.local_id.text end
-        if cls == C.CBackendPlaceGlobal then return p.global.text end
-        if cls == C.CBackendPlaceDeref then return "(*(" .. emit_type(p.ty) .. "*)" .. atom(p.addr) .. ")" end
-        if cls == C.CBackendPlaceField then return place(p.base) .. "." .. p.field.text end
-        if cls == C.CBackendPlaceIndex then
-            if asdl.classof(p.base) == C.CBackendPlaceDeref then return "((" .. emit_type(p.ty) .. "*)" .. atom(p.base.addr) .. ")[" .. atom(p.index) .. "]" end
-            return place(p.base) .. "[" .. atom(p.index) .. "]"
+    function Core.Literal:c_emit_literal() error("missing c_emit_literal leaf method", 2) end
+    function Core.LitInt:c_emit_literal() return self.raw end
+    function Core.LitFloat:c_emit_literal() return self.raw end
+    function Core.LitBool:c_emit_literal() return self.value and "1" or "0" end
+    function Core.LitNil:c_emit_literal() return "0" end
+    function Core.LitString:c_emit_literal() return c_string_literal(self.bytes) end
+
+    function Core.CmpOp:c_emit_cmp_op() error("missing c_emit_cmp_op leaf method", 2) end
+    function Core.CmpEq:c_emit_cmp_op() return "==" end
+    function Core.CmpNe:c_emit_cmp_op() return "!=" end
+    function Core.CmpLt:c_emit_cmp_op() return "<" end
+    function Core.CmpLe:c_emit_cmp_op() return "<=" end
+    function Core.CmpGt:c_emit_cmp_op() return ">" end
+    function Core.CmpGe:c_emit_cmp_op() return ">=" end
+
+    function C.CBackendType:c_emit_type() error("missing c_emit_type leaf method for CBackendType", 2) end
+    function C.CBackendType:c_emit_decl(name) return self:c_emit_type() .. " " .. name end
+    function C.CBackendType:c_emit_named_deps(out) end
+    function C.CBackendType:c_emit_visit_implicit(add_descriptor, add_closure) end
+    function C.CBackendType:c_emit_is_array() return false end
+    function C.CBackendType:c_emit_needs_compound_decl_only() return false end
+    function C.CBackendType:c_emit_is_void() return false end
+
+    function C.CBackendVoid:c_emit_type() return "void" end
+    function C.CBackendVoid:c_emit_is_void() return true end
+    function C.CBackendBool8:c_emit_type() return "uint8_t" end
+    function C.CBackendScalar:c_emit_type() return self.scalar:c_emit_scalar_name() end
+    function C.CBackendIndex:c_emit_type() return "ml_index" end
+    function C.CBackendDataPtr:c_emit_type() return self.pointee and (self.pointee:c_emit_type() .. "*") or "void*" end
+    function C.CBackendDataPtr:c_emit_visit_implicit(add_descriptor, add_closure) if self.pointee then self.pointee:c_emit_visit_implicit(add_descriptor, add_closure) end end
+    function C.CBackendCodePtr:c_emit_type() return self.sig.text end
+    function C.CBackendImportedCodePtr:c_emit_type() return "void (*)(void)" end
+    function C.CBackendNamed:c_emit_type() return (self.id.module_name .. "_" .. self.id.spelling):gsub("[^%w_]", "_") end
+    function C.CBackendNamed:c_emit_named_deps(out) out[#out + 1] = self.id.module_name .. "\0" .. self.id.spelling end
+    function C.CBackendNamed:c_emit_needs_compound_decl_only() return true end
+    function C.CBackendArray:c_emit_type() return self.elem:c_emit_type() end
+    function C.CBackendArray:c_emit_decl(name) return self.elem:c_emit_type() .. " " .. name .. "[" .. tostring(self.count) .. "]" end
+    function C.CBackendArray:c_emit_named_deps(out) self.elem:c_emit_named_deps(out) end
+    function C.CBackendArray:c_emit_visit_implicit(add_descriptor, add_closure) self.elem:c_emit_visit_implicit(add_descriptor, add_closure) end
+    function C.CBackendArray:c_emit_is_array() return true end
+    function C.CBackendArray:c_emit_needs_compound_decl_only() return true end
+    function C.CBackendSliceDescriptor:c_emit_type() return self:c_emit_descriptor_type_name("slice") end
+    function C.CBackendSliceDescriptor:c_emit_visit_implicit(add_descriptor, add_closure) add_descriptor("slice", self); self.elem:c_emit_visit_implicit(add_descriptor, add_closure) end
+    function C.CBackendSliceDescriptor:c_emit_needs_compound_decl_only() return true end
+    function C.CBackendByteSpanDescriptor:c_emit_type() return "ml_bytespan" end
+    function C.CBackendByteSpanDescriptor:c_emit_visit_implicit(add_descriptor, add_closure) add_descriptor("bytespan", self) end
+    function C.CBackendByteSpanDescriptor:c_emit_needs_compound_decl_only() return true end
+    function C.CBackendViewDescriptor:c_emit_type() return self:c_emit_descriptor_type_name("view") end
+    function C.CBackendViewDescriptor:c_emit_visit_implicit(add_descriptor, add_closure) add_descriptor("view", self); self.elem:c_emit_visit_implicit(add_descriptor, add_closure) end
+    function C.CBackendViewDescriptor:c_emit_needs_compound_decl_only() return true end
+    function C.CBackendClosureDescriptor:c_emit_type() return "ml_closure_" .. sanitize(self.sig.text) end
+    function C.CBackendClosureDescriptor:c_emit_visit_implicit(add_descriptor, add_closure)
+        add_closure(self:c_emit_type(), self)
+        if self.ctx then self.ctx:c_emit_visit_implicit(add_descriptor, add_closure) end
+    end
+    function C.CBackendClosureDescriptor:c_emit_needs_compound_decl_only() return true end
+    function C.CBackendAbiHiddenOutPtr:c_emit_type() return C.CBackendDataPtr(self.result):c_emit_type() end
+    function C.CBackendAbiHiddenOutPtr:c_emit_named_deps(out) self.result:c_emit_named_deps(out) end
+    function C.CBackendAbiHiddenOutPtr:c_emit_visit_implicit(add_descriptor, add_closure) self.result:c_emit_visit_implicit(add_descriptor, add_closure) end
+    function C.CBackendVector:c_emit_type() return self.elem:c_emit_type() end
+    function C.CBackendVector:c_emit_named_deps(out) self.elem:c_emit_named_deps(out) end
+    function C.CBackendVector:c_emit_decl(name) return self.elem:c_emit_type() .. " " .. name .. "[" .. tostring(self.lanes) .. "]" end
+
+    function C.CBackendType:c_emit_descriptor_type_name(kind)
+        if kind == "bytespan" then return "ml_bytespan" end
+        local elem = "any"
+        if self.elem then
+            elem = sanitize((self.elem.c_emit_type and self.elem:c_emit_type() or tostring(self.elem)):gsub("%*", "ptr"))
         end
-        if cls == C.CBackendPlaceBytes then return "(*(" .. emit_type(p.ty) .. "*)((unsigned char*)" .. atom(p.base) .. " + " .. tostring(p.offset) .. "))" end
-        error("c_emit: unsupported CBackendPlace " .. tostring(cls or nil), 2)
+        return "ml_" .. kind .. "_" .. elem
     end
 
-    local function cmp_op(op)
-        if op == Core.CmpEq then return "==" end
-        if op == Core.CmpNe then return "!=" end
-        if op == Core.CmpLt then return "<" end
-        if op == Core.CmpLe then return "<=" end
-        if op == Core.CmpGt then return ">" end
-        if op == Core.CmpGe then return ">=" end
-        return "=="
+    function C.CBackendAtom:c_emit_atom() error("missing c_emit_atom leaf method", 2) end
+    function C.CBackendAtom:c_emit_local_text() return nil end
+    function C.CBackendAtomLocal:c_emit_atom() return self.local_id.text end
+    function C.CBackendAtomLocal:c_emit_local_text() return self.local_id.text end
+    function C.CBackendAtomGlobal:c_emit_atom() return self.global.text end
+    function C.CBackendAtomLiteral:c_emit_atom() return "(" .. self.ty:c_emit_type() .. ")" .. self.literal:c_emit_literal() end
+    function C.CBackendAtomNull:c_emit_atom() return "NULL" end
+
+    function C.CBackendPlace:c_emit_place() error("missing c_emit_place leaf method", 2) end
+    function C.CBackendPlaceLocal:c_emit_place() return self.local_id.text end
+    function C.CBackendPlaceGlobal:c_emit_place() return self.global.text end
+    function C.CBackendPlaceDeref:c_emit_place() return "(*(" .. self.ty:c_emit_type() .. "*)" .. self.addr:c_emit_atom() .. ")" end
+    function C.CBackendPlaceField:c_emit_place() return self.base:c_emit_place() .. "." .. self.field.text end
+    function C.CBackendPlaceIndex:c_emit_place() return self.base:c_emit_index_place(self.index) end
+    function C.CBackendPlace:c_emit_index_place(index_atom) return self:c_emit_place() .. "[" .. index_atom:c_emit_atom() .. "]" end
+    function C.CBackendPlaceDeref:c_emit_index_place(index_atom) return "((" .. self.ty:c_emit_type() .. "*)" .. self.addr:c_emit_atom() .. ")[" .. index_atom:c_emit_atom() .. "]" end
+    function C.CBackendPlaceBytes:c_emit_place() return "(*(" .. self.ty:c_emit_type() .. "*)((unsigned char*)" .. self.base:c_emit_atom() .. " + " .. tostring(self.offset) .. "))" end
+
+    function C.CBackendRValue:c_emit_rvalue() error("missing c_emit_rvalue leaf method", 2) end
+    function C.CBackendRAtom:c_emit_rvalue() return self.atom:c_emit_atom() end
+    function C.CBackendRCompare:c_emit_rvalue() return "(" .. self.lhs:c_emit_atom() .. " " .. self.op:c_emit_cmp_op() .. " " .. self.rhs:c_emit_atom() .. ")" end
+    function C.CBackendRCast:c_emit_rvalue() return "(" .. self.to:c_emit_type() .. ")(" .. self.value:c_emit_atom() .. ")" end
+    function C.CBackendRSelect:c_emit_rvalue() return "(" .. self.cond:c_emit_atom() .. " ? " .. self.then_value:c_emit_atom() .. " : " .. self.else_value:c_emit_atom() .. ")" end
+    function C.CBackendRFuncAddr:c_emit_rvalue() return self.func.text end
+    function C.CBackendRExternAddr:c_emit_rvalue() return self["extern"].text end
+    function C.CBackendRPtrOffset:c_emit_rvalue() return "((char*)" .. self.base:c_emit_atom() .. " + (" .. self.index:c_emit_atom() .. ") * " .. tostring(self.elem_size) .. " + " .. tostring(self.const_offset) .. ")" end
+    function C.CBackendRAddrOfPlace:c_emit_rvalue() return "&" .. self.place:c_emit_place() end
+
+    function C.CBackendTypeDecl:c_emit_key() return self.id and (self.id.module_name .. "\0" .. self.id.spelling) or nil end
+    function C.CBackendTypeDecl:c_emit_deps() return {} end
+    function C.CBackendTypedef:c_emit_deps() local out = {}; self.ty:c_emit_named_deps(out); return out end
+    function C.CBackendStructDecl:c_emit_deps() local out = {}; for i = 1, #(self.fields or {}) do self.fields[i].ty:c_emit_named_deps(out) end; return out end
+    function C.CBackendUnionDecl:c_emit_deps() local out = {}; for i = 1, #(self.fields or {}) do self.fields[i].ty:c_emit_named_deps(out) end; return out end
+    function C.CBackendField:c_emit_field_decl() local attr = (self.align and self.align > 1) and (" __attribute__((aligned(" .. tostring(self.align) .. ")))" ) or ""; return "    " .. self.ty:c_emit_decl(self.name.text) .. attr .. ";" end
+    function C.CBackendTypeDecl:c_emit_type_decl(out) error("missing c_emit_type_decl leaf method", 2) end
+    function C.CBackendTypedef:c_emit_type_decl(out) local name = sanitize(self.id.module_name .. "_" .. self.id.spelling); out[#out + 1] = "typedef " .. self.ty:c_emit_decl(name) .. ";" end
+    function C.CBackendStructDecl:c_emit_type_decl(out)
+        local name = sanitize(self.id.module_name .. "_" .. self.id.spelling)
+        out[#out + 1] = "typedef struct " .. name .. " {"
+        for i = 1, #self.fields do out[#out + 1] = self.fields[i]:c_emit_field_decl() end
+        out[#out + 1] = "} " .. name .. ";"
+        if self.size ~= nil then out[#out + 1] = "typedef char ml_assert_size_" .. name .. "[(sizeof(" .. name .. ") == " .. tostring(self.size) .. ") ? 1 : -1];" end
+        if self.align ~= nil then out[#out + 1] = "typedef char ml_assert_align_" .. name .. "[(offsetof(struct { char c; " .. name .. " x; }, x) == " .. tostring(self.align) .. ") ? 1 : -1];" end
+    end
+    function C.CBackendUnionDecl:c_emit_type_decl(out)
+        local name = sanitize(self.id.module_name .. "_" .. self.id.spelling)
+        out[#out + 1] = "typedef union " .. name .. " {"
+        for i = 1, #self.fields do out[#out + 1] = self.fields[i]:c_emit_field_decl() end
+        out[#out + 1] = "} " .. name .. ";"
+        if self.size ~= nil then out[#out + 1] = "typedef char ml_assert_size_" .. name .. "[(sizeof(" .. name .. ") == " .. tostring(self.size) .. ") ? 1 : -1];" end
+        if self.align ~= nil then out[#out + 1] = "typedef char ml_assert_align_" .. name .. "[(offsetof(struct { char c; " .. name .. " x; }, x) == " .. tostring(self.align) .. ") ? 1 : -1];" end
+    end
+    function C.CBackendOpaqueDecl:c_emit_type_decl(out) local name = sanitize(self.id.module_name .. "_" .. self.id.spelling); out[#out + 1] = "typedef struct " .. name .. " " .. name .. ";" end
+
+    function C.CBackendDataInit:c_emit_byte_entries(entries) end
+    function C.CBackendDataBytes:c_emit_byte_entries(entries) for k = 1, #self.bytes do entries[#entries + 1] = "[" .. tostring(self.offset + k - 1) .. "] = " .. tostring(self.bytes:byte(k)) end end
+    function C.CBackendDataZero:c_emit_comment() return "/* zero init at " .. tostring(self.offset) .. " size " .. tostring(self.size) .. " */" end
+    function C.CBackendDataBytes:c_emit_comment() return "/* bytes init at " .. tostring(self.offset) .. " size " .. tostring(#self.bytes) .. " */" end
+    function C.CBackendDataScalar:c_emit_comment() return "/* scalar init at " .. tostring(self.offset) .. ": " .. self.literal:c_emit_literal() .. " */" end
+    function C.CBackendDataReloc:c_emit_comment() return "/* reloc init at " .. tostring(self.offset) .. " */" end
+    function C.CBackendDataInit:c_emit_scalar_literal_for_global(g) return nil end
+    function C.CBackendDataScalar:c_emit_scalar_literal_for_global(g) if (self.offset or 0) == 0 then return self.literal:c_emit_literal() end end
+
+    local function byte_init_list(g)
+        local entries = {}
+        for i = 1, #(g.inits or {}) do g.inits[i]:c_emit_byte_entries(entries) end
+        if #entries == 0 then return "{0}" end
+        return "{ " .. table.concat(entries, ", ") .. " }"
     end
 
-    local function cast_expr(op, to, value)
-        return "(" .. emit_type(to) .. ")(" .. atom(value) .. ")"
+    function C.CBackendType:c_emit_global_is_byte_storage(g) return false end
+    function C.CBackendDataPtr:c_emit_global_is_byte_storage(g) return true end
+    function C.CBackendGlobal:c_emit_scalar_init_literal()
+        if #(self.inits or {}) ~= 1 then return nil end
+        return self.ty:c_emit_accepts_scalar_global_init() and self.inits[1]:c_emit_scalar_literal_for_global(self) or nil
+    end
+    function C.CBackendType:c_emit_accepts_scalar_global_init() return false end
+    function C.CBackendBool8:c_emit_accepts_scalar_global_init() return true end
+    function C.CBackendIndex:c_emit_accepts_scalar_global_init() return true end
+    function C.CBackendScalar:c_emit_accepts_scalar_global_init() return true end
+    function C.CBackendGlobal:c_emit_global(out)
+        local byte_global = self.ty:c_emit_global_is_byte_storage(self)
+        if not byte_global and #(self.inits or {}) > 0 and self.inits[1].c_emit_forces_byte_global then byte_global = self.inits[1]:c_emit_forces_byte_global() end
+        local scalar_init = self:c_emit_scalar_init_literal()
+        if byte_global then out[#out + 1] = "static unsigned char " .. self.name.text .. "[" .. tostring(self.size) .. "] = " .. byte_init_list(self) .. ";"
+        elseif scalar_init ~= nil then out[#out + 1] = "static " .. self.ty:c_emit_decl(self.name.text) .. " = " .. scalar_init .. ";"
+        else out[#out + 1] = "static " .. self.ty:c_emit_decl(self.name.text) .. ";" end
+        for i = 1, #(self.inits or {}) do out[#out + 1] = self.inits[i]:c_emit_comment() end
+    end
+    function C.CBackendDataInit:c_emit_forces_byte_global() return false end
+    function C.CBackendDataBytes:c_emit_forces_byte_global() return true end
+
+    local function emit_storage_copy(out, dst, src) out[#out + 1] = "    memcpy(" .. dst .. ", " .. src .. ", sizeof(" .. dst .. "));" end
+
+    function C.CBackendBlock:c_emit_transfer_needs_scratch(args)
+        local dests = {}
+        for i = 1, #(self.params or {}) do dests[self.params[i].local_id.text] = true end
+        local needed = {}
+        for i = 1, #(self.params or {}) do
+            local src_local = args[i] and args[i]:c_emit_local_text() or nil
+            local dst = self.params[i].local_id.text
+            if src_local ~= nil and src_local ~= dst and dests[src_local] then needed[i] = true end
+        end
+        return needed
     end
 
-    local function rvalue(rv)
-        local cls = asdl.classof(rv)
-        if cls == C.CBackendRAtom then return atom(rv.atom) end
-        if cls == C.CBackendRCompare then return "(" .. atom(rv.lhs) .. " " .. cmp_op(rv.op) .. " " .. atom(rv.rhs) .. ")" end
-        if cls == C.CBackendRCast then return cast_expr(rv.op, rv.to, rv.value) end
-        if cls == C.CBackendRSelect then return "(" .. atom(rv.cond) .. " ? " .. atom(rv.then_value) .. " : " .. atom(rv.else_value) .. ")" end
-        if cls == C.CBackendRFuncAddr then return rv.func.text end
-        if cls == C.CBackendRExternAddr then return rv["extern"].text end
-        if cls == C.CBackendRPtrOffset then return "((char*)" .. atom(rv.base) .. " + (" .. atom(rv.index) .. ") * " .. tostring(rv.elem_size) .. " + " .. tostring(rv.const_offset) .. ")" end
-        if cls == C.CBackendRAddrOfPlace then return "&" .. place(rv.place) end
-        error("c_emit: unsupported CBackendRValue " .. tostring(cls or nil), 2)
+    function C.CBackendBlock:c_emit_transfer_scratch_name(index) return "__xfer_" .. self.label.text .. "_" .. tostring(index) end
+    function C.CBackendBlock:c_emit_note_transfer_scratch(args, scratch)
+        local needed = self:c_emit_transfer_needs_scratch(args)
+        for i = 1, #(self.params or {}) do
+            if needed[i] then
+                local name = self:c_emit_transfer_scratch_name(i)
+                if scratch.by_name[name] == nil then
+                    scratch.by_name[name] = self.params[i].ty
+                    scratch.order[#scratch.order + 1] = name
+                end
+            end
+        end
+    end
+    function C.CBackendBlock:c_emit_transfer(out, args, scratch_needed)
+        scratch_needed = scratch_needed or self:c_emit_transfer_needs_scratch(args)
+        for i = 1, #self.params do
+            if scratch_needed[i] then
+                local tmp = self:c_emit_transfer_scratch_name(i)
+                if self.params[i].ty:c_emit_is_array() then emit_storage_copy(out, tmp, args[i]:c_emit_atom()) else out[#out + 1] = "    " .. tmp .. " = " .. args[i]:c_emit_atom() .. ";" end
+            end
+        end
+        for i = 1, #self.params do
+            local dst = self.params[i].local_id.text
+            local src = scratch_needed[i] and self:c_emit_transfer_scratch_name(i) or args[i]:c_emit_atom()
+            if src ~= dst then
+                if self.params[i].ty:c_emit_is_array() then emit_storage_copy(out, dst, src) else out[#out + 1] = "    " .. dst .. " = " .. src .. ";" end
+            end
+        end
+        out[#out + 1] = "    goto " .. self.label.text .. ";"
     end
 
-    local function decl(ty, name)
-        local cls = asdl.classof(ty)
-        if cls == C.CBackendArray then return emit_type(ty.elem) .. " " .. name .. "[" .. tostring(ty.count) .. "]" end
-        return emit_type(ty) .. " " .. name
+    function C.CBackendStmt:c_emit_stmt(out, blocks, local_types) error("missing c_emit_stmt leaf method", 2) end
+    function C.CBackendAssign:c_emit_stmt(out, blocks, local_types)
+        if local_types[self.dst.text]:c_emit_is_array() then
+            emit_storage_copy(out, self.dst.text, self.rhs.atom:c_emit_atom())
+        else out[#out + 1] = "    " .. self.dst.text .. " = " .. self.rhs:c_emit_rvalue() .. ";" end
     end
+    function C.CBackendHelperCall:c_emit_stmt(out)
+        local args = {}; for i = 1, #self.args do args[i] = self.args[i]:c_emit_atom() end
+        local call = self.helper.text .. "(" .. table.concat(args, ", ") .. ")"
+        if self.dst then out[#out + 1] = "    " .. self.dst.text .. " = " .. call .. ";" else out[#out + 1] = "    " .. call .. ";" end
+    end
+    function C.CBackendLoad:c_emit_stmt(out) out[#out + 1] = "    memcpy(&" .. self.dst.text .. ", " .. self.addr:c_emit_atom() .. ", sizeof(" .. self.dst.text .. "));" end
+    function C.CBackendStore:c_emit_stmt(out) out[#out + 1] = "    memcpy(" .. self.addr:c_emit_atom() .. ", &" .. self.value:c_emit_atom() .. ", sizeof(" .. self.value:c_emit_atom() .. "));" end
+    function C.CBackendPlaceLoad:c_emit_stmt(out, blocks, local_types) if local_types[self.dst.text]:c_emit_is_array() then emit_storage_copy(out, self.dst.text, self.place:c_emit_place()) else out[#out + 1] = "    " .. self.dst.text .. " = " .. self.place:c_emit_place() .. ";" end end
+    function C.CBackendPlaceStore:c_emit_stmt(out) if self.place.ty:c_emit_is_array() then emit_storage_copy(out, self.place:c_emit_place(), self.value:c_emit_atom()) else out[#out + 1] = "    " .. self.place:c_emit_place() .. " = " .. self.value:c_emit_atom() .. ";" end end
+    function C.CBackendZeroInit:c_emit_stmt(out) out[#out + 1] = "    memset(&" .. self.place:c_emit_place() .. ", 0, (size_t)" .. tostring(self.size) .. ");" end
+    function C.CBackendAggregateInit:c_emit_stmt(out) for i = 1, #self.fields do out[#out + 1] = "    " .. self.place:c_emit_place() .. "." .. self.fields[i].field.text .. " = " .. self.fields[i].value:c_emit_atom() .. ";" end end
+    function C.CBackendArrayInit:c_emit_stmt(out) for i = 1, #self.elems do out[#out + 1] = "    " .. self.place:c_emit_place() .. "[" .. tostring(self.elems[i].index) .. "] = " .. self.elems[i].value:c_emit_atom() .. ";" end end
+    function C.CBackendCall:c_emit_stmt(out)
+        local args = {}; for i = 1, #self.args do args[i] = self.args[i]:c_emit_atom() end
+        local call = self.target:c_emit_callee(args) .. "(" .. table.concat(args, ", ") .. ")"
+        if self.dst then out[#out + 1] = "    " .. self.dst.text .. " = " .. call .. ";" else out[#out + 1] = "    " .. call .. ";" end
+    end
+    function C.CBackendComment:c_emit_stmt(out) out[#out + 1] = "    /* " .. self.text:gsub("%*/", "* /") .. " */" end
 
-    local function sig_params(params)
-        if #params == 0 then return "void" end
-        local out = {}
-        for i = 1, #params do out[i] = emit_type(params[i]) end
-        return table.concat(out, ", ")
-    end
+    function C.CBackendCallTarget:c_emit_callee(args) error("missing c_emit_callee leaf method", 2) end
+    function C.CBackendCallDirect:c_emit_callee(args) return self.func.text end
+    function C.CBackendCallExtern:c_emit_callee(args) return self["extern"].text end
+    function C.CBackendCallIndirect:c_emit_callee(args) return self.callee:c_emit_atom() end
+    function C.CBackendCallClosure:c_emit_callee(args) local closure = self.closure:c_emit_atom(); table.insert(args, 1, closure .. ".ctx"); return closure .. ".fn" end
 
-    local function func_params(params)
-        if #params == 0 then return "void" end
-        local out = {}
-        for i = 1, #params do out[i] = decl(params[i].ty, params[i].id.text) end
-        return table.concat(out, ", ")
+    function C.CBackendTerminator:c_emit_term(out, blocks) error("missing c_emit_term leaf method", 2) end
+    function C.CBackendTerminator:c_emit_collect_transfer_scratch(blocks, scratch) end
+    function C.CBackendGoto:c_emit_collect_transfer_scratch(blocks, scratch) blocks[self.dest.text]:c_emit_note_transfer_scratch(self.args, scratch) end
+    function C.CBackendGoto:c_emit_term(out, blocks) blocks[self.dest.text]:c_emit_transfer(out, self.args) end
+    function C.CBackendIfGoto:c_emit_collect_transfer_scratch(blocks, scratch)
+        blocks[self.then_dest.text]:c_emit_note_transfer_scratch(self.then_args, scratch)
+        blocks[self.else_dest.text]:c_emit_note_transfer_scratch(self.else_args, scratch)
     end
+    function C.CBackendIfGoto:c_emit_term(out, blocks)
+        out[#out + 1] = "    if (" .. self.cond:c_emit_atom() .. ") {"
+        local nested = {}; blocks[self.then_dest.text]:c_emit_transfer(nested, self.then_args); for i = 1, #nested do out[#out + 1] = "    " .. nested[i] end
+        out[#out + 1] = "    } else {"
+        nested = {}; blocks[self.else_dest.text]:c_emit_transfer(nested, self.else_args); for i = 1, #nested do out[#out + 1] = "    " .. nested[i] end
+        out[#out + 1] = "    }"
+    end
+    function C.CBackendSwitchCase:c_emit_collect_transfer_scratch(blocks, scratch) blocks[self.dest.text]:c_emit_note_transfer_scratch(self.args, scratch) end
+    function C.CBackendSwitchCase:c_emit_case(out, blocks)
+        out[#out + 1] = "    case " .. self.literal:c_emit_literal() .. ":"
+        blocks[self.dest.text]:c_emit_transfer(out, self.args)
+    end
+    function C.CBackendSwitchGoto:c_emit_collect_transfer_scratch(blocks, scratch)
+        for i = 1, #self.cases do self.cases[i]:c_emit_collect_transfer_scratch(blocks, scratch) end
+        blocks[self.default_dest.text]:c_emit_note_transfer_scratch(self.default_args, scratch)
+    end
+    function C.CBackendSwitchGoto:c_emit_term(out, blocks)
+        out[#out + 1] = "    switch (" .. self.value:c_emit_atom() .. ") {"
+        for i = 1, #self.cases do self.cases[i]:c_emit_case(out, blocks) end
+        out[#out + 1] = "    default:"
+        blocks[self.default_dest.text]:c_emit_transfer(out, self.default_args)
+        out[#out + 1] = "    }"
+    end
+    function C.CBackendReturnVoid:c_emit_term(out) out[#out + 1] = "    return;" end
+    function C.CBackendReturn:c_emit_term(out) out[#out + 1] = "    return " .. self.value:c_emit_atom() .. ";" end
+    function C.CBackendTrap:c_emit_term(out) out[#out + 1] = "    abort();" end
 
-    local function sig_by_id(unit)
-        local out = {}
-        for i = 1, #unit.sigs do out[unit.sigs[i].id.text] = unit.sigs[i] end
-        return out
-    end
+    function C.CBackendFuncBody:c_emit_blocks() error("missing c_emit_blocks leaf method", 2) end
+    function C.CBackendBodyBlocks:c_emit_blocks() return self.blocks end
+    function C.CBackendBodyMixed:c_emit_blocks() return self.blocks end
+    function C.CBackendBodyExec:c_emit_blocks() return {} end
+    function C.CBackendFuncBody:c_emit_body_kind() return "blocks" end
+    function C.CBackendBodyExec:c_emit_body_kind() return "exec" end
+    function C.CBackendBodyMixed:c_emit_body_kind() return (#(self.fragments or {}) > 0) and "mixed" or "blocks" end
 
-    local function func_blocks(func)
-        local body = assert(func.body, "CBackendFunc requires body")
-        local cls = asdl.classof(body)
-        if cls == C.CBackendBodyBlocks or cls == C.CBackendBodyMixed then return body.blocks end
-        if cls == C.CBackendBodyExec then return {} end
-        error("c_emit: unknown CBackendFunc body", 2)
+    local function code_symbol_from_id(id) local text = tostring(id and id.text or "exec"):gsub("^fn:", ""):gsub("^func:", ""):gsub("^function:", ""):gsub("[^%w_]", "_"); if text:match("^%d") then text = "_" .. text end; if text == "" then text = "exec" end; return text end
+    function Exec.ExecFragmentBody:c_emit_exec_symbol() error("missing c_emit_exec_symbol leaf method", 2) end
+    function Exec.ExecFragmentStencil:c_emit_exec_symbol() return self.artifact.symbol.text end
+    function Exec.ExecFragmentCall:c_emit_exec_symbol() return code_symbol_from_id(self.callee) end
+    function C.CBackendExecSite:c_emit_exec_site(out)
+        local args = {}; for i = 1, #(self.args or {}) do args[i] = self.args[i].atom:c_emit_atom() end
+        local call = self.fragment.body:c_emit_exec_symbol() .. "(" .. table.concat(args, ", ") .. ")"
+        return self.result:c_emit_exec_result(out, call)
     end
-
-    local function visit_exec_site_types(site, visit_ty)
-        for i = 1, #(site.args or {}) do visit_ty(site.args[i].ty) end
-        if asdl.classof(site.result) == C.CBackendExecResultLocal then visit_ty(site.result.ty) end
-    end
+    function C.CBackendExecResult:c_emit_exec_result(out, call) error("missing c_emit_exec_result leaf method", 2) end
+    function C.CBackendExecResultVoid:c_emit_exec_result(out, call) out[#out + 1] = "    " .. call .. ";"; return nil end
+    function C.CBackendExecResultLocal:c_emit_exec_result(out, call) out[#out + 1] = "    " .. self.dst.text .. " = " .. call .. ";"; return self.dst end
 
     local function collect_implicit_types(unit)
-        local out, order, descriptors, descriptor_order = {}, {}, {}, {}
+        local closure_types, closure_order, descriptor_types, descriptor_order = {}, {}, {}, {}
         local function add_descriptor(kind, ty)
-            local name = descriptor_type_name(kind, ty)
-            if descriptors[name] == nil then descriptors[name] = { kind = kind, ty = ty }; descriptor_order[#descriptor_order + 1] = name end
+            local name = ty:c_emit_descriptor_type_name(kind)
+            if descriptor_types[name] == nil then descriptor_types[name] = { kind = kind, ty = ty }; descriptor_order[#descriptor_order + 1] = name end
         end
-        local function visit_ty(ty)
-            local cls = asdl.classof(ty)
-            if cls == C.CBackendClosureDescriptor then
-                local name = closure_type_name(ty)
-                if out[name] == nil then out[name] = ty; order[#order + 1] = name end
-            elseif cls == C.CBackendArray then visit_ty(ty.elem)
-            elseif cls == C.CBackendDataPtr and ty.pointee ~= nil then visit_ty(ty.pointee)
-            elseif cls == C.CBackendAbiHiddenOutPtr then visit_ty(ty.result)
-            elseif cls == C.CBackendSliceDescriptor then add_descriptor("slice", ty); visit_ty(ty.elem)
-            elseif cls == C.CBackendByteSpanDescriptor or ty == C.CBackendByteSpanDescriptor then add_descriptor("bytespan", ty)
-            elseif cls == C.CBackendViewDescriptor then add_descriptor("view", ty); visit_ty(ty.elem) end
-        end
-        for i = 1, #(unit.sigs or {}) do
-            for j = 1, #unit.sigs[i].params do visit_ty(unit.sigs[i].params[j]) end
-            visit_ty(unit.sigs[i].result)
-        end
+        local function add_closure(name, ty) if closure_types[name] == nil then closure_types[name] = ty; closure_order[#closure_order + 1] = name end end
+        local function visit_ty(ty) ty:c_emit_visit_implicit(add_descriptor, add_closure) end
+        for i = 1, #(unit.sigs or {}) do for j = 1, #unit.sigs[i].params do visit_ty(unit.sigs[i].params[j]) end; visit_ty(unit.sigs[i].result) end
         for i = 1, #(unit.funcs or {}) do
             for j = 1, #unit.funcs[i].params do visit_ty(unit.funcs[i].params[j].ty) end
             for j = 1, #unit.funcs[i].locals do visit_ty(unit.funcs[i].locals[j].ty) end
-            local body = unit.funcs[i].body
-            if asdl.classof(body) == C.CBackendBodyExec then
-                visit_exec_site_types(body.fragment, visit_ty)
-            elseif asdl.classof(body) == C.CBackendBodyMixed then
-                for j = 1, #(body.fragments or {}) do visit_exec_site_types(body.fragments[j], visit_ty) end
-            end
-            local blocks = func_blocks(unit.funcs[i])
-            for j = 1, #blocks do
-                for k = 1, #blocks[j].params do visit_ty(blocks[j].params[k].ty) end
-            end
+            local blocks = unit.funcs[i].body:c_emit_blocks()
+            for j = 1, #blocks do for k = 1, #blocks[j].params do visit_ty(blocks[j].params[k].ty) end end
+            unit.funcs[i].body:c_emit_visit_exec_site_types(visit_ty)
         end
         for i = 1, #(unit.globals or {}) do visit_ty(unit.globals[i].ty) end
-        return out, order, descriptors, descriptor_order
+        return closure_types, closure_order, descriptor_types, descriptor_order
     end
-
-    local function emit_descriptor_type_decls(descriptor_types, descriptor_order, out)
-        for i = 1, #descriptor_order do
-            local name = descriptor_order[i]
-            local d = descriptor_types[name]
-            if d.kind == "slice" then
-                out[#out + 1] = "struct " .. name .. " { " .. emit_type(C.CBackendDataPtr(d.ty.elem)) .. " data; ml_index len; };"
-            elseif d.kind == "bytespan" then
-                out[#out + 1] = "struct " .. name .. " { uint8_t* data; ml_index len; };"
-            else
-                out[#out + 1] = "struct " .. name .. " { " .. emit_type(C.CBackendDataPtr(d.ty.elem)) .. " data; ml_index len; ml_index stride; };"
-            end
-        end
-    end
-
-    local function emit_closure_type_decls(closure_types, closure_order, out)
-        for i = 1, #closure_order do
-            local name = closure_order[i]
-            local ty = closure_types[name]
-            out[#out + 1] = "struct " .. name .. " { " .. ty.sig.text .. " fn; void* ctx; };"
-        end
-    end
-
-    local function type_decl_key(td)
-        if td == nil or td.id == nil then return nil end
-        return td.id.module_name .. "\0" .. td.id.spelling
-    end
-
-    local function type_deps(ty, out)
-        local cls = asdl.classof(ty)
-        if cls == C.CBackendNamed then
-            out[#out + 1] = ty.id.module_name .. "\0" .. ty.id.spelling
-        elseif cls == C.CBackendArray or cls == C.CBackendVector then
-            type_deps(ty.elem, out)
-        elseif cls == C.CBackendAbiHiddenOutPtr then
-            type_deps(ty.result, out)
-        end
-    end
-
-    local function type_decl_deps(td)
-        local out = {}
-        local cls = asdl.classof(td)
-        if cls == C.CBackendTypedef then
-            type_deps(td.ty, out)
-        elseif cls == C.CBackendStructDecl or cls == C.CBackendUnionDecl then
-            for i = 1, #(td.fields or {}) do type_deps(td.fields[i].ty, out) end
-        end
-        return out
-    end
+    function C.CBackendFuncBody:c_emit_visit_exec_site_types(visit_ty) end
+    function C.CBackendBodyExec:c_emit_visit_exec_site_types(visit_ty) self.fragment:c_emit_visit_exec_site_types(visit_ty) end
+    function C.CBackendBodyMixed:c_emit_visit_exec_site_types(visit_ty) for i = 1, #(self.fragments or {}) do self.fragments[i]:c_emit_visit_exec_site_types(visit_ty) end end
+    function C.CBackendExecSite:c_emit_visit_exec_site_types(visit_ty) for i = 1, #(self.args or {}) do visit_ty(self.args[i].ty) end; self.result:c_emit_visit_result_type(visit_ty) end
+    function C.CBackendExecResult:c_emit_visit_result_type(visit_ty) end
+    function C.CBackendExecResultLocal:c_emit_visit_result_type(visit_ty) visit_ty(self.ty) end
 
     local function ordered_type_decls(types)
         local by_key, out, perm, temp = {}, {}, {}, {}
-        for i = 1, #(types or {}) do
-            local key = type_decl_key(types[i])
-            if key ~= nil and by_key[key] == nil then by_key[key] = types[i] end
-        end
+        for i = 1, #(types or {}) do local key = types[i]:c_emit_key(); if key and by_key[key] == nil then by_key[key] = types[i] end end
         local function visit(td)
-            local key = type_decl_key(td)
-            if key == nil then out[#out + 1] = td; return end
-            if perm[key] then return end
-            if temp[key] then return end
+            local key = td:c_emit_key(); if key == nil then out[#out + 1] = td; return end
+            if perm[key] or temp[key] then return end
             temp[key] = true
-            local deps = type_decl_deps(td)
-            for i = 1, #deps do
-                if deps[i] ~= key and by_key[deps[i]] ~= nil then visit(by_key[deps[i]]) end
-            end
-            temp[key] = nil
-            perm[key] = true
-            out[#out + 1] = td
+            local deps = td:c_emit_deps(); for i = 1, #deps do if deps[i] ~= key and by_key[deps[i]] then visit(by_key[deps[i]]) end end
+            temp[key] = nil; perm[key] = true; out[#out + 1] = td
         end
         for i = 1, #(types or {}) do visit(types[i]) end
         return out
     end
 
-    local function emit_type_decls(unit, out)
-        local types = ordered_type_decls(unit.types)
-        for i = 1, #types do
-            local td = types[i]
-            local cls = asdl.classof(td)
-            local name = (td.id.module_name .. "_" .. td.id.spelling):gsub("[^%w_]", "_")
-            if cls == C.CBackendTypedef then out[#out + 1] = "typedef " .. decl(td.ty, name) .. ";"
-            elseif cls == C.CBackendStructDecl then
-                out[#out + 1] = "typedef struct " .. name .. " {"
-                for j = 1, #td.fields do out[#out + 1] = "    " .. decl(td.fields[j].ty, td.fields[j].name.text) .. ";" end
-                out[#out + 1] = "} " .. name .. ";"
-                if td.size ~= nil then out[#out + 1] = "typedef char ml_assert_size_" .. name .. "[(sizeof(" .. name .. ") == " .. tostring(td.size) .. ") ? 1 : -1];" end
-                if td.align ~= nil then out[#out + 1] = "typedef char ml_assert_align_" .. name .. "[(offsetof(struct { char c; " .. name .. " x; }, x) == " .. tostring(td.align) .. ") ? 1 : -1];" end
-            elseif cls == C.CBackendUnionDecl then
-                out[#out + 1] = "typedef union " .. name .. " {"
-                for j = 1, #td.fields do out[#out + 1] = "    " .. decl(td.fields[j].ty, td.fields[j].name.text) .. ";" end
-                out[#out + 1] = "} " .. name .. ";"
-                if td.size ~= nil then out[#out + 1] = "typedef char ml_assert_size_" .. name .. "[(sizeof(" .. name .. ") == " .. tostring(td.size) .. ") ? 1 : -1];" end
-                if td.align ~= nil then out[#out + 1] = "typedef char ml_assert_align_" .. name .. "[(offsetof(struct { char c; " .. name .. " x; }, x) == " .. tostring(td.align) .. ") ? 1 : -1];" end
-            elseif cls == C.CBackendOpaqueDecl then out[#out + 1] = "typedef struct " .. name .. " " .. name .. ";" end
+    local function emit_descriptor_type_decls(descriptor_types, descriptor_order, out)
+        for i = 1, #descriptor_order do
+            local name, d = descriptor_order[i], descriptor_types[descriptor_order[i]]
+            if d.kind == "slice" then out[#out + 1] = "struct " .. name .. " { " .. C.CBackendDataPtr(d.ty.elem):c_emit_type() .. " data; ml_index len; };"
+            elseif d.kind == "bytespan" then out[#out + 1] = "struct " .. name .. " { uint8_t* data; ml_index len; };"
+            else out[#out + 1] = "struct " .. name .. " { " .. C.CBackendDataPtr(d.ty.elem):c_emit_type() .. " data; ml_index len; ml_index stride; };" end
         end
     end
+    local function emit_closure_type_decls(closure_types, closure_order, out) for i = 1, #closure_order do local name = closure_order[i]; out[#out + 1] = "struct " .. name .. " { " .. closure_types[name].sig.text .. " fn; void* ctx; };" end end
+    local function emit_type_decls(unit, out) local types = ordered_type_decls(unit.types); for i = 1, #types do types[i]:c_emit_type_decl(out) end end
+    local function emit_globals(unit, out) for i = 1, #unit.globals do unit.globals[i]:c_emit_global(out) end end
+    local function sig_by_id(unit) local out = {}; for i = 1, #unit.sigs do out[unit.sigs[i].id.text] = unit.sigs[i] end; return out end
+    local function sig_params(params) local out = {}; if #params == 0 then return "void" end; for i = 1, #params do out[i] = params[i]:c_emit_type() end; return table.concat(out, ", ") end
+    local function func_params(params) local out = {}; if #params == 0 then return "void" end; for i = 1, #params do out[i] = params[i].ty:c_emit_decl(params[i].id.text) end; return table.concat(out, ", ") end
+    local function emit_local_decl(out, local_id, ty) if ty:c_emit_needs_compound_decl_only() then out[#out + 1] = "    " .. ty:c_emit_decl(local_id) .. ";" else out[#out + 1] = "    " .. ty:c_emit_decl(local_id) .. " = 0;" end end
 
-    local function byte_init_list(g)
-        local entries = {}
-        for j = 1, #g.inits do
-            local init = g.inits[j]
-            local icls = asdl.classof(init)
-            if icls == C.CBackendDataBytes then
-                for k = 1, #init.bytes do
-                    entries[#entries + 1] = "[" .. tostring(init.offset + k - 1) .. "] = " .. tostring(init.bytes:byte(k))
-                end
-            elseif icls == C.CBackendDataZero then
-                -- Missing C initializers are zero-filled, so explicit zeros are unnecessary.
-            end
-        end
-        if #entries == 0 then return "{0}" end
-        return "{ " .. table.concat(entries, ", ") .. " }"
-    end
-
-    local function scalar_init_literal(g)
-        if #(g.inits or {}) ~= 1 then return nil end
-        local init = g.inits[1]
-        if asdl.classof(init) ~= C.CBackendDataScalar or (init.offset or 0) ~= 0 then return nil end
-        local gty = asdl.classof(g.ty)
-        if g.ty ~= C.CBackendBool8 and gty ~= C.CBackendBool8 and g.ty ~= C.CBackendIndex and gty ~= C.CBackendIndex and gty ~= C.CBackendScalar then return nil end
-        return literal(init.literal)
-    end
-
-    local function emit_globals(unit, out)
-        for i = 1, #unit.globals do
-            local g = unit.globals[i]
-            local gcls = asdl.classof(g.ty)
-            local byte_global = (gcls == C.CBackendDataPtr) or (#g.inits > 0 and asdl.classof(g.inits[1]) == C.CBackendDataBytes)
-            local scalar_init = scalar_init_literal(g)
-            if byte_global then
-                out[#out + 1] = "static unsigned char " .. g.name.text .. "[" .. tostring(g.size) .. "] = " .. byte_init_list(g) .. ";"
-            elseif scalar_init ~= nil then
-                out[#out + 1] = "static " .. decl(g.ty, g.name.text) .. " = " .. scalar_init .. ";"
-            else
-                out[#out + 1] = "static " .. decl(g.ty, g.name.text) .. ";"
-            end
-            for j = 1, #g.inits do
-                local init = g.inits[j]
-                local icls = asdl.classof(init)
-                if icls == C.CBackendDataBytes then
-                    out[#out + 1] = "/* bytes init at " .. tostring(init.offset) .. " size " .. tostring(#init.bytes) .. " */"
-                elseif icls == C.CBackendDataZero then
-                    out[#out + 1] = "/* zero init at " .. tostring(init.offset) .. " size " .. tostring(init.size) .. " */"
-                elseif icls == C.CBackendDataScalar then
-                    out[#out + 1] = "/* scalar init at " .. tostring(init.offset) .. ": " .. literal(init.literal) .. " */"
-                elseif icls == C.CBackendDataReloc then
-                    out[#out + 1] = "/* reloc init at " .. tostring(init.offset) .. " */"
-                end
-            end
-        end
-    end
-
-    local function is_array_type(ty)
-        return asdl.classof(ty) == C.CBackendArray
-    end
-
-    local function emit_storage_copy(out, dst, src)
-        out[#out + 1] = "    memcpy(" .. dst .. ", " .. src .. ", sizeof(" .. dst .. "));"
-    end
-
-    local function emit_transfer(out, block, args)
-        for i = 1, #block.params do
-            local dst = "__xfer_" .. block.label.text .. "_" .. tostring(i)
-            if is_array_type(block.params[i].ty) then
-                emit_storage_copy(out, dst, atom(args[i]))
-            else
-                out[#out + 1] = "    " .. dst .. " = " .. atom(args[i]) .. ";"
-            end
-        end
-        out[#out + 1] = "    goto " .. block.label.text .. ";"
-    end
-
-    local function emit_stmt(s, out, blocks, local_types)
-        local cls = asdl.classof(s)
-        if cls == C.CBackendAssign then
-            if is_array_type(local_types[s.dst.text]) then
-                if asdl.classof(s.rhs) ~= C.CBackendRAtom then error("c_emit: array assignment requires atom rvalue", 2) end
-                emit_storage_copy(out, s.dst.text, atom(s.rhs.atom))
-            else
-                out[#out + 1] = "    " .. s.dst.text .. " = " .. rvalue(s.rhs) .. ";"
-            end
-        elseif cls == C.CBackendHelperCall then
-            local args = {}; for i = 1, #s.args do args[i] = atom(s.args[i]) end
-            local call = s.helper.text .. "(" .. table.concat(args, ", ") .. ")"
-            if s.dst then out[#out + 1] = "    " .. s.dst.text .. " = " .. call .. ";" else out[#out + 1] = "    " .. call .. ";" end
-        elseif cls == C.CBackendLoad then out[#out + 1] = "    memcpy(&" .. s.dst.text .. ", " .. atom(s.addr) .. ", sizeof(" .. s.dst.text .. "));"
-        elseif cls == C.CBackendStore then out[#out + 1] = "    memcpy(" .. atom(s.addr) .. ", &" .. atom(s.value) .. ", sizeof(" .. atom(s.value) .. "));"
-        elseif cls == C.CBackendPlaceLoad then
-            if is_array_type(local_types[s.dst.text]) then
-                emit_storage_copy(out, s.dst.text, place(s.place))
-            else
-                out[#out + 1] = "    " .. s.dst.text .. " = " .. place(s.place) .. ";"
-            end
-        elseif cls == C.CBackendPlaceStore then
-            if is_array_type(s.place.ty) then
-                emit_storage_copy(out, place(s.place), atom(s.value))
-            else
-                out[#out + 1] = "    " .. place(s.place) .. " = " .. atom(s.value) .. ";"
-            end
-        elseif cls == C.CBackendZeroInit then out[#out + 1] = "    memset(&" .. place(s.place) .. ", 0, (size_t)" .. tostring(s.size) .. ");"
-        elseif cls == C.CBackendAggregateInit then
-            for i = 1, #s.fields do out[#out + 1] = "    " .. place(s.place) .. "." .. s.fields[i].field.text .. " = " .. atom(s.fields[i].value) .. ";" end
-        elseif cls == C.CBackendArrayInit then
-            for i = 1, #s.elems do out[#out + 1] = "    " .. place(s.place) .. "[" .. tostring(s.elems[i].index) .. "] = " .. atom(s.elems[i].value) .. ";" end
-        elseif cls == C.CBackendCall then
-            local args = {}; for i = 1, #s.args do args[i] = atom(s.args[i]) end
-            local tcls = asdl.classof(s.target)
-            local callee
-            if tcls == C.CBackendCallDirect then callee = s.target.func.text
-            elseif tcls == C.CBackendCallExtern then callee = s.target["extern"].text
-            elseif tcls == C.CBackendCallIndirect then callee = atom(s.target.callee)
-            elseif tcls == C.CBackendCallClosure then
-                local closure = atom(s.target.closure)
-                callee = closure .. ".fn"
-                table.insert(args, 1, closure .. ".ctx")
-            end
-            local call = callee .. "(" .. table.concat(args, ", ") .. ")"
-            if s.dst then out[#out + 1] = "    " .. s.dst.text .. " = " .. call .. ";" else out[#out + 1] = "    " .. call .. ";" end
-        elseif cls == C.CBackendComment then out[#out + 1] = "    /* " .. s.text:gsub("%*/", "* /") .. " */"
-        end
-    end
-
-    local function emit_term(t, out, blocks)
-        local cls = asdl.classof(t)
-        if cls == C.CBackendGoto then emit_transfer(out, blocks[t.dest.text], t.args)
-        elseif cls == C.CBackendIfGoto then
-            out[#out + 1] = "    if (" .. atom(t.cond) .. ") {"
-            local nested = {}
-            emit_transfer(nested, blocks[t.then_dest.text], t.then_args)
-            for i = 1, #nested do out[#out + 1] = "    " .. nested[i] end
-            out[#out + 1] = "    } else {"
-            nested = {}
-            emit_transfer(nested, blocks[t.else_dest.text], t.else_args)
-            for i = 1, #nested do out[#out + 1] = "    " .. nested[i] end
-            out[#out + 1] = "    }"
-        elseif cls == C.CBackendSwitchGoto then
-            out[#out + 1] = "    switch (" .. atom(t.value) .. ") {"
-            for i = 1, #t.cases do
-                out[#out + 1] = "    case " .. literal(t.cases[i].literal) .. ":"
-                emit_transfer(out, blocks[t.cases[i].dest.text], t.cases[i].args)
-            end
-            out[#out + 1] = "    default:"
-            emit_transfer(out, blocks[t.default_dest.text], t.default_args)
-            out[#out + 1] = "    }"
-        elseif t == C.CBackendReturnVoid or cls == C.CBackendReturnVoid then out[#out + 1] = "    return;"
-        elseif cls == C.CBackendReturn then out[#out + 1] = "    return " .. atom(t.value) .. ";"
-        elseif t == C.CBackendTrap or cls == C.CBackendTrap then out[#out + 1] = "    abort();"
-        end
-    end
-
-    local function code_symbol_from_id(id)
-        local text = tostring(id and id.text or "exec")
-        text = text:gsub("^fn:", ""):gsub("^func:", ""):gsub("^function:", "")
-        text = text:gsub("[^%w_]", "_")
-        if text:match("^%d") then text = "_" .. text end
-        if text == "" then text = "exec" end
-        return text
-    end
-
-    local function exec_fragment_symbol(fragment)
-        local body = fragment and fragment.body or nil
-        local cls = asdl.classof(body)
-        if cls == Exec.ExecFragmentStencil then return body.artifact.symbol.text end
-        if cls == Exec.ExecFragmentCall then return code_symbol_from_id(body.callee) end
-        error("c_emit: unsupported exec fragment body " .. class_name(body), 3)
-    end
-
-    local function emit_exec_site(site, out)
-        local ecls = asdl.classof(site.emission)
-        local args = {}
-        for i = 1, #(site.args or {}) do args[i] = atom(site.args[i].atom) end
-        local call = exec_fragment_symbol(site.fragment) .. "(" .. table.concat(args, ", ") .. ")"
-        local rcls = asdl.classof(site.result)
-        if rcls == C.CBackendExecResultLocal then
-            out[#out + 1] = "    " .. site.result.dst.text .. " = " .. call .. ";"
-            return site.result.dst
-        end
-        out[#out + 1] = "    " .. call .. ";"
-        return nil
-    end
-
-    local function emit_func(f, sigs, out)
-        local sig = sigs[f.sig.text]
-        out[#out + 1] = emit_type(sig.result) .. " " .. f.name.text .. "(" .. func_params(f.params) .. ") {"
-        local function needs_compound_decl_only(ty)
-            local cls = asdl.classof(ty)
-            return cls == C.CBackendArray or cls == C.CBackendSliceDescriptor or cls == C.CBackendByteSpanDescriptor or cls == C.CBackendViewDescriptor or cls == C.CBackendClosureDescriptor or cls == C.CBackendNamed
-        end
-        local function emit_local_decl(local_id, ty)
-            if needs_compound_decl_only(ty) then
-                out[#out + 1] = "    " .. decl(ty, local_id) .. ";"
-            else
-                out[#out + 1] = "    " .. decl(ty, local_id) .. " = 0;"
-            end
-        end
-        local local_types = {}
-        for i = 1, #f.params do local_types[f.params[i].id.text] = f.params[i].ty end
-        for i = 1, #f.locals do
-            local_types[f.locals[i].id.text] = f.locals[i].ty
-            emit_local_decl(f.locals[i].id.text, f.locals[i].ty)
-        end
-        local body_cls = asdl.classof(f.body)
-        if body_cls == C.CBackendBodyExec then
-            local result = emit_exec_site(f.body.fragment, out)
-            if sig.result == C.CBackendVoid or asdl.classof(sig.result) == C.CBackendVoid then
-                out[#out + 1] = "    return;"
-            elseif result ~= nil then
-                out[#out + 1] = "    return " .. result.text .. ";"
-            else
-                error("c_emit: non-void exec function has no exec result", 2)
-            end
-            out[#out + 1] = "}"
-            return
-        elseif body_cls == C.CBackendBodyMixed and #(f.body.fragments or {}) > 0 then
-            for i = 1, #f.body.fragments do emit_exec_site(f.body.fragments[i], out) end
-        end
-        local f_blocks = func_blocks(f)
-        local blocks = {}; for i = 1, #f_blocks do blocks[f_blocks[i].label.text] = f_blocks[i] end
-        for i = 1, #f_blocks do
-            local b = f_blocks[i]
-            for j = 1, #b.params do
-                local_types[b.params[j].local_id.text] = b.params[j].ty
-                local_types["__xfer_" .. b.label.text .. "_" .. tostring(j)] = b.params[j].ty
-                emit_local_decl(b.params[j].local_id.text, b.params[j].ty)
-                emit_local_decl("__xfer_" .. b.label.text .. "_" .. tostring(j), b.params[j].ty)
-            end
-        end
-        for i = 1, #f_blocks do
-            local b = f_blocks[i]
-            out[#out + 1] = b.label.text .. ":"
-            for j = 1, #b.params do
-                local dst = b.params[j].local_id.text
-                local src = "__xfer_" .. b.label.text .. "_" .. tostring(j)
-                if is_array_type(b.params[j].ty) then
-                    emit_storage_copy(out, dst, src)
-                else
-                    out[#out + 1] = "    " .. dst .. " = " .. src .. ";"
-                end
-            end
-            for j = 1, #b.stmts do emit_stmt(b.stmts[j], out, blocks, local_types) end
-            emit_term(b.term, out, blocks)
-        end
+    function C.CBackendFunc:c_emit_func(sigs, out)
+        local sig = sigs[self.sig.text]
+        out[#out + 1] = sig.result:c_emit_type() .. " " .. self.name.text .. "(" .. func_params(self.params) .. ") {"
+        local local_types = {}; for i = 1, #self.params do local_types[self.params[i].id.text] = self.params[i].ty end
+        for i = 1, #self.locals do local_types[self.locals[i].id.text] = self.locals[i].ty; emit_local_decl(out, self.locals[i].id.text, self.locals[i].ty) end
+        local body_kind = self.body:c_emit_body_kind()
+        if body_kind == "exec" then
+            local result = self.body.fragment:c_emit_exec_site(out)
+            if sig.result:c_emit_is_void() then out[#out + 1] = "    return;" elseif result then out[#out + 1] = "    return " .. result.text .. ";" else error("c_emit: non-void exec function has no exec result", 2) end
+            out[#out + 1] = "}"; return
+        elseif body_kind == "mixed" then for i = 1, #self.body.fragments do self.body.fragments[i]:c_emit_exec_site(out) end end
+        local f_blocks = self.body:c_emit_blocks(); local blocks = {}; for i = 1, #f_blocks do blocks[f_blocks[i].label.text] = f_blocks[i] end
+        local scratch = { by_name = {}, order = {} }
+        for i = 1, #f_blocks do f_blocks[i].term:c_emit_collect_transfer_scratch(blocks, scratch) end
+        for i = 1, #f_blocks do for j = 1, #f_blocks[i].params do local_types[f_blocks[i].params[j].local_id.text] = f_blocks[i].params[j].ty; emit_local_decl(out, f_blocks[i].params[j].local_id.text, f_blocks[i].params[j].ty) end end
+        for i = 1, #scratch.order do local name = scratch.order[i]; local_types[name] = scratch.by_name[name]; emit_local_decl(out, name, scratch.by_name[name]) end
+        for i = 1, #f_blocks do local b = f_blocks[i]; out[#out + 1] = b.label.text .. ":"; for j = 1, #b.stmts do b.stmts[j]:c_emit_stmt(out, blocks, local_types) end; b.term:c_emit_term(out, blocks) end
         out[#out + 1] = "}"
     end
 
-    local function helper_is_atomic(h)
-        local k = h.spec or h
-        local cls = asdl.classof(k)
-        return cls == C.CBackendHelperAtomicLoad or cls == C.CBackendHelperAtomicStore
-            or cls == C.CBackendHelperAtomicRmw or cls == C.CBackendHelperAtomicCas
-            or cls == C.CBackendHelperAtomicFence
+    function C.CBackendHelperUse:c_emit_helper_is_atomic() return self.spec:c_emit_helper_is_atomic() end
+    function C.CBackendHelperSpec:c_emit_helper_is_atomic() return false end
+    function C.CBackendHelperAtomicLoad:c_emit_helper_is_atomic() return true end
+    function C.CBackendHelperAtomicStore:c_emit_helper_is_atomic() return true end
+    function C.CBackendHelperAtomicRmw:c_emit_helper_is_atomic() return true end
+    function C.CBackendHelperAtomicCas:c_emit_helper_is_atomic() return true end
+    function C.CBackendHelperAtomicFence:c_emit_helper_is_atomic() return true end
+    function C.CBackendDialect:c_emit_supports_c11_atomics() return false end
+    function C.CBackendC11:c_emit_supports_c11_atomics() return true end
+    function C.CBackendGnuC:c_emit_supports_c11_atomics() return true end
+    function C.CBackendClangC:c_emit_supports_c11_atomics() return true end
+
+
+
+    function Core.Scalar:c_helper_suffix() error("missing c_helper_suffix leaf method for Scalar", 2) end
+    function Core.ScalarVoid:c_helper_suffix() return "void" end
+    function Core.ScalarBool:c_helper_suffix() return "bool8" end
+    function Core.ScalarI8:c_helper_suffix() return "i8" end
+    function Core.ScalarI16:c_helper_suffix() return "i16" end
+    function Core.ScalarI32:c_helper_suffix() return "i32" end
+    function Core.ScalarI64:c_helper_suffix() return "i64" end
+    function Core.ScalarU8:c_helper_suffix() return "u8" end
+    function Core.ScalarU16:c_helper_suffix() return "u16" end
+    function Core.ScalarU32:c_helper_suffix() return "u32" end
+    function Core.ScalarU64:c_helper_suffix() return "u64" end
+    function Core.ScalarF32:c_helper_suffix() return "f32" end
+    function Core.ScalarF64:c_helper_suffix() return "f64" end
+    function Core.ScalarRawPtr:c_helper_suffix() return "ptr" end
+    function Core.ScalarIndex:c_helper_suffix() return "index" end
+
+    function Core.UnaryOp:c_helper_suffix() error("missing c_helper_suffix leaf method for UnaryOp", 2) end
+    function Core.UnaryNeg:c_helper_suffix() return "neg" end
+    function Core.UnaryNot:c_helper_suffix() return "not" end
+    function Core.UnaryBitNot:c_helper_suffix() return "bitnot" end
+
+    function Core.BinaryOp:c_helper_suffix() error("missing c_helper_suffix leaf method for BinaryOp", 2) end
+    function Core.BinAdd:c_helper_suffix() return "add" end
+    function Core.BinSub:c_helper_suffix() return "sub" end
+    function Core.BinMul:c_helper_suffix() return "mul" end
+    function Core.BinDiv:c_helper_suffix() return "div" end
+    function Core.BinRem:c_helper_suffix() return "rem" end
+    function Core.BinBitAnd:c_helper_suffix() return "and" end
+    function Core.BinBitOr:c_helper_suffix() return "or" end
+    function Core.BinBitXor:c_helper_suffix() return "xor" end
+    function Core.BinShl:c_helper_suffix() return "shl" end
+    function Core.BinLShr:c_helper_suffix() return "lshr" end
+    function Core.BinAShr:c_helper_suffix() return "ashr" end
+    function Core.BinaryOp:c_helper_expr(a, b) error("missing c_helper_expr leaf method for BinaryOp", 2) end
+    function Core.BinAdd:c_helper_expr(a, b) return a .. " + " .. b end
+    function Core.BinSub:c_helper_expr(a, b) return a .. " - " .. b end
+    function Core.BinMul:c_helper_expr(a, b) return a .. " * " .. b end
+    function Core.BinDiv:c_helper_expr(a, b) return a .. " / " .. b end
+    function Core.BinRem:c_helper_expr(a, b) return a .. " % " .. b end
+    function Core.BinBitAnd:c_helper_expr(a, b) return a .. " & " .. b end
+    function Core.BinBitOr:c_helper_expr(a, b) return a .. " | " .. b end
+    function Core.BinBitXor:c_helper_expr(a, b) return a .. " ^ " .. b end
+    function Core.BinShl:c_helper_expr(a, b) return a .. " << " .. b end
+    function Core.BinLShr:c_helper_expr(a, b) return a .. " >> " .. b end
+    function Core.BinAShr:c_helper_expr(a, b) return a .. " >> " .. b end
+
+    function Core.MachineCastOp:c_helper_suffix() error("missing c_helper_suffix leaf method for MachineCastOp", 2) end
+    function Core.MachineCastIdentity:c_helper_suffix() return "identity" end
+    function Core.MachineCastBitcast:c_helper_suffix() return "bitcast" end
+    function Core.MachineCastIreduce:c_helper_suffix() return "ireduce" end
+    function Core.MachineCastSextend:c_helper_suffix() return "sextend" end
+    function Core.MachineCastUextend:c_helper_suffix() return "uextend" end
+    function Core.MachineCastFpromote:c_helper_suffix() return "fpromote" end
+    function Core.MachineCastFdemote:c_helper_suffix() return "fdemote" end
+    function Core.MachineCastSToF:c_helper_suffix() return "stof" end
+    function Core.MachineCastUToF:c_helper_suffix() return "utof" end
+    function Core.MachineCastFToS:c_helper_suffix() return "ftos" end
+    function Core.MachineCastFToU:c_helper_suffix() return "ftou" end
+    function Core.MachineCastOp:c_emit_helper_cast_body(lines, ret) lines[#lines + 1] = "    return (" .. ret .. ")a1;" end
+    function Core.MachineCastBitcast:c_emit_helper_cast_body(lines, ret)
+        lines[#lines + 1] = "    " .. ret .. " out;"
+        lines[#lines + 1] = "    memset(&out, 0, sizeof(out));"
+        lines[#lines + 1] = "    memcpy(&out, &a1, sizeof(out) < sizeof(a1) ? sizeof(out) : sizeof(a1));"
+        lines[#lines + 1] = "    return out;"
     end
 
-    local function target_supports_c11_atomics(target)
-        if target == nil then return false end
-        local dcls = asdl.classof(target.dialect)
-        return target.dialect == C.CBackendC11 or target.dialect == C.CBackendGnuC or target.dialect == C.CBackendClangC
-            or dcls == C.CBackendC11 or dcls == C.CBackendGnuC or dcls == C.CBackendClangC
+    function Core.Intrinsic:c_helper_suffix() error("missing c_helper_suffix leaf method for Intrinsic", 2) end
+    function Core.IntrinsicPopcount:c_helper_suffix() return "popcount" end
+    function Core.IntrinsicClz:c_helper_suffix() return "clz" end
+    function Core.IntrinsicCtz:c_helper_suffix() return "ctz" end
+    function Core.IntrinsicRotl:c_helper_suffix() return "rotl" end
+    function Core.IntrinsicRotr:c_helper_suffix() return "rotr" end
+    function Core.IntrinsicBswap:c_helper_suffix() return "bswap" end
+    function Core.IntrinsicFma:c_helper_suffix() return "fma" end
+    function Core.IntrinsicSqrt:c_helper_suffix() return "sqrt" end
+    function Core.IntrinsicAbs:c_helper_suffix() return "abs" end
+    function Core.IntrinsicFloor:c_helper_suffix() return "floor" end
+    function Core.IntrinsicCeil:c_helper_suffix() return "ceil" end
+    function Core.IntrinsicTruncFloat:c_helper_suffix() return "truncfloat" end
+    function Core.IntrinsicRound:c_helper_suffix() return "round" end
+    function Core.IntrinsicTrap:c_helper_suffix() return "trap" end
+    function Core.IntrinsicAssume:c_helper_suffix() return "assume" end
+    function Core.Intrinsic:c_helper_signature(ty) return { params = { ty }, result = ty } end
+    function Core.IntrinsicTrap:c_helper_signature(ty) return { params = {}, result = C.CBackendVoid } end
+    function Core.IntrinsicAssume:c_helper_signature(ty) return { params = { C.CBackendBool8 }, result = C.CBackendVoid } end
+    function Core.IntrinsicFma:c_helper_signature(ty) return { params = { ty, ty, ty }, result = ty } end
+    function Core.IntrinsicRotl:c_helper_signature(ty) return { params = { ty, ty }, result = ty } end
+    function Core.IntrinsicRotr:c_helper_signature(ty) return { params = { ty, ty }, result = ty } end
+    function Core.Intrinsic:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return a1;" end
+    function Core.IntrinsicTrap:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    abort();" end
+    function Core.IntrinsicAssume:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    if (!a1) abort();" end
+    function Core.IntrinsicSqrt:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")sqrt((double)a1);" end
+    function Core.IntrinsicAbs:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return a1 < 0 ? (" .. ret .. ")((" .. uret .. ")0 - (" .. uret .. ")a1) : a1;" end
+    function Core.IntrinsicFma:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")fma((double)a1, (double)a2, (double)a3);" end
+    function Core.IntrinsicRotl:c_emit_helper_intrinsic_body(lines, ret, uret)
+        lines[#lines + 1] = "    unsigned int s = ((unsigned int)a2) & ((unsigned int)(sizeof(a1) * 8u - 1u));"
+        lines[#lines + 1] = "    return (" .. ret .. ")(((" .. uret .. ")a1 << s) | ((" .. uret .. ")a1 >> ((sizeof(a1)*8u - s) & (sizeof(a1)*8u - 1u))));"
+    end
+    function Core.IntrinsicRotr:c_emit_helper_intrinsic_body(lines, ret, uret)
+        lines[#lines + 1] = "    unsigned int s = ((unsigned int)a2) & ((unsigned int)(sizeof(a1) * 8u - 1u));"
+        lines[#lines + 1] = "    return (" .. ret .. ")(((" .. uret .. ")a1 >> s) | ((" .. uret .. ")a1 << ((sizeof(a1)*8u - s) & (sizeof(a1)*8u - 1u))));"
+    end
+    function Core.IntrinsicPopcount:c_emit_helper_intrinsic_body(lines, ret, uret)
+        lines[#lines + 1] = "    " .. uret .. " x = (" .. uret .. ")a1; unsigned int n = 0;"
+        lines[#lines + 1] = "    while (x) { n += (unsigned int)(x & 1u); x >>= 1; } return (" .. ret .. ")n;"
+    end
+    function Core.IntrinsicClz:c_emit_helper_intrinsic_body(lines, ret, uret)
+        lines[#lines + 1] = "    " .. uret .. " x = (" .. uret .. ")a1; unsigned int n = 0;"
+        lines[#lines + 1] = "    for (int i = (int)(sizeof(a1)*8u)-1; i >= 0; --i) { if ((x >> i) & 1u) break; ++n; } return (" .. ret .. ")n;"
+    end
+    function Core.IntrinsicCtz:c_emit_helper_intrinsic_body(lines, ret, uret)
+        lines[#lines + 1] = "    " .. uret .. " x = (" .. uret .. ")a1; unsigned int n = 0;"
+        lines[#lines + 1] = "    for (unsigned int i = 0; i < sizeof(a1)*8u; ++i) { if ((x >> i) & 1u) break; ++n; } return (" .. ret .. ")n;"
+    end
+    function Core.IntrinsicBswap:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    " .. uret .. " x = (" .. uret .. ")a1, y = 0; for (unsigned int i = 0; i < sizeof(a1); ++i) { y = (y << 8) | (x & 255u); x >>= 8; } return (" .. ret .. ")y;" end
+    function Core.IntrinsicFloor:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")floor((double)a1);" end
+    function Core.IntrinsicCeil:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")ceil((double)a1);" end
+    function Core.IntrinsicTruncFloat:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")trunc((double)a1);" end
+    function Core.IntrinsicRound:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")round((double)a1);" end
+
+    function Core.AtomicRmwOp:c_helper_suffix() error("missing c_helper_suffix leaf method for AtomicRmwOp", 2) end
+    function Core.AtomicRmwAdd:c_helper_suffix() return "add" end
+    function Core.AtomicRmwSub:c_helper_suffix() return "sub" end
+    function Core.AtomicRmwAnd:c_helper_suffix() return "and" end
+    function Core.AtomicRmwOr:c_helper_suffix() return "or" end
+    function Core.AtomicRmwXor:c_helper_suffix() return "xor" end
+    function Core.AtomicRmwXchg:c_helper_suffix() return "xchg" end
+    function Core.AtomicRmwOp:c_emit_helper_atomic_rmw(lines) error("missing c_emit_helper_atomic_rmw leaf method", 2) end
+    function Core.AtomicRmwAdd:c_emit_helper_atomic_rmw(lines) lines[#lines + 1] = "    return atomic_fetch_add_explicit(p, a2, memory_order_seq_cst);" end
+    function Core.AtomicRmwSub:c_emit_helper_atomic_rmw(lines) lines[#lines + 1] = "    return atomic_fetch_sub_explicit(p, a2, memory_order_seq_cst);" end
+    function Core.AtomicRmwAnd:c_emit_helper_atomic_rmw(lines) lines[#lines + 1] = "    return atomic_fetch_and_explicit(p, a2, memory_order_seq_cst);" end
+    function Core.AtomicRmwOr:c_emit_helper_atomic_rmw(lines) lines[#lines + 1] = "    return atomic_fetch_or_explicit(p, a2, memory_order_seq_cst);" end
+    function Core.AtomicRmwXor:c_emit_helper_atomic_rmw(lines) lines[#lines + 1] = "    return atomic_fetch_xor_explicit(p, a2, memory_order_seq_cst);" end
+    function Core.AtomicRmwXchg:c_emit_helper_atomic_rmw(lines) lines[#lines + 1] = "    return atomic_exchange_explicit(p, a2, memory_order_seq_cst);" end
+    function Core.AtomicSeqCst:c_helper_suffix() return "seqcst" end
+
+    function C.CBackendIntOverflow:c_helper_suffix() error("missing c_helper_suffix leaf method for CBackendIntOverflow", 2) end
+    function C.CBackendIntWrap:c_helper_suffix() return "intwrap" end
+    function C.CBackendIntTrapOnOverflow:c_helper_suffix() return "inttraponoverflow" end
+    function C.CBackendIntAssumeNoOverflow:c_helper_suffix() return "intassumenooverflow" end
+    function C.CBackendDivPolicy:c_helper_suffix() error("missing c_helper_suffix leaf method for CBackendDivPolicy", 2) end
+    function C.CBackendDivTrapOnZero:c_helper_suffix() return "divtraponzero" end
+    function C.CBackendDivTrapOnZeroOrOverflow:c_helper_suffix() return "divtraponzerooroverflow" end
+    function C.CBackendShiftPolicy:c_helper_suffix() error("missing c_helper_suffix leaf method for CBackendShiftPolicy", 2) end
+    function C.CBackendShiftMaskCount:c_helper_suffix() return "shiftmaskcount" end
+    function C.CBackendShiftTrapOutOfRange:c_helper_suffix() return "shifttrapoutofrange" end
+    function C.CBackendTargetFeature:c_helper_suffix() error("missing c_helper_suffix leaf method for CBackendTargetFeature", 2) end
+    function C.CBackendFeatureC11Atomics:c_helper_suffix() return "c11atomics" end
+    function C.CBackendFeatureLibm:c_helper_suffix() return "libm" end
+    function C.CBackendFeatureBuiltinOverflow:c_helper_suffix() return "builtinoverflow" end
+    function C.CBackendFeatureBuiltinBitops:c_helper_suffix() return "builtinbitops" end
+    function C.CBackendFeatureUnalignedAccess:c_helper_suffix() return "unalignedaccess" end
+    function C.CBackendFeatureStaticAssert:c_helper_suffix() return "staticassert" end
+    function C.CBackendFeatureHostedRuntime:c_helper_suffix() return "hostedruntime" end
+
+    function C.CBackendType:c_helper_suffix() error("missing c_helper_suffix leaf method for CBackendType", 2) end
+    function C.CBackendVoid:c_helper_suffix() return "void" end
+    function C.CBackendBool8:c_helper_suffix() return "bool8" end
+    function C.CBackendScalar:c_helper_suffix() return self.scalar:c_helper_suffix() end
+    function C.CBackendIndex:c_helper_suffix() return "index" end
+    function C.CBackendDataPtr:c_helper_suffix() return "ptr" end
+    function C.CBackendCodePtr:c_helper_suffix() return "codeptr_" .. sanitize(self.sig.text) end
+    function C.CBackendImportedCodePtr:c_helper_suffix() return "c_codeptr_" .. sanitize(self.sig.text) end
+    function C.CBackendNamed:c_helper_suffix() return sanitize(self.id.module_name .. "_" .. self.id.spelling) end
+    function C.CBackendArray:c_helper_suffix() return "arr" .. tostring(self.count) .. "_" .. self.elem:c_helper_suffix() end
+    function C.CBackendSliceDescriptor:c_helper_suffix() return "slice_" .. self.elem:c_helper_suffix() end
+    function C.CBackendByteSpanDescriptor:c_helper_suffix() return "bytespan" end
+    function C.CBackendViewDescriptor:c_helper_suffix() return "view_" .. self.elem:c_helper_suffix() end
+    function C.CBackendClosureDescriptor:c_helper_suffix() return "closure_" .. sanitize(self.sig.text) end
+    function C.CBackendAbiHiddenOutPtr:c_helper_suffix() return "out_" .. self.result:c_helper_suffix() end
+    function C.CBackendVector:c_helper_suffix() return self.elem:c_helper_suffix() .. "x" .. tostring(self.lanes) end
+    function C.CBackendType:c_helper_unsigned_c_type() return "uint64_t" end
+    function C.CBackendIndex:c_helper_unsigned_c_type() return "uintptr_t" end
+    function C.CBackendScalar:c_helper_unsigned_c_type()
+        if self.scalar == Core.ScalarBool or self.scalar == Core.ScalarI8 or self.scalar == Core.ScalarU8 then return "uint8_t" end
+        if self.scalar == Core.ScalarI16 or self.scalar == Core.ScalarU16 then return "uint16_t" end
+        if self.scalar == Core.ScalarI32 or self.scalar == Core.ScalarU32 then return "uint32_t" end
+        return "uint64_t"
+    end
+    function C.CBackendType:c_helper_is_signed() return false end
+    function C.CBackendScalar:c_helper_is_signed() return self.scalar == Core.ScalarI8 or self.scalar == Core.ScalarI16 or self.scalar == Core.ScalarI32 or self.scalar == Core.ScalarI64 or self.scalar == Core.ScalarIndex end
+
+    function C.CBackendHelperSpec:c_helper_id() error("missing c_helper_id leaf method for CBackendHelperSpec", 2) end
+    function C.CBackendHelperUnary:c_helper_id() return C.CBackendHelperId("ml_" .. self.ty:c_helper_suffix() .. "_" .. self.op:c_helper_suffix()) end
+    function C.CBackendHelperBoolNormalize:c_helper_id() return C.CBackendHelperId("ml_bool_normalize_" .. self.ty:c_helper_suffix()) end
+    function C.CBackendHelperCast:c_helper_id() return C.CBackendHelperId("ml_cast_" .. self.op:c_helper_suffix() .. "_" .. self.from:c_helper_suffix() .. "_to_" .. self.to:c_helper_suffix()) end
+    function C.CBackendHelperPtrOffset:c_helper_id() return C.CBackendHelperId("ml_ptroff_" .. self.pointee:c_helper_suffix() .. "_" .. tostring(self.elem_size) .. (self.checked and "_checked" or "")) end
+    function C.CBackendHelperIntBinary:c_helper_id() return C.CBackendHelperId("ml_" .. self.ty:c_helper_suffix() .. "_" .. self.op:c_helper_suffix() .. "_" .. self.overflow:c_helper_suffix()) end
+    function C.CBackendHelperFloatBinary:c_helper_id() return C.CBackendHelperId("ml_" .. self.ty:c_helper_suffix() .. "_" .. self.op:c_helper_suffix()) end
+    function C.CBackendHelperDivRem:c_helper_id() return C.CBackendHelperId("ml_" .. self.ty:c_helper_suffix() .. "_" .. self.op:c_helper_suffix() .. "_" .. self.mode:c_helper_suffix()) end
+    function C.CBackendHelperShift:c_helper_id() return C.CBackendHelperId("ml_" .. self.ty:c_helper_suffix() .. "_" .. self.op:c_helper_suffix() .. "_" .. self.mode:c_helper_suffix()) end
+    function C.CBackendHelperIntrinsic:c_helper_id() return C.CBackendHelperId("ml_" .. self.ty:c_helper_suffix() .. "_" .. self.intrinsic:c_helper_suffix()) end
+    function C.CBackendHelperLoad:c_helper_id() return C.CBackendHelperId("ml_load_" .. self.access.ty:c_helper_suffix() .. "_a" .. tostring(self.access.align)) end
+    function C.CBackendHelperStore:c_helper_id() return C.CBackendHelperId("ml_store_" .. self.access.ty:c_helper_suffix() .. "_a" .. tostring(self.access.align)) end
+    function C.CBackendHelperAtomicLoad:c_helper_id() return C.CBackendHelperId("ml_atomic_load_" .. self.access.ty:c_helper_suffix()) end
+    function C.CBackendHelperAtomicStore:c_helper_id() return C.CBackendHelperId("ml_atomic_store_" .. self.access.ty:c_helper_suffix()) end
+    function C.CBackendHelperAtomicRmw:c_helper_id() return C.CBackendHelperId("ml_atomic_" .. self.op:c_helper_suffix() .. "_" .. self.access.ty:c_helper_suffix()) end
+    function C.CBackendHelperAtomicCas:c_helper_id() return C.CBackendHelperId("ml_atomic_cas_" .. self.access.ty:c_helper_suffix()) end
+    function C.CBackendHelperAtomicFence:c_helper_id() return C.CBackendHelperId("ml_atomic_fence_" .. self.ordering:c_helper_suffix()) end
+    function C.CBackendHelperMemcpy:c_helper_id() return C.CBackendHelperId("ml_memcpy") end
+    function C.CBackendHelperTypedMemcpy:c_helper_id() return C.CBackendHelperId("ml_memcpy_" .. self.ty:c_helper_suffix() .. "_" .. tostring(self.size) .. "_a" .. tostring(self.align)) end
+    function C.CBackendHelperMemset:c_helper_id() return C.CBackendHelperId("ml_memset") end
+    function C.CBackendHelperTypedMemset:c_helper_id() return C.CBackendHelperId("ml_memset_" .. self.ty:c_helper_suffix() .. "_" .. tostring(self.size) .. "_a" .. tostring(self.align)) end
+    function C.CBackendHelperMemcmp:c_helper_id() return C.CBackendHelperId("ml_memcmp") end
+    function C.CBackendHelperLayoutAssert:c_helper_id() return C.CBackendHelperId("ml_layout_assert_" .. C.CBackendNamed(self.assertion.id):c_helper_suffix()) end
+    function C.CBackendHelperRequireFeature:c_helper_id() return C.CBackendHelperId("ml_require_" .. self.feature:c_helper_suffix()) end
+    function C.CBackendHelperTrap:c_helper_id() return C.CBackendHelperId("ml_trap") end
+
+    function C.CBackendHelperSpec:c_helper_signature() error("missing c_helper_signature leaf method for CBackendHelperSpec", 2) end
+    function C.CBackendHelperUse:c_helper_signature() return self.spec:c_helper_signature() end
+    function C.CBackendHelperUnary:c_helper_signature() return { params = { self.ty }, result = self.ty } end
+    function C.CBackendHelperBoolNormalize:c_helper_signature() return { params = { self.ty }, result = C.CBackendBool8 } end
+    function C.CBackendHelperCast:c_helper_signature() return { params = { self.from }, result = self.to } end
+    function C.CBackendHelperPtrOffset:c_helper_signature() return { params = { C.CBackendDataPtr(nil), C.CBackendIndex }, result = C.CBackendDataPtr(nil) } end
+    function C.CBackendHelperIntBinary:c_helper_signature() return { params = { self.ty, self.ty }, result = self.ty } end
+    function C.CBackendHelperFloatBinary:c_helper_signature() return { params = { self.ty, self.ty }, result = self.ty } end
+    function C.CBackendHelperDivRem:c_helper_signature() return { params = { self.ty, self.ty }, result = self.ty } end
+    function C.CBackendHelperShift:c_helper_signature() return { params = { self.ty, self.ty }, result = self.ty } end
+    function C.CBackendHelperIntrinsic:c_helper_signature() return self.intrinsic:c_helper_signature(self.ty) end
+    function C.CBackendHelperLoad:c_helper_signature() return { params = { C.CBackendDataPtr(nil) }, result = self.access.ty } end
+    function C.CBackendHelperStore:c_helper_signature() return { params = { C.CBackendDataPtr(nil), self.access.ty }, result = C.CBackendVoid } end
+    function C.CBackendHelperAtomicLoad:c_helper_signature() return { params = { C.CBackendDataPtr(self.access.ty) }, result = self.access.ty } end
+    function C.CBackendHelperAtomicStore:c_helper_signature() return { params = { C.CBackendDataPtr(self.access.ty), self.access.ty }, result = C.CBackendVoid } end
+    function C.CBackendHelperAtomicRmw:c_helper_signature() return { params = { C.CBackendDataPtr(self.access.ty), self.access.ty }, result = self.access.ty } end
+    function C.CBackendHelperAtomicCas:c_helper_signature() return { params = { C.CBackendDataPtr(self.access.ty), C.CBackendDataPtr(self.access.ty), self.access.ty }, result = self.access.ty } end
+    function C.CBackendHelperAtomicFence:c_helper_signature() return { params = {}, result = C.CBackendVoid } end
+    function C.CBackendHelperMemcpy:c_helper_signature() return { params = { C.CBackendDataPtr(nil), C.CBackendDataPtr(nil), C.CBackendIndex }, result = C.CBackendVoid } end
+    function C.CBackendHelperTypedMemcpy:c_helper_signature() return { params = { C.CBackendDataPtr(nil), C.CBackendDataPtr(nil) }, result = C.CBackendVoid } end
+    function C.CBackendHelperMemset:c_helper_signature() return { params = { C.CBackendDataPtr(nil), C.CBackendScalar(Core.ScalarI32), C.CBackendIndex }, result = C.CBackendVoid } end
+    function C.CBackendHelperTypedMemset:c_helper_signature() return { params = { C.CBackendDataPtr(nil), C.CBackendScalar(Core.ScalarI32) }, result = C.CBackendVoid } end
+    function C.CBackendHelperMemcmp:c_helper_signature() return { params = { C.CBackendDataPtr(nil), C.CBackendDataPtr(nil), C.CBackendIndex }, result = C.CBackendScalar(Core.ScalarI32) } end
+    function C.CBackendHelperLayoutAssert:c_helper_signature() return { params = {}, result = C.CBackendVoid } end
+    function C.CBackendHelperRequireFeature:c_helper_signature() return { params = {}, result = C.CBackendVoid } end
+    function C.CBackendHelperTrap:c_helper_signature() return { params = {}, result = C.CBackendVoid } end
+
+    local function helper_header(id, sig, emit_type)
+        local ret = emit_type(sig.result)
+        local params = {}
+        for i = 1, #sig.params do params[i] = emit_type(sig.params[i]) .. " a" .. tostring(i) end
+        return { "static inline " .. ret .. " " .. id.text .. "(" .. table.concat(params, ", ") .. ") {" }, ret
+    end
+
+    function C.CBackendHelperSpec:c_emit_helper_body(lines, ret, uret, emit_type) lines[#lines + 1] = "    /* helper spec has no side effects */" end
+    function C.CBackendHelperUnary:c_emit_helper_body(lines, ret, uret, emit_type)
+        return self.op:c_emit_helper_unary_body(lines, ret, uret)
+    end
+    function Core.UnaryOp:c_emit_helper_unary_body(lines, ret, uret) error("missing c_emit_helper_unary_body leaf method", 2) end
+    function Core.UnaryNot:c_emit_helper_unary_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")(!a1);" end
+    function Core.UnaryBitNot:c_emit_helper_unary_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")(~(" .. uret .. ")a1);" end
+    function Core.UnaryNeg:c_emit_helper_unary_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")((" .. uret .. ")0 - (" .. uret .. ")a1);" end
+    function C.CBackendHelperBoolNormalize:c_emit_helper_body(lines) lines[#lines + 1] = "    return a1 ? 1u : 0u;" end
+    function C.CBackendHelperCast:c_emit_helper_body(lines, ret) self.op:c_emit_helper_cast_body(lines, ret) end
+    function C.CBackendHelperPtrOffset:c_emit_helper_body(lines) lines[#lines + 1] = "    return (void*)((unsigned char*)a1 + ((intptr_t)a2 * (intptr_t)" .. tostring(self.elem_size) .. "));" end
+    function C.CBackendHelperLoad:c_emit_helper_body(lines, ret, uret, emit_type) lines[#lines + 1] = "    " .. emit_type(self.access.ty) .. " v;"; lines[#lines + 1] = "    memcpy(&v, a1, sizeof(v));"; lines[#lines + 1] = "    return v;" end
+    function C.CBackendHelperStore:c_emit_helper_body(lines) lines[#lines + 1] = "    memcpy(a1, &a2, sizeof(a2));" end
+    function C.CBackendHelperAtomicLoad:c_emit_helper_body(lines, ret, uret, emit_type) lines[#lines + 1] = "    _Atomic(" .. emit_type(self.access.ty) .. ")* p = (_Atomic(" .. emit_type(self.access.ty) .. ")*)a1;"; lines[#lines + 1] = "    return atomic_load_explicit(p, memory_order_seq_cst);" end
+    function C.CBackendHelperAtomicStore:c_emit_helper_body(lines, ret, uret, emit_type) lines[#lines + 1] = "    _Atomic(" .. emit_type(self.access.ty) .. ")* p = (_Atomic(" .. emit_type(self.access.ty) .. ")*)a1;"; lines[#lines + 1] = "    atomic_store_explicit(p, a2, memory_order_seq_cst);" end
+    function C.CBackendHelperAtomicRmw:c_emit_helper_body(lines, ret, uret, emit_type) lines[#lines + 1] = "    _Atomic(" .. emit_type(self.access.ty) .. ")* p = (_Atomic(" .. emit_type(self.access.ty) .. ")*)a1;"; self.op:c_emit_helper_atomic_rmw(lines) end
+    function C.CBackendHelperAtomicCas:c_emit_helper_body(lines, ret, uret, emit_type) lines[#lines + 1] = "    _Atomic(" .. emit_type(self.access.ty) .. ")* p = (_Atomic(" .. emit_type(self.access.ty) .. ")*)a1;"; lines[#lines + 1] = "    " .. emit_type(self.access.ty) .. " old = *(" .. emit_type(self.access.ty) .. "*)a2;"; lines[#lines + 1] = "    atomic_compare_exchange_strong_explicit(p, (" .. emit_type(self.access.ty) .. "*)a2, a3, memory_order_seq_cst, memory_order_seq_cst);"; lines[#lines + 1] = "    return old;" end
+    function C.CBackendHelperAtomicFence:c_emit_helper_body(lines) lines[#lines + 1] = "    atomic_thread_fence(memory_order_seq_cst);" end
+    function C.CBackendHelperMemcpy:c_emit_helper_body(lines) lines[#lines + 1] = "    memcpy(a1, a2, (size_t)a3);" end
+    function C.CBackendHelperTypedMemcpy:c_emit_helper_body(lines) lines[#lines + 1] = "    memcpy(a1, a2, (size_t)" .. tostring(self.size) .. ");" end
+    function C.CBackendHelperMemset:c_emit_helper_body(lines) lines[#lines + 1] = "    memset(a1, a2, (size_t)a3);" end
+    function C.CBackendHelperTypedMemset:c_emit_helper_body(lines) lines[#lines + 1] = "    memset(a1, a2, (size_t)" .. tostring(self.size) .. ");" end
+    function C.CBackendHelperMemcmp:c_emit_helper_body(lines) lines[#lines + 1] = "    return memcmp(a1, a2, (size_t)a3);" end
+    function C.CBackendHelperTrap:c_emit_helper_body(lines) lines[#lines + 1] = "    abort();" end
+    function C.CBackendHelperIntrinsic:c_emit_helper_body(lines, ret, uret) self.intrinsic:c_emit_helper_intrinsic_body(lines, ret, uret) end
+    function C.CBackendHelperDivRem:c_emit_helper_body(lines, ret, uret) lines[#lines + 1] = "    if (a2 == 0) abort();"; if self.ty:c_helper_is_signed() then lines[#lines + 1] = "    if (a2 == (" .. ret .. ")-1 && a1 == (" .. ret .. ")(((" .. uret .. ")1) << (sizeof(a1) * 8u - 1u))) abort();" end; lines[#lines + 1] = "    return (" .. ret .. ")(" .. self.op:c_helper_expr("a1", "a2") .. ");" end
+    function C.CBackendHelperShift:c_emit_helper_body(lines, ret, uret)
+        lines[#lines + 1] = "    unsigned int width = (unsigned int)(sizeof(a1) * 8u);"
+        lines[#lines + 1] = "    unsigned int s = ((unsigned int)a2) & (width - 1u);"
+        self.op:c_emit_helper_shift_body(lines, ret, uret, self.ty)
+    end
+    function Core.BinaryOp:c_emit_helper_shift_body(lines, ret, uret, ty) lines[#lines + 1] = "    return (" .. ret .. ")((" .. uret .. ")a1 >> s);" end
+    function Core.BinShl:c_emit_helper_shift_body(lines, ret, uret, ty) lines[#lines + 1] = "    return (" .. ret .. ")((" .. uret .. ")a1 << s);" end
+    function Core.BinAShr:c_emit_helper_shift_body(lines, ret, uret, ty)
+        if ty:c_helper_is_signed() then
+            lines[#lines + 1] = "    " .. uret .. " mask = (" .. uret .. ")~(" .. uret .. ")0;"
+            lines[#lines + 1] = "    " .. uret .. " x = ((" .. uret .. ")a1) & mask;"
+            lines[#lines + 1] = "    if (s != 0u && a1 < 0) x = (x >> s) | (mask << (width - s)); else x >>= s;"
+            lines[#lines + 1] = "    return (" .. ret .. ")(x & mask);"
+        else
+            lines[#lines + 1] = "    return (" .. ret .. ")((" .. uret .. ")a1 >> s);"
+        end
+    end
+    function C.CBackendHelperIntBinary:c_emit_helper_body(lines, ret, uret) self.op:c_emit_helper_int_binary_body(lines, ret, uret) end
+    function Core.BinaryOp:c_emit_helper_int_binary_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")(" .. self:c_helper_expr("a1", "a2") .. ");" end
+    function Core.BinAdd:c_emit_helper_int_binary_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")((" .. uret .. ")a1 + (" .. uret .. ")a2);" end
+    function Core.BinSub:c_emit_helper_int_binary_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")((" .. uret .. ")a1 - (" .. uret .. ")a2);" end
+    function Core.BinMul:c_emit_helper_int_binary_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")((" .. uret .. ")a1 * (" .. uret .. ")a2);" end
+    function C.CBackendHelperFloatBinary:c_emit_helper_body(lines, ret) self.op:c_emit_helper_float_binary_body(lines, ret) end
+    function Core.BinaryOp:c_emit_helper_float_binary_body(lines, ret) lines[#lines + 1] = "    return (" .. ret .. ")(a1 + a2);" end
+    function Core.BinAdd:c_emit_helper_float_binary_body(lines, ret) lines[#lines + 1] = "    return (" .. ret .. ")(a1 + a2);" end
+    function Core.BinSub:c_emit_helper_float_binary_body(lines, ret) lines[#lines + 1] = "    return (" .. ret .. ")(a1 - a2);" end
+    function Core.BinMul:c_emit_helper_float_binary_body(lines, ret) lines[#lines + 1] = "    return (" .. ret .. ")(a1 * a2);" end
+    function Core.BinDiv:c_emit_helper_float_binary_body(lines, ret) lines[#lines + 1] = "    return (" .. ret .. ")(a1 / a2);" end
+    function C.CBackendHelperLayoutAssert:c_emit_helper_body(lines) lines[#lines + 1] = "    typedef char ml_size_assert[(sizeof(" .. C.CBackendNamed(self.assertion.id):c_emit_type() .. ") == " .. tostring(self.assertion.size) .. ") ? 1 : -1]; (void)sizeof(ml_size_assert);" end
+    function C.CBackendHelperRequireFeature:c_emit_helper_body(lines) lines[#lines + 1] = "    /* required target feature: " .. self.feature:c_helper_suffix() .. " - " .. tostring(self.reason):gsub("[\r\n]", " ") .. " */" end
+
+    function C.CBackendHelperSpec:c_emit_helper_lines_with_id(id, emit_type)
+        emit_type = emit_type or c_type_name
+        local sig = self:c_helper_signature()
+        local lines, ret = helper_header(id, sig, emit_type)
+        local uret = ((not sig.result:c_emit_is_void() and sig.result) or sig.params[1] or C.CBackendIndex):c_helper_unsigned_c_type()
+        self:c_emit_helper_body(lines, ret, uret, emit_type)
+        lines[#lines + 1] = "}"
+        return lines
+    end
+    function C.CBackendHelperSpec:c_emit_helper_lines(emit_type) return self:c_emit_helper_lines_with_id(self:c_helper_id(), emit_type) end
+    function C.CBackendHelperUse:c_emit_helper_lines(emit_type) return self.spec:c_emit_helper_lines_with_id(self.id, emit_type) end
+
+    local function helper_key(spec) return spec:c_helper_id().text end
+    local function helper_id(spec) return spec:c_helper_id() end
+    local function helper_signature(use) return use:c_helper_signature() end
+    local function emit_helper(use, emit_type) return use:c_emit_helper_lines(emit_type) end
+    local function register(ctx, spec)
+        local id = spec:c_helper_id()
+        if ctx then
+            ctx.helpers_by_id = ctx.helpers_by_id or {}
+            ctx.helper_order = ctx.helper_order or {}
+            if ctx.helpers_by_id[id.text] == nil then
+                local use = C.CBackendHelperUse(id, spec)
+                ctx.helpers_by_id[id.text] = use
+                ctx.helper_order[#ctx.helper_order + 1] = use
+                if type(ctx.helpers) == "table" then ctx.helpers[id.text] = use end
+            end
+        end
+        return id
     end
 
     local function emit_includes(unit, out)
-        local needs_atomics = false
-        for i = 1, #unit.helpers do if helper_is_atomic(unit.helpers[i]) then needs_atomics = true end end
-
-        out[#out + 1] = "#include <stdint.h>"
-        out[#out + 1] = "#include <stddef.h>"
-        out[#out + 1] = "#include <string.h>"
-        out[#out + 1] = "#include <stdlib.h>"
-        out[#out + 1] = "#include <math.h>"
-        if needs_atomics and target_supports_c11_atomics(unit.target) then out[#out + 1] = "#include <stdatomic.h>" end
-        if needs_atomics and not target_supports_c11_atomics(unit.target) then out[#out + 1] = "/* atomics require C11 <stdatomic.h> or a runtime helper provider */" end
+        local needs_atomics = false; for i = 1, #unit.helpers do if unit.helpers[i]:c_emit_helper_is_atomic() then needs_atomics = true end end
+        out[#out + 1] = "#include <stdint.h>"; out[#out + 1] = "#include <stddef.h>"; out[#out + 1] = "#include <string.h>"; out[#out + 1] = "#include <stdlib.h>"; out[#out + 1] = "#include <math.h>"
+        if needs_atomics and unit.target and unit.target.dialect:c_emit_supports_c11_atomics() then out[#out + 1] = "#include <stdatomic.h>" end
+        if needs_atomics and (not unit.target or not unit.target.dialect:c_emit_supports_c11_atomics()) then out[#out + 1] = "/* atomics require C11 <stdatomic.h> or a runtime helper provider */" end
     end
 
-    local function emit_type_forwards(unit, descriptor_order, closure_order, out)
-        for i = 1, #descriptor_order do out[#out + 1] = "typedef struct " .. descriptor_order[i] .. " " .. descriptor_order[i] .. ";" end
-        for i = 1, #closure_order do out[#out + 1] = "typedef struct " .. closure_order[i] .. " " .. closure_order[i] .. ";" end
-        for i = 1, #unit.types do
-            local td = unit.types[i]
-            local cls = asdl.classof(td)
-            local name = (td.id.module_name .. "_" .. td.id.spelling):gsub("[^%w_]", "_")
-            if cls == C.CBackendStructDecl or cls == C.CBackendOpaqueDecl then out[#out + 1] = "typedef struct " .. name .. " " .. name .. ";"
-            elseif cls == C.CBackendUnionDecl then out[#out + 1] = "typedef union " .. name .. " " .. name .. ";" end
-        end
-    end
-
-    local function emit_signatures(unit, out)
-        for i = 1, #unit.sigs do
-            local s = unit.sigs[i]
-            out[#out + 1] = "typedef " .. emit_type(s.result) .. " (*" .. s.id.text .. ")(" .. sig_params(s.params) .. ");"
-        end
-    end
-
-    local function emit_extern_prototypes(unit, sigs, out)
-        for i = 1, #unit.externs do
-            local e = unit.externs[i]
-            local s = sigs[e.sig.text]
-            out[#out + 1] = "extern " .. emit_type(s.result) .. " " .. e.name.text .. "(" .. sig_params(s.params) .. ");"
-        end
-    end
-
-    local function collect_exec_sites(unit)
-        local out = {}
-        for i = 1, #(unit.funcs or {}) do
-            local body = unit.funcs[i].body
-            local cls = asdl.classof(body)
-            if cls == C.CBackendBodyExec then
-                out[#out + 1] = body.fragment
-            elseif cls == C.CBackendBodyMixed then
-                for j = 1, #(body.fragments or {}) do out[#out + 1] = body.fragments[j] end
-            end
-        end
-        return out
-    end
-
-    local function emit_exec_prototypes(unit, out)
-        local seen = {}
-        for _, site in ipairs(collect_exec_sites(unit)) do
-            local body = site.fragment and site.fragment.body or nil
-            if asdl.classof(body) == Exec.ExecFragmentStencil then
-                local decl = body.artifact.c_signature
-                if decl ~= nil and decl ~= "" and not seen[decl] then
-                    seen[decl] = true
-                    out[#out + 1] = decl:match(";%s*$") and decl or (decl .. ";")
-                end
-            end
-        end
-    end
-
-    local function emit_func_prototypes(unit, sigs, out, opts)
-        opts = opts or {}
-        local CoreVisibilityExport = Core.VisibilityExport
-        for i = 1, #unit.funcs do
-            local f = unit.funcs[i]
-            if not opts.exported_only or f.visibility == CoreVisibilityExport then
-                local s = sigs[f.sig.text]
-                out[#out + 1] = emit_type(s.result) .. " " .. f.name.text .. "(" .. func_params(f.params) .. ");"
-            end
-        end
-    end
-
-    local function emit_support(opts)
-        opts = opts or {}
-        local sources = {}
-        if type(opts.support_source) == "string" and opts.support_source ~= "" then sources[#sources + 1] = opts.support_source end
-        if type(opts.support_sources) == "table" then
-            for i = 1, #opts.support_sources do
-                if type(opts.support_sources[i]) == "string" and opts.support_sources[i] ~= "" then sources[#sources + 1] = opts.support_sources[i] end
-            end
-        end
-        if #sources == 0 then return "" end
-        return table.concat(sources, "\n\n") .. "\n"
-    end
+    function C.CBackendTypeDecl:c_emit_forward(out) end
+    function C.CBackendStructDecl:c_emit_forward(out) local name = sanitize(self.id.module_name .. "_" .. self.id.spelling); out[#out + 1] = "typedef struct " .. name .. " " .. name .. ";" end
+    function C.CBackendUnionDecl:c_emit_forward(out) local name = sanitize(self.id.module_name .. "_" .. self.id.spelling); out[#out + 1] = "typedef union " .. name .. " " .. name .. ";" end
+    function C.CBackendOpaqueDecl:c_emit_forward(out) local name = sanitize(self.id.module_name .. "_" .. self.id.spelling); out[#out + 1] = "typedef struct " .. name .. " " .. name .. ";" end
+    local function emit_type_forwards(unit, descriptor_order, closure_order, out) for i = 1, #descriptor_order do out[#out + 1] = "typedef struct " .. descriptor_order[i] .. " " .. descriptor_order[i] .. ";" end; for i = 1, #closure_order do out[#out + 1] = "typedef struct " .. closure_order[i] .. " " .. closure_order[i] .. ";" end; for i = 1, #unit.types do unit.types[i]:c_emit_forward(out) end end
+    local function emit_signatures(unit, out) for i = 1, #unit.sigs do local s = unit.sigs[i]; out[#out + 1] = "typedef " .. s.result:c_emit_type() .. " (*" .. s.id.text .. ")(" .. sig_params(s.params) .. ");" end end
+    local function emit_extern_prototypes(unit, sigs, out) for i = 1, #unit.externs do local e, s = unit.externs[i], sigs[unit.externs[i].sig.text]; out[#out + 1] = "extern " .. s.result:c_emit_type() .. " " .. e.name.text .. "(" .. sig_params(s.params) .. ");" end end
+    function Exec.ExecFragmentBody:c_emit_exec_prototype(out, seen) end
+    function Exec.ExecFragmentStencil:c_emit_exec_prototype(out, seen) local decl = self.artifact.c_signature; if decl and decl ~= "" and not seen[decl] then seen[decl] = true; out[#out + 1] = decl:match(";%s*$") and decl or (decl .. ";") end end
+    local function emit_exec_prototypes(unit, out) local seen = {}; for i = 1, #(unit.funcs or {}) do unit.funcs[i].body:c_emit_exec_prototypes(out, seen) end end
+    function C.CBackendFuncBody:c_emit_exec_prototypes(out, seen) end
+    function C.CBackendBodyExec:c_emit_exec_prototypes(out, seen) self.fragment.fragment.body:c_emit_exec_prototype(out, seen) end
+    function C.CBackendBodyMixed:c_emit_exec_prototypes(out, seen) for i = 1, #(self.fragments or {}) do self.fragments[i].fragment.body:c_emit_exec_prototype(out, seen) end end
+    local function emit_func_prototypes(unit, sigs, out, opts) for i = 1, #unit.funcs do local f = unit.funcs[i]; if not opts.exported_only or f.visibility == Core.VisibilityExport then local s = sigs[f.sig.text]; out[#out + 1] = s.result:c_emit_type() .. " " .. f.name.text .. "(" .. func_params(f.params) .. ");" end end end
+    local function emit_support(opts) local sources = {}; if type(opts.support_source) == "string" and opts.support_source ~= "" then sources[#sources + 1] = opts.support_source end; if type(opts.support_sources) == "table" then for i = 1, #opts.support_sources do if type(opts.support_sources[i]) == "string" and opts.support_sources[i] ~= "" then sources[#sources + 1] = opts.support_sources[i] end end end; if #sources == 0 then return "" end; return table.concat(sources, "\n\n") .. "\n" end
 
     local function emit(unit, opts)
-        opts = opts or {}
-        local out = {}
-
-        out[#out + 1] = "/* generated by lalin C backend */"
-        out[#out + 1] = "/* target: pointer_bits=" .. tostring(unit.target and unit.target.pointer_bits or 64)
-            .. " index_bits=" .. tostring(unit.target and unit.target.index_bits or 64)
-            .. " hosted=" .. tostring(unit.target and unit.target.hosted ~= false) .. " */"
-        emit_includes(unit, out)
-        out[#out + 1] = ""
-
-        out[#out + 1] = "/* typedefs */"
-        local index_ty = (unit.target and unit.target.index_bits == 32) and "int32_t" or "int64_t"
-        out[#out + 1] = "typedef " .. index_ty .. " ml_index;"
-        out[#out + 1] = ""
-
+        opts = opts or {}; local out = {}
+        out[#out + 1] = "/* generated by lalin C backend */"; out[#out + 1] = "/* target: pointer_bits=" .. tostring(unit.target and unit.target.pointer_bits or 64) .. " index_bits=" .. tostring(unit.target and unit.target.index_bits or 64) .. " hosted=" .. tostring(unit.target and unit.target.hosted ~= false) .. " */"; emit_includes(unit, out); out[#out + 1] = ""
+        out[#out + 1] = "/* typedefs */"; local index_ty = (unit.target and unit.target.index_bits == 32) and "int32_t" or "int64_t"; out[#out + 1] = "typedef " .. index_ty .. " ml_index;"; out[#out + 1] = ""
         local closure_types, closure_order, descriptor_types, descriptor_order = collect_implicit_types(unit)
-
-        out[#out + 1] = "/* type forwards for signatures */"
-        emit_type_forwards(unit, descriptor_order, closure_order, out)
-        out[#out + 1] = ""
-
-        out[#out + 1] = "/* signatures */"
-        emit_signatures(unit, out)
-        out[#out + 1] = ""
-
-        out[#out + 1] = "/* type declarations and layout assertions */"
-        emit_descriptor_type_decls(descriptor_types, descriptor_order, out)
-        emit_closure_type_decls(closure_types, closure_order, out)
-        emit_type_decls(unit, out)
-        out[#out + 1] = ""
-
-        local sigs = sig_by_id(unit)
-        out[#out + 1] = "/* externs */"
-        emit_extern_prototypes(unit, sigs, out)
-        emit_exec_prototypes(unit, out)
-        out[#out + 1] = ""
-
-        out[#out + 1] = "/* globals */"
-        emit_globals(unit, out)
-        out[#out + 1] = ""
-
-        out[#out + 1] = "/* helpers */"
-        for i = 1, #unit.helpers do append_all(out, Helpers.emit_helper(unit.helpers[i], emit_type)) end
-        out[#out + 1] = ""
-
-        out[#out + 1] = "/* prototypes */"
-        emit_func_prototypes(unit, sigs, out, { exported_only = false })
-        out[#out + 1] = ""
-
-        out[#out + 1] = "/* bodies */"
-        for i = 1, #unit.funcs do emit_func(unit.funcs[i], sigs, out) end
+        out[#out + 1] = "/* type forwards for signatures */"; emit_type_forwards(unit, descriptor_order, closure_order, out); out[#out + 1] = ""
+        out[#out + 1] = "/* signatures */"; emit_signatures(unit, out); out[#out + 1] = ""
+        out[#out + 1] = "/* type declarations and layout assertions */"; emit_descriptor_type_decls(descriptor_types, descriptor_order, out); emit_closure_type_decls(closure_types, closure_order, out); emit_type_decls(unit, out); out[#out + 1] = ""
+        local sigs = sig_by_id(unit); out[#out + 1] = "/* externs */"; emit_extern_prototypes(unit, sigs, out); emit_exec_prototypes(unit, out); out[#out + 1] = ""
+        out[#out + 1] = "/* globals */"; emit_globals(unit, out); out[#out + 1] = ""
+        out[#out + 1] = "/* helpers */"; for i = 1, #unit.helpers do append_all(out, unit.helpers[i]:c_emit_helper_lines(c_type_name)) end; out[#out + 1] = ""
+        out[#out + 1] = "/* prototypes */"; emit_func_prototypes(unit, sigs, out, { exported_only = false }); out[#out + 1] = ""
+        out[#out + 1] = "/* bodies */"; for i = 1, #unit.funcs do unit.funcs[i]:c_emit_func(sigs, out) end
         return table.concat(out, "\n") .. "\n"
     end
 
     local function emit_header(unit, opts)
-        opts = opts or {}
-        local out = {}
-        local guard_base = opts.guard or opts.name or unit.module_name or "lalin"
-        local guard = sanitize(guard_base .. "_h"):upper()
-        out[#out + 1] = "/* generated by lalin C backend */"
-        out[#out + 1] = "#ifndef " .. guard
-        out[#out + 1] = "#define " .. guard
-        out[#out + 1] = ""
-        emit_includes(unit, out)
-        out[#out + 1] = ""
-        out[#out + 1] = "#ifdef __cplusplus"
-        out[#out + 1] = "extern \"C\" {"
-        out[#out + 1] = "#endif"
-        out[#out + 1] = ""
-        out[#out + 1] = "/* typedefs */"
-        local index_ty = (unit.target and unit.target.index_bits == 32) and "int32_t" or "int64_t"
-        out[#out + 1] = "typedef " .. index_ty .. " ml_index;"
-        out[#out + 1] = ""
+        opts = opts or {}; local out = {}; local guard = sanitize((opts.guard or opts.name or unit.module_name or "lalin") .. "_h"):upper()
+        out[#out + 1] = "/* generated by lalin C backend */"; out[#out + 1] = "#ifndef " .. guard; out[#out + 1] = "#define " .. guard; out[#out + 1] = ""; emit_includes(unit, out); out[#out + 1] = ""; out[#out + 1] = "#ifdef __cplusplus"; out[#out + 1] = "extern \"C\" {"; out[#out + 1] = "#endif"; out[#out + 1] = ""
+        out[#out + 1] = "/* typedefs */"; local index_ty = (unit.target and unit.target.index_bits == 32) and "int32_t" or "int64_t"; out[#out + 1] = "typedef " .. index_ty .. " ml_index;"; out[#out + 1] = ""
         local closure_types, closure_order, descriptor_types, descriptor_order = collect_implicit_types(unit)
-        out[#out + 1] = "/* type forwards for signatures */"
-        emit_type_forwards(unit, descriptor_order, closure_order, out)
-        out[#out + 1] = ""
-        out[#out + 1] = "/* signatures */"
-        emit_signatures(unit, out)
-        out[#out + 1] = ""
-        out[#out + 1] = "/* type declarations */"
-        emit_descriptor_type_decls(descriptor_types, descriptor_order, out)
-        emit_closure_type_decls(closure_types, closure_order, out)
-        emit_type_decls(unit, out)
-        out[#out + 1] = ""
-        local sigs = sig_by_id(unit)
-        out[#out + 1] = "/* required extern pins */"
-        emit_extern_prototypes(unit, sigs, out)
-        out[#out + 1] = ""
-        out[#out + 1] = "/* functions */"
-        emit_func_prototypes(unit, sigs, out, { exported_only = opts.exported_only == true })
-        out[#out + 1] = ""
-        out[#out + 1] = "#ifdef __cplusplus"
-        out[#out + 1] = "}"
-        out[#out + 1] = "#endif"
-        out[#out + 1] = ""
-        out[#out + 1] = "#endif"
+        out[#out + 1] = "/* type forwards for signatures */"; emit_type_forwards(unit, descriptor_order, closure_order, out); out[#out + 1] = ""
+        out[#out + 1] = "/* signatures */"; emit_signatures(unit, out); out[#out + 1] = ""
+        out[#out + 1] = "/* type declarations */"; emit_descriptor_type_decls(descriptor_types, descriptor_order, out); emit_closure_type_decls(closure_types, closure_order, out); emit_type_decls(unit, out); out[#out + 1] = ""
+        local sigs = sig_by_id(unit); out[#out + 1] = "/* required extern pins */"; emit_extern_prototypes(unit, sigs, out); out[#out + 1] = ""; out[#out + 1] = "/* functions */"; emit_func_prototypes(unit, sigs, out, { exported_only = opts.exported_only == true }); out[#out + 1] = ""; out[#out + 1] = "#ifdef __cplusplus"; out[#out + 1] = "}"; out[#out + 1] = "#endif"; out[#out + 1] = ""; out[#out + 1] = "#endif"
         return table.concat(out, "\n") .. "\n"
     end
 
     local function emit_artifact(unit, opts)
-        opts = opts or {}
-        local source = emit(unit, opts)
-        local header = emit_header(unit, opts)
-        local support = emit_support(opts)
-        local combined = source
-        if support ~= "" then
-            combined = support .. "\n" .. source
-        end
-        return {
-            unit = unit,
-            source = source,
-            header = header,
-            support = support,
-            combined = combined,
-        }
+        opts = opts or {}; local source = emit(unit, opts); local header = emit_header(unit, opts); local support = emit_support(opts); local combined = support ~= "" and (support .. "\n" .. source) or source
+        return { unit = unit, source = source, header = header, support = support, combined = combined }
     end
 
-    local api = { emit_artifact = emit_artifact, emit_header = emit_header, emit_support = emit_support, emit_type = emit_type }
+    local helper_api = { helper_key = helper_key, helper_id = helper_id, register = register, helper_signature = helper_signature, emit_helper = emit_helper, type_suffix = function(ty) return ty:c_helper_suffix() end }
+    local api = { emit_artifact = emit_artifact, emit_header = emit_header, emit_support = emit_support, emit_type = c_type_name, helpers = helper_api }
     T._lalin_api_cache.c_emit = api
     return api
 end

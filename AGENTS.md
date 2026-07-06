@@ -4,15 +4,15 @@ Lalin is a LuaJIT-hosted dialect of the LLBL language. Lua is the
 metaprogramming layer. LLBL is the central extensible language workbench and
 bootstrap language: heads, roles, fragments, namespaces, origins, diagnostics,
 formatting, indexing, dialect extension, and generic regions. Lalin is the compiled
-language dialect that lowers typed programs into native C-stencil copy-patch
-artifacts or explicitly selected LuaJIT bytecode artifacts.
+language dialect that lowers typed programs through `CBackendUnit` to `emit_c`.
+The main JIT-like path cooks emitted C with GCC and exposes function pointers
+through LuaJIT FFI; the same emitted C is the AOT path. Native C-stencil
+copy-patch is experimental, and LuaJIT bytecode is explicitly selected.
 
-Before continuing the PVM hard-yank or compiler method rewrite, read
-`docs/PVM_HARD_YANK_CHECKLIST.md`, especially `Non-Negotiable Rewrite Doctrine`,
-and `docs/ASDL_GUIDE.md`. Those rules are binding: ASDL reasoning first, leaf
-ASDL methods own semantics, no class/kind/action dispatch, no generic context
-bags, no `any`/`table`/`map` type escape hatches, no ad hoc Lua constructor
-payloads, and no compatibility shims.
+Before compiler/schema work, read `docs/ASDL_GUIDE.md`. Those rules are
+binding: ASDL reasoning first, leaf ASDL methods own semantics, no
+class/kind/action dispatch, no generic context bags, no `any`/`table`/`map` type
+escape hatches, no ad hoc Lua constructor payloads, and no compatibility shims.
 
 ## ASDL Method Doctrine
 
@@ -180,13 +180,11 @@ mechanics: source/generated symbols, origins, diagnostics, fragments, regions,
 formatting docs, and language-level symbol bindings. Dialects own semantic
 meaning.
 
-The active fast backend is the residualless C-stencil native copy-patch
-architecture described by `docs/RESIDUAL_NATIVE_ARCHITECTURE.md` (despite that
-file's historical name). `lalin.compile` defaults to native copy-patch and
-requires a prebuilt `NativeTemplateBank`/`NativeEmbeddedTemplateBank`; runtime
-native compilation only selects, copies, patches, and installs bank templates. It
-must not invoke C compilation, TCC, readelf/object-dump tools, or an implicit
-bytecode recovery path. LuaJIT bytecode is explicit via `opts.luajit`,
+The active fast path is GCC over `emit_c` output: `CBackendUnit -> emit_c -> gcc
+-shared/-O3 -> dlopen/dlsym -> LuaJIT FFI function pointer`. `emit_c` is also the
+AOT artifact path. The residualless C-stencil native copy-patch architecture in
+`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` is experimental and must not be described
+as the main/default backend. LuaJIT bytecode is explicit via `opts.luajit`,
 `opts.bytecode`, or `compile_luajit`. The old Cranelift/Rust runtime path is not
 part of the current architecture.
 
@@ -196,80 +194,86 @@ part of the current architecture.
 make
 ```
 
-Offline native bank generation may need the configured C toolchain during the
-explicit prebuild step; the runtime native path does not.
+`make gcc` builds the vendored GCC C compiler under `.vendor/gcc/.local` when a
+local GCC is desired for the `emit_c` cooking path. The main runtime C path uses
+GCC/cc to compile emitted C into a shared object and then `dlopen`s it.
+Experimental native bank generation has its own explicit prebuild flow.
 
 ## Authoring Lalin Code
 
-### Primary surface — parsed channel (hand-written)
+### Primary surface — `.lln` declaration documents (hand-written)
 
-Load files with parsed Lalin syntax through `llbl.syntax`:
-
-```lua
-local syntax = require("llbl.syntax")
-require("lalin.syntax")
-
-local chunk = assert(syntax.loadfile("demo.lalin.lua"))
-local module = chunk()
-```
-
-Or inline:
-
-```lua
-local syntax = require("llbl.syntax")
-require("lalin.syntax")
-
-local src = [[
-  local add = lalin fn add(a: i32, b: i32): i32
-    return a + b
-  end
-  return add
-]]
-
-local chunk, compiled = syntax.loadstring(src, "@demo.lalin.lua")
-local fns = chunk()
-```
-
-Files can use `import` to activate bare entrypoints:
-
-```lua
-import "lalin.syntax"
-
-local add = fn add(a: i32, b: i32): i32
-  return a + b
-end
-```
-
-### Builder API — Lua/LLBL DSL (macros, generators)
-
-Use the Lua DSL for programmatic construction. The default `lalin.compile` path
-is native copy-patch and requires a supplied native template bank, so examples
-that should run without a bank must select explicit LuaJIT bytecode mode:
+The current hand-written surface is a `.lln` declaration document loaded through
+`lalin.loadfile` / `lalin.loadstring`, not a mixed Lua file and not the old
+`llbl.syntax` `lalin fn` island syntax.
 
 ```lua
 local lalin = require("lalin")
-lalin.language.use()
+
+local decls, doc = assert(lalin.loadfile("demo.lln"))
+local session = lalin.compile_c_gcc("demo", decls, {
+  gcc_opts = { opt = 3, out_dir = "target/demo" },
+})
+
+local add = assert(session:symbol("add", "int32_t (*)(int32_t, int32_t)"))
+print(add(3, 4)) -- 7
+session:free()
+```
+
+Inline `.lln` source uses bracket type syntax and `do ... end` bodies:
+
+```lua
+local lalin = require("lalin")
+
+local decls = assert(lalin.loadstring([[
+struct Pair
+  x [i32]
+  y [i32]
+end
+
+fn add(a [i32], b [i32]) [i32] do
+  return a + b
+end
+]], "@demo.lln"))
+```
+
+Important parsed-surface rules:
+
+- Root files are declaration documents: `fn`, `extern`, `struct`, `union`,
+  `handle`, `region`, and top-level HostEval declaration splices.
+- Types are bracket escapes: `x [i32]`, `p [ptr [i32]]`, `xs [view [i32]]`.
+- Function bodies use `do ... end`.
+- Top-level Lua chunk forms (`local`, `return`, `module`, parse-time `import`)
+  are rejected in `.lln` documents.
+- The old examples shaped like `lalin fn add(a: i32, b: i32): i32` are stale.
+
+### Builder API — Lua/LLBL DSL (macros, generators)
+
+Use the Lua DSL for programmatic construction. Prefer explicit namespaces in
+examples instead of installing globals:
+
+```lua
+local lalin = require("lalin")
+local lln = lalin.lln
 
 local add = lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
   lln.ret (a + b),
 }
 
-local module = lalin.compile("demo", { add }, { bytecode = true })
-print(module.add(3, 4)) -- 7
+local session = lalin.compile_c_gcc("demo", { add }, {
+  gcc_opts = { opt = 3, out_dir = "target/demo" },
+})
+local add_fn = assert(session:symbol("add", "int32_t (*)(int32_t, int32_t)"))
+print(add_fn(3, 4)) -- 7
+session:free()
 ```
 
-Inline evaluation:
+For an immediately callable Lua module without invoking GCC, select explicit
+LuaJIT bytecode mode:
 
 ```lua
-local lalin = require("lalin")
-
-local unit = lalin.loadstring([[
-  return {
-    lln.fn. add { a [lln.i32], b [lln.i32] } [lln.i32] {
-      lln.ret (a + b),
-    },
-  }
-]], "demo.lua")()
+local module = lalin.compile_luajit("demo", { add })
+-- or: lalin.compile("demo", { add }, { bytecode = true })
 ```
 
 ## Test
@@ -304,9 +308,10 @@ Two authoring paths converge on one pipeline:
 
 ### Primary (hand-written)
 ```text
-Lalin syntax source
-  -> llbl.syntax lexer + driver
-  -> lalin.syntax parsed AST
+.lln declaration document
+  -> lalin.loadfile/loadstring
+  -> lalin.loader + lalin.syntax.document
+  -> ordered parsed declaration array
   -> lalin.syntax.to_module()
   -> LalinTree ASDL
 ```
@@ -326,9 +331,12 @@ LalinTree ASDL
   -> typecheck
   -> LalinCode facts
   -> kernel and schedule facts
-  -> stencil/native template plans
-  -> native copy-patch install or explicit LuaJIT bytecode artifact
-  -> loaded module
+  -> CBackendUnit
+  -> emit_c output
+  -> GCC shared object + dlopen for JIT-like execution
+     or user-owned AOT C build
+     or explicit LuaJIT bytecode / experimental copy-patch when selected
+  -> loaded module / function pointers / artifact
 ```
 
 Key files:
@@ -339,7 +347,8 @@ lua/lalin/dsl/               Lalin authoring heads
 lua/lalin/schema/            ASDL/schema definitions
 lua/lalin/frontend_pipeline.lua
                              DSL/tree/typecheck/code pipeline
-lua/lalin/native_backend.lua native C-stencil copy-patch backend facade
+lua/lalin/c_gcc.lua          GCC-over-emit_c shared-object runner
+lua/lalin/native_backend.lua experimental native C-stencil copy-patch backend facade
 lua/lalin/luajit_backend.lua explicit LuaTrace/LuaJIT bytecode backend facade
 lua/llpvm/                   LLPVM member
 ```
@@ -351,7 +360,7 @@ docs/LLBL_GUIDE.md            central LLBL workbench and region guide
 docs/LANGUAGE_REFERENCE.md   public Lalin language reference
 docs/ARCHITECTURE.md         language, compiler, backend, and lowering architecture
 docs/RESIDUAL_NATIVE_ARCHITECTURE.md
-                             binding native C-stencil copy-patch architecture
+                             experimental native C-stencil copy-patch architecture
 docs/LLPVM_GUIDE.md          low-level VM/task language member
 docs/UI_GUIDE.md             UI package guide
 docs/CONVENTIONS.md          naming, style, and repository conventions

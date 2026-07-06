@@ -2,10 +2,10 @@
 	"version": 1,
 	"workflowId": "wf-native-fast-region-asdl",
 	"planId": "main",
-	"revision": 8,
+	"revision": 16,
 	"nextId": 7,
 	"createdAt": "2026-07-05T17:41:07.793Z",
-	"updatedAt": "2026-07-05T18:24:38.661Z",
+	"updatedAt": "2026-07-05T20:04:38.288Z",
 	"tasks": [
 		{
 			"id": "T001",
@@ -56,18 +56,21 @@
 		{
 			"id": "T004",
 			"title": "Teach graph lowering and installer fallthrough layout",
-			"detail": "Lower NativeFastRegionPlan to NativeTemplateGraph/NativeBankInstallPlan with explicit NativeRegionFallthrough contracts. Extend generated C installer metadata/API as needed so fallthrough-capable templates are laid out adjacent and not patched as jumps; reject unsatisfied fallthrough layout with a typed install reject. Keep real branch/switch/call edges as real control transfers.",
+			"detail": "Lower NativeFastRegionPlan to NativeTemplateGraph/NativeBankInstallPlan with explicit NativeRegionFallthrough contracts. Extend generated C installer metadata/API as needed so fallthrough-capable templates are laid out adjacent and not patched as jumps; reject unsatisfied fallthrough layout with a typed install reject. Keep real branch/switch/call edges as real control transfers. Unblocked schema additions: `NativeAxisFastCodeCompareBranch`, `NativeAxisFastCodeSwitchStep`, `NativeCodeSwitchStepShape`, `NativeRegionSwitch.step_shape`, and `NativeBankSwitchStepEdge` now model compare-branch template selection and switch-step graph/install control explicitly.",
 			"file": "lua/lalin/native_mc.lua",
 			"after": [
 				"T002",
 				"T003"
 			],
-			"status": "claimed",
+			"status": "done",
 			"order": 4,
-			"claimedBy": "agent-1WWTK7",
-			"notes": [],
+			"claimedBy": "agent-0Q176R",
+			"evidence": "Implemented T004 graph/install lowering in lua/lalin/native_mc.lua using typed ASDL: NativeCodeCompareBranchRegion now selects NativeAxisFastCodeCompareBranch families; NativeRegionSwitch lowers into per-case switch-step graph nodes with typed NativeSwitchStepEdge and NativeBankSwitchStepEdge, including per-case immediate bindings via NativeResidenceImmediate; generated C install ABI/continuation target recognizes LALIN_NATIVE_INSTALL_EDGE_SWITCH_STEP in tools/gen_lalin_mc_bank.lua. Added support/equality/source coverage for NativeAxisFastCodeCompareBranch and NativeAxisFastCodeSwitchStep in lua/lalin/native_template_support.lua, lua/lalin/native.lua, and lua/lalin/native_template_sources.lua; updated Code switch projection in lua/lalin/native_code_methods.lua to carry NativeCodeSwitchStepShape/NativeRegionSwitch.step_shape. Tests run: `luajit tests/schema/test_native_fast_region_schema.lua && luajit tests/code_ir/test_native_fast_region_projection.lua && luajit tests/code_ir/test_native_fast_region_template_sources.lua`; `luajit tests/run.lua schema` (12 passed); `luajit tests/run.lua code_ir` (52 passed, 1 skipped).",
+			"notes": [
+				"Unblocked after adding precise ASDL for compare-branch fast template axes and typed switch-step edges instead of string-dispatched lowering."
+			],
 			"createdAt": "2026-07-05T17:41:07.793Z",
-			"updatedAt": "2026-07-05T18:24:38.661Z"
+			"updatedAt": "2026-07-05T19:20:07.330Z"
 		},
 		{
 			"id": "T005",
@@ -77,11 +80,13 @@
 			"after": [
 				"T004"
 			],
-			"status": "todo",
+			"status": "done",
 			"order": 5,
+			"claimedBy": "agent-KDDDM6",
+			"evidence": "Implemented fast public/scalar Code backend routing. Changed lua/lalin/schema/native.lua to add precise NativeFastPublicCodeExprRegion body, lua/lalin/native_template_sources.lua/native_template_support.lua to generate/select fused public-ABI + expression standalone C families, lua/lalin/native_mc.lua to lower public param/result residences to typed ABI register placements without patch holes, and lua/lalin/native_code_methods.lua to route eligible bounded scalar return expressions (including return a*b+imm) through one fused public expression graph node when the bank manifest contains the family, otherwise retaining semantic baseline lowering. Added/updated tests in tests/schema/test_native_fast_region_schema.lua, tests/code_ir/test_native_fast_region_template_sources.lua, and tests/code_ir/test_native_fast_region_projection.lua asserting one-node fast graph, fewer nodes than baseline, public boundary residence, no artificial continuation/fallthrough jumps, and typed immediate ordinal binding. Verified with `luajit tests/schema/test_native_fast_region_schema.lua && luajit tests/code_ir/test_native_fast_region_template_sources.lua && luajit tests/code_ir/test_native_fast_region_projection.lua`; `luajit tests/run.lua schema` (12 passed); `luajit tests/run.lua code_ir` (52 passed, 1 skipped); and an ad-hoc generated fast public mul-add bank smoke that compiled and called `6*7+5 == 47`.",
 			"notes": [],
 			"createdAt": "2026-07-05T17:41:07.793Z",
-			"updatedAt": "2026-07-05T17:41:07.793Z"
+			"updatedAt": "2026-07-05T19:35:28.700Z"
 		},
 		{
 			"id": "T006",
@@ -91,11 +96,13 @@
 			"after": [
 				"T005"
 			],
-			"status": "todo",
+			"status": "done",
 			"order": 6,
+			"claimedBy": "agent-KRF3JS",
+			"evidence": "Implemented benchmark/disassembly comparison in `benchmarks/bench_native_backend.lua`, added generated fast-region benchmark bank manifest `benchmarks/native_fast_region_bench_bank_manifest.lua`, and added const-return fast-region leaf methods in `lua/lalin/native_code_methods.lua` so const/branch/switch fast benchmark bodies do not depend on incomplete const micro-op fallback. Verified `LALIN_NATIVE_BENCH_ITERS=100 luajit benchmarks/bench_native_backend.lua` compares baseline vs fast-region output for const, binary, mul-add, f64 add, branch, and switch, writes baseline/fast disassembly, and verifies `fast_public_i32_mul_add` as one fused 11B node with mnemonics `imul,mov,add,ret` and no stack spills. Ran `luajit tests/run.lua schema` (12 passed) and `luajit tests/run.lua code_ir` (52 passed, 1 skipped).",
 			"notes": [],
 			"createdAt": "2026-07-05T17:41:07.793Z",
-			"updatedAt": "2026-07-05T17:41:07.793Z"
+			"updatedAt": "2026-07-05T20:04:38.288Z"
 		}
 	]
 }

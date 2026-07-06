@@ -748,6 +748,12 @@ local function bind_context(T)
     function Native.NativeAxisFastCodeExpr:native_axis_equals(other) return other:native_axis_equals_fast_code_expr(self.shape) end
     function Native.NativeTemplateAxis:native_axis_equals_fast_code_expr(_shape) return false end
     function Native.NativeAxisFastCodeExpr:native_axis_equals_fast_code_expr(shape) return self.shape == shape end
+    function Native.NativeAxisFastCodeCompareBranch:native_axis_equals(other) return other:native_axis_equals_fast_code_compare_branch(self.shape) end
+    function Native.NativeTemplateAxis:native_axis_equals_fast_code_compare_branch(_shape) return false end
+    function Native.NativeAxisFastCodeCompareBranch:native_axis_equals_fast_code_compare_branch(shape) return self.shape == shape end
+    function Native.NativeAxisFastCodeSwitchStep:native_axis_equals(other) return other:native_axis_equals_fast_code_switch_step(self.shape) end
+    function Native.NativeTemplateAxis:native_axis_equals_fast_code_switch_step(_shape) return false end
+    function Native.NativeAxisFastCodeSwitchStep:native_axis_equals_fast_code_switch_step(shape) return self.shape == shape end
     function Native.NativeAxisFastPublicAbi:native_axis_equals(other) return other:native_axis_equals_fast_public_abi(self.shape) end
     function Native.NativeTemplateAxis:native_axis_equals_fast_public_abi(_shape) return false end
     function Native.NativeAxisFastPublicAbi:native_axis_equals_fast_public_abi(shape) return self.shape == shape end

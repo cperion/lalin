@@ -152,14 +152,43 @@ return schema. LalinTree {
   product. JumpArg { interned, field. name [str], field. value [LalinTree.Expr], },
   product. RegionInvokeTarget { interned, path [LalinCore.Path], },
   sum. RegionWireTarget {
-    RegionWireBlock { variant_unique, label [LalinTree.BlockLabel], },
-    RegionWireCont { variant_unique, cont [LalinTree.RegionCont], },
+    RegionWireBlock { variant_unique, label [LalinTree.BlockLabel], args [many [LalinTree.JumpArg]], },
+    RegionWireCont { variant_unique, cont [LalinTree.RegionCont], args [many [LalinTree.JumpArg]], },
   },
   product. RegionContWire { interned, field. name [str], target [LalinTree.RegionWireTarget], },
   product. TypeRegionDef {
     interned,
     target [LalinTree.RegionInvokeTarget],
     region [LalinTree.Region],
+  },
+  product. RegionSealPayload {
+    interned,
+    cont [LalinTree.RegionCont],
+    type_name [str],
+  },
+  product. RegionProtocol {
+    interned,
+    key [str],
+    result_type_name [str],
+    payloads [many [LalinTree.RegionSealPayload]],
+  },
+  product. RegionSeal {
+    interned,
+    target [LalinTree.RegionInvokeTarget],
+    region [LalinTree.Region],
+    function_name [str],
+    protocol [LalinTree.RegionProtocol],
+  },
+  product. RegionBundleMember {
+    interned,
+    seal [LalinTree.RegionSeal],
+    entry_label [LalinTree.BlockLabel],
+    local_namespace [str],
+  },
+  product. RegionBundle {
+    interned,
+    root [LalinTree.RegionSeal],
+    members [many [LalinTree.RegionBundleMember]],
   },
   sum. RegionInvokeReject {
     RegionInvokeMissingTarget { variant_unique, target [LalinTree.RegionInvokeTarget], },
@@ -850,6 +879,12 @@ return schema. LalinTree {
       actual [LalinType.Type],
     },
     TypeIssueDuplicateVariant { variant_unique, type_name [str], variant_name [str], },
+    TypeIssueDomainContract {
+      variant_unique,
+      handle [str],
+      domain [str],
+      reason [str],
+    },
   },
   sum. TypeUnaryIssueReason {
     TypeUnaryInvalidOperator { variant_unique, op [str], },
@@ -930,6 +965,9 @@ return schema. LalinTree {
     handles [many [LalinTree.TypeHandleDef]],
     effects [many [LalinTree.TypeFuncEffect]],
     regions [many [LalinTree.TypeRegionDef]],
+    region_protocols [many [LalinTree.RegionProtocol]],
+    region_seals [many [LalinTree.RegionSeal]],
+    region_bundles [many [LalinTree.RegionBundle]],
   },
   product. TypeModuleFactsInput {
     interned,

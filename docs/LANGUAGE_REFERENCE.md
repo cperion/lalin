@@ -1,10 +1,11 @@
 # Lalin Language Reference
 
 Lalin is the compiled language member of the LLBL workbench. Lua is the
-metaprogramming layer; Lalin receives monomorphic programs and lowers them
-through typed ASDL facts into native C-stencil copy-patch artifacts by default,
-or into LuaJIT bytecode artifacts when that non-native mode is selected
-explicitly.
+metaprogramming layer; Lalin receives monomorphic programs, lowers them through
+typed ASDL facts into the semantic `emit_c` C backend, and uses that emitted C as
+both the main GCC-backed JIT-like execution path and the AOT artifact path.
+Native C-stencil copy-patch is now experimental; LuaJIT bytecode remains an
+explicit non-main mode.
 
 This reference treats the parsed syntax as the standard source surface. The
 Lua/LLBL DSL is documented in one chapter near the end because it is still the
@@ -29,8 +30,11 @@ The pipeline is:
   -> typecheck
   -> LalinCode facts
   -> flow/value/memory/effect/kernel/schedule facts
-  -> native copy-patch install with a supplied NativeTemplateBank
-     or explicit LuaJIT bytecode artifact
+  -> CBackendUnit
+  -> emit_c C output
+  -> GCC shared-object cook + dlopen for JIT-like execution
+     or user-owned AOT C build
+     or explicit LuaJIT bytecode / experimental native copy-patch when selected
 ```
 
 Important rules:
@@ -49,6 +53,15 @@ Important rules:
   `region Struct.open`, `handle Struct.Ref`).
 - Every block path terminates.
 - Region protocols are explicit named exits.
+- `emit` and `call` are different operations: `emit` is an open CFG splice;
+  `call` is a sealed region invocation with a real call/frame boundary and a
+  generated result protocol.
+- Region and continuation dataflow is explicit. Blocks do not capture hidden
+  lexical state; wire target applications such as `done = next(tok, code)` pass
+  the values that the target block receives.
+- Fast region lowering is represented as ASDL facts such as region protocols,
+  region seals, and region bundles. The language does not rely on C sugar and
+  later compiler luck to recover the intended machine shape.
 - Memory identity and access are explicit: handles are durable names, leases are
   temporary access facts, and owned values are exactly-once obligations.
 - Backend facts are explicit ASDL facts.
@@ -403,7 +416,7 @@ also Lua-like bracket application, so both `x[i32]` and `x [i32]` are accepted.
 [array [i32] [4]]
 [slice [u8]]
 [view [f32]]
-[named("MyStruct")]
+[MyStruct]
 [pkg.SomeType]
 ```
 
@@ -668,7 +681,9 @@ end
 
 The object owns the bytes/state (`Parser`) and the protocol over that state
 (`Parser.next`). The consumer wires continuations instead of unpacking a boxed
-result and calling a dispatcher.
+result and calling a dispatcher. This example uses `emit`, so `Parser.next` is
+spliced into the driver's CFG. Use `call` at the same surface site when the
+protocol should be sealed behind a real region call/frame boundary.
 
 A useful default is **one object per machine**. If a subsystem has retained
 state, repeated execution, diagnostics, cache identity, ownership authority, or
@@ -1031,7 +1046,7 @@ composable, and checkable.
 
 ## Statements
 
-Statement blocks end at `end`, `elseif`, or `else` depending on context.
+Statement blocks end at `end`, `elseif`, `else`, `case`, or `default` depending on context.
 
 ### `requires`
 
@@ -1102,6 +1117,35 @@ end
 
 Conditions are expressions. Every path in a function body still has to
 terminate.
+
+### Switch
+
+`switch` is scalar control dispatch over an integer/bool-like expression. It
+lowers to ASDL `StmtSwitch`, then to `CodeTermSwitch`, then to a C `switch`/goto
+CFG. On GCC this may become a jump table when the case density is suitable.
+
+```lln
+switch instr.op do
+case [OP.ADD] then
+  jump add(a = instr.a, b = instr.b, c = instr.c, next_pc = pc + 1)
+case [OP.RETURN] then
+  jump ret(a = instr.a)
+default then
+  jump bad(op = instr.op, pc = pc)
+end
+```
+
+Case keys may be integer literals, boolean literals, or host constants that
+evaluate to integer/bool literals, such as `[OP.ADD]`. Each `case` and the
+`default` body is an ordinary statement block. Inside a region, jumps in switch
+arms can target local blocks or declared continuation exits and are retargeted
+with the same rules as jumps in `if` arms.
+
+`switch` is a source spelling for an explicit scalar dispatch fact; it is not a
+replacement for region protocols. If the alternatives are semantic outcomes of
+an operation, prefer a region with named continuations. Use `switch` when the
+input is already an encoded scalar fact, such as a bytecode opcode owned by one
+consumer region.
 
 ### Loops
 
@@ -1417,6 +1461,11 @@ literals and expression fragments/ASDL expressions are spliced directly.
 Regions are explicit control protocols. They can be standalone or qualified to
 a struct, making the struct own its access and control vocabulary.
 
+A region is not an expression returning a result object. It is a typed control
+machine with named exits. Each exit is a continuation with its own payload
+schema, and every path in the region must terminate by jumping to a local block
+or to one of those continuation exits.
+
 **Shape:**
 
 ```lln
@@ -1470,6 +1519,28 @@ region Connection.close(self [ptr [Connection]];
 end
 ```
 
+A colon declaration injects `self [ptr [Struct]]`, like colon functions:
+
+```lln
+region Connection:poll(;
+  ready,
+  closed,
+  error(code [i32])
+)
+  entry start()
+    jump ready
+  end
+end
+
+-- means a region named Connection.poll whose first input is:
+-- self [ptr [Connection]]
+```
+
+Use the explicit dot form when the receiver must have a more precise access,
+lease, handle, or ownership type than `ptr [Struct]`.
+
+### Continuation exits and payloads
+
 Continuation exits accept named payloads:
 
 ```lln
@@ -1486,7 +1557,27 @@ done(result [i32])
 done([i32])
 ```
 
-Regions transfer control inside a region with `jump`:
+Named payloads are preferred. They make protocol edges self-documenting and
+support the same shorthand used by calls and wire target applications.
+
+### Local blocks and `jump`
+
+`entry` and `block` declarations introduce region-local control labels. Their
+parameters are explicit block inputs, not captured variables:
+
+```lln
+entry start()
+  jump loop(i = 0, acc = 0)
+end
+
+block loop(i [i32], acc [i32])
+  if i == 10 then jump done(result = acc) end
+  jump loop(i = i + 1, acc = acc + i)
+end
+```
+
+`jump` transfers control inside a region to a local block or to a continuation
+exit:
 
 ```lln
 jump connected(conn)       -- shorthand for conn = conn
@@ -1495,42 +1586,210 @@ jump done(result = x)      -- explicit named payload
 jump done(x)               -- positional payload for anonymous fields
 ```
 
-In a named payload position, a bare identifier means `name = name`. Use the
-explicit `field = expr` form when the payload field and source expression differ.
-
-Regions are invoked with the same shape as their signature. Data arguments come
-before `;`; continuation wiring comes after `;` as `continuation = block` pairs.
-The wired values are continuation blocks/values, so the call site does not use
-`jump`:
+In any named payload context, a bare identifier means `name = name`. Use the
+explicit `field = expr` form when the payload field and source expression differ:
 
 ```lln
-call Connection.open("localhost:8080";
+jump failed(pos = tok.pos, code = parse_code)
+```
+
+The same rule applies to block jumps, continuation exits, and continuation
+target applications. The shorthand is source syntax for explicit ASDL `JumpArg`
+entries; it is not closure capture.
+
+### Invoking regions: `emit` and `call`
+
+Regions are invoked with the same shape as their signature. Data arguments come
+before `;`; continuation wiring comes after `;` as `continuation = target` pairs:
+
+```lln
+emit Connection.open("localhost:8080";
   connected = handle_connected,
   refused = retry_open,
   timeout = retry_open
 )
 
-emit Connection.open("localhost:8080";
+call Connection.open("localhost:8080";
   connected = handle_connected,
   refused = retry_open,
   timeout = retry_open
 )
 ```
 
-`emit` splices the region control graph into the current control context. The
-frontend expands it by cloning the target region's entry and blocks into the
-enclosing control region, then replacing the emit site with a jump to the cloned
-entry. Continuation wiring targets the caller's blocks or enclosing
-continuations.
+The wired targets name caller blocks or enclosing continuation exits. The call
+site does not write `jump`; the invoked region chooses one of its exits, and the
+wiring says where that exit continues in the caller.
 
-`call` uses the same surface syntax but is reserved for a call/frame boundary.
-Its ASDL form is present and typechecked as an invocation node, but frame
-expansion is not implemented yet; using `call` in a control region produces a
-typed region-invocation diagnostic.
+`emit` and `call` intentionally mean different things.
 
-Parsed region declarations lower to `ItemRegion`. Region invocation syntax lowers
-to explicit ASDL invocation statements; `emit` expands before backend lowering,
-so unexpanded emit nodes do not reach code generation.
+#### `emit`: open CFG splice
+
+`emit` is an open control-flow splice. The frontend clones the target region's
+entry and blocks into the enclosing control region, alpha-renames local values
+and labels for that invocation, and replaces the emit site with a jump to the
+cloned entry.
+
+Use `emit` when the region is a local protocol abstraction and should become
+part of the caller's CFG:
+
+```lln
+region ParserDriver.step(self [ptr [ParserDriver]], p [ptr [Parser]];
+  ok,
+  failed(pos [index], code [i32])
+)
+  entry start()
+    emit Parser.next(p;
+      token = got_token,
+      eof = done,
+      syntax = bad_syntax
+    )
+  end
+
+  block got_token(tok [Token])
+    jump ok
+  end
+
+  block done()
+    jump ok
+  end
+
+  block bad_syntax(pos [index], code [i32])
+    jump failed(pos, code)
+  end
+end
+```
+
+After expansion, no `emit` node reaches C lowering. It is an ASDL-visible source
+control abstraction whose implementation is CFG cloning/splicing.
+
+#### `call`: sealed region invocation
+
+`call` is a sealed invocation. It introduces a real call/frame boundary. The
+callee region is lowered as a callable artifact that returns a generated result
+union whose variants correspond to the callee's continuation exits. The caller
+then switches on that result and dispatches to the wired continuation targets.
+
+Source:
+
+```lln
+call Tokenizer.skip_ws(self; done = check(tok, want, code))
+```
+
+Conceptually lowers to:
+
+```text
+callee frame: Tokenizer.skip_ws(self) -> SkipWsResult
+result union: done(payload: { tok })
+caller dispatch:
+  done(tok) -> jump check(tok = tok, want = want, code = code)
+```
+
+This preserves a real call boundary without turning the surface language into
+manual result-object code. The generated result union is a compiler artifact, not
+a source-level protocol object that users switch on manually.
+
+### Continuation target applications
+
+A wiring target may be a bare target name:
+
+```lln
+call Parser.next(p; token = got_token, eof = done, syntax = failed)
+```
+
+or a target application with explicit arguments:
+
+```lln
+call Tokenizer.skip_ws(self; done = check(tok, want, code))
+```
+
+The target application says exactly which values the target block/continuation
+receives when the callee exits through that continuation. Arguments may come from
+two places:
+
+1. **callee continuation payloads**, such as `tok` above; and
+2. **caller lexical values passed explicitly through the generated dispatch
+   block**, such as `want` and `code` above.
+
+This is explicit dataflow, not hidden closure capture. If the target block needs
+`want` and `code`, they must appear in the target application and in the block's
+parameter list:
+
+```lln
+region Tokenizer.expect_char(self [ptr [Tokenizer]], want [u8], code [i32];
+  done(tok [ptr [Tokenizer]]),
+  parse_error(parse_code [i32], at [index])
+)
+  entry start()
+    call Tokenizer.skip_ws(self; done = check(tok, want, code))
+  end
+
+  block check(tok [ptr [Tokenizer]], want [u8], code [i32])
+    if tok.pos == tok.len then
+      jump parse_error(parse_code = code, at = tok.pos)
+    end
+    let ch [u8] = tok.src[tok.pos]
+    if ch == want then
+      tok.pos = tok.pos + 1
+      jump done(tok)
+    else
+      jump parse_error(parse_code = code, at = tok.pos)
+    end
+  end
+end
+```
+
+Bare argument names use the named shorthand:
+
+```lln
+check(tok, want, code)
+```
+
+means:
+
+```lln
+check(tok = tok, want = want, code = code)
+```
+
+Use explicit names for reordering, renaming, field projections, or computed
+values:
+
+```lln
+call Parser.next(p;
+  token = consume(tok = tok, source_pos = p.pos),
+  syntax = parse_error(parse_code = code, at = pos)
+)
+```
+
+For `emit`, target application arguments are substituted directly into the
+spliced CFG. For sealed `call`, non-payload target arguments are threaded through
+the generated dispatch block with their typed values.
+
+### Protocols, seals, and bundles
+
+Parsed region declarations lower to `ItemRegion`. Region invocations lower to
+explicit ASDL statements:
+
+- `StmtRegionEmit` for open CFG splicing;
+- `StmtRegionCall` for sealed call/frame boundaries.
+
+Typechecking collects ASDL-visible region facts:
+
+- **`RegionProtocol`** names a continuation-exit shape. Regions with the same
+  exit protocol can share generated result-union vocabulary.
+- **`RegionSeal`** describes a sealed callable region: its callable function,
+  payload structs, and result union.
+- **`RegionBundle`** groups compatible sealed regions so hot same-protocol
+  transfers can lower to intra-bundle jumps instead of separate helper calls.
+
+These facts are semantic compiler vocabulary. They make the fast path explicit:
+a bytecode VM can be written as Lalin regions, with `call` preserving real sealed
+entry points and bundle lowering fusing same-protocol internal transfers. The
+compiler does not depend on C inlining or GCC recognizing accidental sugar to get
+the intended VM shape.
+
+Unexpanded `emit` and unlowered continuation jumps must not reach final C
+lowering. Sealed `call` reaches C lowering as generated functions, result unions,
+and dispatch code according to the collected region facts.
 
 ---
 
@@ -1670,10 +1929,10 @@ end
 
 region BufferStore.borrow(
   self [readonly [ptr [BufferStore]]],
-  ref [named("BufferStore.Ref")];
+  ref [BufferStore.Ref];
   borrowed(record [lease("self", ptr [BufferRecord])]),
-  stale(ref [named("BufferStore.Ref")]),
-  missing(ref [named("BufferStore.Ref")])
+  stale(ref [BufferStore.Ref]),
+  missing(ref [BufferStore.Ref])
 )
   entry start()
     -- Store-private validation checks index/generation/epoch.
@@ -1699,7 +1958,7 @@ A client does not manually check generations or scatter nil/stale branches. It
 wires the store protocol:
 
 ```lln
-region Reader.read_one(self [ptr [Reader]], store [ptr [BufferStore]], ref [named("BufferStore.Ref")];
+region Reader.read_one(self [ptr [Reader]], store [ptr [BufferStore]], ref [BufferStore.Ref];
   ok(len [index]),
   stale,
   missing
@@ -1716,11 +1975,11 @@ region Reader.read_one(self [ptr [Reader]], store [ptr [BufferStore]], ref [name
     jump ok(len = record.len)
   end
 
-  block got_stale(ref [named("BufferStore.Ref")])
+  block got_stale(ref [BufferStore.Ref])
     jump stale
   end
 
-  block got_missing(ref [named("BufferStore.Ref")])
+  block got_missing(ref [BufferStore.Ref])
     jump missing
   end
 end
@@ -1729,6 +1988,49 @@ end
 The store object hides memory discipline behind typed exits. The handle may
 escape; the lease cannot. Invalidating store methods are naturally checked
 against live leases because both facts are attached to the same object protocol.
+
+### Domain Contract
+
+A handle that declares `domain [A]` is making a checkable claim: `A` is the
+object that can resolve that handle. Lalin checks the core `Domain(A, H)` shape
+when the handle is typechecked:
+
+```text
+H has domain A and target R
+A has a qualified resolver region taking `(self, H)`
+that resolver has a success continuation carrying `lease("self", ptr [R])`
+```
+
+The resolver region may be named for the domain vocabulary, for example
+`A.borrow` or `A.resolve`. Failure exits are ordinary named continuations such as
+`stale`, `missing`, `invalid`, or `busy`:
+
+```lln
+handle BufferStore.Ref [u32]
+  invalid = 0
+  domain [BufferStore]
+  target [BufferRecord]
+end
+
+region BufferStore.borrow(self [readonly [ptr [BufferStore]]], ref [BufferStore.Ref];
+  borrowed(record [lease("self", ptr [BufferRecord])]),
+  stale(ref [BufferStore.Ref]),
+  missing(ref [BufferStore.Ref])
+)
+  entry start()
+    jump missing(ref)
+  end
+end
+```
+
+If the handle names a domain but no matching resolver exists, or if the resolver
+succeeds without granting a lease from `self` to the handle target, typechecking
+reports a domain-contract issue at declaration time instead of deferring the
+failure to the first attempted use.
+
+The same contract is used by stores, generic resolvers, and LuaBridge-style
+runtime boundaries. The skins differ; the object law is the same: the domain is
+the authority that owns durable handles and grants temporary access.
 
 ### Handle Resolution
 
@@ -1862,42 +2164,41 @@ stencil-shaped backend facts.
 
 ## Backend Defaults
 
-The default executable backend is native copy-patch. It requires a supplied
-`NativeTemplateBank` or `NativeEmbeddedTemplateBank` whose target and
-`NativeTemplateSourceManifest` match the program being compiled.
+The main executable backend is GCC over `emit_c` output. It compiles the emitted
+C as a shared object, loads it with `dlopen`, and exposes symbols as LuaJIT FFI
+function pointers.
 
 ```text
 inferred Lalin compilation unit
   -> LalinCode / LalinKernel / LalinStencil facts
-  -> NativeTemplateGraph and ABI projection
-  -> supplied NativeTemplateBank selection
-  -> copy code/constant-pool bytes
-  -> patch typed holes, continuations, constants, and runtime symbols
-  -> installed native entry point
+  -> CBackendUnit
+  -> emit_c C implementation/header/support
+  -> gcc -shared -O3
+  -> dlopen + dlsym
+  -> LuaJIT FFI function pointer
 ```
 
-The runtime native path never runs a C compiler, object parser, linker, object
-dumper, shell tool, or alternate backend. If no compatible native bank is
-supplied, compilation fails with an explicit diagnostic.
+Use:
 
 ```lua
-local bank = require("target.lalin_binary.lalin_native_template_bank")
-
-local module = lalin.compile("demo", decls, {
-  native_embedded_bank = bank,
+local session = lalin.compile_c_gcc("demo", decls, {
+  gcc_opts = { opt = 3, out_dir = "target/demo" },
 })
+
+local add = assert(session:symbol("add", "int32_t (*)(int32_t, int32_t)"))
+print(add(3, 4))
+session:free()
 ```
 
-Equivalent native-bank option names are `native_bank`/`bank` for an imported
-`NativeTemplateBank`, and `native_embedded_bank`/`embedded_bank` for an embedded
-bank value. A manifest may be supplied as `native_template_manifest`,
-`native_manifest`, or `template_manifest` when the caller wants an exact manifest
-check.
+or select it through the generic compiler facade:
 
-Native public ABI projections support zero or one result. A scalar result is
-returned through the projected return register; aggregate or by-reference result
-forms use the projected hidden result pointer. Multiple native results are not a
-single function ABI and must be represented before native lowering.
+```lua
+local session = lalin.compile("demo", decls, { backend = "gcc" })
+```
+
+The emitted C remains available for AOT builds through `emit_c` and `compile_c`.
+The user/build system owns AOT compiler flags, linker inputs, and target ABI
+choices.
 
 Explicit LuaJIT bytecode mode is selected separately:
 
@@ -1909,19 +2210,20 @@ local module2 = lalin.compile("demo", decls, {
 })
 ```
 
-LuaJIT bytecode mode is not a recovery path for a missing native bank, and native
-banks are rejected by the LuaJIT bytecode APIs.
+LuaJIT bytecode mode is not a recovery path for GCC C execution or AOT builds.
+It is a separately selected artifact form.
 
-### Offline Native Template Banks
+### Experimental Native Template Banks
 
-Use `NativeTemplateBankRequest` and its `NativeTemplateSourceManifest` when you
-want to build or reuse a native bank outside the runtime compile path. A complete
-native bank is generated from closed native capability classes; subset support
-helpers are only for tests or explicit target subsets. The capability first
-computes a manifest, then generates exactly matching `NativeTemplateSource` C
-stencils. The offline generator consumes the request, compiles those stencils
-ahead of time, verifies typed object facts with Lalin's internal ELF/object
-parser, and emits the checked-in/native binary artifacts:
+Native copy-patch template banks are experimental. Use `NativeTemplateBankRequest`
+and its `NativeTemplateSourceManifest` when you are explicitly working on that
+experimental path. A complete native bank is generated from closed native
+capability classes; subset support helpers are only for tests or explicit target
+subsets. The capability first computes a manifest, then generates exactly
+matching `NativeTemplateSource` C stencils. The offline generator consumes the
+request, compiles those stencils ahead of time, verifies typed object facts with
+Lalin's internal ELF/object parser, and emits the checked-in/native binary
+artifacts:
 
 ```sh
 luajit tools/gen_lalin_mc_bank.lua \
@@ -1940,11 +2242,12 @@ native template verifier/install path.
 
 ### C / AOT Emission
 
-Use `emit_c_artifact` when the desired product is a C artifact that the user
-compiles as a native program or library:
+Use `emit_c` when the desired product is a C artifact that the user compiles as
+a native program or library. This is the same semantic C output consumed by the
+GCC C JIT path:
 
 ```lua
-local artifact = lalin.emit_c_artifact(decls, {
+local artifact = lalin.emit_c(decls, {
   name = "demo",
   c_path = "target/demo.c",
   h_path = "target/demo.h",
@@ -1952,11 +2255,11 @@ local artifact = lalin.emit_c_artifact(decls, {
 })
 ```
 
-The C path emits the selected program as ordinary C translation units. Selected
-stencil-shaped bodies are emitted inline in the same generated C artifact. The
-user then compiles that C with `gcc` or another C toolchain. It is the
-whole-program AOT path, separate from native copy-patch and explicit LuaJIT
-bytecode runtime artifact paths.
+The C path lowers through the semantic `CBackendUnit` pipeline and emits the
+selected program as ordinary C translation units. The user then compiles that C
+with `gcc` or another C toolchain for AOT, or lets `compile_c_gcc` cook it into a
+shared object for JIT-like local execution. Experimental native copy-patch and
+explicit LuaJIT bytecode are separate paths.
 
 ---
 
@@ -1977,10 +2280,12 @@ Use the DSL when:
 
 ```lua
 local lalin = require("lalin")
-lalin.language.use()
+local lln = lalin.lln
 ```
 
-This installs the usual namespace values, including `lln`.
+Prefer explicit namespace locals in examples. `lalin.language.use()` exists for
+LLBL language-environment experiments, but normal builder examples should not
+rely on installed globals.
 
 ### Function
 
@@ -2181,9 +2486,10 @@ The formatter currently prints the Lua/LLBL DSL surface.
 | `handle Struct.name [repr] ... end` | implemented; qualified handles bind to struct value in env; this is Lalin's durable reference form |
 | `unique` marker inside `struct` | documented identity model; direct parsed lowering is pending, use handles/stores for durable identity today |
 | `handle Name [repr] ... end` | implemented; handle fact types use bracket type values |
-| `region name(params; exits) ... end` | parser implemented; integration is narrower than function/struct/union |
-| `emit Region(args; cont = block)` | parsed, lowered to ASDL, expanded into enclosing control CFG before backend lowering |
-| `call Region(args; cont = block)` | parsed and lowered to ASDL; frame expansion pending and diagnosed if used |
+| `region name(params; exits) ... end` | implemented as typed control protocol; lowers to `ItemRegion` |
+| `emit Region(args; cont = block)` | implemented as open CFG splice; expands into enclosing control CFG before backend lowering |
+| `call Region(args; cont = block)` | implemented as sealed region invocation; lowers through region seals/result unions/dispatch |
+| `cont = target(arg, ...)` in region wiring | implemented; explicit continuation target application with shorthand args |
 | `jump exit(name)` | implemented as shorthand for `jump exit(name = name)` in named payloads |
 | `let` / `var` | implemented |
 | assignment | implemented in statement blocks |
@@ -2193,6 +2499,7 @@ The formatter currently prints the Lua/LLBL DSL surface.
 | access / lease / owned type values | implemented through Lua type values in brackets |
 | `expr:method(args)` method call | implemented; preserves method intent for staging, then lowers to `method(expr, args)` static call |
 | `if` / `elseif` / `else` | implemented |
+| `switch expr do case K then ... default then ... end` | implemented; lowers to scalar `StmtSwitch` / C `switch` |
 | `loop i in 0 .. n do ... end` | implemented |
 | parsed `fold` / `scan` inside loops | implemented |
 | parsed `grid`, `tiled grid`, `window` domains | implemented |

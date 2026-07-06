@@ -136,30 +136,30 @@ If lowering needs a fact, represent it in schema first.
 
 ## Backends
 
-The target fast backend architecture is residualless native C-stencil
-copy-patch. `LalinCode`, `LalinKernel`, and `LalinStencil` leaf methods generate
-closed `NativeTemplateSource` C stencils. An explicit offline bank build turns a
-`NativeTemplateBankRequest` and `NativeTemplateSourceManifest` into a typed
-`NativeEmbeddedTemplateBank`. The runtime native path only selects matching bank
-templates, copies bytes, patches typed holes/relocations, installs executable
-memory, and calls the resulting entry point. Despite its historical filename,
-`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` is the binding native architecture.
+The main backend path is semantic C. `LalinCode`, `LalinKernel`, and
+`LalinStencil` facts lower to `CBackendUnit`; `emit_c` emits ordinary C; the GCC
+C JIT path cooks that emitted C as a shared object and loads function pointers
+through LuaJIT FFI. The AOT path is the same `emit_c` output handed to the user's
+build system.
 
-Backend decisions must be ASDL values. Exact stencil selection, template-family
-selection, manifest entries, patch coordinates, ABI projections, runtime symbol
-capabilities, and typed rejection reasons are not option bags, string tags, raw
-hole tables, or side maps. The leaf that owns the semantic descriptor also owns
-whether its fields are fixed in the template family, runtime ABI parameters, or
-typed patch coordinates.
+Backend decisions must be ASDL values. Stencil selection, lowering plans, ABI
+projections, runtime symbol capabilities, and typed rejection reasons are not
+option bags, string tags, raw hole tables, or side maps. The leaf that owns the
+semantic descriptor also owns how that descriptor becomes C, JIT-cooked shared
+object input, AOT source, or an explicitly selected experimental artifact.
 
-LuaJIT bytecode is an explicit non-native mode. It is not an implicit fallback
-from native compilation, and the runtime native path must never invoke a C
-compiler, object tool, or residual wrapper.
+Native C-stencil copy-patch is experimental. `docs/RESIDUAL_NATIVE_ARCHITECTURE.md`
+records that research architecture for closed template banks, offline stencil
+compilation, and typed patch coordinates. It is not the default/main backend
+story.
 
-Keep the C/AOT path separate in wording and code. `emit_c_artifact` emits the
-whole selected program as C so the user can compile it with GCC; it should fuse
-selected stencil-shaped work at C level rather than describing itself as a
-LuaJIT residual materializer.
+LuaJIT bytecode is an explicit non-main mode. It is not an implicit fallback from
+GCC C execution, AOT emission, or experimental native compilation.
+
+Keep the C path central in wording and code. `emit_c` is the public semantic C
+backend API: it emits the whole selected program as C so GCC can cook it for
+JIT-like execution or the user can compile it for AOT. It must not describe
+itself as, or route through, the old LuaJIT residual C materializer.
 
 Backend code should consume typed facts:
 

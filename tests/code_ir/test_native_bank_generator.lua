@@ -149,6 +149,7 @@ local T = asdl.context()
 Schema(T)
 require("lalin.native_mc")(T)
 local N = T.LalinNative
+local Support = require("lalin.native_template_support")(T)
 local artifact = dofile(lua_path)(T)
 assert(asdl.isa(artifact, N.NativeBankArtifact), tostring(artifact))
 assert(artifact.template_count == 1, "generated artifact should describe one C-owned template")
@@ -177,6 +178,70 @@ local trivial_install = N.NativeBankInstallRequest(loaded_bank, trivial_plan, N.
 assert(asdl.isa(trivial_install, N.NativeInstallSucceeded), tostring(trivial_install))
 local trivial_call = trivial_install.executable.protocol:call_native_executable(N.NativeExecutableCallInput(trivial_install.executable, {}))
 assert(asdl.isa(trivial_call, N.NativeCallReturnedI32) and trivial_call.value == 7, "C-owned generated bank should select, install, and execute through its C API")
+
+local fallthrough_manifest = dir .. "/fallthrough_manifest.lua"
+local fallthrough_c = dir .. "/fallthrough_bank.c"
+local fallthrough_h = dir .. "/fallthrough_bank.h"
+local fallthrough_lua = dir .. "/fallthrough_bank.lua"
+local fallthrough_so = dir .. "/fallthrough_bank.so"
+local fallthrough_log = dir .. "/fallthrough_generator.log"
+write_file(fallthrough_manifest, [[
+package.path = './?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;' .. package.path
+return function(T)
+  local N = T.LalinNative
+  local Support = require('lalin.native_template_support')(T)
+  local target = Support.host_target()
+  local function source(suffix)
+    local family = N.NativeTemplateFamily(N.NativeTemplateFamilyId('native.generator.fallthrough.' .. suffix), N.NativeRoleCodeTerm, { Support.axis_target(target) }, Support.protocol_void_none())
+    local generator = Support.stencil_generator(Support.stencil_generator_id('generator.fallthrough.' .. suffix), family, N.NativeChunkSupertemplate, {})
+    local configuration = Support.stencil_configuration(Support.stencil_configuration_id('generator.fallthrough.' .. suffix), generator, {})
+    local signature = Support.spill_all_stencil_signature(Support.scalar_i32(), {}, {})
+    return N.NativeTemplateSource(
+      N.NativeTemplateId('native.generator.fallthrough.' .. suffix),
+      family, generator, configuration, signature,
+      N.NativeExtractFallthroughFragment,
+      'lalin_native_generator_fallthrough_' .. suffix,
+      '#include <stdint.h>\nvoid lalin_native_generator_fallthrough_' .. suffix .. '(uint8_t *frame) { (void)frame; }\n',
+      {}, {}, {}, {})
+  end
+  local a = source('a')
+  local b = source('b')
+  local group_a = Support.template_manifest_group(a.generator, { Support.template_manifest_entry_for_source(a) })
+  local group_b = Support.template_manifest_group(b.generator, { Support.template_manifest_entry_for_source(b) })
+  local manifest = Support.template_source_manifest(Support.template_manifest_id('generator.fallthrough'), N.NativeTemplateSupportDomainId('native.template.support.generator.fallthrough'), { group_a, group_b })
+  return N.NativeTemplateBankRequest(N.NativeBankId('native-generator-fallthrough-bank'), target, Support.empty_runtime(), manifest, { a, b })
+end
+]])
+assert(command_ok(table.concat({
+    "luajit tools/gen_lalin_mc_bank.lua",
+    shell_quote(fallthrough_c), shell_quote(fallthrough_h), shell_quote(fallthrough_lua), shell_quote(fallthrough_manifest),
+    "2>", shell_quote(fallthrough_log),
+}, " ")), "fallthrough bank generator should build")
+assert(command_ok("gcc -shared -fPIC " .. shell_quote(fallthrough_c) .. " -o " .. shell_quote(fallthrough_so)), "fallthrough generated C bank should link")
+local fallthrough_artifact = dofile(fallthrough_lua)(T)
+local fallthrough_loaded = assert(fallthrough_artifact:load_native_bank(fallthrough_so).bank)
+local fallthrough_a = fallthrough_artifact.manifest.groups[1].entries[1].family
+local fallthrough_b = fallthrough_artifact.manifest.groups[2].entries[1].family
+local node_a = N.NativeTemplateNodeId("native.generator.fallthrough.a.node")
+local node_b = N.NativeTemplateNodeId("native.generator.fallthrough.b.node")
+local reversed_fallthrough_graph = N.NativeTemplateGraph(
+    fallthrough_artifact.target,
+    N.NativeCallVoid,
+    N.NativeFrameLayout({}, 0, 1),
+    {
+        N.NativeTemplateNode(node_b, N.NativeTemplateInstanceId("native.generator.fallthrough.b.instance"), fallthrough_b, {}, {}, {}),
+        N.NativeTemplateNode(node_a, N.NativeTemplateInstanceId("native.generator.fallthrough.a.instance"), fallthrough_a, {}, {}, {}),
+    },
+    { N.NativeFallthroughEdge(node_a, node_b, Support.next_continuation_symbol()) },
+    {},
+    N.NativeModuleAddressPlan({}, {}, {}, {}, {}, {}),
+    node_a,
+    { node_b }
+)
+local reversed_fallthrough_plan = reversed_fallthrough_graph:select_native_bank_install_plan(N.NativeBankInstallPlanSelectionInput(fallthrough_artifact.target, N.NativeRuntime({})))
+local reversed_fallthrough_install = N.NativeBankInstallRequest(fallthrough_loaded, reversed_fallthrough_plan, N.NativeExecutableAllocatorMmap):install_native()
+assert(asdl.isa(reversed_fallthrough_install, N.NativeInstallRejected), "non-adjacent fallthrough layout should reject")
+assert(asdl.isa(reversed_fallthrough_install.rejects[1], N.NativeInstallRejectFallthroughLayout), "fallthrough rejection should be a typed ASDL install reject")
 
 local complete_manifest = dir .. "/complete_micro_manifest.lua"
 local complete_c = dir .. "/complete_micro_bank.c"
