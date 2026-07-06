@@ -1,0 +1,844 @@
+{
+	"version": 1,
+	"workflowId": "wf-249c33d5",
+	"planId": "hard-yank",
+	"revision": 4,
+	"nextId": 63,
+	"createdAt": "2026-07-06T18:19:02.484Z",
+	"updatedAt": "2026-07-06T18:25:28.144Z",
+	"tasks": [
+		{
+			"id": "T001",
+			"title": "Verify precondition: schema/init.lua load order and DSL imports",
+			"detail": "Read lua/lalin/schema/init.lua to confirm 28 modules load in order. Read lua/lalin/schema/dsl.lua to confirm product/sum/each DSL. Confirm no active code generator exists (no Makefile gen target). Verify tree.lua TreeCode* block is contiguous lines 1160-1495. Verify code.lua CodeBack* block is contiguous lines 504-669.",
+			"file": "lua/lalin/schema/init.lua",
+			"after": [],
+			"status": "todo",
+			"order": 1,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T002",
+			"title": "Create tree_lower_schema.lua — extract TreeCode* from tree.lua",
+			"detail": "Create new file lua/lalin/schema/tree_lower_schema.lua. Copy lines 1160-1495 from lua/lalin/schema/tree.lua (all TreeCode* products). Rename all products: TreeCode→TreeLower (e.g., TreeCodeModuleFacts→TreeLowerModuleFacts, TreeCodeFuncState→TreeLowerFunctionState, TreeCodeInput→TreeLowerInput, TreeCodeExprInput→TreeLowerExprInput, etc.). Also rename all field type references that point to TreeCode* types. Rename sub-types consistently: TreeCodeBindingState→TreeLowerBindingState, TreeCodeResidenceFacts→TreeLowerResidenceFacts, TreeCodeEmissionState→TreeLowerEmissionState, TreeCodeCounterState→TreeLowerCounterState, TreeCodeAlphaState→TreeLowerAlphaState, TreeCodeControlState→TreeLowerControlState. Add module declaration: module('lalin.schema.tree_lower_schema', package.seeall, lalin_schema_dsl). Import: schema/init.lua Dsl, and any types referenced from code.lua (CodeValueId, CodeInstId, CodeTermId, CodeBlockId, CodeType, CodeSig, etc.), bind.lua, type.lua, sem.lua.",
+			"file": "lua/lalin/schema/tree_lower_schema.lua",
+			"after": [],
+			"status": "todo",
+			"order": 2,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T003",
+			"title": "Create code_backend_schema.lua — extract CodeBack* from code.lua",
+			"detail": "Create new file lua/lalin/schema/code_backend_schema.lua. Copy lines 504-669 from code.lua. Rename all products: CodeBack→CodeBackend (CodeBackModuleFacts→CodeBackendModuleMachine, CodeBackFunctionFacts→CodeBackendFunctionFacts, CodeBackFunctionState→CodeBackendFunctionState, CodeBackInstInput→CodeBackendInstInput, CodeBackTermInput→CodeBackendTermInput, CodeBackPlaceInput→CodeBackendPlaceInput, CodeBackStateResult→CodeBackendStateResult, CodeBackValueResult→CodeBackendValueResult, CodeBackAddressResult→CodeBackendAddressResult, CodeBackMemoryInfoResult→CodeBackendMemoryInfoResult, CodeBackPlaceResult→CodeBackendPlaceResult). Rename sub-types: CodeBackSigAbi→CodeBackendSigAbi, CodeBackLocalSlot→CodeBackendLocalSlot, CodeBackReadonlyProjection→CodeBackendReadonlyProjection, CodeBackAggregateState→CodeBackendAggregateState, CodeBackClosureState→CodeBackendClosureState, CodeBackLocalSlotState→CodeBackendLocalSlotState, CodeBackTempState→CodeBackendTempState. Add module declaration.",
+			"file": "lua/lalin/schema/code_backend_schema.lua",
+			"after": [],
+			"status": "todo",
+			"order": 3,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T004",
+			"title": "Create code_validate_schema.lua — CodeValidationMachine + CodeValidateResult + CodeIssue",
+			"detail": "Create new file lua/lalin/schema/code_validate_schema.lua. Define: module('lalin.schema.code_validate_schema', package.seeall, lalin_schema_dsl). Add products: CodeValidationMachine { module [CodeModule], graph [CodeGraph], spine [CodeBackendSpine], issues [many CodeIssue], relocs [many CodeRelocCheckEntry] } interned. CodeValidateResult sum: CodeValidateOk { module [CodeModule] }, CodeValidateFailed { issues [many CodeIssue] }. CodeIssue sum: CodeIssueMissingSig { sig [CodeSig] }, CodeIssueMissingValue { value [CodeValueId] }, CodeIssueMissingGlobal { global [CodeGlobalId] }, CodeIssueInvalidReloc { reloc [CodeRelocId], reason [str] }, CodeIssueSignatureMismatch { sig [CodeSig], reason [str] }, CodeIssueInvalidType { ty [CodeType], reason [str] }, CodeIssueSizeMismatch { expected, actual, context [str] }, CodeIssueAlignmentMismatch { expected, actual, context [str] }, CodeIssueRecursiveType { ty [CodeType] }, CodeIssueUnsupported { feature [str], reason [str] }. CodeRelocCheckEntry { reloc_key [str], checked [bool] } interned. Also add a CodeBackendSpine product referencing code module, graph, target, layout_env.",
+			"file": "lua/lalin/schema/code_validate_schema.lua",
+			"after": [],
+			"status": "todo",
+			"order": 4,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T005",
+			"title": "Create emit_c_schema.lua — CEmitMachine + CEmitModuleResult + CEmitHelper products",
+			"detail": "Create new file lua/lalin/schema/emit_c_schema.lua. Define CEmitMachine { spine [LowerBackSpine], sigs [many CodeSigByIdEntry], helpers [many CEmitHelperEntry], sig_order [many CodeSig], helper_order [many CEmitHelperEntry] } interned. CEmitModuleResult sum: CEmitOk { unit [CBackendUnit] }, CEmitFailed { issues [many CEmitIssue] } where CEmitIssue sum covers emit errors. CEmitFuncResult { source [str], func_name [str], helpers [many CEmitHelperEntry] }. CEmitHelperEntry { helper_key [str], helper [CEmitHelper] } interned.",
+			"file": "lua/lalin/schema/emit_c_schema.lua",
+			"after": [],
+			"status": "todo",
+			"order": 5,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T006",
+			"title": "Update schema/init.lua — add new schema modules, remove TreeCode*/CodeBack* from originals",
+			"detail": "Modify lua/lalin/schema/init.lua: Add 'tree_lower' to module list (after 'tree'). Add 'code_backend' (after 'code'). Add 'code_validate' and 'emit_c' at appropriate positions. Remove TreeCode* block from tree.lua (delete lines 1160-1495). Remove CodeBack* block from code.lua (delete lines 504-669). Update any cross-references in remaining schema files that reference TreeCode*/CodeBack* types — these now live in the new modules under LalinTreeLower/LalinCodeBackend namespaces.",
+			"file": "lua/lalin/schema/init.lua",
+			"after": [
+				"T002",
+				"T003",
+				"T004",
+				"T005"
+			],
+			"status": "todo",
+			"order": 6,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T007",
+			"title": "Delete sem_call_decide.lua and its test",
+			"detail": "Delete lua/lalin/sem_call_decide.lua. Delete tests/runtime/test_sem_switch_call.lua (it only tests sem_call_decide). Remove the require from test discovery if needed. This file is test-only and its typed CodeCallTarget path already exists in tree_to_code.lua leaf methods.",
+			"file": "lua/lalin/sem_call_decide.lua",
+			"after": [],
+			"status": "todo",
+			"order": 7,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T008",
+			"title": "Rename products in tree_to_code.lua — TreeCode→TreeLower (600+ sites)",
+			"detail": "In lua/lalin/tree_to_code.lua, perform bulk rename: every Tr.TreeCode* → Tr.TreeLower*. This includes ~120 constructor calls, ~40 method receivers, and ~440 other type references. Use sed or structured find-replace. Verify the file has no remaining TreeCode references (except method names tree_code_* which stay). Key constructs: Tr.TreeCodeModuleFacts(...), Tr.TreeCodeFuncState(...), Tr.TreeCodeExprInput(...), Tr.TreeCodeStateResult(...), etc. Also update type namespace: Tr now references LalinTreeLower types (populated from tree_lower_schema.lua). Method names (tree_code_with_state, tree_code_ensure_local, etc.) keep their prefix unless the task wants them renamed too — target architecture says file rename only, method names are semantically about the phase not the product.",
+			"file": "lua/lalin/tree_to_code.lua",
+			"after": [
+				"T006"
+			],
+			"status": "todo",
+			"order": 8,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T009",
+			"title": "Rename CodeBack→CodeBackend in native_code_methods.lua and test_native_value_representation.lua",
+			"detail": "In lua/lalin/native_code_methods.lua: rename 2 method receivers (line 634: Code.CodeBackModuleFacts:native_code_type_layout_plan → Code.CodeBackendModuleMachine, line 1520 same). Update 1 error string (line 650). In tests/code_ir/test_native_value_representation.lua: rename 2 constructions (line 49: Code.CodeBackModuleFacts → Code.CodeBackendModuleMachine, line 55: Code.CodeBackReadonlyProjection → Code.CodeBackendReadonlyProjection). Update 1 assertion string (line 146).",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T006"
+			],
+			"status": "todo",
+			"order": 9,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T010",
+			"title": "Update code_type.lua tree_code_sig_entry reference",
+			"detail": "In lua/lalin/code_type.lua lines 213-214: change ctx.tree_code_sig_entry to ctx.tree_lower_sig_entry. This is a method call reference on TreeCodeModuleSigState (now TreeLowerModuleSigState). Verify the method name on the new module matches.",
+			"file": "lua/lalin/code_type.lua",
+			"after": [
+				"T008"
+			],
+			"status": "todo",
+			"order": 10,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T011",
+			"title": "Fix nil-passthrough: back_scalar → TypeBackScalarUnavailable",
+			"detail": "In lua/lalin/type_func_abi_plan.lua:30-34, replace back_scalar returning nil with returning Ty.TypeBackScalarUnavailable(ty, shape). Need to capture ty and shape in scope. Update callers: type_abi_classify.lua, type_func_abi_plan.lua internal consumers that check 'if back_scalar(ty) == nil then' → check asdl.classof(r) instead. Note: type_func_abi_plan is test-only, so blast radius is minimal.",
+			"file": "lua/lalin/type_func_abi_plan.lua",
+			"after": [],
+			"status": "todo",
+			"order": 20,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T012",
+			"title": "Fix nil-passthrough: known_layout → TypeMemLayoutUnknown",
+			"detail": "In lua/lalin/type_abi_classify.lua:38-42, replace known_layout returning nil with returning Ty.TypeMemLayoutUnknown(ty, shape). Update callers in type_abi_classify.lua that check 'if known_layout(ty, env) == nil then' → check asdl.classof(r). type_abi_classify is test-only.",
+			"file": "lua/lalin/type_abi_classify.lua",
+			"after": [],
+			"status": "todo",
+			"order": 21,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T013",
+			"title": "Fix nil-passthrough: value_type → typed issue return in code_validate.lua",
+			"detail": "In lua/lalin/code_validate.lua:206-211, change value_type(fctx, ctx, value) to return Code.CodeIssueMissingValue(value) as a typed issue instead of nil. Update all callers to check the result type. Also call add_issue in the caller not inside the helper. The function currently has a side effect (calls add_issue internally) plus returns nil — clean into pure typed return.",
+			"file": "lua/lalin/code_validate.lua",
+			"after": [],
+			"status": "todo",
+			"order": 22,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T014",
+			"title": "Leaf-methodify tree_contract_facts.lua",
+			"detail": "Rewrite lua/lalin/tree_contract_facts.lua: Remove schema.classof/isa if/elseif dispatch in contract_fact(). Install leaf methods on each Tr.Contract* union leaf: Tr.ContractBounds:contract_fact() → Tr.ContractFactBounds or Tr.ContractFactExprBounds, Tr.ContractWindowBounds:contract_fact(), etc. Keep the existing bind_context(T)→api entrypoint and T._lalin_api_cache memoization. The api delegates: api.contract_fact = function(node) return node:contract_fact() end. Preserve the single/as_list helpers. Remove the error() at the bottom — missing leaf methods will error naturally via Lua method dispatch. Verify at the 1 production call site in tree_to_code.lua:2928 (TreeContractFacts.facts(self.func)).",
+			"file": "lua/lalin/tree_contract_facts.lua",
+			"after": [],
+			"status": "todo",
+			"order": 30,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T015",
+			"title": "Leaf-methodify tree_control_facts.lua",
+			"detail": "Install leaf methods on each Tr.ControlFact* union leaf: ControlFactJump:control_decide(), ControlFactBlockParam:control_decide(), ControlFactJumpArg:control_decide(), ControlFactReject:control_decide(). Keep bind_context(T)→api and T._lalin_api_cache memoization. Remove the dead require from tree_typecheck.lua:58. Test file tests/code_ir/test_tree_control_facts.lua pins current behavior — rewrite after methodify.",
+			"file": "lua/lalin/tree_control_facts.lua",
+			"after": [],
+			"status": "todo",
+			"order": 31,
+			"blockedReason": "RESOLVED: methodify. Install leaf methods on each ControlFact* variant. Dead require in tree_typecheck.lua removed as part of cleanup.",
+			"notes": [
+				"Decision needed: leaf-methodify or just remove dead require. Since 0 production call sites, removing the dead require is pragmatic.",
+				"If leaf-methodifying: install methods on ControlFact* variants like ControlFactJump, ControlFactBlockParam, ControlFactJumpArg, ControlFactReject."
+			],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:25:28.144Z"
+		},
+		{
+			"id": "T016",
+			"title": "Leaf-methodify tree_expr_type.lua",
+			"detail": "Rewrite lua/lalin/tree_expr_type.lua: Remove schema.classof/isa if/elseif dispatch. Install leaf methods on each Tr.Expr* variant: Tr.Expr*:tree_expr_type() → returns Ty.Type result. Keep bind_context(T)→api and T._lalin_api_cache. The only production call site is through tree_place_type.lua:129 (but tree_place_type is test-only), so effectively test-only. Minimal blast radius.",
+			"file": "lua/lalin/tree_expr_type.lua",
+			"after": [],
+			"status": "todo",
+			"order": 32,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T017",
+			"title": "Leaf-methodify tree_module_type.lua",
+			"detail": "Rewrite lua/lalin/tree_module_type.lua: Remove schema.classof/isa dispatch. Install leaf methods on Tr.ModuleHeader* variants: ModuleSurface:module_name(), ModuleTyped:module_name(), ModuleSem:module_name(), ModuleCode:module_name() → returns string. Install leaf methods on Tr.TypeDecl* variants for item_layout: TypeDeclStruct:item_layout(), TypeDeclUnion:item_layout(), TypeDeclEnumSugar:item_layout(), TypeDeclHandle:item_layout(), TypeDeclTaggedUnionSugar:item_layout(). Install canonical_local_type as leaf methods on Ty.* variants. Keep bind_context(T)→api. Blast radius: 5 production call sites across tree_typecheck.lua (3 sites), frontend_pipeline.lua (1 site), tree_to_code.lua (1 site), sem_layout_resolve.lua (1 site).",
+			"file": "lua/lalin/tree_module_type.lua",
+			"after": [],
+			"status": "todo",
+			"order": 33,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T018",
+			"title": "Leaf-methodify tree_place_type.lua",
+			"detail": "Rewrite lua/lalin/tree_place_type.lua: Remove schema.classof/isa dispatch. Install leaf methods on Tr.Place* variants: Tr.PlaceVar:tree_place_type() → Ty.Type, Tr.PlaceDeref:tree_place_type(), Tr.PlaceField:tree_place_type(), etc. Keep bind_context(T)→api. This file is test-only (0 production call sites).",
+			"file": "lua/lalin/tree_place_type.lua",
+			"after": [],
+			"status": "todo",
+			"order": 34,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T019",
+			"title": "Leaf-methodify tree_stmt_type.lua",
+			"detail": "Rewrite lua/lalin/tree_stmt_type.lua: Remove schema.classof/isa dispatch. Install leaf methods on Tr.Stmt* variants: Tr.StmtLet:tree_stmt_env_effect() → StmtEnvEffect, Tr.StmtAssign:tree_stmt_env_effect(), etc. Keep bind_context(T)→api. This file is test-only (0 production call sites).",
+			"file": "lua/lalin/tree_stmt_type.lua",
+			"after": [],
+			"status": "todo",
+			"order": 35,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T020",
+			"title": "Leaf-methodify sem_layout_resolve.lua → layout_resolve.lua",
+			"detail": "Rewrite lua/lalin/sem_layout_resolve.lua: This is the biggest leaf-methodification (153 classof hits). Install leaf methods on Tr.Expr*, Tr.Place*, Tr.TypeDecl*, Tr.ModuleHeader* variants for layout resolution. Replace massive schema.classof if/elseif chains. Keep bind_context(T)→api. The resolve_module/resolve_expr/resolve_place/resolve_field_ref free functions become leaf methods dispatch. Blast radius: 1 production call site (frontend_pipeline.lua:105), massive internal dispatch. Also rename the file to layout_resolve.lua and update the require in frontend_pipeline.lua:54 and tests/runtime/test_sem_layout_resolve.lua:5. Update error strings in tree_to_code.lua:1146,1417 ('sem_layout_resolve' → 'layout_resolve').",
+			"file": "lua/lalin/sem_layout_resolve.lua",
+			"after": [],
+			"status": "todo",
+			"order": 36,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T021",
+			"title": "Leaf-methodify type_classify.lua",
+			"detail": "Rewrite lua/lalin/type_classify.lua: Remove schema.classof/isa dispatch in classify_type(). Install leaf methods on Ty.* variants: Ty.TScalar:type_classify() → TypeShapeScalar, Ty.TPtr:type_classify() → TypeShapePtr, Ty.TArray:type_classify() → TypeShapeArray, etc. Keep bind_context(T)→api. Blast radius: 1 real production call site (type_size_align.lua:265) used on the hot path through tree_to_code, code_aggregate_abi, sem_layout_resolve, native_code_methods.",
+			"file": "lua/lalin/type_classify.lua",
+			"after": [],
+			"status": "todo",
+			"order": 37,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T022",
+			"title": "Leaf-methodify type_abi_classify.lua",
+			"detail": "Rewrite lua/lalin/type_abi_classify.lua: Remove schema.classof/isa dispatch. Install leaf methods on Ty.TypeShape* variants: TypeShapeScalar:abi_classify(), TypeShapePtr:abi_classify(), TypeShapeAggregate:abi_classify(), etc. Keep bind_context(T)→api. This file is test-only (0 production call sites).",
+			"file": "lua/lalin/type_abi_classify.lua",
+			"after": [],
+			"status": "todo",
+			"order": 38,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T023",
+			"title": "Fix EffectAtomic.ordering [str] → [LalinCore.AtomicOrdering]",
+			"detail": "In lua/lalin/schema/effect.lua line 28: change ordering [str] to ordering [LalinCore.AtomicOrdering]. In lua/lalin/code_effect_facts.lua lines 133,139: remove tostring() wrap around k.ordering — pass the typed AtomicOrdering directly to Effect.EffectAtomic(...) constructor. This is a one-line schema change + two-line impl change.",
+			"file": "lua/lalin/schema/effect.lua",
+			"after": [],
+			"status": "todo",
+			"order": 40,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T024",
+			"title": "Create GraphEdgeKind and GraphUseRole typed sums",
+			"detail": "In lua/lalin/schema/graph.lua: Replace kind [str] with kind [GraphEdgeKind] where GraphEdgeKind is a new sum: GraphEdgeJump, GraphEdgeThen, GraphEdgeElse, GraphEdgeSwitchCase { lit [str] }, GraphEdgeSwitchDefault, GraphEdgeVariantCase { name [str] }, GraphEdgeVariantDefault. Replace role [str] with role [GraphUseRole] where GraphUseRole is a sum with ~40 variants (DerefAddr, Index, IndexBase, FieldBase, ..., ReturnValueN). In lua/lalin/code_graph.lua: update all ~50 string construction sites to use the typed constructors. The string values were never read back as dispatch keys, so this is purely a write-side change.",
+			"file": "lua/lalin/schema/graph.lua",
+			"after": [],
+			"status": "todo",
+			"order": 41,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T025",
+			"title": "Create ScheduleCapabilityKind typed sum",
+			"detail": "In lua/lalin/schema/schedule.lua: Replace kind [str] with kind [ScheduleCapabilityKind] where ScheduleCapabilityKind is a sum: ScheduleCapClosedForm, ScheduleCapScalarIndex, ScheduleCapScalarPointer, ScheduleCapVectorContiguous. In lua/lalin/kernel_emit_support.lua: change schedule_kind_name() to return the typed sum instead of string. Update code_schedule_plan.lua:94 to use tostring() on the typed sum for diagnostics only.",
+			"file": "lua/lalin/schema/schedule.lua",
+			"after": [],
+			"status": "todo",
+			"order": 42,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T026",
+			"title": "Fix c_emit.lua descriptor kind string dispatch (d.kind == 'slice'/'bytespan')",
+			"detail": "In lua/lalin/c_emit.lua:649-651, replace string dispatch if d.kind == 'slice'/'bytespan'/'view' with asdl.classof dispatch. The descriptors are already typed (CBackendSliceDescriptor, CBackendByteSpanDescriptor, CBackendViewDescriptor). Store the typed descriptor directly instead of converting to { kind = 'slice', ty = self }. Update construction sites at lines 610, 121, 124, 127, 130.",
+			"file": "lua/lalin/c_emit.lua",
+			"after": [],
+			"status": "todo",
+			"order": 43,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T027",
+			"title": "Fix back_inspect.lua and back_validate.lua string dispatch",
+			"detail": "In lua/lalin/back_inspect.lua:25-35, replace cmd.kind string dispatch with asdl.classof(cmd) dispatch. BackCmd is already an ASDL sum. In lua/lalin/back_validate.lua:885-1061, replace 28-way issue kind string dispatch with asdl.classof dispatch. Both are already typed — just using the wrong dispatch mechanism.",
+			"file": "lua/lalin/back_inspect.lua",
+			"after": [],
+			"status": "todo",
+			"order": 44,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T028",
+			"title": "Fix TreeLowerControlExitResult and TreeLowerFallthroughResult — bool→sum",
+			"detail": "In tree_lower_schema.lua (new): Change TreeLowerControlExitResult from product with saw_exit [bool] to a sum: TreeLowerSawExit { state [TreeLowerFunctionState] }, TreeLowerNoExit { state [TreeLowerFunctionState] }. Change TreeLowerFallthroughResult from product with falls [bool] to sum: TreeLowerFellThrough { state [TreeLowerFunctionState] }, TreeLowerNoFall { state [TreeLowerFunctionState] }. In tree_to_code.lua: update the 1 write site (line 583) and 2 read sites (lines 2353, 2428) for saw_exit. Update 5 read sites for falls (lines 1964, 1968, 2027, 2057, 2062). Trace back falls write sites to convert construction.",
+			"file": "lua/lalin/schema/tree_lower_schema.lua",
+			"after": [
+				"T002"
+			],
+			"status": "todo",
+			"order": 45,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T029",
+			"title": "Create CodeBackendReadonly sum replacing readonly [bool]",
+			"detail": "In code_backend_schema.lua: Create CodeBackendReadonly sum: CodeBackendReadonly, CodeBackendReadWrite. Replace CodeReadonlyByInstEntry.readonly [bool] with readonly [CodeBackendReadonly]. Update CodeBackendReadonlyProjection. The only construction site passes {} (empty), so update that test construction in test_native_value_representation.lua:55.",
+			"file": "lua/lalin/schema/code_backend_schema.lua",
+			"after": [
+				"T003"
+			],
+			"status": "todo",
+			"order": 46,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T051",
+			"title": "Fix string dispatch in native view/slice/bytespan code",
+			"detail": "In native_code_methods.lua:3363,3373 and native_template_sources.lua:3533,3567-3568,3601,3631: Replace kind == 'view'/'slice'/'bytespan' string dispatch with asdl.classof or typed discriminators. These code paths are experimental (native backend) but should still use typed dispatch.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [],
+			"status": "todo",
+			"order": 47,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:52.167Z",
+			"updatedAt": "2026-07-06T18:19:52.167Z"
+		},
+		{
+			"id": "T052",
+			"title": "Fix string dispatch in luajit_backend.lua artifact kind",
+			"detail": "In luajit_backend.lua:62-69: Replace 8-way string dispatch over 'scatter_reduce'/'store_n'/'scan'/'find'/'partition'/'reduce'/'reduce_n'/'count' with asdl.classof dispatch over StencilArtifactShape ASDL union. The union already exists — use it directly.",
+			"file": "lua/lalin/luajit_backend.lua",
+			"after": [],
+			"status": "todo",
+			"order": 48,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:52.167Z",
+			"updatedAt": "2026-07-06T18:19:52.167Z"
+		},
+		{
+			"id": "T053",
+			"title": "Fix string dispatch in phase_validate.lua/phase_execute.lua/phase_dsl.lua MachineImpl",
+			"detail": "In phase_validate.lua:105-121, phase_execute.lua:29-32, phase_dsl.lua:113-116: Replace string dispatch over 'unknown'/'lalin'/'lua'/'c'/'external' with asdl.classof dispatch over MachineImpl ASDL sum (ImplLua/ImplLalin/ImplC/ImplExternal). The union already exists.",
+			"file": "lua/lalin/phase_validate.lua",
+			"after": [],
+			"status": "todo",
+			"order": 49,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:52.167Z",
+			"updatedAt": "2026-07-06T18:19:52.167Z"
+		},
+		{
+			"id": "T030",
+			"title": "Fix ValueFactProjection and MemAccessProjection — construct entry products",
+			"detail": "In code_value_facts.lua: Change expr_index() (line 522) to construct actual ValueExprByValueEntry/ValueProofByValueEntry/etc. entry products instead of empty Lua tables. The code_value_index_into methods (lines 479-489) must construct entry products and append them to the projection's fields. Change the ValueFactProjection construction from ValueFactProjection({},{},{},{}) to ValueFactProjection({}, {}, {}, {}) but with the many-list populated by constructing entry products. Update all read sites across 5 callers in code_value_facts.lua, code_mem_facts.lua, code_kernel_plan.lua. For MemAccessProjection in code_mem_facts.lua:637-746: change access_projection() to construct actual entry products. Update 3 callers in lower_to_c.lua, code_kernel_plan.lua, code_effect_facts.lua. This is the highest-skill task — the entry products must be properly typed in the many-list.",
+			"file": "lua/lalin/code_value_facts.lua",
+			"after": [],
+			"status": "todo",
+			"order": 50,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T031",
+			"title": "Remove dead methods and CodeValueSemanticsProjection dead chain",
+			"detail": "Remove unused methods from ValueFactProjection: proof_for_value (line 502), int_semantics_for_value (line 507), float_mode_for_value (line 512), code_value_semantics_projection (line 517). Remove CodeValueSemanticsProjection dead schema field from CodeBackModuleFacts/code.lua line 564 (no consumer ever reads .value_semantics). Remove the dead construction at code_value_facts.lua:518. Remove the test construction at test_native_value_representation.lua:53. Clean up the schema type if no references remain.",
+			"file": "lua/lalin/code_value_facts.lua",
+			"after": [],
+			"status": "todo",
+			"order": 51,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T050",
+			"title": "Remove ctx bag from code_aggregate_abi.lua",
+			"detail": "In lua/lalin/code_aggregate_abi.lua: The ctx bag is used at lines 95-96 for ctx.layout_env and ctx.target. These are consumed by layout(ctx, ty) and size_align(ctx, ty). Replace the generic ctx parameter with explicit layout_env and target parameters. Update callers in code_to_c.lua and lower_to_c.lua that pass ctx bags to these functions. This removes the last ctx bag consumer in the aggregate ABI layer.",
+			"file": "lua/lalin/code_aggregate_abi.lua",
+			"after": [],
+			"status": "todo",
+			"order": 52,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:52.167Z",
+			"updatedAt": "2026-07-06T18:19:52.167Z"
+		},
+		{
+			"id": "T032",
+			"title": "Create CodeValidationMachine replacing ctx/fctx bags in code_validate.lua",
+			"detail": "Rewrite lua/lalin/code_validate.lua: Replace the mutable ctx table with a CodeValidationMachine ASDL product. The machine has typed fields: module, graph, spine, issues [many CodeIssue], relocs [many CodeRelocCheckEntry]. Methods return a new machine (with_issue, with_reloc) instead of mutating. Replace add_issue(ctx, issue) mutation with machine = machine:with_issue(issue). Replace index_by building ctx.sigs/data/globals/externs/funcs with lookup methods on the machine or typed entry products. Replace check_reloc mutation with machine:with_reloc(reloc). Remove ctx.collector side-effect — use typed issue return instead. Update the 1 production call site in frontend_pipeline.lua:56.",
+			"file": "lua/lalin/code_validate.lua",
+			"after": [
+				"T004"
+			],
+			"status": "todo",
+			"order": 55,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T033",
+			"title": "Create CEmitMachine replacing ctx bags in code_type.lua",
+			"detail": "Rewrite lua/lalin/code_type.lua: Replace the generic ctx bag (ctx.code_sigs, ctx.code_sig_order, ctx.sigs, ctx.sig_order) with a CEmitMachine ASDL product. The machine has typed fields for sigs, sig_order, code_sigs, code_sig_order. Replace remember_code_sig(ctx, sig) mutation with machine = machine:with_sig(sig). Replace defaults_target(opts) free function consumption of loose stringly-typed opts with validation through CBackendTarget typed constructors. Update all ~8 consumers of code_type.lua across code_to_c.lua, stencil_c.lua, stencil_artifact_plan.lua, native_code_methods.lua, luajit_ctype.lua, luajit_lower.lua, lower_to_c.lua, tree_to_code.lua, and test files.",
+			"file": "lua/lalin/code_type.lua",
+			"after": [
+				"T005"
+			],
+			"status": "todo",
+			"order": 56,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T034",
+			"title": "Create CEmitMachine replacing ctx bags in c_emit.lua (emit_c_lower.lua)",
+			"detail": "Rewrite lua/lalin/c_emit.lua: Replace ctx.helpers_by_id/ctx.helper_order/ctx.helpers mutable side tables with CEmitMachine typed fields. Replace mutation ctx.helpers_by_id[id.text] = use with machine = machine:with_helper(id, use). Replace ctx.helpers[id.text] = use pattern. This affects 6 mutation sites (lines 1213-1219). Update all ~7 consumers: c_helpers.lua, c_validate.lua, stencil_artifact_plan.lua, code_to_c.lua, stencil_c.lua, init.lua (2 sites), lower_to_c.lua.",
+			"file": "lua/lalin/c_emit.lua",
+			"after": [
+				"T005"
+			],
+			"status": "todo",
+			"order": 57,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T035",
+			"title": "Rename files: tree_to_code.lua → tree_lower.lua",
+			"detail": "Rename the file. Update require sites: frontend_pipeline.lua:55, init.lua:58, tests/frontend/test_tree_to_code_methods.lua:7,42. Update indirect string references: c_coverage.lua:34,84,92,181,260, frontend_pipeline.lua:45,111,112, compiler_package.lua:36, test_phase_dsl.lua:29-60, test_phase_plan.lua:30-94, test_c_backend_coverage_matrix.lua:96. Rename the test file tests/frontend/test_tree_to_code_methods.lua → test_tree_lower_methods.lua.",
+			"file": "lua/lalin/tree_to_code.lua",
+			"after": [
+				"T008"
+			],
+			"status": "todo",
+			"order": 60,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T036",
+			"title": "Rename files: sem_const_eval.lua → const_eval.lua, sem_switch_decide.lua → switch_decide.lua",
+			"detail": "Rename sem_const_eval.lua → const_eval.lua. Update require site: tree_to_code.lua:27, tests/runtime/test_sem_const_eval.lua:5. Rename test file to test_const_eval.lua. Update string assertion. Rename sem_switch_decide.lua → switch_decide.lua. Update require site: tests/runtime/test_sem_switch_call.lua:5. Rename test file.",
+			"file": "lua/lalin/sem_const_eval.lua",
+			"after": [],
+			"status": "todo",
+			"order": 61,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T037",
+			"title": "Rename files: sem_layout_resolve.lua → layout_resolve.lua",
+			"detail": "Already handled in T020 (leaf-methodification). This task covers only the rename if not done there. Update require site: frontend_pipeline.lua:105. Update test require: tests/runtime/test_sem_layout_resolve.lua → test_layout_resolve.lua. Update error strings in tree_to_code.lua:1146,1417.",
+			"file": "lua/lalin/sem_layout_resolve.lua",
+			"after": [
+				"T020"
+			],
+			"status": "todo",
+			"order": 62,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T038",
+			"title": "Rename files: type_func_abi_plan.lua → func_abi_plan.lua, type_to_back_scalar.lua → type_to_backend_scalar.lua",
+			"detail": "Rename type_func_abi_plan.lua → func_abi_plan.lua. Update require sites: tests/core/test_type_func_abi_plan.lua:5 (rename test file too). Update internal requires inside the file: type_to_back_scalar→type_to_backend_scalar, type_classify stays same. Rename type_to_back_scalar.lua → type_to_backend_scalar.lua. Update require sites: bind_residence_gather.lua:43, type_abi_classify.lua:43, func_abi_plan.lua internal, test_type_to_back_scalar.lua:5 (rename test file too).",
+			"file": "lua/lalin/type_func_abi_plan.lua",
+			"after": [],
+			"status": "todo",
+			"order": 63,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T039",
+			"title": "Rename files: c_emit.lua → emit_c_lower.lua",
+			"detail": "Rename c_emit.lua → emit_c_lower.lua. This is the biggest file rename blast radius. Update all require sites: c_helpers.lua:2, c_validate.lua:7, stencil_artifact_plan.lua:79, code_to_c.lua:25, stencil_c.lua:22, init.lua:64,784, test_c_emit.lua:11, test_c_helpers.lua:10. Update indirect references in those files. Update c_emit method names on CBackend types if they reference the module (but these are method names, not module references — they may stay). Rename test file test_c_emit.lua → test_emit_c_lower.lua.",
+			"file": "lua/lalin/c_emit.lua",
+			"after": [
+				"T034"
+			],
+			"status": "todo",
+			"order": 64,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T040",
+			"title": "Rename files: c_gcc.lua → emit_c_compile.lua, c_tcc.lua → emit_c_tcc.lua",
+			"detail": "Rename c_gcc.lua → emit_c_compile.lua. Update init.lua:67,1071 (M.c_gcc → M.emit_c_compile). Update test file: test_c_gcc.lua → test_emit_c_compile.lua. Update init.lua:672 opts.backend == 'c_gcc' → 'emit_c_compile', init.lua:1073 opts.c_gcc_opts → opts.emit_c_compile_opts, init.lua:1083 compile_c_gcc → compile_emit_c. Rename c_tcc.lua → emit_c_tcc.lua. Update init.lua:66,1063. Update test_tcc.lua.",
+			"file": "lua/lalin/c_gcc.lua",
+			"after": [],
+			"status": "todo",
+			"order": 65,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T041",
+			"title": "Rename files: c_validate→emit_c_validate, c_helpers→emit_c_helpers, c_coverage→emit_c_coverage, c_materialize→emit_c_materialize",
+			"detail": "Bulk rename 4 c_* files. c_validate.lua → emit_c_validate.lua (update frontend_pipeline.lua:68, init.lua:63, 3 test files). c_helpers.lua → emit_c_helpers.lua (update init.lua:65, 5 test files). c_coverage.lua → emit_c_coverage.lua (update c_validate.lua:8, frontend_pipeline.lua:17, 3 test files). c_materialize.lua → emit_c_materialize.lua (update lower_to_c.lua:35, test_schema_c_materialize.lua:18). Rename all corresponding test files.",
+			"file": "lua/lalin/c_validate.lua",
+			"after": [],
+			"status": "todo",
+			"order": 66,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T042",
+			"title": "Rename back_* files → backend_*",
+			"detail": "Rename back_validate.lua → backend_validate.lua (update error/catalog.lua:249, test_schema_back_validate.lua:5). Rename back_inspect.lua → backend_inspect.lua (update init.lua:51 M.back_inspect→M.backend_inspect). Rename back_program.lua → backend_program.lua (update init.lua:49, test_schema_back_program.lua:5). Rename back_target_model.lua → backend_target_model.lua (update frontend_pipeline.lua:69, link_target_model.lua:5, init.lua:50, luajit_backend.lua:24, test_schema_back_target_model.lua:5). Update opts.back_target_model → opts.backend_target_model across init.lua:760,860, luajit_backend.lua:35, lower_to_c.lua:2112. Rename test files.",
+			"file": "lua/lalin/back_validate.lua",
+			"after": [],
+			"status": "todo",
+			"order": 67,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T043",
+			"title": "Integrate lower_to_c.lua into emit_c_lower.lua",
+			"detail": "Merge lua/lalin/lower_to_c.lua (2100+ lines) into emit_c_lower.lua. The LowerToC module is required only by frontend_pipeline.lua:67 and tests/code_ir/test_lower_strategy_emit_methods.lua:8. Move all functions and leaf methods from lower_to_c.lua into emit_c_lower.lua. Remove the separate require. Update frontend_pipeline.lua to call emit_c_lower instead of lower_to_c. This is the second-largest single-file task after tree_lower.lua product rename. The lower_to_c.lua is the main C-emit orchestration that chains all fact pass results into a CBackendUnit.",
+			"file": "lua/lalin/lower_to_c.lua",
+			"after": [
+				"T039"
+			],
+			"status": "todo",
+			"order": 68,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T049",
+			"title": "Rename schema/back.lua → schema/backend_schema.lua and update namespace",
+			"detail": "Rename lua/lalin/schema/back.lua to lua/lalin/schema/backend_schema.lua. The module declaration changes from 'lalin.schema.back' to 'lalin.schema.backend_schema'. This means the DSL registers products under LalinBackend instead of LalinBack. The product names (BackCmd, BackScalar, etc.) stay the same. Update schema/init.lua to load 'backend' instead of 'back'. Update EVERY file that references T.LalinBack.* → T.LalinBackend.* (or local Back = T.LalinBack → T.LalinBackend). This affects ~30+ files including tree_to_code.lua, lower_to_c.lua, c_emit.lua, code_to_c.lua, code_validate.lua, code_aggregate_abi.lua, back_validate.lua, back_inspect.lua, back_program.lua, back_target_model.lua, kernel_emit_support.lua, native_code_methods.lua, luajit_*.lua, stencil_*.lua, and numerous test files.",
+			"file": "lua/lalin/schema/back.lua",
+			"after": [
+				"T042"
+			],
+			"status": "todo",
+			"order": 68,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:52.167Z",
+			"updatedAt": "2026-07-06T18:19:52.167Z"
+		},
+		{
+			"id": "T044",
+			"title": "Split LowerBackEmitInput into spine + optional cache",
+			"detail": "In lua/lalin/schema/lower.lua: Split LowerBackEmitInput (9-field context bag) into LowerBackSpine { code_module, graph, target } and LowerBackCache { flow [optional], value_facts [optional], mem [optional], effect [optional], kernels [optional], schedules [optional] }. New LowerBackEmitInput { spine, fragment, cache [optional] }. In lower_to_c.lua:2100-2104: the recompute pattern already does this — formalize it as methods on LowerBackSpine: spine:flow_facts(), spine:value_facts(), spine:mem_facts(contracts), spine:effect_facts(contracts). Replace the manual recompute with typed methods that use the optional cache when available.",
+			"file": "lua/lalin/schema/lower.lua",
+			"after": [
+				"T043"
+			],
+			"status": "todo",
+			"order": 69,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T054",
+			"title": "DELETE abandoned Back IR: schema, implementation files, and Back type references",
+			"detail": "The Back IR (BackCmd/BackScalar/BackVal/BackAddress/BackMemoryInfo/BackTarget in back.lua schema) was the Cranelift lowering target — abandoned. DELETE: lua/lalin/schema/back.lua, lua/lalin/back_inspect.lua, lua/lalin/back_program.lua, lua/lalin/back_target_model.lua, lua/lalin/back_validate.lua. Remove 'back' from schema/init.lua load order. Strip Back* type references from code.lua/code_backend_schema.lua CodeBackend* products (BackValId→replace with CBackendLocalId, BackAddress→CBackendAddress, BackCmd→remove, BackTarget→keep for ABI in type schema). Files that import back_* and need cleanup: frontend_pipeline.lua, bind_residence_gather.lua, error/catalog.lua, type_abi_classify.lua, type_func_abi_plan.lua, type_to_back_scalar.lua, link_target_model.lua, luajit_backend.lua, luajit_ctype.lua, code_schedule_plan.lua, kernel_emit_support.lua. Delete test files: tests/schema/test_schema_back_*.lua. NOTE: BackScalar and BackTarget may still be needed for ABI classification in the C path — preserve the minimal subset if used by active code. The CodeBackend* products were the bridge to Cranelift and may also be dead — verify before extracting to code_backend_schema.lua.",
+			"file": "lua/lalin/schema/back.lua",
+			"after": [
+				"T001"
+			],
+			"status": "todo",
+			"order": 69,
+			"notes": [
+				"Decision: rename Back→Backend products or keep Back prefix?",
+				"Target architecture shows BackCmd under backend_schema.lua — implying no product rename.",
+				"If renamed, blast radius is ~30 files, ~1000 construction sites."
+			],
+			"createdAt": "2026-07-06T18:19:52.167Z",
+			"updatedAt": "2026-07-06T18:25:28.144Z"
+		},
+		{
+			"id": "T045",
+			"title": "Update frontend_pipeline.lua for all file renames and new APIs",
+			"detail": "After all file renames, update lua/lalin/frontend_pipeline.lua comprehensively. This file imports 16+ modules, 7 of which are renamed. Update all require strings. Update all variable names that reference old module names. Update all function calls that use renamed product types. Update progress labels and error messages. Verify the full pipeline: tree_lower → code_validate → code_graph → flow_facts → value_facts → mem_facts → effect_facts → kernel_plan → schedule_plan → code_lower_plan → lower_to_c/emit_c_lower. This depends on T035-T044 being complete.",
+			"file": "lua/lalin/frontend_pipeline.lua",
+			"after": [
+				"T035",
+				"T036",
+				"T037",
+				"T038",
+				"T039",
+				"T040",
+				"T041",
+				"T042",
+				"T043"
+			],
+			"status": "todo",
+			"order": 70,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T046",
+			"title": "Update init.lua for all file renames and API surface",
+			"detail": "Update lua/lalin/init.lua: 11 module table assignment lines (M.X = require(...)), 4 additional require sites, 3 opts field references. Rename M.tree_to_code → M.tree_lower. Rename M.c_emit → M.emit_c_lower. Rename M.c_gcc → M.emit_c_compile. Rename M.c_tcc → M.emit_c_tcc. Rename M.c_validate → M.emit_c_validate. Rename M.c_helpers → M.emit_c_helpers. Rename M.back_inspect → M.backend_inspect. Rename M.back_program → M.backend_program. Rename M.back_target_model → M.backend_target_model. Update opts field references: opts.backend == 'c_gcc' → 'emit_c_compile', opts.c_gcc_opts → opts.emit_c_compile_opts, opts.back_target_model → opts.backend_target_model. Update compile_c_gcc function to compile_emit_c.",
+			"file": "lua/lalin/init.lua",
+			"after": [
+				"T040",
+				"T041",
+				"T042"
+			],
+			"status": "todo",
+			"order": 71,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T055",
+			"title": "Update compiler_package.lua capability strings",
+			"detail": "In lua/lalin/compiler_package.lua:36: Change capability string 'tree_to_code' → 'tree_lower'. Update any other phase capability strings that reference renamed phases. This feeds test_phase_dsl.lua and test_phase_plan.lua phase DSL source strings.",
+			"file": "lua/lalin/compiler_package.lua",
+			"after": [
+				"T035"
+			],
+			"status": "todo",
+			"order": 72,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:52.167Z",
+			"updatedAt": "2026-07-06T18:19:52.167Z"
+		},
+		{
+			"id": "T056",
+			"title": "Update compiler_machines.lua for new module names",
+			"detail": "In lua/lalin/compiler_machines.lua: Update references to renamed modules. This file delegates to frontend_pipeline.lua but may have hardcoded module references. Verify and update.",
+			"file": "lua/lalin/compiler_machines.lua",
+			"after": [
+				"T045"
+			],
+			"status": "todo",
+			"order": 73,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:52.167Z",
+			"updatedAt": "2026-07-06T18:19:52.167Z"
+		},
+		{
+			"id": "T057",
+			"title": "Update luajit_*.lua files for renamed schema types",
+			"detail": "In luajit_lower.lua, luajit_emit.lua, luajit_expr.lua, luajit_ctype.lua: Update ctx bag field accesses to use new machine objects where applicable. Update ctx.sigs → machine.sigs, ctx.code_sigs → machine.code_sigs, ctx.layout_env → explicit parameter. These files use the same ctx bag pattern as code_type.lua and c_emit.lua. luajit_lower.lua also has Back.BackCmd references that change namespace.",
+			"file": "lua/lalin/luajit_lower.lua",
+			"after": [
+				"T033",
+				"T034",
+				"T049"
+			],
+			"status": "todo",
+			"order": 74,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:52.167Z",
+			"updatedAt": "2026-07-06T18:19:52.167Z"
+		},
+		{
+			"id": "T058",
+			"title": "Update stencil_*.lua files for renamed types and APIs",
+			"detail": "In stencil_methods.lua, stencil_metastencil.lua, stencil_artifact_plan.lua, stencil_c.lua: Update Back→Backend namespace references. Update c_emit→emit_c_lower require. Update code_type→new CEmitMachine API. These files use the hot stencil→C path in the lowering.",
+			"file": "lua/lalin/stencil_methods.lua",
+			"after": [
+				"T033",
+				"T034",
+				"T039",
+				"T049"
+			],
+			"status": "todo",
+			"order": 75,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:52.167Z",
+			"updatedAt": "2026-07-06T18:19:52.167Z"
+		},
+		{
+			"id": "T059",
+			"title": "Update native_*.lua files for renamed types and APIs",
+			"detail": "In native_code_methods.lua, native_backend.lua, native_template_sources.lua: Update Back→Backend namespace. Update CodeBackModuleFacts→CodeBackendModuleMachine method receivers. Update code_type→new CEmitMachine API. These are experimental (native copy-patch backend) but must not break.",
+			"file": "lua/lalin/native_code_methods.lua",
+			"after": [
+				"T009",
+				"T033",
+				"T049"
+			],
+			"status": "todo",
+			"order": 76,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:52.167Z",
+			"updatedAt": "2026-07-06T18:19:52.167Z"
+		},
+		{
+			"id": "T060",
+			"title": "Update remaining files: code_to_c.lua, compiler_abi.lua, exec_plan.lua, link_target_model.lua",
+			"detail": "Bulk update files that reference renamed types/APIs. code_to_c.lua: uses Back namespace, c_emit module, code_type ctx bag. compiler_abi.lua: uses code_validate. exec_plan.lua: uses fact pass free functions. link_target_model.lua: uses back_target_model. Update all require strings and API calls.",
+			"file": "lua/lalin/code_to_c.lua",
+			"after": [
+				"T033",
+				"T034",
+				"T039",
+				"T042",
+				"T049"
+			],
+			"status": "todo",
+			"order": 77,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:52.167Z",
+			"updatedAt": "2026-07-06T18:19:52.167Z"
+		},
+		{
+			"id": "T047",
+			"title": "Update all test files for renamed modules and products",
+			"detail": "After all other tasks complete, update every test file. This is a bulk operation: ~27 require string changes across ~16 test files, ~20 string assertion updates (print strings, assertions), phase DSL string updates in test_phase_dsl.lua and test_phase_plan.lua. Rename test files to match new module names: test_tree_to_code_methods.lua → test_tree_lower_methods.lua, test_sem_const_eval.lua → test_const_eval.lua, test_sem_layout_resolve.lua → test_layout_resolve.lua, test_type_func_abi_plan.lua → test_func_abi_plan.lua, test_type_to_back_scalar.lua → test_type_to_backend_scalar.lua, test_c_emit.lua → test_emit_c_lower.lua, test_c_gcc.lua → test_emit_c_compile.lua, test_c_tcc.lua → test_emit_c_tcc.lua, test_c_helpers.lua → test_emit_c_helpers.lua, test_c_validate.lua → test_emit_c_validate.lua, test_schema_back_validate.lua → test_schema_backend_validate.lua, test_schema_back_program.lua → test_schema_backend_program.lua, test_schema_back_target_model.lua → test_schema_backend_target_model.lua. Delete test_sem_switch_call.lua (already done in T007).",
+			"file": "tests/",
+			"after": [
+				"T046"
+			],
+			"status": "todo",
+			"order": 80,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T048",
+			"title": "Verify build: run test suite and fix issues",
+			"detail": "After all tasks complete, run the test suite. Start with schema tests: luajit tests/run.lua schema. Then frontend: luajit tests/run.lua frontend. Then code_ir: luajit tests/run.lua code_ir. Then compiler_process. Fix any remaining references to old names. Check that tree_lower_schema types are correctly registered in T context. Check that CodeBackendModuleMachine types are registered. Verify CEmitMachine is accessible. Check that all require paths resolve. Fix any nil passthrough callers that now receive typed unions instead of nil. Fix any asdl.classof checks that should now use typed dispatch.",
+			"file": "N/A",
+			"after": [
+				"T047"
+			],
+			"status": "todo",
+			"order": 81,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:02.485Z",
+			"updatedAt": "2026-07-06T18:19:02.485Z"
+		},
+		{
+			"id": "T061",
+			"title": "Update test infrastructure: test discovery and run scripts",
+			"detail": "Update tests/run.lua if it has hardcoded test file lists or module discovery. Update any test harness code that references old module names. Verify that all renamed test files are discoverable.",
+			"file": "tests/run.lua",
+			"after": [
+				"T047"
+			],
+			"status": "todo",
+			"order": 82,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:52.167Z",
+			"updatedAt": "2026-07-06T18:19:52.167Z"
+		},
+		{
+			"id": "T062",
+			"title": "Full test suite pass and fix remaining issues",
+			"detail": "Run the complete test suite: luajit tests/run.lua (all suites). Fix any remaining references to old names. Fix any type errors from entry product construction changes. Fix any nil→typed-union breaking changes. Fix any method dispatch errors from leaf-methodification. Iterate until all tests pass. This is the final verification task.",
+			"file": "N/A",
+			"after": [
+				"T048",
+				"T061"
+			],
+			"status": "todo",
+			"order": 83,
+			"notes": [],
+			"createdAt": "2026-07-06T18:19:52.167Z",
+			"updatedAt": "2026-07-06T18:19:52.167Z"
+		}
+	]
+}
