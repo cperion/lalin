@@ -19,6 +19,7 @@ local function bind_context(T)
     local Mem = T.LalinMem
     local Stencil = T.LalinStencil
     local CMat = T.LalinCMat
+    local asdl = require("lalin.asdl")
 
     local CodeToC = require("lalin.code_to_c")(T)
     local CodeType = require("lalin.code_type")(T)
@@ -1460,8 +1461,30 @@ local function bind_context(T)
         c_emission.stmts = { C.CBackendComment("semantic scalar CMat kernel " .. kplan.id.text) }
         if semantic_fragment_prelude ~= nil then semantic_fragment_prelude(c_emission, graph, fragment, loop.header.block) end
         bind_control_values(c_emission, data_bindings, bindings_by_block, loop.header.block)
-        c_emission.blocks[#c_emission.blocks + 1] = C.CBackendBlock(clabel(loop.header.block), c_block_params(c_emission, header_block), c_emission.stmts,
-            C.CBackendIfGoto(atom(cond), clabel(body_successor), edge_args_with_reduction(reduction_state, edge_facts[exit_edge.from.block.text .. "\0" .. body_successor.text]), clabel(exit_edge.to.block), edge_args_with_reduction(reduction_state, edge_facts[exit_edge.from.block.text .. "\0" .. exit_edge.to.block.text])))
+        if control_state ~= nil then
+            for _, block in ipairs(c_emission.code_func.blocks or {}) do
+                if block.id == loop.header.block or (body_set[block.id.text] and block.id ~= loop.header.block) then
+                    for _, inst in ipairs(block.insts or {}) do
+                        if asdl.classof(inst.op) == Code.CodeInstLoad and asdl.classof(inst.op.place) == Code.CodePlaceField then
+                            local place = inst.op.place:lower_code_place_to_c(c_emission)
+                            c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceLoad(cid(inst.op.dst), place)
+                        end
+                    end
+                end
+            end
+            local counter = atom(kplan.body.domain.counter)
+            local counted = loop_fact and loop_fact.counted
+            local stop_id = counted and counted.stop
+            local stop_val = stop_id and atom(stop_id) or C.CBackendAtomLiteral(c_ty(c_emission, Code.CodeTyIndex), Core.LitInt("0"))
+            local domain_exit = tmp(c_emission, "cmat_domain_exit", Code.CodeTyBool8)
+            c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(domain_exit, C.CBackendRCompare(Core.CmpEq, c_ty(c_emission, Code.CodeTyIndex), counter, cast_to(c_emission, stop_val, Code.CodeTyIndex, Code.CodeTyIndex, "cmat_stop_cast")))
+            local result = control_state.result
+            c_emission.blocks[#c_emission.blocks + 1] = C.CBackendBlock(clabel(loop.header.block), c_block_params(c_emission, header_block), c_emission.stmts,
+                C.CBackendIfGoto(C.CBackendAtomLocal(domain_exit), clabel(result.success), edge_args_with_reduction(reduction_state, edge_facts[loop.header.block.text .. "\0" .. result.success.text]), clabel(body_successor), edge_args_with_reduction(reduction_state, edge_facts[loop.header.block.text .. "\0" .. body_successor.text])))
+        else
+            c_emission.blocks[#c_emission.blocks + 1] = C.CBackendBlock(clabel(loop.header.block), c_block_params(c_emission, header_block), c_emission.stmts,
+                C.CBackendIfGoto(atom(cond), clabel(body_successor), edge_args_with_reduction(reduction_state, edge_facts[exit_edge.from.block.text .. "\0" .. body_successor.text]), clabel(exit_edge.to.block), edge_args_with_reduction(reduction_state, edge_facts[exit_edge.from.block.text .. "\0" .. exit_edge.to.block.text])))
+        end
         for _, block in ipairs(c_emission.code_func.blocks or {}) do
             if body_set[block.id.text] and block.id ~= loop.header.block then
                 c_emission.current_code_block_id = block.id
