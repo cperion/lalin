@@ -22,6 +22,7 @@ local function bind_context(T)
 
     local CodeType = require("lalin.code_type")(T)
     local CodeValidate = require("lalin.code_validate")(T)
+    require("lalin.c_emit")(T)
 
     local api = {}
 
@@ -32,13 +33,17 @@ local function bind_context(T)
     local function c_sig_id(id) return C.CBackendFuncSigId(sanitize(id.text)) end
     local function c_synth_local_id(prefix, id) return C.CBackendLocalId(sanitize(prefix .. ":" .. id.text)) end
     local function c_synth_local_id2(prefix, id, suffix) return C.CBackendLocalId(sanitize(prefix .. ":" .. id.text .. ":" .. suffix)) end
+    local function c_compact_synth_local(c_emission, prefix)
+        c_emission.next_compact_synth_local = (c_emission.next_compact_synth_local or 0) + 1
+        return C.CBackendLocalId(sanitize(prefix .. ":" .. tostring(c_emission.next_compact_synth_local)))
+    end
 
     local function add_helper(c_emission, spec)
-        local key = tostring(spec)
+        local id = spec:c_helper_id()
+        local key = id.text
         c_emission.helpers_by_key = c_emission.helpers_by_key or {}
         local use = c_emission.helpers_by_key[key]
         if use ~= nil then return use.id end
-        local id = C.CBackendHelperId("ml_code_helper_" .. tostring(#c_emission.helper_order + 1))
         use = C.CBackendHelperUse(id, spec)
         c_emission.helpers_by_key[key] = use
         c_emission.helpers_by_id[id.text] = use
@@ -721,7 +726,7 @@ local function bind_context(T)
     function Lower.LowerCarrierEdgeCarrySame:code_to_c_arg(c_emission, plan, transfer, source_label) local p=plan:code_to_c_param_for_label(source_label); if p==nil then return nil,{} end; return C.CBackendAtomLocal(p.param),{} end
     local function carrier_add_arg(c_emission, plan, source_label, suffix, rhs)
         local p = plan:code_to_c_param_for_label(source_label); if p == nil then return nil, {} end
-        local dst = c_synth_local_id2("carrier_next", plan.carrier, suffix)
+        local dst = c_compact_synth_local(c_emission, "carrier_next")
         c_emission.synthetic_carrier_locals = c_emission.synthetic_carrier_locals or {}; c_emission.synthetic_carrier_locals[dst.text] = plan.value_ty
         return C.CBackendAtomLocal(dst), { C.CBackendHelperCall(dst, add_helper(c_emission, C.CBackendHelperIntBinary(Core.BinAdd, c_ty(c_emission, plan.value_ty), C.CBackendIntWrap)), { C.CBackendAtomLocal(p.param), rhs }) }
     end
@@ -737,7 +742,7 @@ local function bind_context(T)
     function Lower.LowerAddressEdgeSource:code_to_c_arg(c_emission, plan, transfer, source_label) return nil, {} end
     local function zero_index_atom(c_emission) return C.CBackendAtomLiteral(C.CBackendIndex, Core.LitInt("0")) end
     local function address_ptr_temp(c_emission, plan, suffix, rhs, prefix)
-        local dst = c_synth_local_id2("address_next", plan.address, suffix)
+        local dst = c_compact_synth_local(c_emission, "address_next")
         c_emission.synthetic_address_locals = c_emission.synthetic_address_locals or {}; c_emission.synthetic_address_locals[dst.text] = Code.CodeTyDataPtr(plan.base.elem_ty)
         local pre = {}
         for _, st in ipairs(prefix or {}) do pre[#pre + 1] = st end

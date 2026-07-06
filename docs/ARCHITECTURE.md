@@ -139,16 +139,18 @@ LalinTree.Module
   │
   ▼
 ┌─────────────────────────────────────────┐
-│ 5. Stencil Planning                     │
-│    StencilMachine + StencilArtifactPlan │
-│    → StencilArtifact[] (apply, reduce,   │
-│       scan, gather, scatter, etc.)       │
+│ 5. SOAC / CMat Planning                 │
+│    StencilComputation                   │
+│      producer + accesses + streams      │
+│      + algebraic sinks + legality       │
+│    → CMatFusedKernel                    │
 └─────────────────────────────────────────┘
   │
   ▼
 ┌─────────────────────────────────────────┐
 │ 6. C Backend Lowering                   │
 │    LowerToC.module()                    │
+│    StencilStreamOp/StencilSinkOp leaves │
 │    → CBackendUnit + C validation        │
 └─────────────────────────────────────────┘
   │

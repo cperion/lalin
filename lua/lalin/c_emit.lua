@@ -90,6 +90,20 @@ local function bind_context(T)
     function C.CBackendDataPtr:c_emit_can_hoist_field_load() return true end
     function C.CBackendDataPtr:c_emit_can_copy_propagate() return true end
     function C.CBackendDataPtr:c_emit_visit_implicit(add_descriptor, add_closure) if self.pointee then self.pointee:c_emit_visit_implicit(add_descriptor, add_closure) end end
+    function C.CBackendQualifiedDataPtr:c_emit_type()
+        local q = {}
+        if self.const_pointee then q[#q + 1] = "const" end
+        if self.volatile_pointee then q[#q + 1] = "volatile" end
+        local base = self.pointee and self.pointee:c_emit_type() or "void"
+        local left = (#q > 0 and (table.concat(q, " ") .. " ") or "") .. base .. "*"
+        return self.restrict_ptr and (left .. " restrict") or left
+    end
+    function C.CBackendQualifiedDataPtr:c_emit_can_hoist_field_load() return true end
+    function C.CBackendQualifiedDataPtr:c_emit_can_copy_propagate() return true end
+    function C.CBackendQualifiedDataPtr:c_emit_visit_implicit(add_descriptor, add_closure) if self.pointee then self.pointee:c_emit_visit_implicit(add_descriptor, add_closure) end end
+    function C.CBackendType:c_emit_points_to_place_type(_ty) return false end
+    function C.CBackendDataPtr:c_emit_points_to_place_type(ty) return self.pointee ~= nil and self.pointee:c_emit_type() == ty:c_emit_type() end
+    function C.CBackendQualifiedDataPtr:c_emit_points_to_place_type(ty) return self.pointee ~= nil and self.pointee:c_emit_type() == ty:c_emit_type() end
     function C.CBackendCodePtr:c_emit_type() return self.sig.text end
     function C.CBackendCodePtr:c_emit_can_copy_propagate() return true end
     function C.CBackendImportedCodePtr:c_emit_type() return "void (*)(void)" end
@@ -143,6 +157,9 @@ local function bind_context(T)
     function C.CBackendAtomGlobal:c_emit_atom() return self.global.text end
     function C.CBackendAtomLiteral:c_emit_atom() return "(" .. self.ty:c_emit_type() .. ")" .. self.literal:c_emit_literal() end
     function C.CBackendAtomNull:c_emit_atom() return "NULL" end
+    function C.CBackendAtom:c_emit_cast_to(to) return "(" .. to:c_emit_type() .. ")(" .. self:c_emit_atom() .. ")" end
+    function C.CBackendAtomLiteral:c_emit_cast_to(to) return "(" .. to:c_emit_type() .. ")" .. self.literal:c_emit_literal() end
+    function C.CBackendAtomNull:c_emit_cast_to(to) return "(" .. to:c_emit_type() .. ")NULL" end
     function C.CBackendAtom:c_emit_rewrite_aliases(aliases) return self end
     function C.CBackendAtom:c_emit_alias_source_text() return nil end
     function C.CBackendAtom:c_emit_collect_used_locals(used) end
@@ -153,11 +170,21 @@ local function bind_context(T)
     function C.CBackendAtomLocal:c_emit_inline_expr(ctx) return ctx:expr_for_local(self.local_id.text) or self.local_id.text end
 
     function C.CBackendPlace:c_emit_place() error("missing c_emit_place leaf method", 2) end
+    function C.CBackendPlace:c_emit_place_typed(_local_types) return self:c_emit_place() end
     function C.CBackendPlaceLocal:c_emit_place() return self.local_id.text end
     function C.CBackendPlaceGlobal:c_emit_place() return self.global.text end
     function C.CBackendPlaceDeref:c_emit_place() return "(*(" .. self.ty:c_emit_type() .. "*)" .. self.addr:c_emit_atom() .. ")" end
-    function C.CBackendPlaceField:c_emit_place() return self.base:c_emit_place() .. "." .. self.field.text end
+    function C.CBackendPlaceDeref:c_emit_place_typed(local_types)
+        local name = self.addr:c_emit_local_text()
+        local aty = name and local_types and local_types[name]
+        if aty ~= nil and aty:c_emit_points_to_place_type(self.ty) then return "*" .. self.addr:c_emit_atom() end
+        return self:c_emit_place()
+    end
+    function C.CBackendPlace:c_emit_field_place(field) return self:c_emit_place() .. "." .. field.text end
+    function C.CBackendPlaceDeref:c_emit_field_place(field) return "((" .. self.ty:c_emit_type() .. "*)" .. self.addr:c_emit_atom() .. ")->" .. field.text end
+    function C.CBackendPlaceField:c_emit_place() return self.base:c_emit_field_place(self.field) end
     function C.CBackendPlaceIndex:c_emit_place() return self.base:c_emit_index_place(self.index) end
+    function C.CBackendPlacePtrIndex:c_emit_place() return self.base:c_emit_atom() .. "[" .. self.index:c_emit_atom() .. "]" end
     function C.CBackendPlace:c_emit_index_place(index_atom) return self:c_emit_place() .. "[" .. index_atom:c_emit_atom() .. "]" end
     function C.CBackendPlaceDeref:c_emit_index_place(index_atom) return "((" .. self.ty:c_emit_type() .. "*)" .. self.addr:c_emit_atom() .. ")[" .. index_atom:c_emit_atom() .. "]" end
     function C.CBackendPlaceBytes:c_emit_place() return "(*(" .. self.ty:c_emit_type() .. "*)((unsigned char*)" .. self.base:c_emit_atom() .. " + " .. tostring(self.offset) .. "))" end
@@ -178,6 +205,9 @@ local function bind_context(T)
     function C.CBackendPlaceIndex:c_emit_rewrite_aliases(aliases) return C.CBackendPlaceIndex(self.base:c_emit_rewrite_aliases(aliases), self.index:c_emit_rewrite_aliases(aliases), self.ty, self.elem_size) end
     function C.CBackendPlaceIndex:c_emit_collect_used_locals(used) self.base:c_emit_collect_used_locals(used); self.index:c_emit_collect_used_locals(used) end
     function C.CBackendPlaceIndex:c_emit_inline_place_expr(ctx) local base, ok = self.base:c_emit_inline_place_expr(ctx); if not ok then return self:c_emit_place(), false end; return base .. "[" .. self.index:c_emit_inline_expr(ctx) .. "]", true end
+    function C.CBackendPlacePtrIndex:c_emit_rewrite_aliases(aliases) return C.CBackendPlacePtrIndex(self.base:c_emit_rewrite_aliases(aliases), self.index:c_emit_rewrite_aliases(aliases), self.ty, self.elem_size) end
+    function C.CBackendPlacePtrIndex:c_emit_collect_used_locals(used) self.base:c_emit_collect_used_locals(used); self.index:c_emit_collect_used_locals(used) end
+    function C.CBackendPlacePtrIndex:c_emit_inline_place_expr(ctx) return self.base:c_emit_inline_expr(ctx) .. "[" .. self.index:c_emit_inline_expr(ctx) .. "]", true end
     function C.CBackendPlaceBytes:c_emit_rewrite_aliases(aliases) return C.CBackendPlaceBytes(self.base:c_emit_rewrite_aliases(aliases), self.offset, self.ty, self.size, self.align) end
     function C.CBackendPlaceBytes:c_emit_collect_used_locals(used) self.base:c_emit_collect_used_locals(used) end
 
@@ -206,7 +236,7 @@ local function bind_context(T)
     function C.CBackendRValue:c_emit_rvalue() error("missing c_emit_rvalue leaf method", 2) end
     function C.CBackendRAtom:c_emit_rvalue() return self.atom:c_emit_atom() end
     function C.CBackendRCompare:c_emit_rvalue() return "(" .. self.lhs:c_emit_atom() .. " " .. self.op:c_emit_cmp_op() .. " " .. self.rhs:c_emit_atom() .. ")" end
-    function C.CBackendRCast:c_emit_rvalue() return "(" .. self.to:c_emit_type() .. ")(" .. self.value:c_emit_atom() .. ")" end
+    function C.CBackendRCast:c_emit_rvalue() return self.value:c_emit_cast_to(self.to) end
     function C.CBackendRSelect:c_emit_rvalue() return "(" .. self.cond:c_emit_atom() .. " ? " .. self.then_value:c_emit_atom() .. " : " .. self.else_value:c_emit_atom() .. ")" end
     function C.CBackendRFuncAddr:c_emit_rvalue() return self.func.text end
     function C.CBackendRExternAddr:c_emit_rvalue() return self["extern"].text end
@@ -398,7 +428,7 @@ local function bind_context(T)
     function C.CBackendStore:c_emit_collect_field_hoist_state(state) local base = self.addr:c_emit_local_text(); if base ~= nil then state:mark_base_clobber(base) end end
     function C.CBackendStore:c_emit_rewrite_aliases(aliases) return C.CBackendStore(self.addr:c_emit_rewrite_aliases(aliases), self.value:c_emit_rewrite_aliases(aliases), self.access) end
     function C.CBackendStore:c_emit_collect_used_locals(used) self.addr:c_emit_collect_used_locals(used); self.value:c_emit_collect_used_locals(used) end
-    function C.CBackendPlaceLoad:c_emit_stmt(out, blocks, local_types) if local_types[self.dst.text]:c_emit_is_array() then emit_storage_copy(out, self.dst.text, self.place:c_emit_place()) else out[#out + 1] = "    " .. self.dst.text .. " = " .. self.place:c_emit_place() .. ";" end end
+    function C.CBackendPlaceLoad:c_emit_stmt(out, blocks, local_types) if local_types[self.dst.text]:c_emit_is_array() then emit_storage_copy(out, self.dst.text, self.place:c_emit_place_typed(local_types)) else out[#out + 1] = "    " .. self.dst.text .. " = " .. self.place:c_emit_place_typed(local_types) .. ";" end end
     function C.CBackendPlaceLoad:c_emit_collect_field_hoist_state(state)
         state:mark_assigned(self.dst.text)
         local candidate = self.place:c_emit_direct_field_load_candidate(function(name) return state:canonical_local(name) end)
@@ -422,7 +452,7 @@ local function bind_context(T)
     function C.CBackendPlaceLoad:c_emit_assigned_local() return self.dst.text end
     function C.CBackendPlaceLoad:c_emit_collect_used_locals(used) self.place:c_emit_collect_used_locals(used) end
     function C.CBackendPlaceLoad:c_emit_inline_expr(ctx) local expr, ok = self.place:c_emit_inline_place_expr(ctx); return ok and expr or nil end
-    function C.CBackendPlaceStore:c_emit_stmt(out) if self.place.ty:c_emit_is_array() then emit_storage_copy(out, self.place:c_emit_place(), self.value:c_emit_atom()) else out[#out + 1] = "    " .. self.place:c_emit_place() .. " = " .. self.value:c_emit_atom() .. ";" end end
+    function C.CBackendPlaceStore:c_emit_stmt(out, _blocks, local_types) if self.place.ty:c_emit_is_array() then emit_storage_copy(out, self.place:c_emit_place_typed(local_types), self.value:c_emit_atom()) else out[#out + 1] = "    " .. self.place:c_emit_place_typed(local_types) .. " = " .. self.value:c_emit_atom() .. ";" end end
     function C.CBackendPlaceStore:c_emit_collect_field_hoist_state(state) self.place:c_emit_note_direct_field_store(state.blocked_fields, state.blocked_bases, function(name) return state:canonical_local(name) end) end
     function C.CBackendPlaceStore:c_emit_rewrite_aliases(aliases) return C.CBackendPlaceStore(self.place:c_emit_rewrite_aliases(aliases), self.value:c_emit_rewrite_aliases(aliases)) end
     function C.CBackendPlaceStore:c_emit_collect_used_locals(used) self.place:c_emit_collect_used_locals(used); self.value:c_emit_collect_used_locals(used) end
@@ -1022,6 +1052,7 @@ local function bind_context(T)
     function C.CBackendScalar:c_helper_suffix() return self.scalar:c_helper_suffix() end
     function C.CBackendIndex:c_helper_suffix() return "index" end
     function C.CBackendDataPtr:c_helper_suffix() return "ptr" end
+    function C.CBackendQualifiedDataPtr:c_helper_suffix() return (self.const_pointee and "const_" or "") .. (self.volatile_pointee and "volatile_" or "") .. (self.restrict_ptr and "restrict_" or "") .. "ptr" end
     function C.CBackendCodePtr:c_helper_suffix() return "codeptr_" .. sanitize(self.sig.text) end
     function C.CBackendImportedCodePtr:c_helper_suffix() return "c_codeptr_" .. sanitize(self.sig.text) end
     function C.CBackendNamed:c_helper_suffix() return sanitize(self.id.module_name .. "_" .. self.id.spelling) end

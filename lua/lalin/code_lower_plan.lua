@@ -7,6 +7,16 @@ local function sanitize(s)
     return s
 end
 
+local function short_hash(text)
+    text = tostring(text or "")
+    local h = 2166136261
+    for i = 1, #text do
+        h = bit.bxor(h, text:byte(i))
+        h = (h * 16777619) % 4294967296
+    end
+    return string.format("%08x", h)
+end
+
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
     if T._lalin_api_cache.code_lower_plan ~= nil then return T._lalin_api_cache.code_lower_plan end
@@ -213,11 +223,11 @@ local function bind_context(T)
     end
 
     local function carrier_param_id(carrier, block)
-        return C.CBackendLocalId("semantic_carrier_" .. sanitize(carrier.id.text) .. "_" .. sanitize(block.block.text))
+        return C.CBackendLocalId("sem_car_" .. short_hash(carrier.id.text .. "\0" .. block.func.text .. "\0" .. block.block.text))
     end
 
     local function address_param_id(address, block)
-        return C.CBackendLocalId("semantic_address_" .. sanitize(address.id.text) .. "_" .. sanitize(block.block.text))
+        return C.CBackendLocalId("sem_addr_" .. short_hash(address.id.text .. "\0" .. block.func.text .. "\0" .. block.block.text))
     end
 
     function Flow.FlowCarrierTransfer:lower_plan_matches_edge(edge)

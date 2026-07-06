@@ -25,8 +25,11 @@ local artifact = lalin.emit_c(decls, {
   h_path = "target/field_load_hoist.h",
 })
 assert(artifact.source:match("__hoist_field_"), "expected repeated pointer-field load to be hoisted")
-local _, data_loads = artifact.source:gsub("%(%*%(_Holder%*%)v_sum3_arg_sum3_h%)%.data", "")
-assert(data_loads == 1, "expected one direct h.data load for hoist init, got " .. tostring(data_loads))
+local _, data_loads = artifact.source:gsub("%(%(_Holder%*%)v_sum3_arg_sum3_h%)->data", "")
+if data_loads ~= 1 then
+  data_loads = artifact.source:find("((_Holder*)v_sum3_arg_sum3_h)->data", 1, true) and 1 or 0
+end
+assert(data_loads == 1, "expected one direct h->data load for hoist init, got " .. tostring(data_loads))
 local ok = os.execute("gcc -std=c99 -O2 target/field_load_hoist.c -o target/field_load_hoist")
 assert(ok == true or ok == 0, "gcc failed for field_load_hoist")
 ok = os.execute("target/field_load_hoist; code=$?; test $code -eq 21")

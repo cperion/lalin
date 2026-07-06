@@ -191,8 +191,27 @@ local function bind_context(T)
                 if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
                 ok, reason = kernel_expr_supported(effect.value)
                 if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
+            elseif ecls == Kernel.KernelEffectScan then
+                local ok, reason = lane_supported(effect.dst)
+                if not ok then rejects[#rejects + 1] = reject_memory(reason) end
+                ok, reason = value_expr_supported(effect.index)
+                if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
+                ok, reason = value_expr_supported(effect.reduction.contribution)
+                if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
+            elseif ecls == Kernel.KernelEffectCopy then
+                local ok, reason = lane_supported(effect.dst)
+                if not ok then rejects[#rejects + 1] = reject_memory(reason) end
+                ok, reason = kernel_expr_supported(effect.src)
+                if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
+            elseif ecls == Kernel.KernelEffectScatterReduce then
+                local ok, reason = lane_supported(effect.dst)
+                if not ok then rejects[#rejects + 1] = reject_memory(reason) end
+                ok, reason = value_expr_supported(effect.index)
+                if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
+                ok, reason = kernel_expr_supported(effect.value)
+                if not ok then rejects[#rejects + 1] = reject_algebra(reason) end
             elseif ecls == Kernel.KernelEffectFold then
-                -- folds are executable only via Reduction/ClosedForm-specific emitters.
+                -- folds are executable only via CMat reduction/scan materializers.
             elseif ecls == Kernel.KernelEffectCall then
                 rejects[#rejects + 1] = reject_target("kernel call effects do not have an emitter")
             else

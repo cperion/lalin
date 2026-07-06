@@ -463,12 +463,46 @@ return function(T)
         end
     end
 
+    function Ty.Type:protocol_param_name() error("missing protocol_param_name leaf method on " .. tostring(self), 2) end
+    function Ty.TScalar:protocol_param_name()
+        local s = self.scalar
+        if s == C.ScalarVoid then return "void"
+        elseif s == C.ScalarBool then return "bool"
+        elseif s == C.ScalarI8 then return "i8" elseif s == C.ScalarI16 then return "i16"
+        elseif s == C.ScalarI32 then return "i32" elseif s == C.ScalarI64 then return "i64"
+        elseif s == C.ScalarU8 then return "u8" elseif s == C.ScalarU16 then return "u16"
+        elseif s == C.ScalarU32 then return "u32" elseif s == C.ScalarU64 then return "u64"
+        elseif s == C.ScalarF32 then return "f32" elseif s == C.ScalarF64 then return "f64"
+        elseif s == C.ScalarRawPtr then return "rawptr"
+        elseif s == C.ScalarIndex then return "index" end
+        return "scalar"
+    end
+    function Ty.TPtr:protocol_param_name() return "ptr_" .. self.elem:protocol_param_name() end
+    function Ty.TArray:protocol_param_name() return "arr" .. tostring(self.count.count) .. "_" .. self.elem:protocol_param_name() end
+    function Ty.TSlice:protocol_param_name() return "slice_" .. self.elem:protocol_param_name() end
+    function Ty.TView:protocol_param_name() return "view_" .. self.elem:protocol_param_name() end
+    function Ty.TLease:protocol_param_name() return "lease_" .. self.base:protocol_param_name() end
+    function Ty.TOwned:protocol_param_name() return self.base:protocol_param_name() end
+    function Ty.TAccess:protocol_param_name() return self.base:protocol_param_name() end
+    function Ty.TNamed:protocol_param_name() return self.ref:protocol_param_name() end
+    function Ty.TypeRef:protocol_param_name() return "ref" end
+    function Ty.TypeRefGlobal:protocol_param_name() return sanitize_name(self.module_name) .. "_" .. sanitize_name(self.type_name) end
+    function Ty.TypeRefLocal:protocol_param_name() return sanitize_name(self.sym.name) end
+    function Ty.TypeRefPath:protocol_param_name()
+        local parts = {}
+        for _, p in ipairs(self.path.parts or {}) do parts[#parts+1] = p.text end
+        return sanitize_name(table.concat(parts, "_"))
+    end
+    function Ty.THandle:protocol_param_name() return "handle_" .. self.ref:protocol_param_name() end
+    function Ty.TCType:protocol_param_name() return sanitize_name(self.id.module_name) .. "_" .. sanitize_name(self.id.spelling) end
+    function Ty.TCFuncPtr:protocol_param_name() return "cfunc_" .. sanitize_name(self.sig.text) end
+
     local function protocol_key_for_region(region)
         local parts = {}
         for i, cont in ipairs(region.conts or {}) do
             parts[#parts + 1] = cont.name
             for j, param in ipairs(cont.params or {}) do
-                parts[#parts + 1] = param.name .. ":" .. tostring(param.ty)
+                parts[#parts + 1] = param.name .. "_" .. param.ty:protocol_param_name()
             end
         end
         return table.concat(parts, "__")

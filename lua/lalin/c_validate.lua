@@ -36,6 +36,7 @@ local function bind_context(T)
     function C.CBackendType:c_validate_eq_scalar(left) return false end
     function C.CBackendType:c_validate_eq_index(left) return false end
     function C.CBackendType:c_validate_eq_data_ptr(left) return false end
+    function C.CBackendType:c_validate_eq_qualified_data_ptr(left) return false end
     function C.CBackendType:c_validate_eq_code_ptr(left) return false end
     function C.CBackendType:c_validate_eq_imported_code_ptr(left) return false end
     function C.CBackendType:c_validate_eq_named(left) return false end
@@ -60,7 +61,21 @@ local function bind_context(T)
         if self.pointee == nil or left.pointee == nil then return true end
         return left.pointee:c_validate_type_eq(self.pointee)
     end
+    function C.CBackendDataPtr:c_validate_eq_qualified_data_ptr(left)
+        if self.pointee == nil or left.pointee == nil then return true end
+        return left.pointee:c_validate_type_eq(self.pointee)
+    end
     function C.CBackendDataPtr:c_validate_eq_array(left) return self.pointee == nil or self.pointee:c_validate_type_eq(left.elem) end
+    function C.CBackendQualifiedDataPtr:c_validate_type_eq(other) return other:c_validate_eq_qualified_data_ptr(self) end
+    function C.CBackendQualifiedDataPtr:c_validate_eq_data_ptr(left)
+        if self.pointee == nil or left.pointee == nil then return true end
+        return left.pointee:c_validate_type_eq(self.pointee)
+    end
+    function C.CBackendQualifiedDataPtr:c_validate_eq_qualified_data_ptr(left)
+        if self.pointee == nil or left.pointee == nil then return true end
+        return left.pointee:c_validate_type_eq(self.pointee)
+    end
+    function C.CBackendQualifiedDataPtr:c_validate_eq_array(left) return self.pointee == nil or self.pointee:c_validate_type_eq(left.elem) end
     function C.CBackendCodePtr:c_validate_type_eq(other) return other:c_validate_eq_code_ptr(self) end
     function C.CBackendCodePtr:c_validate_eq_code_ptr(left) return self.sig.text == left.sig.text end
     function C.CBackendImportedCodePtr:c_validate_type_eq(other) return other:c_validate_eq_imported_code_ptr(self) end
@@ -108,6 +123,7 @@ local function bind_context(T)
     function C.CBackendIndex:c_validate_static_size() return 8 end
     function C.CBackendScalar:c_validate_static_size() return self.scalar:c_validate_static_size() end
     function C.CBackendDataPtr:c_validate_static_size() return 8 end
+    function C.CBackendQualifiedDataPtr:c_validate_static_size() return 8 end
     function C.CBackendCodePtr:c_validate_static_size() return 8 end
     function C.CBackendImportedCodePtr:c_validate_static_size() return 8 end
 
@@ -161,6 +177,7 @@ local function bind_context(T)
     function C.CBackendPlaceDeref:c_validate_type(st, func, locals) check_atom(self.addr, st, func, locals); return self.ty end
     function C.CBackendPlaceField:c_validate_type(st, func, locals) self.base:c_validate_type(st, func, locals); if self.align ~= nil and not align_ok(self.align) then st:add(C.CBackendIssueInvalidAlignment("place-field", self.align)) end; return self.ty end
     function C.CBackendPlaceIndex:c_validate_type(st, func, locals) self.base:c_validate_type(st, func, locals); check_atom(self.index, st, func, locals); return self.ty end
+    function C.CBackendPlacePtrIndex:c_validate_type(st, func, locals) check_atom(self.base, st, func, locals); check_atom(self.index, st, func, locals); return self.ty end
     function C.CBackendPlaceBytes:c_validate_type(st, func, locals) check_atom(self.base, st, func, locals); if not align_ok(self.align) then st:add(C.CBackendIssueInvalidAlignment("place-bytes", self.align)) end; return self.ty end
 
     function C.CBackendExecResult:c_validate_result(st, func, sig, locals, initialized, site) if sig ~= nil and not sig.result:c_emit_is_void() then st:add(C.CBackendIssueCallResultType("exec-return:" .. func.name.text, sig.id, sig.result, C.CBackendVoid)) end end

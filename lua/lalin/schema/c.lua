@@ -90,6 +90,13 @@ return schema. LalinC {
     CBackendScalar { variant_unique, scalar [LalinCore.Scalar], },
     CBackendIndex,
     CBackendDataPtr { variant_unique, pointee [optional [LalinC.CBackendType]], },
+    CBackendQualifiedDataPtr {
+      variant_unique,
+      pointee [optional [LalinC.CBackendType]],
+      const_pointee [bool],
+      restrict_ptr [bool],
+      volatile_pointee [bool],
+    },
     CBackendCodePtr { variant_unique, sig [LalinC.CBackendFuncSigId], },
     CBackendNamed { variant_unique, field. id [LalinC.CTypeId], },
     CBackendArray { variant_unique, elem [LalinC.CBackendType], count [number], },
@@ -228,6 +235,13 @@ return schema. LalinC {
     CBackendPlaceIndex {
       variant_unique,
       base [LalinC.CBackendPlace],
+      index [LalinC.CBackendAtom],
+      field. ty [LalinC.CBackendType],
+      elem_size [number],
+    },
+    CBackendPlacePtrIndex {
+      variant_unique,
+      base [LalinC.CBackendAtom],
       index [LalinC.CBackendAtom],
       field. ty [LalinC.CBackendType],
       elem_size [number],

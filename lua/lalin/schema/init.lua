@@ -11,6 +11,7 @@ local SCHEMA_MODULES = {
     "core",
     "back",
     "c",
+    "c_materialize",
     "luajit",
     "luatrace",
     "link",

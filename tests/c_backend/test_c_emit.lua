@@ -83,6 +83,16 @@ local function assert_order(s, ...)
 end
 assert_order(src, "/* target:", "#include <stdint.h>", "/* typedefs */", "/* signatures */", "/* type declarations", "/* externs */", "/* globals */", "/* helpers */", "/* prototypes */", "/* bodies */")
 
+local qptr_i32 = C.CBackendQualifiedDataPtr(i32, true, true, false)
+local qsig_id = C.CBackendFuncSigId("sig_qptr_to_void")
+local qsig = C.CBackendFuncSig(qsig_id, { C.CBackendDataPtr(i32) }, C.CBackendVoid)
+local qp = C.CBackendLocal(C.CBackendLocalId("qp"), C.CBackendName("qp"), qptr_i32)
+local qfunc = C.CBackendFunc(C.CBackendName("qualified_param"), "qualified_param", Core.VisibilityExport, qsig_id, { qp }, {}, blocks_body({ C.CBackendBlock(C.CBackendLabel("entry"), {}, {}, C.CBackendReturnVoid) }))
+local qunit = C.CBackendUnit("qualified", target, { qsig }, {}, {}, {}, {}, { qfunc })
+assert_no_issues(Validate.validate(qunit), "qualified pointer should validate against unqualified ABI signature")
+local qsrc = Emit.emit_artifact(qunit).source
+assert(qsrc:match("void qualified_param%(const int32_t%* restrict qp%)"), "qualified pointer parameter emitted")
+
 local pair_id = C.CTypeId("m", "Pair")
 local pair_ty = C.CBackendNamed(pair_id)
 local pair_decl = C.CBackendStructDecl(pair_id, { C.CBackendField(C.CBackendName("x"), i32, 0, 4, 4) }, 4, 4)
@@ -119,7 +129,7 @@ assert(complex_src:match("/%* scalar init at 0: 99 %*/"), "typed scalar global i
 assert(complex_src:match("/%* reloc init at 0 %*/"), "reloc global init comment")
 assert(complex_src:match("p%.x = %(int32_t%)7;"), "aggregate init emits field assignment")
 assert(complex_src:match("callee%("), "indirect call syntax")
-assert(complex_src:match("__xfer_join_1"), "transfer temp emitted")
+assert(complex_src:match("jp = out;"), "transfer emits direct dest assignment when no overlap")
 assert(complex_src:match("atomic_load_explicit"), "atomic helper emitted")
 assert_order(complex_src, "/* typedefs */", "/* signatures */", "/* type declarations", "/* globals */", "/* helpers */", "/* prototypes */", "/* bodies */")
 

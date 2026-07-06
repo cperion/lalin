@@ -17,6 +17,8 @@ local function bind_context(T)
     local Schedule = T.LalinSchedule
     local Value = T.LalinValue
     local Mem = T.LalinMem
+    local Stencil = T.LalinStencil
+    local CMat = T.LalinCMat
 
     local CodeToC = require("lalin.code_to_c")(T)
     local CodeType = require("lalin.code_type")(T)
@@ -29,6 +31,7 @@ local function bind_context(T)
     local CodeSchedulePlan = require("lalin.code_schedule_plan")(T)
     local CodeLowerPlan = require("lalin.code_lower_plan")(T)
     local ExecPlan = require("lalin.exec_plan")(T)
+    local CMaterialize = require("lalin.c_materialize")(T)
 
     local api = {}
 
@@ -95,15 +98,12 @@ local function bind_context(T)
         return CodeType.code_type_to_c(ty, c_emission.c_type_projection)
     end
 
-    local function helper_key(spec) return tostring(spec) end
-
     local function add_helper(c_emission, spec)
-        local key = helper_key(spec)
-        local existing = c_emission.helper_by_key[key]
+        local id = spec:c_helper_id()
+        local existing = c_emission.helper_by_key[id.text]
         if existing ~= nil then return existing.id end
-        c_emission.next_helper = c_emission.next_helper + 1
-        local use = C.CBackendHelperUse(C.CBackendHelperId("ml_semantic_helper_" .. tostring(c_emission.next_helper)), spec)
-        c_emission.helper_by_key[key] = use
+        local use = C.CBackendHelperUse(id, spec)
+        c_emission.helper_by_key[id.text] = use
         c_emission.unit.helpers[#c_emission.unit.helpers + 1] = use
         return use.id
     end
@@ -205,6 +205,9 @@ local function bind_context(T)
             return add_helper(c_emission, C.CBackendHelperDivRem(op, c_ty(c_emission, ty), mode))
         end
         return add_helper(c_emission, C.CBackendHelperIntBinary(op, c_ty(c_emission, ty), overflow_mode(sem)))
+    end
+    local function unary_helper(c_emission, op, ty)
+        return add_helper(c_emission, C.CBackendHelperUnary(op, c_ty(c_emission, ty)))
     end
     function Core.BinaryOp:lower_c_is_div_or_rem() return false end
     function Core.BinDiv:lower_c_is_div_or_rem() return true end
@@ -443,16 +446,6 @@ local function bind_context(T)
         c_emission.kernel_value_types[binding.id.text] = binding.ty
     end
 
-    function Kernel.KernelEffect:lower_c_emit_effect(c_emission) error("lower_to_c: unsupported KernelEffect " .. node_name(self), 3) end
-    function Kernel.KernelEffectStore:lower_c_emit_effect(c_emission)
-        local value, vty = lower_kernel_expr(c_emission, self.value)
-        value = cast_to(c_emission, value, vty, self.dst.elem_ty, "store_cast")
-        local place = place_for_write_lane(c_emission, self.dst, self.index)
-        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceStore(place, value)
-    end
-    function Kernel.KernelEffectFold:lower_c_emit_effect(c_emission) end
-    local function emit_kernel_effect(c_emission, effect) return effect:lower_c_emit_effect(c_emission) end
-
     local function term_args(xs)
         local out = {}
         for i = 1, #(xs or {}) do out[i] = atom(xs[i]) end
@@ -565,8 +558,27 @@ local function bind_context(T)
     end
 
     function Kernel.KernelEffect:lower_c_place_effect(c_emission, effects_by_block) error("lower_to_c: unsupported KernelEffect in planned kernel", 2) end
-    function Kernel.KernelEffectFold:lower_c_place_effect(c_emission, effects_by_block) end
+    function Kernel.KernelEffectFold:lower_c_place_effect(c_emission, effects_by_block)
+        -- Fold ownership is represented by KernelResultReduction and lowered by
+        -- the StencilSinkOpFold leaf of the active StencilComputation. It is
+        -- intentionally not placed as a direct effect.
+    end
     function Kernel.KernelEffectStore:lower_c_place_effect(c_emission, effects_by_block)
+        local access = first_write_access(c_emission, self.dst)
+        local block = access and access.block and access.block.block
+        if block ~= nil then effects_by_block[block.text] = effects_by_block[block.text] or {}; effects_by_block[block.text][#effects_by_block[block.text] + 1] = self end
+    end
+    function Kernel.KernelEffectScan:lower_c_place_effect(c_emission, effects_by_block)
+        local access = first_write_access(c_emission, self.dst)
+        local block = access and access.block and access.block.block
+        if block ~= nil then effects_by_block[block.text] = effects_by_block[block.text] or {}; effects_by_block[block.text][#effects_by_block[block.text] + 1] = self end
+    end
+    function Kernel.KernelEffectCopy:lower_c_place_effect(c_emission, effects_by_block)
+        local access = first_write_access(c_emission, self.dst)
+        local block = access and access.block and access.block.block
+        if block ~= nil then effects_by_block[block.text] = effects_by_block[block.text] or {}; effects_by_block[block.text][#effects_by_block[block.text] + 1] = self end
+    end
+    function Kernel.KernelEffectScatterReduce:lower_c_place_effect(c_emission, effects_by_block)
         local access = first_write_access(c_emission, self.dst)
         local block = access and access.block and access.block.block
         if block ~= nil then effects_by_block[block.text] = effects_by_block[block.text] or {}; effects_by_block[block.text][#effects_by_block[block.text] + 1] = self end
@@ -596,35 +608,778 @@ local function bind_context(T)
         return active
     end
 
+    function Core.UnaryOp:lower_c_stencil_unary_op()
+        error("lower_to_c: unary op cannot be represented as StencilPointUnary", 2)
+    end
+    function Core.UnaryNeg:lower_c_stencil_unary_op() return Stencil.StencilUnaryNeg end
+    function Core.UnaryNot:lower_c_stencil_unary_op() return Stencil.StencilUnaryBoolNot end
+    function Core.UnaryBitNot:lower_c_stencil_unary_op() return Stencil.StencilUnaryBitNot end
+
+    function Core.BinaryOp:lower_c_stencil_binary_op()
+        error("lower_to_c: binary op cannot be represented as StencilPointBinary", 2)
+    end
+    function Core.BinAdd:lower_c_stencil_binary_op() return Stencil.StencilBinaryAdd end
+    function Core.BinSub:lower_c_stencil_binary_op() return Stencil.StencilBinarySub end
+    function Core.BinMul:lower_c_stencil_binary_op() return Stencil.StencilBinaryMul end
+    function Core.BinDiv:lower_c_stencil_binary_op() return Stencil.StencilBinaryDiv end
+    function Core.BinRem:lower_c_stencil_binary_op() return Stencil.StencilBinaryMod end
+    function Core.BinBitAnd:lower_c_stencil_binary_op() return Stencil.StencilBinaryAnd end
+    function Core.BinBitOr:lower_c_stencil_binary_op() return Stencil.StencilBinaryOr end
+    function Core.BinBitXor:lower_c_stencil_binary_op() return Stencil.StencilBinaryXor end
+    function Core.BinShl:lower_c_stencil_binary_op() return Stencil.StencilBinaryShl end
+    function Core.BinLShr:lower_c_stencil_binary_op() return Stencil.StencilBinaryLShr end
+    function Core.BinAShr:lower_c_stencil_binary_op() return Stencil.StencilBinaryAShr end
+
+    function Mem.MemBase:lower_c_cmat_local_id()
+        error("lower_to_c: stencil CMat access base is not a local value", 2)
+    end
+    function Mem.MemBaseValue:lower_c_cmat_local_id() return CMat.CMatLocalId(sanitize(self.value.text)) end
+    function Mem.MemBaseArgument:lower_c_cmat_local_id() return CMat.CMatLocalId(sanitize(self.value.text)) end
+
+    local function cmat_access_binding_for_lane(lane, name, role)
+        local layout = Stencil.StencilLayoutContiguous(1)
+        local source = Stencil.StencilAccess(name, role, lane.elem_ty, layout)
+        return CMat.CMatAccessBinding(
+            Stencil.StencilAccessRef(name),
+            source,
+            lane.base:lower_c_cmat_local_id(),
+            lane.elem_ty,
+            layout,
+            role:cmat_mutability(),
+            role:cmat_restrict_eligible(layout),
+            role:cmat_const_eligible(),
+            Stencil.StencilAlignmentUnknown
+        )
+    end
+
+    local function cmat_state_for_kernel(kplan)
+        local state = { read_by_lane = {}, reads = {}, binding_by_kernel = {}, binding_by_code = {} }
+        for _, binding in ipairs(kplan.body.bindings or {}) do
+            state.binding_by_kernel[binding.id.text] = binding
+            local code_name = binding.id.text:match("^kval:(.+)$")
+            if code_name ~= nil then state.binding_by_code[code_name] = binding end
+        end
+        return state
+    end
+
+    function Kernel.KernelExpr:lower_c_stencil_point_ty(_state)
+        error("lower_to_c: KernelExpr cannot project a StencilPointExpr type", 2)
+    end
+    function Kernel.KernelExprLaneLoad:lower_c_stencil_point_ty(_state) return self.lane.elem_ty end
+    function Kernel.KernelExprKernelValue:lower_c_stencil_point_ty(state)
+        local binding = state.binding_by_kernel[self.value.text]
+        if binding == nil then error("lower_to_c: missing kernel binding for stencil value " .. self.value.text, 2) end
+        return binding.expr:lower_c_stencil_point_ty(state)
+    end
+    function Kernel.KernelExprAlgebra:lower_c_stencil_point_ty(state) return self.expr:lower_c_stencil_point_ty(state) end
+    function Kernel.KernelExprValue:lower_c_stencil_point_ty(state)
+        local binding = state.binding_by_code[self.value.text]
+        if binding == nil then error("lower_to_c: unbound Code value in stencil expression " .. self.value.text, 2) end
+        return binding.expr:lower_c_stencil_point_ty(state)
+    end
+
+    function Kernel.KernelExpr:lower_c_stencil_point(_state)
+        error("lower_to_c: KernelExpr cannot become StencilPointExpr", 2)
+    end
+    function Kernel.KernelExprLaneLoad:lower_c_stencil_point(state)
+        local key = self.lane.id.text
+        local access = state.read_by_lane[key]
+        if access == nil then
+            local name = "x" .. tostring(#state.reads + 1)
+            access = cmat_access_binding_for_lane(self.lane, name, Stencil.StencilAccessRead)
+            state.read_by_lane[key] = access
+            state.reads[#state.reads + 1] = access
+        end
+        return Stencil.StencilPointInput(access.access)
+    end
+    function Kernel.KernelExprKernelValue:lower_c_stencil_point(state)
+        local binding = state.binding_by_kernel[self.value.text]
+        if binding == nil then error("lower_to_c: missing kernel binding for stencil value " .. self.value.text, 2) end
+        return binding.expr:lower_c_stencil_point(state)
+    end
+    function Kernel.KernelExprAlgebra:lower_c_stencil_point(state) return self.expr:lower_c_stencil_point(state) end
+    function Kernel.KernelExprValue:lower_c_stencil_point(state)
+        local binding = state.binding_by_code[self.value.text]
+        if binding == nil then error("lower_to_c: unbound Code value in stencil expression " .. self.value.text, 2) end
+        return binding.expr:lower_c_stencil_point(state)
+    end
+
+    function Value.ValueExpr:lower_c_stencil_point_ty(_state)
+        error("lower_to_c: ValueExpr cannot project a StencilPointExpr type", 2)
+    end
+    function Value.ValueExprConst:lower_c_stencil_point_ty(_state) return self.const.ty end
+    function Value.ValueExprValue:lower_c_stencil_point_ty(state)
+        local binding = state.binding_by_code[self.value.text]
+        if binding == nil then error("lower_to_c: unbound Code value in stencil point expression " .. self.value.text, 2) end
+        return binding.expr:lower_c_stencil_point_ty(state)
+    end
+    function Value.ValueExprUnary:lower_c_stencil_point_ty(_state) return self.ty end
+    function Value.ValueExprCast:lower_c_stencil_point_ty(_state) return self.to end
+    function Value.ValueExprAdd:lower_c_stencil_point_ty(_state) return self.ty end
+    function Value.ValueExprSub:lower_c_stencil_point_ty(_state) return self.ty end
+    function Value.ValueExprMul:lower_c_stencil_point_ty(_state) return self.ty end
+    function Value.ValueExprDiv:lower_c_stencil_point_ty(_state) return self.ty end
+    function Value.ValueExprRem:lower_c_stencil_point_ty(_state) return self.ty end
+    function Value.ValueExprBinary:lower_c_stencil_point_ty(_state) return self.ty end
+    function Value.ValueExprCmp:lower_c_stencil_point_ty(_state) return Code.CodeTyBool8 end
+    function Value.ValueExprSelect:lower_c_stencil_point_ty(state) return self.t:lower_c_stencil_point_ty(state) end
+
+    function Value.ValueExpr:lower_c_stencil_point(_state)
+        error("lower_to_c: ValueExpr cannot become StencilPointExpr", 2)
+    end
+    function Value.ValueExprConst:lower_c_stencil_point(_state) return Stencil.StencilPointConst(self, self.const.ty) end
+    function Value.ValueExprValue:lower_c_stencil_point(state)
+        local binding = state.binding_by_code[self.value.text]
+        if binding == nil then error("lower_to_c: unbound Code value in stencil point expression " .. self.value.text, 2) end
+        return binding.expr:lower_c_stencil_point(state)
+    end
+    function Value.ValueExprUnary:lower_c_stencil_point(state) return Stencil.StencilPointUnary(self.op:lower_c_stencil_unary_op(), self.value:lower_c_stencil_point(state), self.ty, nil, nil) end
+    function Value.ValueExprAdd:lower_c_stencil_point(state) return Stencil.StencilPointBinary(Stencil.StencilBinaryAdd, self.a:lower_c_stencil_point(state), self.b:lower_c_stencil_point(state), self.ty, self.sem, nil) end
+    function Value.ValueExprSub:lower_c_stencil_point(state) return Stencil.StencilPointBinary(Stencil.StencilBinarySub, self.a:lower_c_stencil_point(state), self.b:lower_c_stencil_point(state), self.ty, self.sem, nil) end
+    function Value.ValueExprMul:lower_c_stencil_point(state) return Stencil.StencilPointBinary(Stencil.StencilBinaryMul, self.a:lower_c_stencil_point(state), self.b:lower_c_stencil_point(state), self.ty, self.sem, nil) end
+    function Value.ValueExprDiv:lower_c_stencil_point(state) return Stencil.StencilPointBinary(Stencil.StencilBinaryDiv, self.a:lower_c_stencil_point(state), self.b:lower_c_stencil_point(state), self.ty, self.sem, nil) end
+    function Value.ValueExprRem:lower_c_stencil_point(state) return Stencil.StencilPointBinary(Stencil.StencilBinaryMod, self.a:lower_c_stencil_point(state), self.b:lower_c_stencil_point(state), self.ty, self.sem, nil) end
+    function Value.ValueExprBinary:lower_c_stencil_point(state) return Stencil.StencilPointBinary(self.op:lower_c_stencil_binary_op(), self.a:lower_c_stencil_point(state), self.b:lower_c_stencil_point(state), self.ty, self.sem, nil) end
+    function Value.ValueExprCast:lower_c_stencil_point(state) return Stencil.StencilPointCast(self.op, self.value:lower_c_stencil_point(state), self.from, self.to) end
+    function Value.ValueExprCmp:lower_c_stencil_point(state) return Stencil.StencilPointCompare(self.op, self.a:lower_c_stencil_point(state), self.b:lower_c_stencil_point(state), Code.CodeTyBool8) end
+    function Value.ValueExprSelect:lower_c_stencil_point(state)
+        return Stencil.StencilPointSelect(Stencil.StencilPredNonZero, self.cond:lower_c_stencil_point(state), self.t:lower_c_stencil_point(state), self.f:lower_c_stencil_point(state), self:lower_c_stencil_point_ty(state))
+    end
+
+    function Stencil.StencilBinaryOp:lower_c_core_binary_op()
+        error("lower_to_c: StencilBinaryOp cannot be emitted by CMat inline", 2)
+    end
+    function Stencil.StencilUnaryOp:lower_c_core_unary_op() error("lower_to_c: unary op cannot be represented as a C helper", 2) end
+    function Stencil.StencilUnaryIdentity:lower_c_core_unary_op() return nil end
+    function Stencil.StencilUnaryNeg:lower_c_core_unary_op() return Core.UnaryNeg end
+    function Stencil.StencilUnaryBitNot:lower_c_core_unary_op() return Core.UnaryBitNot end
+    function Stencil.StencilUnaryBoolNot:lower_c_core_unary_op() return Core.UnaryNot end
+
+    function Stencil.StencilBinaryAdd:lower_c_core_binary_op() return Core.BinAdd end
+    function Stencil.StencilBinarySub:lower_c_core_binary_op() return Core.BinSub end
+    function Stencil.StencilBinaryMul:lower_c_core_binary_op() return Core.BinMul end
+    function Stencil.StencilBinaryDiv:lower_c_core_binary_op() return Core.BinDiv end
+    function Stencil.StencilBinaryMod:lower_c_core_binary_op() return Core.BinRem end
+    function Stencil.StencilBinaryAnd:lower_c_core_binary_op() return Core.BinBitAnd end
+    function Stencil.StencilBinaryOr:lower_c_core_binary_op() return Core.BinBitOr end
+    function Stencil.StencilBinaryXor:lower_c_core_binary_op() return Core.BinBitXor end
+    function Stencil.StencilBinaryShl:lower_c_core_binary_op() return Core.BinShl end
+    function Stencil.StencilBinaryLShr:lower_c_core_binary_op() return Core.BinLShr end
+    function Stencil.StencilBinaryAShr:lower_c_core_binary_op() return Core.BinAShr end
+
+    function Stencil.StencilBinaryOp:lower_c_inline_binary(c_emission, lhs, rhs, ty, sem)
+        local dst = tmp(c_emission, "cmat_bin", ty)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(dst, binary_helper(c_emission, self:lower_c_core_binary_op(), ty, sem), { lhs, rhs })
+        return C.CBackendAtomLocal(dst), ty
+    end
+    function Stencil.StencilBinaryMin:lower_c_inline_binary(c_emission, lhs, rhs, ty, _sem)
+        local cond = tmp(c_emission, "cmat_min_cmp", Code.CodeTyBool8)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(cond, C.CBackendRCompare(Core.CmpLt, c_ty(c_emission, ty), lhs, rhs))
+        local dst = tmp(c_emission, "cmat_min", ty)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(dst, C.CBackendRSelect(c_ty(c_emission, ty), C.CBackendAtomLocal(cond), lhs, rhs))
+        return C.CBackendAtomLocal(dst), ty
+    end
+    function Stencil.StencilBinaryMax:lower_c_inline_binary(c_emission, lhs, rhs, ty, _sem)
+        local cond = tmp(c_emission, "cmat_max_cmp", Code.CodeTyBool8)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(cond, C.CBackendRCompare(Core.CmpGt, c_ty(c_emission, ty), lhs, rhs))
+        local dst = tmp(c_emission, "cmat_max", ty)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(dst, C.CBackendRSelect(c_ty(c_emission, ty), C.CBackendAtomLocal(cond), lhs, rhs))
+        return C.CBackendAtomLocal(dst), ty
+    end
+
+    function Stencil.StencilAliasFact:lower_c_is_noalias() return false end
+    function Stencil.StencilAliasNoAlias:lower_c_is_noalias() return true end
+    function Stencil.StencilFusionLegalityFact:lower_c_access_noalias(_left, _right) return false end
+    function Stencil.StencilFusionAccessAliasRelation:lower_c_access_noalias(left, right)
+        local direct = self.left.name == left.name and self.right.name == right.name
+        local reverse = self.left.name == right.name and self.right.name == left.name
+        return (direct or reverse) and self.relation:lower_c_is_noalias()
+    end
+    function Stencil.StencilFusionLegality:lower_c_access_noalias(left, right)
+        for _, fact in ipairs(self.facts or {}) do if fact:lower_c_access_noalias(left, right) then return true end end
+        return false
+    end
+    function Stencil.StencilComputation:lower_c_access_restrict_proven(access)
+        local seen_other = false
+        for _, other in ipairs(self.accesses or {}) do
+            if other.name ~= access.name then
+                seen_other = true
+                if not self.legality:lower_c_access_noalias(Stencil.StencilAccessRef(access.name), Stencil.StencilAccessRef(other.name)) then return false end
+            end
+        end
+        return seen_other
+    end
+    local function note_cmat_param_qualifiers(c_emission, computation, bindings)
+        c_emission.c_param_qualifiers = c_emission.c_param_qualifiers or {}
+        for _, binding in ipairs(bindings or {}) do
+            if binding.restrict_eligible and computation:lower_c_access_restrict_proven(binding.source) then
+                local q = c_emission.c_param_qualifiers[binding.local_id.text] or { restrict_ptr = false }
+                q.restrict_ptr = true
+                c_emission.c_param_qualifiers[binding.local_id.text] = q
+            end
+        end
+    end
+
+    function CMat.CMatAccessBinding:lower_c_inline_load(c_emission, index_atom)
+        local dst = tmp(c_emission, "cmat_load", self.ty)
+        local place = C.CBackendPlacePtrIndex(C.CBackendAtomLocal(C.CBackendLocalId(self.local_id.text)), index_atom, c_ty(c_emission, self.ty), 1)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceLoad(dst, place)
+        return C.CBackendAtomLocal(dst), self.ty
+    end
+    function CMat.CMatAccessBinding:lower_c_inline_store(c_emission, index_atom, value)
+        local place = C.CBackendPlacePtrIndex(C.CBackendAtomLocal(C.CBackendLocalId(self.local_id.text)), index_atom, c_ty(c_emission, self.ty), 1)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceStore(place, value)
+    end
+
+    function Stencil.StencilPointExpr:lower_c_inline_point(_c_emission, _cmat, _index_atom)
+        error("lower_to_c: unsupported inline CMat point expression", 2)
+    end
+    function Stencil.StencilPointInput:lower_c_inline_point(c_emission, cmat, index_atom)
+        return cmat.access_by_name[self.access.name]:lower_c_inline_load(c_emission, index_atom)
+    end
+    function Stencil.StencilPointConst:lower_c_inline_point(c_emission) return lower_value_expr(c_emission, self.value) end
+    function Stencil.StencilPointUnary:lower_c_inline_point(c_emission, cmat, index_atom)
+        local value, vty = self.arg:lower_c_inline_point(c_emission, cmat, index_atom)
+        local ty = self.result_ty or vty
+        local op = self.op:lower_c_core_unary_op()
+        if op == nil then return value, ty end
+        local dst = tmp(c_emission, "cmat_un", ty)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(dst, unary_helper(c_emission, op, ty), { value })
+        return C.CBackendAtomLocal(dst), ty
+    end
+    function Stencil.StencilPointBinary:lower_c_inline_point(c_emission, cmat, index_atom)
+        local a, aty = self.left:lower_c_inline_point(c_emission, cmat, index_atom)
+        local b, bty = self.right:lower_c_inline_point(c_emission, cmat, index_atom)
+        local ty = self.result_ty or aty or bty
+        a = cast_to(c_emission, a, aty, ty, "cmat_bin_lhs_cast")
+        b = cast_to(c_emission, b, bty, ty, "cmat_bin_rhs_cast")
+        return self.op:lower_c_inline_binary(c_emission, a, b, ty, self.int_semantics)
+    end
+    function Stencil.StencilPointCast:lower_c_inline_point(c_emission, cmat, index_atom)
+        local src = self.arg:lower_c_inline_point(c_emission, cmat, index_atom)
+        local dst = tmp(c_emission, "cmat_cast", self.to)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(dst, C.CBackendRCast(self.op, c_ty(c_emission, self.to), src))
+        return C.CBackendAtomLocal(dst), self.to
+    end
+    function Stencil.StencilPointCompare:lower_c_inline_point(c_emission, cmat, index_atom)
+        local a, aty = self.left:lower_c_inline_point(c_emission, cmat, index_atom)
+        local b, bty = self.right:lower_c_inline_point(c_emission, cmat, index_atom)
+        local ty = aty or bty
+        a = cast_to(c_emission, a, aty, ty, "cmat_cmp_lhs_cast")
+        b = cast_to(c_emission, b, bty, ty, "cmat_cmp_rhs_cast")
+        local dst = tmp(c_emission, "cmat_cmp", self.result_ty)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(dst, C.CBackendRCompare(self.cmp, c_ty(c_emission, ty), a, b))
+        return C.CBackendAtomLocal(dst), self.result_ty
+    end
+    function Stencil.StencilPointSelect:lower_c_inline_point(c_emission, cmat, index_atom)
+        local cond_value, cty = self.cond:lower_c_inline_point(c_emission, cmat, index_atom)
+        local cond = self.pred:lower_c_inline_pred(c_emission, cmat, index_atom, cond_value, cty)
+        local t, tty = self.then_expr:lower_c_inline_point(c_emission, cmat, index_atom)
+        local f, fty = self.else_expr:lower_c_inline_point(c_emission, cmat, index_atom)
+        local ty = self.result_ty or tty or fty
+        t = cast_to(c_emission, t, tty, ty, "cmat_select_then")
+        f = cast_to(c_emission, f, fty, ty, "cmat_select_else")
+        local dst = tmp(c_emission, "cmat_select", ty)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(dst, C.CBackendRSelect(c_ty(c_emission, ty), cond, t, f))
+        return C.CBackendAtomLocal(dst), ty
+    end
+
+    local function bool_literal(c_emission, value)
+        return C.CBackendAtomLiteral(c_ty(c_emission, Code.CodeTyBool8), Core.LitBool(value))
+    end
+
+    local function emit_bool_select(c_emission, prefix, cond, then_atom, else_atom)
+        local dst = tmp(c_emission, prefix, Code.CodeTyBool8)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(dst, C.CBackendRSelect(c_ty(c_emission, Code.CodeTyBool8), cond, then_atom, else_atom))
+        return C.CBackendAtomLocal(dst), Code.CodeTyBool8
+    end
+
+    function Stencil.StencilPredicate:lower_c_inline_pred(_c_emission, _cmat, _index_atom, _value, _ty)
+        error("lower_to_c: unsupported StencilPredicate for inline CMat", 2)
+    end
+    function Stencil.StencilPredNonZero:lower_c_inline_pred(c_emission, _cmat, _index_atom, value, ty)
+        local zero = C.CBackendAtomLiteral(c_ty(c_emission, ty), Core.LitInt("0"))
+        local dst = tmp(c_emission, "cmat_pred_nonzero", Code.CodeTyBool8)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(dst, C.CBackendRCompare(Core.CmpNe, c_ty(c_emission, ty), value, zero))
+        return C.CBackendAtomLocal(dst), Code.CodeTyBool8
+    end
+    function Stencil.StencilPredCompareConst:lower_c_inline_pred(c_emission, _cmat, _index_atom, value, ty)
+        local rhs, rty = lower_value_expr(c_emission, self.value)
+        rhs = cast_to(c_emission, rhs, rty, self.operand_ty or ty, "cmat_pred_const_cast")
+        value = cast_to(c_emission, value, ty, self.operand_ty or ty, "cmat_pred_value_cast")
+        local dst = tmp(c_emission, "cmat_pred_cmp", Code.CodeTyBool8)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(dst, C.CBackendRCompare(self.cmp, c_ty(c_emission, self.operand_ty or ty), value, rhs))
+        return C.CBackendAtomLocal(dst), Code.CodeTyBool8
+    end
+    function Stencil.StencilPredRange:lower_c_inline_pred(c_emission, _cmat, _index_atom, value, ty)
+        local pty = self.operand_ty or ty
+        local lower, lty = lower_value_expr(c_emission, self.lower)
+        local upper, uty = lower_value_expr(c_emission, self.upper)
+        value = cast_to(c_emission, value, ty, pty, "cmat_pred_range_value")
+        lower = cast_to(c_emission, lower, lty, pty, "cmat_pred_range_lower")
+        upper = cast_to(c_emission, upper, uty, pty, "cmat_pred_range_upper")
+        local lo = tmp(c_emission, "cmat_pred_range_lo", Code.CodeTyBool8)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(lo, C.CBackendRCompare(self.lower_cmp, c_ty(c_emission, pty), lower, value))
+        local hi = tmp(c_emission, "cmat_pred_range_hi", Code.CodeTyBool8)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(hi, C.CBackendRCompare(self.upper_cmp, c_ty(c_emission, pty), value, upper))
+        return emit_bool_select(c_emission, "cmat_pred_range", C.CBackendAtomLocal(lo), C.CBackendAtomLocal(hi), bool_literal(c_emission, false))
+    end
+    function Stencil.StencilPredAnd:lower_c_inline_pred(c_emission, cmat, index_atom, value, ty)
+        local acc = bool_literal(c_emission, true)
+        for _, term in ipairs(self.terms or {}) do
+            local next_atom = term:lower_c_inline_pred(c_emission, cmat, index_atom, value, ty)
+            acc = emit_bool_select(c_emission, "cmat_pred_and", acc, next_atom, bool_literal(c_emission, false))
+        end
+        return acc, Code.CodeTyBool8
+    end
+    function Stencil.StencilPredOr:lower_c_inline_pred(c_emission, cmat, index_atom, value, ty)
+        local acc = bool_literal(c_emission, false)
+        for _, term in ipairs(self.terms or {}) do
+            local next_atom = term:lower_c_inline_pred(c_emission, cmat, index_atom, value, ty)
+            acc = emit_bool_select(c_emission, "cmat_pred_or", acc, bool_literal(c_emission, true), next_atom)
+        end
+        return acc, Code.CodeTyBool8
+    end
+    function Stencil.StencilPredNot:lower_c_inline_pred(c_emission, cmat, index_atom, value, ty)
+        local pred = self.term:lower_c_inline_pred(c_emission, cmat, index_atom, value, ty)
+        return emit_bool_select(c_emission, "cmat_pred_not", pred, bool_literal(c_emission, false), bool_literal(c_emission, true))
+    end
+
+    function Stencil.StencilPointPredicate:lower_c_inline_point(c_emission, cmat, index_atom)
+        local value, ty = self.arg:lower_c_inline_point(c_emission, cmat, index_atom)
+        local pred = self.pred:lower_c_inline_pred(c_emission, cmat, index_atom, value, ty)
+        return cast_to(c_emission, pred, Code.CodeTyBool8, self.result_ty, "cmat_pred_result")
+    end
+
+    function Stencil.StencilAccessRef:lower_c_binding(cmat)
+        local binding = cmat.access_by_name[self.name]
+        if binding == nil then error("lower_to_c: CMat access is not bound: " .. self.name, 2) end
+        return binding
+    end
+
+    function Stencil.StencilIndexExpr:lower_c_inline_index(_c_emission, _cmat, index_atom)
+        return index_atom, Code.CodeTyIndex
+    end
+    function Stencil.StencilIndexAxis:lower_c_inline_index(_c_emission, _cmat, index_atom)
+        return index_atom, Code.CodeTyIndex
+    end
+    function Stencil.StencilIndexStream:lower_c_inline_index(c_emission, cmat, index_atom)
+        return self.stream:lower_c_inline_stream(c_emission, cmat, index_atom)
+    end
+    function Stencil.StencilIndexPoint:lower_c_inline_index(c_emission, _cmat, _index_atom)
+        return lower_value_expr(c_emission, self.expr)
+    end
+
+    function Stencil.StencilStreamRef:lower_c_inline_stream(c_emission, cmat, index_atom)
+        local stream = cmat.stream_by_id[self.stream.text]
+        if stream == nil then error("lower_to_c: CMat stream is not defined: " .. self.stream.text, 2) end
+        return stream:lower_c_inline_stream(c_emission, cmat, index_atom)
+    end
+    function Stencil.StencilStreamDef:lower_c_inline_stream(c_emission, cmat, index_atom)
+        return self.op:lower_c_inline_stream(c_emission, cmat, index_atom, self.ty)
+    end
+    function Stencil.StencilStreamOp:lower_c_inline_stream(_c_emission, _cmat, _index_atom, _ty)
+        error("lower_to_c: unsupported StencilStreamOp for inline CMat", 2)
+    end
+    function Stencil.StencilStreamIndex:lower_c_inline_stream(_c_emission, _cmat, index_atom, _ty)
+        return index_atom, Code.CodeTyIndex
+    end
+    function Stencil.StencilStreamAccess:lower_c_inline_stream(c_emission, cmat, index_atom, _ty)
+        local idx = index_atom
+        if self.index ~= nil then idx = self.index:lower_c_inline_index(c_emission, cmat, index_atom) end
+        return self.access:lower_c_binding(cmat):lower_c_inline_load(c_emission, idx)
+    end
+    function Stencil.StencilStreamWindowAccess:lower_c_inline_stream()
+        error("lower_to_c: window access requires CMat window producer materialization", 2)
+    end
+    function Stencil.StencilStreamConst:lower_c_inline_stream(c_emission, _cmat, _index_atom, _ty)
+        return lower_value_expr(c_emission, self.value)
+    end
+    function Stencil.StencilStreamMap:lower_c_inline_stream(c_emission, cmat, index_atom, _ty)
+        return self.expr:lower_c_inline_point(c_emission, cmat, index_atom)
+    end
+    function Stencil.StencilStreamZip:lower_c_inline_stream()
+        error("lower_to_c: zip stream is a structural stream group and cannot be consumed as one scalar", 2)
+    end
+    function Stencil.StencilStreamSelect:lower_c_inline_stream(c_emission, cmat, index_atom, ty)
+        local pred, pty = self.pred:lower_c_inline_stream(c_emission, cmat, index_atom)
+        local t, tty = self.then_stream:lower_c_inline_stream(c_emission, cmat, index_atom)
+        local f, fty = self.else_stream:lower_c_inline_stream(c_emission, cmat, index_atom)
+        local dst = tmp(c_emission, "cmat_select", ty or tty or fty)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(dst, C.CBackendRSelect(c_ty(c_emission, ty or tty or fty), cast_to(c_emission, pred, pty, Code.CodeTyBool8, "cmat_select_pred"), t, f))
+        return C.CBackendAtomLocal(dst), ty or tty or fty
+    end
+    function Stencil.StencilStreamMask:lower_c_inline_stream(c_emission, cmat, index_atom, ty)
+        local pred, pty = self.pred:lower_c_inline_stream(c_emission, cmat, index_atom)
+        local value, vty = self.value:lower_c_inline_stream(c_emission, cmat, index_atom)
+        local masked, mty = self.masked_value:lower_c_inline_stream(c_emission, cmat, index_atom)
+        local dst = tmp(c_emission, "cmat_mask", ty or vty or mty)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(dst, C.CBackendRSelect(c_ty(c_emission, ty or vty or mty), cast_to(c_emission, pred, pty, Code.CodeTyBool8, "cmat_mask_pred"), value, masked))
+        return C.CBackendAtomLocal(dst), ty or vty or mty
+    end
+    function Stencil.StencilStreamGather:lower_c_inline_stream(c_emission, cmat, index_atom, _ty)
+        local idx = self.index_stream:lower_c_inline_stream(c_emission, cmat, index_atom)
+        return self.source:lower_c_binding(cmat):lower_c_inline_load(c_emission, idx)
+    end
+
+    function Stencil.StencilSinkDef:lower_c_inline_sink(c_emission, cmat, index_atom)
+        return self.op:lower_c_inline_sink(c_emission, cmat, index_atom)
+    end
+    function Stencil.StencilSinkOp:lower_c_inline_sink(_c_emission, _cmat, _index_atom)
+        error("lower_to_c: unsupported StencilSinkOp for inline CMat", 2)
+    end
+    function Stencil.StencilSinkOpStore:lower_c_inline_sink(c_emission, cmat, index_atom)
+        local dst = self.dst:lower_c_binding(cmat)
+        local value, vty = self.value:lower_c_inline_stream(c_emission, cmat, index_atom)
+        value = cast_to(c_emission, value, vty, dst.ty, "cmat_store_cast")
+        dst:lower_c_inline_store(c_emission, index_atom, value)
+    end
+
+    function Value.ReductionOp:lower_c_inline_reduce_update(_c_emission, _acc, _value, _ty, _sem)
+        error("lower_to_c: reduction op cannot be emitted by inline CMat", 2)
+    end
+    function Value.ReductionAdd:lower_c_inline_reduce_update(c_emission, acc, value, ty, sem)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(acc, binary_helper(c_emission, Core.BinAdd, ty, sem), { C.CBackendAtomLocal(acc), value })
+    end
+    function Value.ReductionMul:lower_c_inline_reduce_update(c_emission, acc, value, ty, sem)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(acc, binary_helper(c_emission, Core.BinMul, ty, sem), { C.CBackendAtomLocal(acc), value })
+    end
+    function Value.ReductionAnd:lower_c_inline_reduce_update(c_emission, acc, value, ty, sem)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(acc, binary_helper(c_emission, Core.BinBitAnd, ty, sem), { C.CBackendAtomLocal(acc), value })
+    end
+    function Value.ReductionOr:lower_c_inline_reduce_update(c_emission, acc, value, ty, sem)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(acc, binary_helper(c_emission, Core.BinBitOr, ty, sem), { C.CBackendAtomLocal(acc), value })
+    end
+    function Value.ReductionXor:lower_c_inline_reduce_update(c_emission, acc, value, ty, sem)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(acc, binary_helper(c_emission, Core.BinBitXor, ty, sem), { C.CBackendAtomLocal(acc), value })
+    end
+    function Value.ReductionMin:lower_c_inline_reduce_update(c_emission, acc, value, ty, _sem)
+        local cond = tmp(c_emission, "cmat_reduce_min_cmp", Code.CodeTyBool8)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(cond, C.CBackendRCompare(Core.CmpLt, c_ty(c_emission, ty), value, C.CBackendAtomLocal(acc)))
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(acc, C.CBackendRSelect(c_ty(c_emission, ty), C.CBackendAtomLocal(cond), value, C.CBackendAtomLocal(acc)))
+    end
+    function Value.ReductionMax:lower_c_inline_reduce_update(c_emission, acc, value, ty, _sem)
+        local cond = tmp(c_emission, "cmat_reduce_max_cmp", Code.CodeTyBool8)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(cond, C.CBackendRCompare(Core.CmpGt, c_ty(c_emission, ty), value, C.CBackendAtomLocal(acc)))
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(acc, C.CBackendRSelect(c_ty(c_emission, ty), C.CBackendAtomLocal(cond), value, C.CBackendAtomLocal(acc)))
+    end
+
+    function Stencil.StencilScanMode:lower_c_scan_store_before_update() return false end
+    function Stencil.StencilScanExclusive:lower_c_scan_store_before_update() return true end
+    function Stencil.StencilScanInclusive:lower_c_scan_store_before_update() return false end
+
+    function Stencil.StencilSinkOpFold:lower_c_inline_sink(c_emission, cmat, index_atom)
+        if cmat.acc == nil then error("lower_to_c: fold sink requires an accumulator local", 2) end
+        local value, vty = self.value:lower_c_inline_stream(c_emission, cmat, index_atom)
+        value = cast_to(c_emission, value, vty, self.reducer.result_ty, "cmat_reduce_cast")
+        self.reducer.reduction:lower_c_inline_reduce_update(c_emission, cmat.acc, value, self.reducer.result_ty, self.reducer.int_semantics)
+    end
+
+    function Stencil.StencilSinkOpScan:lower_c_inline_sink(c_emission, cmat, index_atom)
+        if cmat.acc == nil then error("lower_to_c: scan sink requires an accumulator local", 2) end
+        local dst = self.dst:lower_c_binding(cmat)
+        local value, vty = self.value:lower_c_inline_stream(c_emission, cmat, index_atom)
+        value = cast_to(c_emission, value, vty, self.reducer.result_ty, "cmat_scan_cast")
+        if self.mode:lower_c_scan_store_before_update() then
+            dst:lower_c_inline_store(c_emission, index_atom, C.CBackendAtomLocal(cmat.acc))
+            self.reducer.reduction:lower_c_inline_reduce_update(c_emission, cmat.acc, value, self.reducer.result_ty, self.reducer.int_semantics)
+        else
+            self.reducer.reduction:lower_c_inline_reduce_update(c_emission, cmat.acc, value, self.reducer.result_ty, self.reducer.int_semantics)
+            dst:lower_c_inline_store(c_emission, index_atom, C.CBackendAtomLocal(cmat.acc))
+        end
+    end
+
+    function Stencil.StencilSinkOpScatterStore:lower_c_inline_sink(c_emission, cmat, index_atom)
+        local dst = self.dst:lower_c_binding(cmat)
+        local scatter_index, index_ty = self.index:lower_c_inline_stream(c_emission, cmat, index_atom)
+        scatter_index = cast_to(c_emission, scatter_index, index_ty, Code.CodeTyIndex, "cmat_scatter_index_cast")
+        local value, vty = self.value:lower_c_inline_stream(c_emission, cmat, index_atom)
+        value = cast_to(c_emission, value, vty, dst.ty, "cmat_scatter_store_cast")
+        dst:lower_c_inline_store(c_emission, scatter_index, value)
+    end
+
+    function Stencil.StencilSinkOpScatterFold:lower_c_inline_sink(c_emission, cmat, index_atom)
+        local dst = self.dst:lower_c_binding(cmat)
+        local scatter_index, index_ty = self.index:lower_c_inline_stream(c_emission, cmat, index_atom)
+        scatter_index = cast_to(c_emission, scatter_index, index_ty, Code.CodeTyIndex, "cmat_scatter_index_cast")
+        local old = tmp(c_emission, "cmat_scatter_old", self.reducer.result_ty)
+        local place = C.CBackendPlacePtrIndex(C.CBackendAtomLocal(C.CBackendLocalId(dst.local_id.text)), scatter_index, c_ty(c_emission, self.reducer.result_ty), 1)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceLoad(old, place)
+        local value, vty = self.value:lower_c_inline_stream(c_emission, cmat, index_atom)
+        value = cast_to(c_emission, value, vty, self.reducer.result_ty, "cmat_scatter_reduce_cast")
+        self.reducer.reduction:lower_c_inline_reduce_update(c_emission, old, value, self.reducer.result_ty, self.reducer.int_semantics)
+        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceStore(place, C.CBackendAtomLocal(old))
+    end
+
+    function Stencil.StencilComputation:lower_c_inline_computation(c_emission, cmat, index_atom)
+        cmat.computation = self
+        cmat.stream_by_id = {}
+        for _, stream in ipairs(self.streams or {}) do cmat.stream_by_id[stream.id.text] = stream end
+        for _, sink in ipairs(self.sinks or {}) do sink:lower_c_inline_sink(c_emission, cmat, index_atom) end
+    end
+
+    local function default_stencil_schedule()
+        return Stencil.StencilScheduleScalar(Stencil.StencilCompilerPolicy(Stencil.StencilCompilerGcc, Stencil.StencilOptO3, Stencil.StencilMachineNative, {}))
+    end
+
+    local function producer_from_loop(loop_fact)
+        local counted = loop_fact and loop_fact.counted
+        if counted == nil then return Stencil.StencilProducer(nil, Stencil.StencilProduceRange1D(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilProducerForward)) end
+        return Stencil.StencilProducer(
+            loop_fact.domain,
+            Stencil.StencilProduceRange1D(
+                Code.CodeTyIndex,
+                Value.ValueExprValue(counted.start),
+                Value.ValueExprValue(counted.stop),
+                1,
+                Stencil.StencilProducerForward
+            )
+        )
+    end
+
+    local function computation_for_body(kplan, loop_fact, reads, dst, body_stream, sink)
+        local accesses, streams, sinks = {}, {}, {}
+        if dst ~= nil then accesses[#accesses + 1] = dst.source end
+        for _, access in ipairs(reads or {}) do accesses[#accesses + 1] = access.source end
+        streams[#streams + 1] = body_stream
+        sinks[#sinks + 1] = sink
+        return Stencil.StencilComputation(
+            Stencil.StencilMetastencilId("cmat:" .. sanitize(kplan.id.text) .. ":" .. sanitize(sink.id.text)),
+            producer_from_loop(loop_fact),
+            accesses,
+            streams,
+            sinks,
+            Stencil.StencilFusionLegality({}, {}, {}),
+            default_stencil_schedule(),
+            kplan.body.equivalence and kplan.body.equivalence.proofs or {}
+        )
+    end
+
+    local function cmat_bindings(dst, reads)
+        local out = {}
+        if dst ~= nil then out[#out + 1] = dst end
+        for _, access in ipairs(reads or {}) do out[#out + 1] = access end
+        return out
+    end
+
+    local function cmat_context_for_computation(computation, access_by_name)
+        local materialized = computation:cmat_materialize()
+        return { kernel = materialized.kernel, computation = computation, access_by_name = access_by_name }
+    end
+
+    local function cmat_store_kernel_from_expr(c_emission, kplan, loop_fact, dst_lane, reads, expr, store_mode)
+        local dst = cmat_access_binding_for_lane(dst_lane, "dst", Stencil.StencilAccessWrite)
+        local stream = Stencil.StencilStreamDef(Stencil.StencilStreamId("value"), dst_lane.elem_ty, Stencil.StencilStreamMap(expr, {}))
+        local sink = Stencil.StencilSinkDef(Stencil.StencilSinkId("store"), Stencil.StencilSinkOpStore(dst.access, Stencil.StencilStreamRef(stream.id), store_mode))
+        local computation = computation_for_body(kplan, loop_fact, reads, dst, stream, sink)
+        note_cmat_param_qualifiers(c_emission, computation, cmat_bindings(dst, reads))
+        local access_by_name = { dst = dst }
+        for _, access in ipairs(reads or {}) do access_by_name[access.access.name] = access end
+        return cmat_context_for_computation(computation, access_by_name)
+    end
+
+    local function cmat_store_kernel(c_emission, kplan, loop_fact, store)
+        local state = cmat_state_for_kernel(kplan)
+        local expr = store.value:lower_c_stencil_point(state)
+        return cmat_store_kernel_from_expr(c_emission, kplan, loop_fact, store.dst, state.reads, expr, Stencil.StencilStoreElementwise)
+    end
+
+    local function cmat_copy_kernel(c_emission, kplan, loop_fact, copy)
+        local state = cmat_state_for_kernel(kplan)
+        local expr = copy.src:lower_c_stencil_point(state)
+        return cmat_store_kernel_from_expr(c_emission, kplan, loop_fact, copy.dst, state.reads, expr, Stencil.StencilStoreCopy(copy.semantics))
+    end
+
+    local function cmat_reduce_kernel(c_emission, kplan, loop_fact, reduction)
+        local state = cmat_state_for_kernel(kplan)
+        local expr = reduction.contribution:lower_c_stencil_point(state)
+        local stream = Stencil.StencilStreamDef(Stencil.StencilStreamId("value"), reduction.ty, Stencil.StencilStreamMap(expr, {}))
+        local reducer = Stencil.StencilReducer(reduction.op, reduction.ty, reduction.init, reduction.int_semantics, reduction.float_mode)
+        local sink = Stencil.StencilSinkDef(Stencil.StencilSinkId("fold"), Stencil.StencilSinkOpFold(Stencil.StencilStreamRef(stream.id), reducer, reduction.ty, Stencil.StencilReduceInitExternal, nil))
+        local computation = computation_for_body(kplan, loop_fact, state.reads, nil, stream, sink)
+        note_cmat_param_qualifiers(c_emission, computation, state.reads)
+        local access_by_name = {}
+        for _, access in ipairs(state.reads) do access_by_name[access.access.name] = access end
+        return cmat_context_for_computation(computation, access_by_name)
+    end
+
+    local function cmat_scan_kernel(c_emission, kplan, loop_fact, scan)
+        local state = cmat_state_for_kernel(kplan)
+        local reduction = scan.reduction
+        local expr = reduction.contribution:lower_c_stencil_point(state)
+        local dst = cmat_access_binding_for_lane(scan.dst, "dst", Stencil.StencilAccessWrite)
+        local stream = Stencil.StencilStreamDef(Stencil.StencilStreamId("value"), reduction.ty, Stencil.StencilStreamMap(expr, {}))
+        local reducer = Stencil.StencilReducer(reduction.op, reduction.ty, reduction.init, reduction.int_semantics, reduction.float_mode)
+        local sink = Stencil.StencilSinkDef(Stencil.StencilSinkId("scan"), Stencil.StencilSinkOpScan(dst.access, Stencil.StencilStreamRef(stream.id), reducer, scan.mode, scan.axis or Stencil.StencilAxisRef(1)))
+        local computation = computation_for_body(kplan, loop_fact, state.reads, dst, stream, sink)
+        note_cmat_param_qualifiers(c_emission, computation, cmat_bindings(dst, state.reads))
+        local access_by_name = { dst = dst }
+        for _, access in ipairs(state.reads) do access_by_name[access.access.name] = access end
+        return cmat_context_for_computation(computation, access_by_name)
+    end
+
+    local function cmat_scatter_reduce_kernel(c_emission, kplan, loop_fact, effect)
+        local state = cmat_state_for_kernel(kplan)
+        local expr = effect.value:lower_c_stencil_point(state)
+        local scatter_index = effect.index:lower_c_stencil_point(state)
+        local dst = cmat_access_binding_for_lane(effect.dst, "dst", Stencil.StencilAccessReadWrite)
+        local access_by_name = { dst = dst }
+        for _, access in ipairs(state.reads) do access_by_name[access.access.name] = access end
+        local reducer = effect.reducer
+        local value_stream = Stencil.StencilStreamDef(Stencil.StencilStreamId("value"), reducer.result_ty, Stencil.StencilStreamMap(expr, {}))
+        local index_stream = Stencil.StencilStreamDef(Stencil.StencilStreamId("index"), Code.CodeTyIndex, Stencil.StencilStreamMap(scatter_index, {}))
+        local sink = Stencil.StencilSinkDef(Stencil.StencilSinkId("scatter_fold"), Stencil.StencilSinkOpScatterFold(dst.access, Stencil.StencilStreamRef(index_stream.id), Stencil.StencilStreamRef(value_stream.id), reducer, Stencil.StencilScatterReduceSequential))
+        local accesses, streams = { dst.source }, { value_stream, index_stream }
+        for _, access in ipairs(state.reads) do accesses[#accesses + 1] = access.source end
+        local computation = Stencil.StencilComputation(
+            Stencil.StencilMetastencilId("cmat:" .. sanitize(kplan.id.text) .. ":scatter_fold"),
+            producer_from_loop(loop_fact),
+            accesses,
+            streams,
+            { sink },
+            Stencil.StencilFusionLegality({}, {}, {}),
+            default_stencil_schedule(),
+            kplan.body.equivalence and kplan.body.equivalence.proofs or {}
+        )
+        note_cmat_param_qualifiers(c_emission, computation, cmat_bindings(dst, state.reads))
+        return cmat_context_for_computation(computation, access_by_name)
+    end
+
+    function Kernel.KernelEffect:lower_c_emit_inline_cmat(_c_emission, _kplan, _loop_fact, _index_atom)
+        error("lower_to_c: KernelEffect has no inline CMat materialization", 2)
+    end
+    function Kernel.KernelEffectFold:lower_c_emit_inline_cmat(_c_emission, _kplan, _loop_fact, _index_atom)
+        error("lower_to_c: reductions must use CMat reduction materialization, not KernelEffectFold direct emission", 2)
+    end
+    function Kernel.KernelEffectStore:lower_c_emit_inline_cmat(c_emission, kplan, loop_fact, index_atom)
+        local cmat = cmat_store_kernel(c_emission, kplan, loop_fact, self)
+        cmat.computation:lower_c_inline_computation(c_emission, cmat, index_atom)
+    end
+    function Kernel.KernelEffectScan:lower_c_emit_inline_cmat(c_emission, kplan, loop_fact, index_atom)
+        local cmat = cmat_scan_kernel(c_emission, kplan, loop_fact, self)
+        cmat.acc = cid(self.reduction.accumulator)
+        cmat.computation:lower_c_inline_computation(c_emission, cmat, index_atom)
+    end
+    function Kernel.KernelEffectCopy:lower_c_emit_inline_cmat(c_emission, kplan, loop_fact, index_atom)
+        local cmat = cmat_copy_kernel(c_emission, kplan, loop_fact, self)
+        cmat.computation:lower_c_inline_computation(c_emission, cmat, index_atom)
+    end
+    function Kernel.KernelEffectScatterReduce:lower_c_emit_inline_cmat(c_emission, kplan, loop_fact, index_atom)
+        local cmat = cmat_scatter_reduce_kernel(c_emission, kplan, loop_fact, self)
+        cmat.computation:lower_c_inline_computation(c_emission, cmat, index_atom)
+    end
+
+    function Kernel.KernelEffect:lower_c_updates_reduction(_reduction) return false end
+    function Kernel.KernelEffectScan:lower_c_updates_reduction(reduction) return self.reduction == reduction end
+    function Kernel.KernelEffectFold:lower_c_updates_reduction(_reduction) return false end
+    local function reduction_updated_by_effect(kplan, reduction)
+        if reduction == nil then return false end
+        for _, effect in ipairs(kplan.body.effects or {}) do if effect:lower_c_updates_reduction(reduction) then return true end end
+        return false
+    end
+
+    local function emit_inline_cmat_effect(c_emission, kplan, loop_fact, effect, index_atom)
+        return effect:lower_c_emit_inline_cmat(c_emission, kplan, loop_fact, index_atom)
+    end
+
+    function Kernel.KernelExpr:lower_c_is_data_body_expr(_bindings) return false end
+    function Kernel.KernelExprLaneLoad:lower_c_is_data_body_expr(_bindings) return true end
+    function Kernel.KernelExprAlgebra:lower_c_is_data_body_expr(bindings) return self.expr:lower_c_is_data_body_expr(bindings) end
+    function Kernel.KernelExprKernelValue:lower_c_is_data_body_expr(bindings)
+        local binding = bindings and bindings[self.value.text]
+        return binding ~= nil and binding.expr:lower_c_is_data_body_expr(bindings) or false
+    end
+    function Value.ValueExpr:lower_c_is_data_body_expr(_bindings) return false end
+    function Value.ValueExprValue:lower_c_is_data_body_expr(bindings)
+        local binding = bindings and bindings["kval:" .. self.value.text]
+        return binding ~= nil and binding.expr:lower_c_is_data_body_expr(bindings) or false
+    end
+    function Value.ValueExprUnary:lower_c_is_data_body_expr(bindings) return self.value:lower_c_is_data_body_expr(bindings) end
+    function Value.ValueExprCast:lower_c_is_data_body_expr(bindings) return self.value:lower_c_is_data_body_expr(bindings) end
+    function Value.ValueExprAdd:lower_c_is_data_body_expr(bindings) return self.a:lower_c_is_data_body_expr(bindings) or self.b:lower_c_is_data_body_expr(bindings) end
+    function Value.ValueExprSub:lower_c_is_data_body_expr(bindings) return self.a:lower_c_is_data_body_expr(bindings) or self.b:lower_c_is_data_body_expr(bindings) end
+    function Value.ValueExprMul:lower_c_is_data_body_expr(bindings) return self.a:lower_c_is_data_body_expr(bindings) or self.b:lower_c_is_data_body_expr(bindings) end
+    function Value.ValueExprDiv:lower_c_is_data_body_expr(bindings) return self.a:lower_c_is_data_body_expr(bindings) or self.b:lower_c_is_data_body_expr(bindings) end
+    function Value.ValueExprRem:lower_c_is_data_body_expr(bindings) return self.a:lower_c_is_data_body_expr(bindings) or self.b:lower_c_is_data_body_expr(bindings) end
+    function Value.ValueExprBinary:lower_c_is_data_body_expr(bindings) return self.a:lower_c_is_data_body_expr(bindings) or self.b:lower_c_is_data_body_expr(bindings) end
+    function Value.ValueExprSelect:lower_c_is_data_body_expr(bindings) return self.cond:lower_c_is_data_body_expr(bindings) or self.t:lower_c_is_data_body_expr(bindings) or self.f:lower_c_is_data_body_expr(bindings) end
+    function Value.ValueExprCmp:lower_c_is_data_body_expr(bindings) return self.a:lower_c_is_data_body_expr(bindings) or self.b:lower_c_is_data_body_expr(bindings) end
+
+    local function binding_index_for_body(kplan)
+        local out = {}
+        for _, binding in ipairs(kplan.body.bindings or {}) do out[binding.id.text] = binding end
+        return out
+    end
+
+    local function bind_control_values(c_emission, bindings, bindings_by_block, block_id)
+        for _, binding in ipairs(bindings_by_block[block_id.text] or {}) do
+            if not binding.expr:lower_c_is_data_body_expr(bindings) then bind_kernel_value(c_emission, binding) end
+        end
+    end
+
+    function Kernel.KernelResult:lower_c_reduction_fact() return nil end
+    function Kernel.KernelResultReduction:lower_c_reduction_fact() return self.reduction end
+
+    local function reduction_state_for_kernel(c_emission, kplan, loop_fact)
+        local reduction = kplan.body.result:lower_c_reduction_fact()
+        if reduction == nil then return nil end
+        local acc = cid(reduction.accumulator)
+        return { reduction = reduction, acc = acc, cmat = cmat_reduce_kernel(c_emission, kplan, loop_fact, reduction), updated_by_effect = reduction_updated_by_effect(kplan, reduction) }
+    end
+
+    local function reduction_arg_or_atom(reduction_state, arg)
+        if reduction_state ~= nil and arg ~= nil then
+            local acc = reduction_state.reduction.accumulator
+            if arg.src == acc or arg.dst_param == acc then return C.CBackendAtomLocal(reduction_state.acc) end
+        end
+        return atom(arg.src)
+    end
+
+    local function edge_args_with_reduction(reduction_state, edge_fact)
+        local args = {}
+        for _, arg in ipairs(edge_fact and edge_fact.args or {}) do args[#args + 1] = reduction_arg_or_atom(reduction_state, arg) end
+        return args
+    end
+
+    local function emit_reduction_update(c_emission, reduction_state, index_atom)
+        if reduction_state == nil or reduction_state.updated_by_effect then return end
+        local cmat = reduction_state.cmat
+        cmat.acc = reduction_state.acc
+        cmat.computation:lower_c_inline_computation(c_emission, cmat, index_atom)
+    end
+
     local function emit_scalar_kernel_fragment(c_emission, graph, flow, kernels, fragment)
         local kplan = kernel_by_id(kernels)[fragment.strategy.kernel.text]
         if kplan == nil then error("lower_to_c: kernel strategy references missing kernel " .. fragment.strategy.kernel.text, 2) end
-        local loop, body_set, edge_facts, exit_edge, latch_edge, body_successor, cond = loop_partition(c_emission, graph, flow, kplan)
+        local loop, body_set, edge_facts, exit_edge, latch_edge, body_successor, cond, loop_fact = loop_partition(c_emission, graph, flow, kplan)
         local previous_active_addresses = c_emission.active_address_plans
         c_emission.active_address_plans = active_addresses_for_kernel(c_emission, kplan)
         local bindings_by_block, effects_by_block = place_bindings_effects(c_emission, kplan)
+        local reduction_state = reduction_state_for_kernel(c_emission, kplan, loop_fact)
+        local data_bindings = binding_index_for_body(kplan)
         local header_block = c_emission.block_by_id[loop.header.block.text]
         c_emission.current_code_block_id = loop.header.block
-        c_emission.stmts = { C.CBackendComment("semantic scalar kernel " .. kplan.id.text) }
+        c_emission.stmts = { C.CBackendComment("semantic scalar CMat kernel " .. kplan.id.text) }
         if semantic_fragment_prelude ~= nil then semantic_fragment_prelude(c_emission, graph, fragment, loop.header.block) end
-        for _, b in ipairs(bindings_by_block[loop.header.block.text] or {}) do bind_kernel_value(c_emission, b) end
+        bind_control_values(c_emission, data_bindings, bindings_by_block, loop.header.block)
         c_emission.blocks[#c_emission.blocks + 1] = C.CBackendBlock(clabel(loop.header.block), c_block_params(c_emission, header_block), c_emission.stmts,
-            C.CBackendIfGoto(atom(cond), clabel(body_successor), edge_args(c_emission, edge_facts[exit_edge.from.block.text .. "\0" .. body_successor.text]), clabel(exit_edge.to.block), edge_args(c_emission, edge_facts[exit_edge.from.block.text .. "\0" .. exit_edge.to.block.text])))
+            C.CBackendIfGoto(atom(cond), clabel(body_successor), edge_args_with_reduction(reduction_state, edge_facts[exit_edge.from.block.text .. "\0" .. body_successor.text]), clabel(exit_edge.to.block), edge_args_with_reduction(reduction_state, edge_facts[exit_edge.from.block.text .. "\0" .. exit_edge.to.block.text])))
         for _, block in ipairs(c_emission.code_func.blocks or {}) do
             if body_set[block.id.text] and block.id ~= loop.header.block then
                 c_emission.current_code_block_id = block.id
-                c_emission.stmts = { C.CBackendComment("semantic scalar kernel body " .. kplan.id.text) }
+                c_emission.stmts = { C.CBackendComment("semantic scalar CMat kernel body " .. kplan.id.text) }
                 if semantic_fragment_prelude ~= nil then semantic_fragment_prelude(c_emission, graph, fragment, block.id) end
-                for _, b in ipairs(bindings_by_block[block.id.text] or {}) do bind_kernel_value(c_emission, b) end
-                for _, e in ipairs(effects_by_block[block.id.text] or {}) do emit_kernel_effect(c_emission, e) end
+                bind_control_values(c_emission, data_bindings, bindings_by_block, block.id)
+                for _, e in ipairs(effects_by_block[block.id.text] or {}) do emit_inline_cmat_effect(c_emission, kplan, loop_fact, e, atom(kplan.body.domain.counter)) end
+                if block.id == latch_edge.from.block then emit_reduction_update(c_emission, reduction_state, atom(kplan.body.domain.counter)) end
                 local term
                 if block.id == latch_edge.from.block then
-                    term = C.CBackendGoto(clabel(loop.header.block), edge_args(c_emission, edge_facts[latch_edge.from.block.text .. "\0" .. latch_edge.to.block.text]))
+                    term = C.CBackendGoto(clabel(loop.header.block), edge_args_with_reduction(reduction_state, edge_facts[latch_edge.from.block.text .. "\0" .. latch_edge.to.block.text]))
                 else
                     local next_edge = nil
                     for _, fg in ipairs(graph.funcs or {}) do if fg.func == loop.func then for _, edge in ipairs(fg.edges or {}) do if edge.from.block == block.id and body_set[edge.to.block.text] then next_edge = edge end end end end
                     if next_edge == nil then error("lower_to_c: scalar kernel body block has no in-loop successor", 2) end
-                    term = C.CBackendGoto(clabel(next_edge.to.block), edge_args(c_emission, edge_facts[next_edge.from.block.text .. "\0" .. next_edge.to.block.text]))
+                    term = C.CBackendGoto(clabel(next_edge.to.block), edge_args_with_reduction(reduction_state, edge_facts[next_edge.from.block.text .. "\0" .. next_edge.to.block.text]))
                 end
                 c_emission.blocks[#c_emission.blocks + 1] = C.CBackendBlock(clabel(block.id), c_block_params(c_emission, block), c_emission.stmts, term)
             end
@@ -700,87 +1455,6 @@ local function bind_context(T)
     function Kernel.KernelExprAlgebra:lower_c_kernel_expr_lane(c_emission, lane, index_ty) return lower_value_expr_lane(c_emission, self.expr, lane, index_ty) end
     function Kernel.KernelExprLaneLoad:lower_c_kernel_expr_lane(c_emission, lane, index_ty) local dst=tmp(c_emission,"vec_lane_load",self.lane.elem_ty); local place=vector_read_lane_place(c_emission,self.lane,lane,index_ty); c_emission.stmts[#c_emission.stmts+1]=C.CBackendPlaceLoad(dst,place); return C.CBackendAtomLocal(dst),self.lane.elem_ty end
     lower_kernel_expr_lane = function(c_emission, expr, lane, index_ty) return expr:lower_c_kernel_expr_lane(c_emission, lane, index_ty) end
-
-    function Kernel.KernelEffect:lower_c_emit_vector_lane(c_emission, lane, index_ty) end
-    function Kernel.KernelEffectStore:lower_c_emit_vector_lane(c_emission, lane, index_ty)
-        c_emission.lane_value_by_code = {}
-        c_emission.lane_value_by_kernel = {}
-        for _, binding in ipairs(c_emission.current_kernel_bindings or {}) do lower_kernel_expr_lane(c_emission, Kernel.KernelExprKernelValue(binding.id), lane, index_ty) end
-        local value, vty = lower_kernel_expr_lane(c_emission, self.value, lane, index_ty)
-        value = cast_to(c_emission, value, vty, self.dst.elem_ty, "vec_store_cast")
-        local place = vector_write_lane_place(c_emission, self.dst, lane, index_ty)
-        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendPlaceStore(place, value)
-    end
-    local function emit_vector_lane_effect(c_emission, effect, lane, index_ty) return effect:lower_c_emit_vector_lane(c_emission, lane, index_ty) end
-
-    function Schedule.ScheduleForm:lower_c_vector_lanes() return nil end
-    function Schedule.ScheduleVector:lower_c_vector_lanes() return self.lanes:lower_c_lane_count() end
-    function Schedule.LaneShape:lower_c_lane_count() return nil end
-    function Schedule.LaneVector:lower_c_lane_count() return self.lanes end
-
-    local function emit_vector_kernel_fragment(c_emission, graph, flow, kernels, schedules, fragment)
-        local kplan = kernel_by_id(kernels)[fragment.strategy.kernel.text]
-        local sched = schedule_by_id(schedules)[fragment.strategy.schedule.text]
-        if kplan == nil or sched == nil or sched.form:lower_c_vector_lanes() == nil then error("lower_to_c: vector kernel strategy requires ScheduleVector", 2) end
-        local lanes = sched.form:lower_c_vector_lanes()
-        local loop, body_set, edge_facts, exit_edge, latch_edge, body_successor, scalar_cond, loop_fact = loop_partition(c_emission, graph, flow, kplan)
-        if loop_fact == nil or loop_fact.counted == nil or kplan.body.domain.counter == nil then error("lower_to_c: vector kernel requires counted loop", 2) end
-        c_emission.current_kernel_bindings = kplan.body.bindings or {}
-        for _, binding in ipairs(kplan.body.bindings or {}) do c_emission.kernel_binding_by_id[binding.id.text] = binding end
-        local counter = kplan.body.domain.counter
-        c_emission.vector_counter = counter
-        local counter_ty = value_ty(c_emission, counter) or Code.CodeTyIndex
-        local vector_label = C.CBackendLabel(clabel(loop.header.block).text .. "_semantic_vector")
-        local tail_label = C.CBackendLabel(clabel(loop.header.block).text .. "_semantic_tail")
-        local next_i = C.CBackendLocalId("semantic_vec_next_i_" .. sanitize(loop.id.text))
-        add_local(c_emission, next_i, counter_ty)
-        local ok = C.CBackendLocalId("semantic_vec_ok_" .. sanitize(loop.id.text))
-        add_local(c_emission, ok, Code.CodeTyBool8)
-
-        c_emission.stmts = { C.CBackendComment("semantic vector kernel dispatch " .. kplan.id.text) }
-        if semantic_fragment_prelude ~= nil then semantic_fragment_prelude(c_emission, graph, fragment, loop.header.block) end
-        for _, binding in ipairs(kplan.body.bindings or {}) do
-            local block = c_emission.kernel_value_block and c_emission.kernel_value_block[binding.id.text]
-            if block == loop.header.block then bind_kernel_value(c_emission, binding) end
-        end
-        local lane_atom = C.CBackendAtomLiteral(c_ty(c_emission, counter_ty), Core.LitInt(tostring(lanes)))
-        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendHelperCall(next_i, binary_helper(c_emission, Core.BinAdd, counter_ty, nil), { atom(counter), lane_atom })
-        local stop = atom(loop_fact.counted.stop)
-        c_emission.stmts[#c_emission.stmts + 1] = C.CBackendAssign(ok, C.CBackendRCompare(Core.CmpLe, c_ty(c_emission, counter_ty), C.CBackendAtomLocal(next_i), stop))
-        c_emission.blocks[#c_emission.blocks + 1] = C.CBackendBlock(clabel(loop.header.block), c_block_params(c_emission, c_emission.block_by_id[loop.header.block.text]), c_emission.stmts,
-            C.CBackendIfGoto(C.CBackendAtomLocal(ok), vector_label, {}, tail_label, {}))
-
-        c_emission.stmts = { C.CBackendComment("semantic vector main loop lanes=" .. tostring(lanes)) }
-        for _, effect in ipairs(kplan.body.effects or {}) do for lane = 0, lanes - 1 do emit_vector_lane_effect(c_emission, effect, lane, counter_ty) end end
-        local latch_fact = edge_facts[latch_edge.from.block.text .. "\0" .. latch_edge.to.block.text]
-        local jump_args = {}
-        for _, arg in ipairs(latch_fact and latch_fact.args or {}) do jump_args[#jump_args + 1] = (arg.dst_param == counter) and C.CBackendAtomLocal(next_i) or atom(arg.dst_param) end
-        c_emission.blocks[#c_emission.blocks + 1] = C.CBackendBlock(vector_label, {}, c_emission.stmts, C.CBackendGoto(clabel(loop.header.block), jump_args))
-
-        c_emission.stmts = { C.CBackendComment("semantic vector scalar tail") }
-        c_emission.blocks[#c_emission.blocks + 1] = C.CBackendBlock(tail_label, {}, c_emission.stmts,
-            C.CBackendIfGoto(atom(scalar_cond), clabel(exit_edge.to.block), edge_args(c_emission, edge_facts[exit_edge.from.block.text .. "\0" .. exit_edge.to.block.text]), clabel(body_successor), edge_args(c_emission, edge_facts[exit_edge.from.block.text .. "\0" .. body_successor.text])))
-
-        local bindings_by_block, effects_by_block = place_bindings_effects(c_emission, kplan)
-        for _, block in ipairs(c_emission.code_func.blocks or {}) do
-            if body_set[block.id.text] and block.id ~= loop.header.block then
-                c_emission.stmts = { C.CBackendComment("semantic vector scalar-tail body " .. kplan.id.text) }
-                if semantic_fragment_prelude ~= nil then semantic_fragment_prelude(c_emission, graph, fragment, block.id) end
-                for _, b in ipairs(bindings_by_block[block.id.text] or {}) do bind_kernel_value(c_emission, b) end
-                for _, e in ipairs(effects_by_block[block.id.text] or {}) do emit_kernel_effect(c_emission, e) end
-                local term
-                if block.id == latch_edge.from.block then
-                    term = C.CBackendGoto(clabel(loop.header.block), edge_args(c_emission, latch_fact))
-                else
-                    local next_edge = nil
-                    for _, fg in ipairs(graph.funcs or {}) do if fg.func == loop.func then for _, edge in ipairs(fg.edges or {}) do if edge.from.block == block.id and body_set[edge.to.block.text] then next_edge = edge end end end end
-                    if next_edge == nil then error("lower_to_c: vector tail body block has no in-loop successor", 2) end
-                    term = C.CBackendGoto(clabel(next_edge.to.block), edge_args(c_emission, edge_facts[next_edge.from.block.text .. "\0" .. next_edge.to.block.text]))
-                end
-                c_emission.blocks[#c_emission.blocks + 1] = C.CBackendBlock(clabel(block.id), c_block_params(c_emission, block), c_emission.stmts, term)
-            end
-        end
-    end
 
     function Lower.LowerCover:lower_c_cover_blocks(func, graph_loops, add) end
     function Lower.LowerCoverFunction:lower_c_cover_blocks(func, graph_loops, add) for _, b in ipairs(func.blocks or {}) do add(b) end end
@@ -933,7 +1607,11 @@ local function bind_context(T)
     end
 
     function Lower.LowerEmitVectorKernel:emit_to_c(c_emission, fragment_emit)
-        emit_vector_kernel_fragment(c_emission, fragment_emit.graph, fragment_emit.flow, fragment_emit.kernels, fragment_emit.schedules, fragment_emit.fragment)
+        -- Vector scheduling is now a CMat policy, not a separate direct
+        -- KernelEffect emitter. Until CMat vector bodies are richer, emit the
+        -- same inline CMat SOAC body and let the C compiler see the canonical
+        -- stencil computation instead of falling back to the old lane unroller.
+        emit_scalar_kernel_fragment(c_emission, fragment_emit.graph, fragment_emit.flow, fragment_emit.kernels, fragment_emit.fragment)
     end
 
     function Lower.LowerEmitMissingSchedule:emit_to_c(c_emission, fragment_emit)
@@ -942,6 +1620,26 @@ local function bind_context(T)
 
     function Lower.LowerEmitUnsupported:emit_to_c(c_emission, fragment_emit)
         error("lower_to_c: " .. tostring(self.reason), 2)
+    end
+
+    function C.CBackendType:lower_c_with_param_qualifiers(_qual) return self end
+    function C.CBackendDataPtr:lower_c_with_param_qualifiers(qual)
+        if not (qual and qual.restrict_ptr) then return self end
+        return C.CBackendQualifiedDataPtr(self.pointee, false, true, false)
+    end
+    function C.CBackendQualifiedDataPtr:lower_c_with_param_qualifiers(qual)
+        if not (qual and qual.restrict_ptr) then return self end
+        return C.CBackendQualifiedDataPtr(self.pointee, self.const_pointee, true, self.volatile_pointee)
+    end
+
+    local function apply_c_param_qualifiers(c_emission, params)
+        if c_emission.c_param_qualifiers == nil then return params end
+        local out = {}
+        for i, p in ipairs(params or {}) do
+            local q = c_emission.c_param_qualifiers[p.id.text]
+            if q ~= nil then out[i] = C.CBackendLocal(p.id, p.name, p.ty:lower_c_with_param_qualifiers(q)) else out[i] = p end
+        end
+        return out
     end
 
     local function prepare_func_emission(c_emission, code_func, c_func)
@@ -956,6 +1654,7 @@ local function bind_context(T)
         c_emission.kernel_value_code_id = {}
         c_emission.kernel_binding_by_id = {}
         c_emission.const_by_value = {}
+        c_emission.c_param_qualifiers = {}
         c_emission.local_seen = {}
         for _, p in ipairs(c_func.params or {}) do c_emission.local_seen[p.id.text] = true end
         for _, l in ipairs(c_func.locals or {}) do c_emission.local_seen[l.id.text] = true end
@@ -1230,7 +1929,7 @@ local function bind_context(T)
             mutable_func.symbol,
             mutable_func.visibility,
             mutable_func.sig,
-            mutable_func.params,
+            apply_c_param_qualifiers(c_emission, mutable_func.params),
             mutable_func.locals,
             C.CBackendBodyBlocks(clabel(code_func.blocks[1].id), lowered_blocks)
         )
@@ -1310,7 +2009,7 @@ local function bind_context(T)
             carrier_plan_by_id = carrier_plan_by_id,
             address_plans = (lower and lower.addresses) or {},
         }
-        for _, h in ipairs(unit.helpers or {}) do c_emission.helper_by_key[helper_key(h.spec)] = h end
+        for _, h in ipairs(unit.helpers or {}) do c_emission.helper_by_key[h.id.text] = h end
 
         for _, code_func in ipairs(code_module.funcs or {}) do
             local fp = plans[code_func.id.text]
