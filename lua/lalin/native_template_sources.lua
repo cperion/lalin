@@ -3508,14 +3508,14 @@ local function bind_context(T)
         return "*(" .. c_type .. " *)(void *)(frame + " .. hole_address_expr(desc_hole) .. " + " .. tostring(offset) .. ")"
     end
 
-    local function append_descriptor_make_source(out, input, kind, elem_ty, data_location, len_location, stride_location)
+    local function append_descriptor_make_source(out, input, kind_name, axis, elem_ty, data_location, len_location, stride_location)
         local ptr_scalar = Support.scalar_pointer(input.domain.target.pointer_bits)
         local index_scalar = Support.scalar_index(input.domain.target.pointer_bits)
         local data_token = Support.logical_location_token(data_location)
         local len_token = Support.logical_location_token(len_location)
         local stride_token = stride_location and Support.logical_location_token(stride_location) or nil
         local elem_token = elem_ty and symbol_fragment(elem_ty:native_source_type_token()) or "bytes"
-        local id_tail = kind .. ".make." .. elem_token .. ".data." .. data_token .. ".len." .. len_token .. (stride_token and (".stride." .. stride_token) or "")
+        local id_tail = kind_name .. ".make." .. elem_token .. ".data." .. data_token .. ".len." .. len_token .. (stride_token and (".stride." .. stride_token) or "")
         local id_base = "native.hole.code.inst." .. id_tail
         local desc_hole = frame_offset_hole(id_base .. ".dst")
         local data_holes = data_location:native_edge_copy_source_holes(id_base .. ".data", ptr_scalar)
@@ -3530,7 +3530,6 @@ local function bind_context(T)
         local operands = { Support.stencil_operand(0, ptr_scalar, data_location), Support.stencil_operand(1, index_scalar, len_location) }
         if stride_location ~= nil then operands[#operands + 1] = Support.stencil_operand(2, index_scalar, stride_location) end
         local signature = Support.spill_all_stencil_signature(ptr_scalar, operands, { next_signature })
-        local axis = kind == "view" and Native.NativeCodeInstViewMakeAxis(elem_ty) or (kind == "slice" and Native.NativeCodeInstSliceMakeAxis(elem_ty) or Native.NativeCodeInstByteSpanMakeAxis)
         local family = Support.code_inst_frame_family(id_tail, input.domain.target, ptr_scalar, axis)
         local entry = "lalin_native_code_inst_" .. symbol_fragment(id_tail)
         local next_symbol = Support.next_continuation_symbol()
@@ -3551,9 +3550,9 @@ local function bind_context(T)
         append_manifest_source(out, "code.inst." .. id_tail, family, Native.NativeChunkDescriptorOp, signature, Native.NativeExtractContinuationFragment({ next_symbol }), entry, lines, holes, { next_ordinal })
     end
 
-    local function append_descriptor_extract_source(out, input, kind, field_name, dest_scalar, dest_location)
+    local function append_descriptor_extract_source(out, input, kind_name, axis, field_name, dest_scalar, dest_location)
         local dst_token = Support.logical_location_token(dest_location)
-        local id_tail = kind .. "." .. field_name .. ".to." .. dst_token
+        local id_tail = kind_name .. "." .. field_name .. ".to." .. dst_token
         local id_base = "native.hole.code.inst." .. id_tail
         local desc_hole = frame_offset_hole(id_base .. ".src")
         local dest_holes = dest_location:native_edge_copy_dest_holes(id_base .. ".dst", dest_scalar)
@@ -3564,9 +3563,6 @@ local function bind_context(T)
         if asdl.isa(dest_location, Native.NativeStencilContinuationArgLocationClass) then next_params[#next_params + 1] = Support.stencil_continuation_param(0, dest_scalar, dest_location) end
         local next_signature = Support.stencil_continuation_signature(next_ordinal, next_params)
         local signature = Support.spill_all_stencil_signature(dest_scalar, { Support.stencil_operand(0, dest_scalar, dest_location) }, { next_signature })
-        local axis = (kind == "view" and (field_name == "data" and Native.NativeCodeInstViewDataAxis or (field_name == "len" and Native.NativeCodeInstViewLenAxis or Native.NativeCodeInstViewStrideAxis)))
-            or (kind == "slice" and (field_name == "data" and Native.NativeCodeInstSliceDataAxis or Native.NativeCodeInstSliceLenAxis))
-            or (field_name == "data" and Native.NativeCodeInstByteSpanDataAxis or Native.NativeCodeInstByteSpanLenAxis)
         local family = Support.code_inst_frame_family(id_tail, input.domain.target, dest_scalar, axis)
         local entry = "lalin_native_code_inst_" .. symbol_fragment(id_tail)
         local next_symbol = Support.next_continuation_symbol()
@@ -3775,22 +3771,22 @@ local function bind_context(T)
             local elem_ty = scalar:native_code_type()
             for _, data_location in ipairs({ frame_slot, cont_arg }) do
                 for _, len_location in ipairs({ frame_slot, cont_arg }) do
-                    append_descriptor_make_source(out, input, "slice", elem_ty, data_location, len_location, nil)
-                    for _, stride_location in ipairs({ frame_slot, cont_arg }) do append_descriptor_make_source(out, input, "view", elem_ty, data_location, len_location, stride_location) end
+                    append_descriptor_make_source(out, input, "slice", Native.NativeCodeInstSliceMakeAxis(elem_ty), elem_ty, data_location, len_location, nil)
+                    for _, stride_location in ipairs({ frame_slot, cont_arg }) do append_descriptor_make_source(out, input, "view", Native.NativeCodeInstViewMakeAxis(elem_ty), elem_ty, data_location, len_location, stride_location) end
                 end
             end
         end
         for _, data_location in ipairs({ frame_slot, cont_arg }) do
-            for _, len_location in ipairs({ frame_slot, cont_arg }) do append_descriptor_make_source(out, input, "bytespan", nil, data_location, len_location, nil) end
+            for _, len_location in ipairs({ frame_slot, cont_arg }) do append_descriptor_make_source(out, input, "bytespan", Native.NativeCodeInstByteSpanMakeAxis, nil, data_location, len_location, nil) end
         end
         for _, dest_location in ipairs({ frame_slot, cont_arg }) do
-            append_descriptor_extract_source(out, input, "slice", "data", ptr_scalar, dest_location)
-            append_descriptor_extract_source(out, input, "slice", "len", index_scalar, dest_location)
-            append_descriptor_extract_source(out, input, "view", "data", ptr_scalar, dest_location)
-            append_descriptor_extract_source(out, input, "view", "len", index_scalar, dest_location)
-            append_descriptor_extract_source(out, input, "view", "stride", index_scalar, dest_location)
-            append_descriptor_extract_source(out, input, "bytespan", "data", ptr_scalar, dest_location)
-            append_descriptor_extract_source(out, input, "bytespan", "len", index_scalar, dest_location)
+            append_descriptor_extract_source(out, input, "slice", Native.NativeCodeInstSliceDataAxis, "data", ptr_scalar, dest_location)
+            append_descriptor_extract_source(out, input, "slice", Native.NativeCodeInstSliceLenAxis, "len", index_scalar, dest_location)
+            append_descriptor_extract_source(out, input, "view", Native.NativeCodeInstViewDataAxis, "data", ptr_scalar, dest_location)
+            append_descriptor_extract_source(out, input, "view", Native.NativeCodeInstViewLenAxis, "len", index_scalar, dest_location)
+            append_descriptor_extract_source(out, input, "view", Native.NativeCodeInstViewStrideAxis, "stride", index_scalar, dest_location)
+            append_descriptor_extract_source(out, input, "bytespan", Native.NativeCodeInstByteSpanDataAxis, "data", ptr_scalar, dest_location)
+            append_descriptor_extract_source(out, input, "bytespan", Native.NativeCodeInstByteSpanLenAxis, "len", index_scalar, dest_location)
         end
     end
 

@@ -3,7 +3,7 @@ S.use()
 
 return schema. LalinSchedule {
   product. ScheduleId { interned, text [str], },
-  product. ScheduleTarget { interned, target [LalinBack.BackTargetModel], },
+  product. ScheduleTarget { interned, target [LalinBackend.BackTargetModel], },
   sum. LaneShape {
     LaneScalar,
     LaneVector { variant_unique, elem_ty [LalinCode.CodeType], lanes [number], },

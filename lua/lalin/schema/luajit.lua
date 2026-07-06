@@ -20,7 +20,7 @@ return schema. LalinLuaJIT {
     LJCTypeBool,
     LJCTypeScalar {
       variant_unique,
-      scalar [LalinBack.BackScalar],
+      scalar [LalinBackend.BackScalar],
       spelling [str],
     },
     LJCTypePointer {
@@ -376,7 +376,7 @@ return schema. LalinLuaJIT {
       start [LalinLuaJIT.LJExpr],
       stop [LalinLuaJIT.LJExpr],
       step [LalinLuaJIT.LJExpr],
-      scalar [LalinBack.BackScalar],
+      scalar [LalinBackend.BackScalar],
     },
     LJMachineMap {
       variant_unique,

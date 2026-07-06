@@ -5,7 +5,7 @@ local Schema = require("lalin.schema")
 
 local T = asdl.context()
 Schema(T)
-require("lalin.lower_to_c")(T)
+require("lalin.emit_c_lower")(T)
 
 local Code = T.LalinCode
 local Flow = T.LalinFlow
@@ -43,7 +43,7 @@ assert(input(vector_schedule):select_lower_emit() == Lower.LowerEmitVectorKernel
 local missing = input(nil, "kernel schedule is absent"):select_lower_emit()
 assert(missing.reason == "kernel schedule is absent")
 
-local ok = pcall(require, "lalin.lower_strategy_emit_rules")
+local ok = pcall(require, "lalin.emit_c_lower_rules")
 assert(not ok, "lower_strategy_emit_rules must not exist")
 
 io.write("lalin lower_strategy_emit methods ok\n")

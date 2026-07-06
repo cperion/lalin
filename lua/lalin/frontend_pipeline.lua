@@ -14,7 +14,7 @@ local function progress(ctx, name, payload)
 end
 
 local function assert_no_c_phase_unreachable(root, site)
-    local Coverage = require("lalin.c_coverage")
+    local Coverage = require("lalin.emit_c_coverage")
     local phase_unreachable = {}
     for _, table_ in pairs(Coverage.all_tables()) do
         for variant, c in pairs(table_) do
@@ -42,7 +42,7 @@ local function assert_no_c_phase_unreachable(root, site)
     walk(root)
     if #found > 0 then
         table.sort(found)
-        error((site or "C frontend") .. " phase boundary failed before tree_to_code/code_to_c; phase_unreachable construct(s) remain:\n" .. table.concat(found, "\n"), 3)
+        error((site or "C frontend") .. " phase boundary failed before tree_lower/code_to_c; phase_unreachable construct(s) remain:\n" .. table.concat(found, "\n"), 3)
     end
 end
 
@@ -51,8 +51,8 @@ local function bind_context(T)
     local SurfaceResolve = require("lalin.surface_resolve")(T)
     local ClosureConvert = require("lalin.closure_convert")(T)
     local Typecheck = require("lalin.tree_typecheck")(T)
-    local Layout = require("lalin.sem_layout_resolve")(T)
-    local TreeToCode = require("lalin.tree_to_code")(T)
+    local Layout = require("lalin.layout_resolve")(T)
+    local TreeToCode = require("lalin.tree_lower")(T)
     local CodeValidate = require("lalin.code_validate")(T)
     local CodeGraph = require("lalin.code_graph")(T)
     local CodeFlowFacts = require("lalin.code_flow_facts")(T)
@@ -65,15 +65,15 @@ local function bind_context(T)
     local CodeLowerPlan = require("lalin.code_lower_plan")(T)
     local CodeType = require("lalin.code_type")(T)
     local LowerToC = require("lalin.lower_to_c")(T)
-    local CValidate = require("lalin.c_validate")(T)
-    local BackTarget = require("lalin.back_target_model")(T)
+    local CValidate = require("lalin.emit_c_validate")(T)
+    local BackTarget = require("lalin.backend_target_model")(T)
     local CompilerAbi = require("lalin.compiler_abi")(T)
     local Errors = require("lalin.error")
     local function checked_to_code_result(checked, opts)
         opts = opts or {}
         local process_ctx = opts.process_ctx
         local is_c = opts.root == "emit_c" or opts.codegen == "c" or opts.backend == "c" or opts.c_target ~= nil
-        local target_model = opts.target_model or opts.back_target_model or BackTarget.default_native()
+        local target_model = opts.target_model or opts.backend_target_model or BackTarget.default_native()
         local target = is_c and CodeType.default_target(opts.c_target or opts) or (opts.target or BackTarget.host_target(target_model))
         local analysis_ctx = opts.analysis_ctx or {}
         local collector = opts.collector or Errors.ThrowingCollector(
@@ -108,8 +108,8 @@ local function bind_context(T)
         local code_module, code_contracts = TreeToCode.module_with_contracts(resolved, { layout_env = layout_env, target = target, module_id = opts.module_id })
         local code_contract_set = code_contracts
         code_contracts = (code_contract_set and code_contract_set.facts) or code_contracts or {}
-        if code_module == nil then error((opts.site or "frontend") .. " lowering failed: tree_to_code produced nil module", 2) end
-        progress(process_ctx, "tree_to_code", { code_module = code_module, code_contracts = code_contracts, code_contract_set = code_contract_set, target = is_c and "c" or "back" })
+        if code_module == nil then error((opts.site or "frontend") .. " lowering failed: tree_lower produced nil module", 2) end
+        progress(process_ctx, "tree_lower", { code_module = code_module, code_contracts = code_contracts, code_contract_set = code_contract_set, target = is_c and "c" or "back" })
         local code_report = CodeValidate.validate(code_module, collector)
         progress(process_ctx, "code_validate", { report = code_report, target = is_c and "c" or "back" })
         return T.LalinCompiler.CodeResult(code_module, code_contracts, layout_env)
@@ -148,7 +148,7 @@ local function bind_context(T)
         progress(process_ctx, "effect_facts", { facts = effect_facts, target = "c" })
         local kernel_plan = CodeKernelPlan.plan(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts)
         progress(process_ctx, "kernel_plan", { plan = kernel_plan, target = "c" })
-        local schedule_plan = CodeSchedulePlan.plan(code_module, kernel_plan, flow_facts, value_facts, mem_semantics, effect_facts, opts.target_model or opts.back_target_model)
+        local schedule_plan = CodeSchedulePlan.plan(code_module, kernel_plan, flow_facts, value_facts, mem_semantics, effect_facts, opts.target_model or opts.backend_target_model)
         progress(process_ctx, "schedule_plan", { plan = schedule_plan, target = "c" })
         local lower_plan = CodeLowerPlan.plan(code_module, graph, kernel_plan, schedule_plan, T.LalinLower.LowerTargetC)
         progress(process_ctx, "lower_plan", { plan = lower_plan, target = "c" })

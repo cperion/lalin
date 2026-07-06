@@ -10,26 +10,26 @@ local function bind_context(T)
     if T._lalin_api_cache.code_aggregate_abi ~= nil then return T._lalin_api_cache.code_aggregate_abi end
 
     local Code = T.LalinCode
-    local Back = T.LalinBack
+    local Backend = T.LalinBackend
     local TypeSizeAlign = require("lalin.type_size_align")(T)
 
     local api = {}
 
     local function scalar(ty)
-        if ty == Code.CodeTyVoid then return Back.BackVoid end
-        if ty == Code.CodeTyBool8 then return Back.BackBool end
-        if ty == Code.CodeTyIndex then return Back.BackIndex end
+        if ty == Code.CodeTyVoid then return Backend.BackVoid end
+        if ty == Code.CodeTyBool8 then return Backend.BackBool end
+        if ty == Code.CodeTyIndex then return Backend.BackIndex end
         local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then
-            if ty.bits == 8 then return ty.signedness == Code.CodeSigned and Back.BackI8 or Back.BackU8 end
-            if ty.bits == 16 then return ty.signedness == Code.CodeSigned and Back.BackI16 or Back.BackU16 end
-            if ty.bits == 32 then return ty.signedness == Code.CodeSigned and Back.BackI32 or Back.BackU32 end
-            if ty.bits == 64 then return ty.signedness == Code.CodeSigned and Back.BackI64 or Back.BackU64 end
+            if ty.bits == 8 then return ty.signedness == Code.CodeSigned and Backend.BackI8 or Backend.BackU8 end
+            if ty.bits == 16 then return ty.signedness == Code.CodeSigned and Backend.BackI16 or Backend.BackU16 end
+            if ty.bits == 32 then return ty.signedness == Code.CodeSigned and Backend.BackI32 or Backend.BackU32 end
+            if ty.bits == 64 then return ty.signedness == Code.CodeSigned and Backend.BackI64 or Backend.BackU64 end
         elseif cls == Code.CodeTyFloat then
-            if ty.bits == 32 then return Back.BackF32 end
-            if ty.bits == 64 then return Back.BackF64 end
+            if ty.bits == 32 then return Backend.BackF32 end
+            if ty.bits == 64 then return Backend.BackF64 end
         elseif cls == Code.CodeTyDataPtr or cls == Code.CodeTyCodePtr or cls == Code.CodeTyImportedCFuncPtr then
-            return Back.BackPtr
+            return Backend.BackPtr
         elseif cls == Code.CodeTyHandle then
             return scalar(ty.repr)
         elseif cls == Code.CodeTyLease then
@@ -66,10 +66,10 @@ local function bind_context(T)
     end
 
     local function component_scalars(ty)
-        if is_view(ty) then return { Back.BackPtr, Back.BackIndex, Back.BackIndex } end
-        if is_slice(ty) then return { Back.BackPtr, Back.BackIndex } end
-        if is_byte_span(ty) then return { Back.BackPtr, Back.BackIndex } end
-        if is_aggregate(ty) then return { Back.BackPtr } end
+        if is_view(ty) then return { Backend.BackPtr, Backend.BackIndex, Backend.BackIndex } end
+        if is_slice(ty) then return { Backend.BackPtr, Backend.BackIndex } end
+        if is_byte_span(ty) then return { Backend.BackPtr, Backend.BackIndex } end
+        if is_aggregate(ty) then return { Backend.BackPtr } end
         local s = scalar(ty)
         if s == nil then error("code_aggregate_abi: unsupported Code type " .. class_name(ty), 3) end
         return { s }
@@ -78,7 +78,7 @@ local function bind_context(T)
     local function lowered_sig(sig)
         local sret = (#(sig.results or {}) == 1 and is_aggregate(sig.results[1]))
         local params, results = {}, {}
-        if sret then params[#params + 1] = Back.BackPtr end
+        if sret then params[#params + 1] = Backend.BackPtr end
         for i = 1, #(sig.params or {}) do
             for _, s in ipairs(component_scalars(sig.params[i])) do params[#params + 1] = s end
         end
@@ -110,11 +110,11 @@ local function bind_context(T)
         end
         local s = scalar(ty)
         if s ~= nil then
-            if s == Back.BackVoid then return 0, 1 end
-            if s == Back.BackBool or s == Back.BackI8 or s == Back.BackU8 then return 1, 1 end
-            if s == Back.BackI16 or s == Back.BackU16 then return 2, 2 end
-            if s == Back.BackI32 or s == Back.BackU32 or s == Back.BackF32 then return 4, 4 end
-            if s == Back.BackI64 or s == Back.BackU64 or s == Back.BackF64 or s == Back.BackPtr or s == Back.BackIndex then return 8, 8 end
+            if s == Backend.BackVoid then return 0, 1 end
+            if s == Backend.BackBool or s == Backend.BackI8 or s == Backend.BackU8 then return 1, 1 end
+            if s == Backend.BackI16 or s == Backend.BackU16 then return 2, 2 end
+            if s == Backend.BackI32 or s == Backend.BackU32 or s == Backend.BackF32 then return 4, 4 end
+            if s == Backend.BackI64 or s == Backend.BackU64 or s == Backend.BackF64 or s == Backend.BackPtr or s == Backend.BackIndex then return 8, 8 end
         end
         local l = layout(ctx, ty)
         if l ~= nil then return l.size, l.align end
@@ -137,7 +137,7 @@ local function bind_context(T)
     api.component_scalars = component_scalars
     api.param_back_scalar = function(ty)
         if is_view(ty) or is_slice(ty) or is_byte_span(ty) then return nil end
-        if is_aggregate(ty) then return Back.BackPtr end
+        if is_aggregate(ty) then return Backend.BackPtr end
         return scalar(ty)
     end
     api.lowered_sig = lowered_sig

@@ -18,11 +18,13 @@ local function bind_context(T)
     local Code = T.LalinCode
     local Mem = T.LalinMem
     local Lower = T.LalinLower
+    local Graph = T.LalinGraph
     local C = T.LalinC
+    local CEm = T.LalinCEmit
 
     local CodeType = require("lalin.code_type")(T)
     local CodeValidate = require("lalin.code_validate")(T)
-    require("lalin.c_emit")(T)
+    require("lalin.emit_c_lower")(T)
 
     local api = {}
 
@@ -52,7 +54,9 @@ local function bind_context(T)
     end
 
     local function c_ty(c_emission, ty)
-        return CodeType.code_type_to_c(ty, c_emission.c_type_projection)
+        local result, new_machine = CodeType.code_type_to_c(c_emission.c_type_projection, ty)
+        c_emission.c_type_projection = new_machine
+        return result
     end
 
     local function c_type_id_key(id)
@@ -1178,7 +1182,8 @@ local function bind_context(T)
         local fields = {}
         for i = 1, #(self.fields or {}) do
             local lf = self.fields[i]
-            local fty = CodeType.type_to_c(lf.ty, c_emission.c_type_projection)
+            local fty
+            fty, c_emission.c_type_projection = CodeType.type_to_c(c_emission.c_type_projection, lf.ty)
             local sz, al = c_type_size_align(c_emission, fty)
             if lf.field_name == "__payload" and self.align ~= nil and self.align > al then al = self.align end
             fields[#fields + 1] = C.CBackendField(C.CBackendName(lf.field_name), fty, lf.offset, sz, al)
@@ -1283,13 +1288,17 @@ local function bind_context(T)
             error("code_to_c: CodeModule failed validation with " .. tostring(#report.issues) .. " issue(s)", 2)
         end
         local module_name = tostring(code_module.id.text):gsub("^module:", "")
-        local c_type_projection = { code_sigs = {}, code_sig_order = {}, module_name = module_name }
+        local spine = Lower.LowerBackSpine(code_module, Graph.CodeGraph(code_module.id, {}), CodeType.normalize_target(opts.target or opts.c_target or opts))
+        local c_type_projection = CEm.CEmitMachine.empty(spine)
         local sigs = {}
-        for i = 1, #(code_module.sigs or {}) do c_type_projection.code_sigs[code_module.sigs[i].id.text] = code_module.sigs[i] end
         for i = 1, #(code_module.sigs or {}) do
             local s = code_module.sigs[i]
-            local params = {}; for j = 1, #s.params do params[j] = CodeType.code_type_to_c(s.params[j], c_type_projection) end
-            local result = (#s.results == 0) and C.CBackendVoid or CodeType.code_type_to_c(s.results[1], c_type_projection)
+            local params = {}; for j = 1, #s.params do
+                params[j], c_type_projection = CodeType.code_type_to_c(c_type_projection, s.params[j])
+            end
+            local result
+            if #s.results == 0 then result = C.CBackendVoid
+            else result, c_type_projection = CodeType.code_type_to_c(c_type_projection, s.results[1]) end
             sigs[#sigs + 1] = C.CBackendFuncSig(c_sig_id(s.id), params, result)
         end
         local lower_carrier_by_id = {}

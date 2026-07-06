@@ -15,7 +15,7 @@ local Kernel = T.LalinKernel
 local Stencil = T.LalinStencil
 local CMat = T.LalinCMat
 
-local CMaterialize = require("lalin.c_materialize")(T)
+local CMaterialize = require("lalin.emit_c_materialize")(T)
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local sem = Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOverflow, Code.CodeShiftMaskCount)

@@ -18,6 +18,13 @@ local function list_or_single(results)
     return results
 end
 
+local function append(list, item)
+    local out = {}
+    for i = 1, #(list or {}) do out[i] = list[i] end
+    out[#out + 1] = item
+    return out
+end
+
 local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
     if T._lalin_api_cache.code_type ~= nil then return T._lalin_api_cache.code_type end
@@ -26,8 +33,16 @@ local function bind_context(T)
     local Ty = T.LalinType
     local Code = T.LalinCode
     local C = T.LalinC
+    local CEm = T.LalinCEmit
+    local CB = T.LalinCodeBackend
+    local Lower = T.LalinLower
+    local Graph = T.LalinGraph
 
     local api = {}
+
+    -- =====================================================================
+    -- Pure free functions — no state, no ctx, no mutation
+    -- =====================================================================
 
     local function default_target(opts)
         opts = opts or {}
@@ -114,11 +129,11 @@ local function bind_context(T)
         error("code_type: unsupported float width " .. tostring(bits), 3)
     end
 
-    local function named_type_name(ref, ctx)
+    local function named_type_name(ref, module_name)
         local rcls = asdl.classof(ref)
         if rcls == Ty.TypeRefGlobal then return ref.module_name, ref.type_name end
         if rcls == Ty.TypeRefLocal then return "local", ref.sym.name end
-        if rcls == Ty.TypeRefPath and #ref.path.parts > 0 then return (ctx and ctx.module_name) or "", ref.path.parts[#ref.path.parts].text end
+        if rcls == Ty.TypeRefPath and #ref.path.parts > 0 then return (module_name or ""), ref.path.parts[#ref.path.parts].text end
         error("code_type: unresolved named type " .. class_name(ref), 3)
     end
 
@@ -204,79 +219,6 @@ local function bind_context(T)
         return entry and entry.sig or entry
     end
 
-    local function remember_code_sig(ctx, sig)
-        if ctx == nil then return sig end
-        ctx.code_sigs = ctx.code_sigs or {}
-        ctx.code_sig_order = ctx.code_sig_order or {}
-        local existing = stored_code_sig(ctx.code_sigs[sig.id.text])
-        if existing == nil then
-            if type(ctx.tree_code_sig_entry) == "function" then
-                ctx.code_sigs[sig.id.text] = ctx:tree_code_sig_entry(sig)
-            else
-                ctx.code_sigs[sig.id.text] = sig
-            end
-            ctx.code_sig_order[#ctx.code_sig_order + 1] = sig
-            return sig
-        end
-        return existing
-    end
-
-    local function ensure_code_sig(ctx, params, results)
-        results = normalize_code_results(results)
-        local id = code_sig_id(params or {}, results)
-        remember_code_sig(ctx, Code.CodeSig(id, params or {}, results))
-        return id
-    end
-
-    local type_to_code
-    type_to_code = function(ty, ctx)
-        local cls = asdl.classof(ty)
-        if cls == Ty.TScalar then
-            return scalar_to_code(ty.scalar)
-        elseif cls == Ty.TPtr then
-            return Code.CodeTyDataPtr(type_to_code(ty.elem, ctx))
-        elseif cls == Ty.TArray then
-            if asdl.classof(ty.count) ~= Ty.ArrayLenConst then
-                error("code_type: dynamic array length reached CodeType projection; typechecking must reject ArrayLenExpr before backend lowering", 2)
-            end
-            return Code.CodeTyArray(type_to_code(ty.elem, ctx), ty.count.count)
-        elseif cls == Ty.TSlice then
-            return Code.CodeTySlice(type_to_code(ty.elem, ctx))
-        elseif cls == Ty.TView then
-            return Code.CodeTyView(type_to_code(ty.elem, ctx))
-        elseif cls == Ty.TLease then
-            return Code.CodeTyLease(type_to_code(ty.base, ctx), ty)
-        elseif cls == Ty.TOwned then
-            return type_to_code(ty.base, ctx)
-        elseif cls == Ty.TAccess then
-            return type_to_code(ty.base, ctx)
-        elseif cls == Ty.THandle then
-            local rcls = asdl.classof(ty.repr)
-            if rcls == Ty.HandleReprScalar then
-                return Code.CodeTyHandle(scalar_to_code(ty.repr.scalar), ty)
-            end
-            error("code_type: unsupported handle repr " .. class_name(ty.repr), 2)
-        elseif cls == Ty.TFunc then
-            local params = {}
-            for i = 1, #ty.params do params[i] = type_to_code(ty.params[i], ctx) end
-            local result = type_to_code(ty.result, ctx)
-            return Code.CodeTyCodePtr(ensure_code_sig(ctx, params, { result }))
-        elseif cls == Ty.TClosure then
-            local params = {}
-            for i = 1, #ty.params do params[i] = type_to_code(ty.params[i], ctx) end
-            local result = type_to_code(ty.result, ctx)
-            return Code.CodeTyClosure(ensure_code_sig(ctx, params, { result }))
-        elseif cls == Ty.TNamed then
-            local module_name, type_name = named_type_name(ty.ref, ctx)
-            return Code.CodeTyNamed(module_name, type_name, canonical_named_source_ty(ty, module_name, type_name))
-        elseif cls == Ty.TCType then
-            return Code.CodeTyImportedC(ty.id)
-        elseif cls == Ty.TCFuncPtr then
-            return Code.CodeTyImportedCFuncPtr(ty.sig)
-        end
-        error("code_type: unsupported LalinType " .. class_name(ty), 2)
-    end
-
     local function c_backend_sig_id(code_sig_id_value)
         return C.CBackendFuncSigId(code_sig_id_value.text)
     end
@@ -285,100 +227,304 @@ local function bind_context(T)
         return C.CBackendFuncSigId("closure_" .. code_sig_id_value.text)
     end
 
-    local code_type_to_c
+    -- =====================================================================
+    -- TreeLowerModuleSigState — sig accumulator for tree→code lowering
+    -- =====================================================================
 
-    local function code_sig_result_to_c(ctx, sig)
+    local TL = T.LalinTreeLower
+
+    local function sig_state_lookup(sig_state, key)
+        for _, entry in ipairs(sig_state.code_sigs or {}) do
+            if entry.sig_name == key then return entry.sig end
+        end
+        return nil
+    end
+
+    local function sig_state_with_sig(sig_state, sig)
+        local key = sig.id.text
+        if sig_state_lookup(sig_state, key) ~= nil then return sig_state end
+        local new_sigs = append(sig_state.code_sigs, TL.TreeLowerSigEntry(key, sig))
+        local new_order = append(sig_state.code_sig_order, sig)
+        return TL.TreeLowerModuleSigState(sig_state.module_name, new_sigs, new_order)
+    end
+
+    -- =====================================================================
+    -- CEmitMachine — typed machine for C emission phase only
+    -- =====================================================================
+
+    function CEm.CEmitMachine.empty(spine)
+        return CEm.CEmitMachine(spine, {}, {}, {}, {})
+    end
+
+    function CEm.CEmitMachine.dummy(target)
+        target = target or C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian, true)
+        local spine = Lower.LowerBackSpine(
+            Code.CodeModule(Code.CodeModuleId("_dummy"), {}, {}, {}, {}, {}, {}, Code.CodeOriginUnknown),
+            Graph.CodeGraph(Code.CodeModuleId("_dummy"), {}),
+            target
+        )
+        return CEm.CEmitMachine(spine, {}, {}, {}, {})
+    end
+
+    -- Look up a code sig from the spine's CodeModule (not from CEmitMachine).
+    local function lookup_code_sig(spine, key)
+        local mod = spine and spine.code_module
+        if mod == nil then return nil end
+        for _, sig in ipairs(mod.sigs or {}) do
+            if sig.id.text == key then return sig end
+        end
+        return nil
+    end
+
+    function CEm.CEmitMachine:c_sig_for_key(key)
+        for _, entry in ipairs(self.c_sigs or {}) do
+            if entry.c_key == key then return entry.csig end
+        end
+        return nil
+    end
+
+    function CEm.CEmitMachine:with_c_sig(c_key, csig)
+        if self:c_sig_for_key(c_key) ~= nil then return self end
+        local new_c_sigs = append(self.c_sigs, CEm.CEmitCSigEntry(c_key, csig))
+        local new_c_order = append(self.c_sig_order, csig)
+        return CEm.CEmitMachine(self.spine, new_c_sigs, new_c_order, self.helpers, self.helper_order)
+    end
+
+    function CEm.CEmitMachine:with_helper(entry)
+        local key = entry.helper_key
+        for _, existing in ipairs(self.helpers or {}) do
+            if existing.helper_key == key then return self end
+        end
+        local new_helpers = append(self.helpers, entry)
+        local new_order = append(self.helper_order, entry)
+        return CEm.CEmitMachine(self.spine, self.c_sigs, self.c_sig_order, new_helpers, new_order)
+    end
+
+    function CEm.CEmitMachine:helper_for_id(id_text)
+        for _, entry in ipairs(self.helpers or {}) do
+            if entry.helper_key == id_text then return entry.helper end
+        end
+        return nil
+    end
+
+    -- =====================================================================
+    -- State-threading operations
+    -- =====================================================================
+
+    local function ensure_code_sig_on(sig_state, params, results)
+        results = normalize_code_results(results)
+        local id = code_sig_id(params or {}, results)
+        local sig = Code.CodeSig(id, params or {}, results)
+        local new_sig_state = sig_state_with_sig(sig_state, sig)
+        return id, new_sig_state
+    end
+
+    local type_to_code_on
+    type_to_code_on = function(sig_state, ty)
+        local cls = asdl.classof(ty)
+        if cls == Ty.TScalar then
+            return scalar_to_code(ty.scalar), sig_state
+        elseif cls == Ty.TPtr then
+            local elem_ty, ss = type_to_code_on(sig_state, ty.elem)
+            return Code.CodeTyDataPtr(elem_ty), ss
+        elseif cls == Ty.TArray then
+            if asdl.classof(ty.count) ~= Ty.ArrayLenConst then
+                error("code_type: dynamic array length reached CodeType projection; typechecking must reject ArrayLenExpr before backend lowering", 2)
+            end
+            local elem_ty, ss = type_to_code_on(sig_state, ty.elem)
+            return Code.CodeTyArray(elem_ty, ty.count.count), ss
+        elseif cls == Ty.TSlice then
+            local elem_ty, ss = type_to_code_on(sig_state, ty.elem)
+            return Code.CodeTySlice(elem_ty), ss
+        elseif cls == Ty.TView then
+            local elem_ty, ss = type_to_code_on(sig_state, ty.elem)
+            return Code.CodeTyView(elem_ty), ss
+        elseif cls == Ty.TLease then
+            local base_ty, ss = type_to_code_on(sig_state, ty.base)
+            return Code.CodeTyLease(base_ty, ty), ss
+        elseif cls == Ty.TOwned then
+            return type_to_code_on(sig_state, ty.base)
+        elseif cls == Ty.TAccess then
+            return type_to_code_on(sig_state, ty.base)
+        elseif cls == Ty.THandle then
+            local rcls = asdl.classof(ty.repr)
+            if rcls == Ty.HandleReprScalar then
+                return Code.CodeTyHandle(scalar_to_code(ty.repr.scalar), ty), sig_state
+            end
+            error("code_type: unsupported handle repr " .. class_name(ty.repr), 2)
+        elseif cls == Ty.TFunc then
+            local params = {}
+            local ss = sig_state
+            for i = 1, #ty.params do
+                params[i], ss = type_to_code_on(ss, ty.params[i])
+            end
+            local result, ss = type_to_code_on(ss, ty.result)
+            local sig_id, ss = ensure_code_sig_on(ss, params, { result })
+            return Code.CodeTyCodePtr(sig_id), ss
+        elseif cls == Ty.TClosure then
+            local params = {}
+            local ss = sig_state
+            for i = 1, #ty.params do
+                params[i], ss = type_to_code_on(ss, ty.params[i])
+            end
+            local result, ss = type_to_code_on(ss, ty.result)
+            local sig_id, ss = ensure_code_sig_on(ss, params, { result })
+            return Code.CodeTyClosure(sig_id), ss
+        elseif cls == Ty.TNamed then
+            local module_name, type_name = named_type_name(ty.ref, sig_state.module_name)
+            return Code.CodeTyNamed(module_name, type_name, canonical_named_source_ty(ty, module_name, type_name)), sig_state
+        elseif cls == Ty.TCType then
+            return Code.CodeTyImportedC(ty.id), sig_state
+        elseif cls == Ty.TCFuncPtr then
+            return Code.CodeTyImportedCFuncPtr(ty.sig), sig_state
+        end
+        error("code_type: unsupported LalinType " .. class_name(ty), 2)
+    end
+
+    local function code_sig_result_to_c(machine, sig)
         local results = sig.results or {}
-        if #results == 0 then return C.CBackendVoid end
-        if #results == 1 then return code_type_to_c(results[1], ctx) end
+        if #results == 0 then return C.CBackendVoid, machine end
+        if #results == 1 then return code_type_to_c_on(machine, results[1]) end
         error("code_type: C backend cannot spell multi-result CodeSig " .. sig.id.text, 3)
     end
 
-    local function ensure_c_backend_sig(ctx, sig_id)
+    local function ensure_c_backend_sig_on(machine, sig_id)
         local id = c_backend_sig_id(sig_id)
-        local sig = stored_code_sig(ctx and ctx.code_sigs and ctx.code_sigs[sig_id.text])
-        if sig and ctx then
-            ctx.sigs = ctx.sigs or {}
-            ctx.sig_order = ctx.sig_order or {}
-            if ctx.sigs[id.text] == nil then
-                local params = {}
-                for i = 1, #sig.params do params[i] = code_type_to_c(sig.params[i], ctx) end
-                local result = code_sig_result_to_c(ctx, sig)
-                local c_sig = C.CBackendFuncSig(id, params, result)
-                ctx.sigs[id.text] = c_sig
-                ctx.sig_order[#ctx.sig_order + 1] = c_sig
+        local sig = lookup_code_sig(machine.spine, sig_id.text)
+        if sig and machine:c_sig_for_key(id.text) == nil then
+            local params = {}
+            local m = machine
+            for i = 1, #sig.params do
+                params[i], m = code_type_to_c_on(m, sig.params[i])
             end
+            local result, m = code_sig_result_to_c(m, sig)
+            local c_sig = C.CBackendFuncSig(id, params, result)
+            return id, m:with_c_sig(id.text, c_sig)
         end
-        return id
+        return id, machine
     end
 
-    local function ensure_c_backend_closure_sig(ctx, sig_id)
+    local function ensure_c_backend_closure_sig_on(machine, sig_id)
         local id = c_backend_closure_sig_id(sig_id)
-        local sig = stored_code_sig(ctx and ctx.code_sigs and ctx.code_sigs[sig_id.text])
-        if sig and ctx then
-            ctx.sigs = ctx.sigs or {}
-            ctx.sig_order = ctx.sig_order or {}
-            if ctx.sigs[id.text] == nil then
-                local params = { C.CBackendDataPtr(nil) }
-                for i = 1, #sig.params do params[#params + 1] = code_type_to_c(sig.params[i], ctx) end
-                local result = code_sig_result_to_c(ctx, sig)
-                local c_sig = C.CBackendFuncSig(id, params, result)
-                ctx.sigs[id.text] = c_sig
-                ctx.sig_order[#ctx.sig_order + 1] = c_sig
+        local sig = lookup_code_sig(machine.spine, sig_id.text)
+        if sig and machine:c_sig_for_key(id.text) == nil then
+            local params = { C.CBackendDataPtr(nil) }
+            local m = machine
+            for i = 1, #sig.params do
+                params[#params + 1], m = code_type_to_c_on(m, sig.params[i])
             end
+            local result, m = code_sig_result_to_c(m, sig)
+            local c_sig = C.CBackendFuncSig(id, params, result)
+            return id, m:with_c_sig(id.text, c_sig)
         end
-        return id
+        return id, machine
     end
 
-    code_type_to_c = function(ty, ctx)
-        if ty == Code.CodeTyVoid then return C.CBackendVoid end
-        if ty == Code.CodeTyBool8 then return C.CBackendBool8 end
-        if ty == Code.CodeTyIndex then return C.CBackendIndex end
+    code_type_to_c_on = function(machine, ty)
+        if ty == Code.CodeTyVoid then return C.CBackendVoid, machine end
+        if ty == Code.CodeTyBool8 then return C.CBackendBool8, machine end
+        if ty == Code.CodeTyIndex then return C.CBackendIndex, machine end
         local cls = asdl.classof(ty)
-        if cls == Code.CodeTyInt then return C.CBackendScalar(int_scalar(ty.bits, ty.signedness)) end
-        if cls == Code.CodeTyFloat then return C.CBackendScalar(float_scalar(ty.bits)) end
-        if cls == Code.CodeTyDataPtr then return C.CBackendDataPtr(ty.pointee and code_type_to_c(ty.pointee, ctx) or nil) end
-        if cls == Code.CodeTyCodePtr then return C.CBackendCodePtr(ensure_c_backend_sig(ctx, ty.sig)) end
-        if cls == Code.CodeTyNamed then return C.CBackendNamed(C.CTypeId(ty.module_name, ty.type_name)) end
-        if cls == Code.CodeTyArray then return C.CBackendArray(code_type_to_c(ty.elem, ctx), ty.count) end
-        if cls == Code.CodeTySlice then return C.CBackendSliceDescriptor(code_type_to_c(ty.elem, ctx)) end
-        if cls == Code.CodeTyByteSpan or ty == Code.CodeTyByteSpan then return C.CBackendByteSpanDescriptor end
-        if cls == Code.CodeTyView then return C.CBackendViewDescriptor(code_type_to_c(ty.elem, ctx)) end
-        if cls == Code.CodeTyHandle then return code_type_to_c(ty.repr, ctx) end
-        if cls == Code.CodeTyLease then return code_type_to_c(ty.base, ctx) end
-        if cls == Code.CodeTyClosure then return C.CBackendClosureDescriptor(ensure_c_backend_closure_sig(ctx, ty.sig), C.CBackendDataPtr(nil)) end
-        if cls == Code.CodeTyImportedC then return C.CBackendNamed(ty.id) end
-        if cls == Code.CodeTyImportedCFuncPtr then return C.CBackendImportedCodePtr(ty.sig) end
-        if cls == Code.CodeTyVector then return C.CBackendVector(code_type_to_c(ty.elem, ctx), ty.lanes) end
+        if cls == Code.CodeTyInt then return C.CBackendScalar(int_scalar(ty.bits, ty.signedness)), machine end
+        if cls == Code.CodeTyFloat then return C.CBackendScalar(float_scalar(ty.bits)), machine end
+        if cls == Code.CodeTyDataPtr then
+            if ty.pointee then
+                local pointee, m = code_type_to_c_on(machine, ty.pointee)
+                return C.CBackendDataPtr(pointee), m
+            end
+            return C.CBackendDataPtr(nil), machine
+        end
+        if cls == Code.CodeTyCodePtr then
+            local sig_id, m = ensure_c_backend_sig_on(machine, ty.sig)
+            return C.CBackendCodePtr(sig_id), m
+        end
+        if cls == Code.CodeTyNamed then return C.CBackendNamed(C.CTypeId(ty.module_name, ty.type_name)), machine end
+        if cls == Code.CodeTyArray then
+            local elem, m = code_type_to_c_on(machine, ty.elem)
+            return C.CBackendArray(elem, ty.count), m
+        end
+        if cls == Code.CodeTySlice then
+            local elem, m = code_type_to_c_on(machine, ty.elem)
+            return C.CBackendSliceDescriptor(elem), m
+        end
+        if cls == Code.CodeTyByteSpan or ty == Code.CodeTyByteSpan then return C.CBackendByteSpanDescriptor, machine end
+        if cls == Code.CodeTyView then
+            local elem, m = code_type_to_c_on(machine, ty.elem)
+            return C.CBackendViewDescriptor(elem), m
+        end
+        if cls == Code.CodeTyHandle then return code_type_to_c_on(machine, ty.repr) end
+        if cls == Code.CodeTyLease then return code_type_to_c_on(machine, ty.base) end
+        if cls == Code.CodeTyClosure then
+            local sig_id, m = ensure_c_backend_closure_sig_on(machine, ty.sig)
+            return C.CBackendClosureDescriptor(sig_id, C.CBackendDataPtr(nil)), m
+        end
+        if cls == Code.CodeTyImportedC then return C.CBackendNamed(ty.id), machine end
+        if cls == Code.CodeTyImportedCFuncPtr then return C.CBackendImportedCodePtr(ty.sig), machine end
+        if cls == Code.CodeTyVector then
+            local elem, m = code_type_to_c_on(machine, ty.elem)
+            return C.CBackendVector(elem, ty.lanes), m
+        end
         error("code_type: unsupported CodeType for C backend " .. class_name(ty), 2)
     end
 
-    local function type_to_c(ty, ctx)
-        return code_type_to_c(type_to_code(ty, ctx), ctx)
+    local function type_to_c_on(sig_state, ty)
+        local code_ty, ss = type_to_code_on(sig_state, ty)
+        -- C conversion needs a CEmitMachine; create a dummy for simple conversions
+        return code_type_to_c_on(CEm.CEmitMachine.dummy(), code_ty)
     end
 
-    local function ensure_type_sig(ctx, params, result)
+    local function ensure_type_sig_on(sig_state, params, result)
         local code_params = {}
-        for i = 1, #(params or {}) do code_params[i] = type_to_code(params[i], ctx) end
-        local code_result = type_to_code(result, ctx)
-        return ensure_code_sig(ctx, code_params, { code_result })
+        local ss = sig_state
+        for i = 1, #(params or {}) do
+            code_params[i], ss = type_to_code_on(ss, params[i])
+        end
+        local code_result, ss = type_to_code_on(ss, result)
+        return ensure_code_sig_on(ss, code_params, { code_result })
+    end
+
+    -- Convenience: single-call code_type_to_c without accumulating state.
+    -- For callers that just need a type conversion without sig accumulation.
+    api.code_type_to_c_simple = function(ty)
+        return select(1, code_type_to_c_on(CEm.CEmitMachine({}, {}, {}, {}), ty))
     end
 
     api.default_target = default_target
     api.normalize_target = normalize_target
     api.target_facts = target_facts
     api.scalar_to_code = scalar_to_code
-    api.type_to_code = type_to_code
     api.code_type_key = code_type_key
     api.code_sig_id = code_sig_id
-    api.ensure_code_sig = ensure_code_sig
-    api.ensure_type_sig = ensure_type_sig
     api.c_backend_sig_id = c_backend_sig_id
     api.c_backend_closure_sig_id = c_backend_closure_sig_id
-    api.ensure_c_backend_sig = ensure_c_backend_sig
-    api.ensure_c_backend_closure_sig = ensure_c_backend_closure_sig
-    api.code_type_to_c = code_type_to_c
-    api.type_to_c = type_to_c
+
+    api.type_to_code = function(sig_state, ty)
+        return type_to_code_on(sig_state, ty)
+    end
+
+    api.ensure_code_sig = function(sig_state, params, results)
+        return ensure_code_sig_on(sig_state, params, results)
+    end
+
+    api.ensure_type_sig = function(sig_state, params, result)
+        return ensure_type_sig_on(sig_state, params, result)
+    end
+
+    api.ensure_c_backend_sig = function(machine, sig_id)
+        return ensure_c_backend_sig_on(machine, sig_id)
+    end
+
+    api.ensure_c_backend_closure_sig = function(machine, sig_id)
+        return ensure_c_backend_closure_sig_on(machine, sig_id)
+    end
+
+    api.code_type_to_c = function(machine, ty)
+        return code_type_to_c_on(machine, ty)
+    end
+
+    api.type_to_c = function(sig_state, ty)
+        return type_to_c_on(sig_state, ty)
+    end
 
     T._lalin_api_cache.code_type = api
     return api

@@ -6,10 +6,10 @@ local T = asdl.context(); Schema(T)
 
 local Core = T.LalinCore
 local C = T.LalinC
-local Validate = require("lalin.c_validate")(T)
-local Helpers = require("lalin.c_helpers")(T)
+local Validate = require("lalin.emit_c_validate")(T)
+local Helpers = require("lalin.emit_c_helpers")(T)
 local CodeType = require("lalin.code_type")(T)
-local Coverage = require("lalin.c_coverage")
+local Coverage = require("lalin.emit_c_coverage")
 
 local i32 = C.CBackendScalar(Core.ScalarI32)
 local i64 = C.CBackendScalar(Core.ScalarI64)

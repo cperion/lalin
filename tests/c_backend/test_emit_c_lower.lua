@@ -8,9 +8,9 @@ local Core = T.LalinCore
 local Code = T.LalinCode
 local Exec = T.LalinExec
 local C = T.LalinC
-local Emit = require("lalin.c_emit")(T)
-local Validate = require("lalin.c_validate")(T)
-local Helpers = require("lalin.c_helpers")(T)
+local Emit = require("lalin.emit_c_lower")(T)
+local Validate = require("lalin.emit_c_validate")(T)
+local Helpers = require("lalin.emit_c_helpers")(T)
 local CodeType = require("lalin.code_type")(T)
 
 local i32 = C.CBackendScalar(Core.ScalarI32)

@@ -33,7 +33,7 @@ return package "lalin.compiler" {
         diagnostics. diag,
         abi. process,
         impl. lua { module = "lalin.compiler_machines", func = "checked_to_c_code" },
-        capabilities { "diagnostics", "source_index", "layout", "tree_to_code" },
+        capabilities { "diagnostics", "source_index", "layout", "tree_lower" },
     },
 
     machine. hosted_c_code_to_c {

@@ -10,7 +10,7 @@ local function bind_context(T)
     if T._lalin_api_cache.kernel_emit_support ~= nil then return T._lalin_api_cache.kernel_emit_support end
 
     local Code = T.LalinCode
-    local Back = T.LalinBack
+    local Backend = T.LalinBackend
     local Flow = T.LalinFlow
     local Value = T.LalinValue
     local Mem = T.LalinMem
@@ -141,18 +141,18 @@ local function bind_context(T)
         if target == nil then return false end
         local scalar = nil
         local cls = asdl.classof(elem_ty)
-        if elem_ty == Code.CodeTyIndex then scalar = Back.BackIndex
+        if elem_ty == Code.CodeTyIndex then scalar = Backend.BackIndex
         elseif cls == Code.CodeTyInt then
-            if elem_ty.bits == 32 then scalar = elem_ty.signedness == Code.CodeSigned and Back.BackI32 or Back.BackU32
-            elseif elem_ty.bits == 64 then scalar = elem_ty.signedness == Code.CodeSigned and Back.BackI64 or Back.BackU64
-            elseif elem_ty.bits == 16 then scalar = elem_ty.signedness == Code.CodeSigned and Back.BackI16 or Back.BackU16
-            elseif elem_ty.bits == 8 then scalar = elem_ty.signedness == Code.CodeSigned and Back.BackI8 or Back.BackU8 end
+            if elem_ty.bits == 32 then scalar = elem_ty.signedness == Code.CodeSigned and Backend.BackI32 or Backend.BackU32
+            elseif elem_ty.bits == 64 then scalar = elem_ty.signedness == Code.CodeSigned and Backend.BackI64 or Backend.BackU64
+            elseif elem_ty.bits == 16 then scalar = elem_ty.signedness == Code.CodeSigned and Backend.BackI16 or Backend.BackU16
+            elseif elem_ty.bits == 8 then scalar = elem_ty.signedness == Code.CodeSigned and Backend.BackI8 or Backend.BackU8 end
         elseif cls == Code.CodeTyFloat then
-            scalar = elem_ty.bits == 32 and Back.BackF32 or (elem_ty.bits == 64 and Back.BackF64 or nil)
+            scalar = elem_ty.bits == 32 and Backend.BackF32 or (elem_ty.bits == 64 and Backend.BackF64 or nil)
         end
         if scalar == nil then return false end
         for _, fact in ipairs(target and target.facts or {}) do
-            if asdl.classof(fact) == Back.BackTargetSupportsShape and asdl.classof(fact.shape) == Back.BackShapeVec then
+            if asdl.classof(fact) == Backend.BackTargetSupportsShape and asdl.classof(fact.shape) == Backend.BackShapeVec then
                 local vec = fact.shape.vec
                 if vec.elem == scalar and vec.lanes == lanes then return true end
             end

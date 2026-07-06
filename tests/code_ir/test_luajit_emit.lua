@@ -11,7 +11,7 @@ Schema(T)
 
 local Core = T.LalinCore
 local Code = T.LalinCode
-local Back = T.LalinBack
+local Back = T.LalinBackend
 local Flow = T.LalinFlow
 local LJ = T.LalinLuaJIT
 local Value = T.LalinValue

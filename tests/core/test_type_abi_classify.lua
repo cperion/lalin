@@ -9,7 +9,7 @@ A(T)
 local L = Abi(T)
 local C = T.LalinCore
 local Ty = T.LalinType
-local B = T.LalinBack
+local B = T.LalinBackend
 local Sem = T.LalinSem
 
 local i32 = Ty.TScalar(C.ScalarI32)

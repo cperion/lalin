@@ -15,7 +15,7 @@ local Effect = T.LalinEffect
 local Kernel = T.LalinKernel
 local Schedule = T.LalinSchedule
 local Lower = T.LalinLower
-local Back = T.LalinBack
+local Backend_s = T.LalinBackend
 
 local origin = Code.CodeOriginGenerated("schema smoke")
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -113,7 +113,7 @@ local kmod = Kernel.KernelModulePlan(module.id, flow, values, mem, effects, { kp
 assert(kmod.plans[1].body.result.closed_form == closed and kmod.plans[1].body.lanes[1].backend_info[1] == backend)
 assert(Kernel["Kernel" .. "Schedule" .. "Vector"] == nil and Kernel["KernelFunc" .. "Plan"] == nil, "old Kernel schedule/function-plan shapes must be removed")
 
-local target = Schedule.ScheduleTarget(Back.BackTargetModel(Back.BackTargetNative, {}))
+local target = Schedule.ScheduleTarget(Backend_s.BackTargetModel(Backend_s.BackTargetNative, {}))
 local sched = Schedule.SchedulePlanned(Schedule.ScheduleId("schedule:smoke"), kplan.id, Schedule.ScheduleScalarIndex, { Schedule.ScheduleProofTarget("scalar") }, { Schedule.ScheduleRejectTarget("no vector proof") })
 local smod = Schedule.ScheduleModulePlan(module.id, target, { sched })
 assert(smod.schedules[1].kernel == kplan.id)

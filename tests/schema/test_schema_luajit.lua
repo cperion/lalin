@@ -8,7 +8,7 @@ Schema(T)
 
 local Core = T.LalinCore
 local Code = T.LalinCode
-local Back = T.LalinBack
+local Backend = T.LalinBackend
 local Value = T.LalinValue
 local Kernel = T.LalinKernel
 local Stencil = T.LalinStencil
@@ -16,7 +16,7 @@ local LJ = T.LalinLuaJIT
 
 assert(LJ ~= nil, "LalinLuaJIT namespace should be installed")
 
-local i32_c = LJ.LJCTypeScalar(Back.BackI32, "int32_t")
+local i32_c = LJ.LJCTypeScalar(Backend.BackI32, "int32_t")
 local void_c = LJ.LJCTypeVoid
 local i32_ty = LJ.LJPhysicalType(
     Code.CodeTyInt(32, Code.CodeSigned),

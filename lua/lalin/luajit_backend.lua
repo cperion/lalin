@@ -21,18 +21,18 @@ local function bind_context(T)
     local BytecodeTrace = require("lalin.residual_luatrace")(T)
     local ExecPlan = require("lalin.exec_plan")(T)
     local CodeSchedulePlan = require("lalin.code_schedule_plan")(T)
-    local BackTargetModel = require("lalin.back_target_model")(T)
+    local BackTargetModel = require("lalin.backend_target_model")(T)
 
     local api = {}
 
     local function default_target_model()
-        local Back = T.LalinBack
+        local Backend = T.LalinBackend
         local native = BackTargetModel.default_native()
-        return Back.BackTargetModel(Back.BackTargetDynasmJit, native.facts)
+        return Backend.BackTargetModel(Backend.BackTargetDynasmJit, native.facts)
     end
 
     local function target_model(opts)
-        return opts.target_model or opts.back_target_model or default_target_model()
+        return opts.target_model or opts.backend_target_model or default_target_model()
     end
 
     local function host_target(opts)

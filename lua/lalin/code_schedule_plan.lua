@@ -11,7 +11,7 @@ local function bind_context(T)
     T._lalin_api_cache = T._lalin_api_cache or {}
     if T._lalin_api_cache.code_schedule_plan ~= nil then return T._lalin_api_cache.code_schedule_plan end
 
-    local Back = T.LalinBack
+    local Backend = T.LalinBackend
     local Code = T.LalinCode
     local Kernel = T.LalinKernel
     local Schedule = T.LalinSchedule
@@ -66,17 +66,17 @@ local function bind_context(T)
     end
 
     local function default_target()
-        return Back.BackTargetModel(Back.BackTargetNative, {})
+        return Backend.BackTargetModel(Backend.BackTargetNative, {})
     end
 
     local function supports_masked_tail(target)
-        for _, fact in ipairs(target and target.facts or {}) do if fact == Back.BackTargetSupportsMaskedTail then return true end end
+        for _, fact in ipairs(target and target.facts or {}) do if fact == Backend.BackTargetSupportsMaskedTail then return true end end
         return false
     end
 
     local function target_prefers_unroll(target)
         for _, fact in ipairs(target and target.facts or {}) do
-            if asdl.classof(fact) == Back.BackTargetPrefersUnroll then return fact.unroll end
+            if asdl.classof(fact) == Backend.BackTargetPrefersUnroll then return fact.unroll end
         end
         return 1
     end
@@ -96,18 +96,18 @@ local function bind_context(T)
     end
 
     local function scalar_for_code_ty(ty)
-        if ty == Code.CodeTyBool8 then return Back.BackBool end
-        if ty == Code.CodeTyIndex then return Back.BackIndex end
+        if ty == Code.CodeTyBool8 then return Backend.BackBool end
+        if ty == Code.CodeTyIndex then return Backend.BackIndex end
         local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then
-            if ty.bits == 8 then return ty.signedness == Code.CodeSigned and Back.BackI8 or Back.BackU8 end
-            if ty.bits == 16 then return ty.signedness == Code.CodeSigned and Back.BackI16 or Back.BackU16 end
-            if ty.bits == 32 then return ty.signedness == Code.CodeSigned and Back.BackI32 or Back.BackU32 end
-            if ty.bits == 64 then return ty.signedness == Code.CodeSigned and Back.BackI64 or Back.BackU64 end
+            if ty.bits == 8 then return ty.signedness == Code.CodeSigned and Backend.BackI8 or Backend.BackU8 end
+            if ty.bits == 16 then return ty.signedness == Code.CodeSigned and Backend.BackI16 or Backend.BackU16 end
+            if ty.bits == 32 then return ty.signedness == Code.CodeSigned and Backend.BackI32 or Backend.BackU32 end
+            if ty.bits == 64 then return ty.signedness == Code.CodeSigned and Backend.BackI64 or Backend.BackU64 end
         end
         if cls == Code.CodeTyFloat then
-            if ty.bits == 32 then return Back.BackF32 end
-            if ty.bits == 64 then return Back.BackF64 end
+            if ty.bits == 32 then return Backend.BackF32 end
+            if ty.bits == 64 then return Backend.BackF64 end
         end
         return nil
     end
@@ -125,7 +125,7 @@ local function bind_context(T)
         local elem = scalar_for_code_ty(elem_ty)
         if elem == nil then return nil end
         for _, fact in ipairs(target and target.facts or {}) do
-            if asdl.classof(fact) == Back.BackTargetSupportsShape and asdl.classof(fact.shape) == Back.BackShapeVec and fact.shape.vec.elem == elem then
+            if asdl.classof(fact) == Backend.BackTargetSupportsShape and asdl.classof(fact.shape) == Backend.BackShapeVec and fact.shape.vec.elem == elem then
                 return Schedule.ScheduleVector(Schedule.LaneVector(elem_ty, fact.shape.vec.lanes), target_prefers_unroll(target), 1, Schedule.TailScalar)
             end
         end

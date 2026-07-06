@@ -10,8 +10,8 @@ local Tr = T.LalinTree
 local Bn = T.LalinBind
 local C = T.LalinC
 local CodeType = require("lalin.code_type")(T)
-local Helpers = require("lalin.c_helpers")(T)
-local Validate = require("lalin.c_validate")(T)
+local Helpers = require("lalin.emit_c_helpers")(T)
+local Validate = require("lalin.emit_c_validate")(T)
 
 local i32_ty = Ty.TScalar(Core.ScalarI32)
 local cctx = { target = CodeType.default_target({}), layout_env = nil, diagnostics = {}, globals = {}, global_types = {}, global_ids = {}, env = {}, locals = {}, local_types = {}, local_storage = {}, helpers = {}, helpers_by_id = {}, helper_order = {}, sigs = {}, sig_order = {}, types = {}, type_decls_by_id = {} }

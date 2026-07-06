@@ -293,7 +293,7 @@ end
 
 function M.compile(c_source, opts)
     opts = with_vendored_defaults(opts)
-    assert(type(c_source) == "string", "lalin.c_tcc.compile expects C source string")
+    assert(type(c_source) == "string", "lalin.emit_c_tcc.compile expects C source string")
     local lib, avail_err = load_libtcc(opts)
     if not lib then return nil, avail_err end
 

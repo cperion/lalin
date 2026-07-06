@@ -14,7 +14,7 @@ return package "lalin.compiler" {
     world. tree [LalinTree.Module],
     world. checked [LalinTree.TypecheckResult],
     world. code [LalinCode.CodeModule],
-    world. back [LalinBack.Program],
+    world. back [LalinBackend.Program],
     world. diag [LalinDiag.Report],
 
     machine. lalin_typecheck {
@@ -26,12 +26,12 @@ return package "lalin.compiler" {
         capabilities { "diagnostics", "source_index" },
     },
 
-    machine. lalin_tree_to_code {
+    machine. lalin_tree_lower {
         from. checked,
         to. code,
         diagnostics. diag,
         abi. process,
-        impl. lalin { module = "lalin.tree_to_code", func = "lower" },
+        impl. lalin { module = "lalin.tree_lower", func = "lower" },
     },
 
     machine. lalin_lower_to_back {
@@ -51,13 +51,13 @@ return package "lalin.compiler" {
         machine. lalin_typecheck,
     },
 
-    phase. tree_to_code {
+    phase. tree_lower {
         from. checked,
         to. code,
         diagnostics. diag,
         cache. node,
         deterministic(true),
-        machine. lalin_tree_to_code,
+        machine. lalin_tree_lower,
     },
 
     phase. lower_to_back {
@@ -107,12 +107,12 @@ assert(machine.impl.function_name == "typecheck")
 assert(machine.capabilities[1] == "diagnostics")
 
 local phase = pkg.phases[2]
-assert(phase.id.text == "tree_to_code")
+assert(phase.id.text == "tree_lower")
 assert(phase.input.text == "checked")
 assert(phase.output.text == "code")
 assert(phase.cache == P.CacheNode)
 assert(phase.deterministic == true)
-assert(phase.machine.text == "lalin_tree_to_code")
+assert(phase.machine.text == "lalin_tree_lower")
 
 assert(pkg.roots[1].id.text == "compile")
 assert(pkg.roots[1].input.text == "tree")

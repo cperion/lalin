@@ -163,6 +163,12 @@ return schema. LalinLower {
     insts [many [LalinLower.LowerAddressInstUse]],
     proofs [many [LalinLower.LowerProof]],
   },
+  product. LowerBackSpine {
+    interned,
+    code_module [LalinCode.CodeModule],
+    graph [LalinGraph.CodeGraph],
+    target [LalinC.CBackendTarget],
+  },
   product. LowerBackEmitInput {
     code_module [LalinCode.CodeModule],
     graph [LalinGraph.CodeGraph],

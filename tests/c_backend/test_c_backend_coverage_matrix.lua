@@ -2,7 +2,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
-local Coverage = require("lalin.c_coverage")
+local Coverage = require("lalin.emit_c_coverage")
 
 local T = asdl.context(); Schema(T)
 
@@ -93,7 +93,7 @@ for sum_name, expected_variants in pairs(expected) do
     for variant in pairs(expected_variants) do
         local c = actual[variant]
         assert(c ~= nil, "missing coverage classification for " .. sum_name .. "." .. variant)
-        assert(VALID[c.status], "invalid final tree_to_code/code_validate/code_to_c coverage status for " .. sum_name .. "." .. variant .. ": " .. tostring(c.status))
+        assert(VALID[c.status], "invalid final tree_lower/code_validate/code_to_c coverage status for " .. sum_name .. "." .. variant .. ": " .. tostring(c.status))
         assert(type(c.section) == "string" and c.section ~= "", "missing section for " .. sum_name .. "." .. variant)
         assert(type(c.reason) == "string" and c.reason ~= "", "missing reason for " .. sum_name .. "." .. variant)
         if c.status ~= "supported" then

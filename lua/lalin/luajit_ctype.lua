@@ -17,10 +17,11 @@ local function bind_context(T)
     if T._lalin_api_cache.luajit_ctype ~= nil then return T._lalin_api_cache.luajit_ctype end
 
     local Code = T.LalinCode
-    local Back = T.LalinBack
+    local Backend = T.LalinBackend
     local Ty = T.LalinType
     local Sem = T.LalinSem
     local LJ = T.LalinLuaJIT
+    local CEm = T.LalinCEmit
     local CodeType = require("lalin.code_type")(T)
 
     local api = {}
@@ -67,57 +68,57 @@ local function bind_context(T)
     end
 
     local function scalar_spelling(scalar)
-        if scalar == Back.BackVoid then return "void" end
-        if scalar == Back.BackBool then return "uint8_t" end
-        if scalar == Back.BackI8 then return "int8_t" end
-        if scalar == Back.BackI16 then return "int16_t" end
-        if scalar == Back.BackI32 then return "int32_t" end
-        if scalar == Back.BackI64 then return "int64_t" end
-        if scalar == Back.BackU8 then return "uint8_t" end
-        if scalar == Back.BackU16 then return "uint16_t" end
-        if scalar == Back.BackU32 then return "uint32_t" end
-        if scalar == Back.BackU64 then return "uint64_t" end
-        if scalar == Back.BackF32 then return "float" end
-        if scalar == Back.BackF64 then return "double" end
-        if scalar == Back.BackIndex then return "intptr_t" end
-        if scalar == Back.BackPtr then return "void*" end
+        if scalar == Backend.BackVoid then return "void" end
+        if scalar == Backend.BackBool then return "uint8_t" end
+        if scalar == Backend.BackI8 then return "int8_t" end
+        if scalar == Backend.BackI16 then return "int16_t" end
+        if scalar == Backend.BackI32 then return "int32_t" end
+        if scalar == Backend.BackI64 then return "int64_t" end
+        if scalar == Backend.BackU8 then return "uint8_t" end
+        if scalar == Backend.BackU16 then return "uint16_t" end
+        if scalar == Backend.BackU32 then return "uint32_t" end
+        if scalar == Backend.BackU64 then return "uint64_t" end
+        if scalar == Backend.BackF32 then return "float" end
+        if scalar == Backend.BackF64 then return "double" end
+        if scalar == Backend.BackIndex then return "intptr_t" end
+        if scalar == Backend.BackPtr then return "void*" end
         error("luajit_ctype: unsupported BackScalar " .. class_name(scalar), 2)
     end
 
     local function scalar_ctype(scalar)
-        if scalar == Back.BackVoid then return LJ.LJCTypeVoid end
-        if scalar == Back.BackPtr then return LJ.LJCTypePointer(nil, true) end
+        if scalar == Backend.BackVoid then return LJ.LJCTypeVoid end
+        if scalar == Backend.BackPtr then return LJ.LJCTypePointer(nil, true) end
         return LJ.LJCTypeScalar(scalar, scalar_spelling(scalar))
     end
 
     local function scalar_register_rep(scalar)
-        if scalar == Back.BackVoid then return LJ.LJRegVoid end
-        if scalar == Back.BackBool then return LJ.LJRegLuaBoolean end
-        if scalar == Back.BackI8 then return LJ.LJRegTraceInt32(8, Code.CodeSigned) end
-        if scalar == Back.BackI16 then return LJ.LJRegTraceInt32(16, Code.CodeSigned) end
-        if scalar == Back.BackI32 then return LJ.LJRegTraceInt32(32, Code.CodeSigned) end
-        if scalar == Back.BackU8 then return LJ.LJRegTraceInt32(8, Code.CodeUnsigned) end
-        if scalar == Back.BackU16 then return LJ.LJRegTraceInt32(16, Code.CodeUnsigned) end
-        if scalar == Back.BackU32 then return LJ.LJRegTraceInt32(32, Code.CodeUnsigned) end
-        if scalar == Back.BackI64 or scalar == Back.BackU64 or scalar == Back.BackPtr then
+        if scalar == Backend.BackVoid then return LJ.LJRegVoid end
+        if scalar == Backend.BackBool then return LJ.LJRegLuaBoolean end
+        if scalar == Backend.BackI8 then return LJ.LJRegTraceInt32(8, Code.CodeSigned) end
+        if scalar == Backend.BackI16 then return LJ.LJRegTraceInt32(16, Code.CodeSigned) end
+        if scalar == Backend.BackI32 then return LJ.LJRegTraceInt32(32, Code.CodeSigned) end
+        if scalar == Backend.BackU8 then return LJ.LJRegTraceInt32(8, Code.CodeUnsigned) end
+        if scalar == Backend.BackU16 then return LJ.LJRegTraceInt32(16, Code.CodeUnsigned) end
+        if scalar == Backend.BackU32 then return LJ.LJRegTraceInt32(32, Code.CodeUnsigned) end
+        if scalar == Backend.BackI64 or scalar == Backend.BackU64 or scalar == Backend.BackPtr then
             return LJ.LJRegCData(scalar_ctype(scalar))
         end
         return LJ.LJRegLuaNumber
     end
 
     local function code_scalar(ty)
-        if ty == Code.CodeTyVoid then return Back.BackVoid end
-        if ty == Code.CodeTyBool8 then return Back.BackBool end
-        if ty == Code.CodeTyIndex then return Back.BackIndex end
+        if ty == Code.CodeTyVoid then return Backend.BackVoid end
+        if ty == Code.CodeTyBool8 then return Backend.BackBool end
+        if ty == Code.CodeTyIndex then return Backend.BackIndex end
         local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then
-            if ty.bits == 8 then return ty.signedness == Code.CodeSigned and Back.BackI8 or Back.BackU8 end
-            if ty.bits == 16 then return ty.signedness == Code.CodeSigned and Back.BackI16 or Back.BackU16 end
-            if ty.bits == 32 then return ty.signedness == Code.CodeSigned and Back.BackI32 or Back.BackU32 end
-            if ty.bits == 64 then return ty.signedness == Code.CodeSigned and Back.BackI64 or Back.BackU64 end
+            if ty.bits == 8 then return ty.signedness == Code.CodeSigned and Backend.BackI8 or Backend.BackU8 end
+            if ty.bits == 16 then return ty.signedness == Code.CodeSigned and Backend.BackI16 or Backend.BackU16 end
+            if ty.bits == 32 then return ty.signedness == Code.CodeSigned and Backend.BackI32 or Backend.BackU32 end
+            if ty.bits == 64 then return ty.signedness == Code.CodeSigned and Backend.BackI64 or Backend.BackU64 end
         elseif cls == Code.CodeTyFloat then
-            if ty.bits == 32 then return Back.BackF32 end
-            if ty.bits == 64 then return Back.BackF64 end
+            if ty.bits == 32 then return Backend.BackF32 end
+            if ty.bits == 64 then return Backend.BackF64 end
         end
         return nil
     end
@@ -202,7 +203,7 @@ local function bind_context(T)
             local lines = { "struct " .. spelling .. " {" }
             for i = 1, #(layout.fields or {}) do
                 local field = layout.fields[i]
-                local field_code_ty = CodeType.type_to_code(field.ty, ctx)
+                local field_code_ty = select(1, CodeType.type_to_code(T.LalinTreeLower.TreeLowerModuleSigState("_dummy", {}, {}), field.ty))
                 local field_physical = physical_type(field_code_ty, ctx)
                 lines[#lines + 1] = "  " .. ctype_spelling(field_physical.storage, ctx) .. " " .. sanitize(field.field_name) .. ";"
             end
@@ -267,21 +268,21 @@ local function bind_context(T)
             local elem = physical_type(ty.elem, ctx)
             return descriptor_struct(ctx, "slice", ty, {
                 LJ.LJCField("data", LJ.LJCTypePointer(elem.storage, true), nil, nil, nil),
-                LJ.LJCField("len", scalar_ctype(Back.BackIndex), nil, nil, nil),
+                LJ.LJCField("len", scalar_ctype(Backend.BackIndex), nil, nil, nil),
             })
         end
         if cls == Code.CodeTyByteSpan or ty == Code.CodeTyByteSpan then
             return descriptor_struct(ctx, "bytespan", ty, {
-                LJ.LJCField("data", LJ.LJCTypePointer(scalar_ctype(Back.BackU8), true), nil, nil, nil),
-                LJ.LJCField("len", scalar_ctype(Back.BackIndex), nil, nil, nil),
+                LJ.LJCField("data", LJ.LJCTypePointer(scalar_ctype(Backend.BackU8), true), nil, nil, nil),
+                LJ.LJCField("len", scalar_ctype(Backend.BackIndex), nil, nil, nil),
             })
         end
         if cls == Code.CodeTyView then
             local elem = physical_type(ty.elem, ctx)
             return descriptor_struct(ctx, "view", ty, {
                 LJ.LJCField("data", LJ.LJCTypePointer(elem.storage, true), nil, nil, nil),
-                LJ.LJCField("len", scalar_ctype(Back.BackIndex), nil, nil, nil),
-                LJ.LJCField("stride", scalar_ctype(Back.BackIndex), nil, nil, nil),
+                LJ.LJCField("len", scalar_ctype(Backend.BackIndex), nil, nil, nil),
+                LJ.LJCField("stride", scalar_ctype(Backend.BackIndex), nil, nil, nil),
             })
         end
         if cls == Code.CodeTyHandle then return ctype_for_code_type(ty.repr, ctx) end
@@ -320,21 +321,21 @@ local function bind_context(T)
         if cls == Code.CodeTySlice then
             local elem = physical_type(ty.elem, ctx)
             local data = LJ.LJCField("data", LJ.LJCTypePointer(elem.storage, true), nil, nil, nil)
-            local len = LJ.LJCField("len", scalar_ctype(Back.BackIndex), nil, nil, nil)
+            local len = LJ.LJCField("len", scalar_ctype(Backend.BackIndex), nil, nil, nil)
             local cty = ctype_for_code_type(ty, ctx)
             return LJ.LJPhysicalType(ty, LJ.LJRegTuple({ data, len }), cty, cty)
         end
         if cls == Code.CodeTyByteSpan or ty == Code.CodeTyByteSpan then
-            local data = LJ.LJCField("data", LJ.LJCTypePointer(scalar_ctype(Back.BackU8), true), nil, nil, nil)
-            local len = LJ.LJCField("len", scalar_ctype(Back.BackIndex), nil, nil, nil)
+            local data = LJ.LJCField("data", LJ.LJCTypePointer(scalar_ctype(Backend.BackU8), true), nil, nil, nil)
+            local len = LJ.LJCField("len", scalar_ctype(Backend.BackIndex), nil, nil, nil)
             local cty = ctype_for_code_type(ty, ctx)
             return LJ.LJPhysicalType(ty, LJ.LJRegTuple({ data, len }), cty, cty)
         end
         if cls == Code.CodeTyView then
             local elem = physical_type(ty.elem, ctx)
             local data = LJ.LJCField("data", LJ.LJCTypePointer(elem.storage, true), nil, nil, nil)
-            local len = LJ.LJCField("len", scalar_ctype(Back.BackIndex), nil, nil, nil)
-            local stride = LJ.LJCField("stride", scalar_ctype(Back.BackIndex), nil, nil, nil)
+            local len = LJ.LJCField("len", scalar_ctype(Backend.BackIndex), nil, nil, nil)
+            local stride = LJ.LJCField("stride", scalar_ctype(Backend.BackIndex), nil, nil, nil)
             local cty = ctype_for_code_type(ty, ctx)
             return LJ.LJPhysicalType(ty, LJ.LJRegTuple({ data, len, stride }), cty, cty)
         end
@@ -351,7 +352,8 @@ local function bind_context(T)
 
     local function type_to_physical(lalin_ty, ctx)
         local CodeType = require("lalin.code_type")(T)
-        return physical_type(CodeType.type_to_code(lalin_ty, ctx), ctx)
+        local CEm = T.LalinCEmit
+        return physical_type(select(1, CodeType.type_to_code(T.LalinTreeLower.TreeLowerModuleSigState("_dummy", {}, {}), lalin_ty)), ctx)
     end
 
     api.code_type_key = code_type_key

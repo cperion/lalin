@@ -6,7 +6,7 @@ local T = asdl.context(); Schema(T)
 
 local Core = T.LalinCore
 local C = T.LalinC
-local H = require("lalin.c_helpers")(T)
+local H = require("lalin.emit_c_helpers")(T)
 
 local function exec_ok(cmd)
     local r = os.execute(cmd)

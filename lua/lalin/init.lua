@@ -46,25 +46,23 @@ M.loader = require("lalin.loader")
 M.path = M.loader.path
 M.lalin = M.dsl.namespace()
 M.lln = M.dsl.namespace { name = "lln" }
-M.back_program = require("lalin.back_program")
-M.back_target_model = require("lalin.back_target_model")
-M.back_inspect = require("lalin.back_inspect")
+M.backend_target_model = require("lalin.backend_target_model")
 M.link_target_model = require("lalin.link_target_model")
 M.link_plan_validate = require("lalin.link_plan_validate")
 M.link_command_plan = require("lalin.link_command_plan")
 M.link_execute = require("lalin.link_execute")
 M.code_type = require("lalin.code_type")
 M.code_validate = require("lalin.code_validate")
-M.tree_to_code = require("lalin.tree_to_code")
+M.tree_lower = require("lalin.tree_lower")
 M.code_to_c = require("lalin.code_to_c")
 M.exec_plan = require("lalin.exec_plan")
 M.stencil_methods = require("lalin.stencil_methods")
 M.stencil_artifact_plan = require("lalin.stencil_artifact_plan")
-M.c_validate = require("lalin.c_validate")
-M.c_emit = require("lalin.c_emit")
-M.c_helpers = require("lalin.c_helpers")
-M.c_tcc = require("lalin.c_tcc")
-M.c_gcc = require("lalin.c_gcc")
+M.emit_c_validate = require("lalin.emit_c_validate")
+M.emit_c_lower = require("lalin.emit_c_lower")
+M.emit_c_helpers = require("lalin.emit_c_helpers")
+M.emit_c_tcc = require("lalin.emit_c_tcc")
+M.emit_c_compile = require("lalin.emit_c_compile")
 M.native = require("lalin.native")
 M.native_mc = require("lalin.native_mc")
 M.native_backend = require("lalin.native_backend")
@@ -757,7 +755,7 @@ local function prepare_c_backend(decl, name, opts)
         c_target = opts.c_target,
         c_opts = opts.c_opts,
         target_model = opts.target_model,
-        back_target_model = opts.back_target_model,
+        back_target_model = opts.backend_target_model,
     })
     if opts.reject_on_c_issues ~= false and c_result.c_report and c_result.c_report.issues and #c_result.c_report.issues ~= 0 then
         local messages = {}
@@ -781,7 +779,7 @@ end
 function prepare_c_artifact(decl, name, opts)
     opts = opts or {}
     local plan = prepare_c_backend(decl, name, opts)
-    local Emit = require("lalin.c_emit")(plan.context)
+    local Emit = require("lalin.emit_c_lower")(plan.context)
     local artifact = Emit.emit_artifact(plan.c_unit, opts)
     artifact.kind = "CBackendArtifact"
     artifact.name = plan.name
@@ -857,7 +855,7 @@ function prepare_luajit_artifact(decl, name, opts)
         effect = opts.effect,
         kernel = opts.kernel,
         target_model = opts.target_model,
-        back_target_model = opts.back_target_model,
+        back_target_model = opts.backend_target_model,
         target = opts.target,
         schedule = opts.schedule,
         schedule_plan = opts.schedule_plan,
@@ -1060,7 +1058,7 @@ function M.compile_c(decl, opts)
         artifact:write(opts)
     end
     local c_src = artifact.combined
-    local CTcc = require("lalin.c_tcc")
+    local CTcc = require("lalin.emit_c_tcc")
     if opts.runner == "libtcc" or opts.use_libtcc or os.getenv("LALIN_C_USE_LIBTCC") == "1" then
         local session, err = CTcc.compile(c_src, opts.libtcc_opts or { libraries = { "m" } })
         if not session then error(err and err.message or "libtcc compile failed", 2) end
@@ -1068,9 +1066,9 @@ function M.compile_c(decl, opts)
         return session, c_src
     end
     if opts.runner == "gcc" or opts.use_gcc or os.getenv("LALIN_C_USE_GCC") == "1" then
-        local CGcc = require("lalin.c_gcc")
+        local CGcc = require("lalin.emit_c_compile")
         local gcc_opts = {}
-        for k, v in pairs(opts.gcc_opts or opts.c_gcc_opts or opts) do gcc_opts[k] = v end
+        for k, v in pairs(opts.gcc_opts or opts.emit_c_compile_opts or opts) do gcc_opts[k] = v end
         gcc_opts.name = gcc_opts.name or opts.name or artifact.name
         local session, err = CGcc.compile(c_src, gcc_opts)
         if not session then error(err and err.message or "gcc C compile failed", 2) end

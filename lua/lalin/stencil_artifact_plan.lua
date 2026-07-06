@@ -75,8 +75,9 @@ local function bind_context(T)
     local Kernel = T.LalinKernel
     local Stencil = T.LalinStencil
     local Schedule = T.LalinSchedule
+    local CEm = T.LalinCEmit
     local CodeType = require("lalin.code_type")(T)
-    local CEmit = require("lalin.c_emit")(T)
+    local CEmit = require("lalin.emit_c_lower")(T)
     local ReductionAlgebra = require("lalin.reduction_algebra")(T)
 
     local api = {}
@@ -96,7 +97,7 @@ local function bind_context(T)
         if cls == Code.CodeTyClosure then return "ml_closure_" .. sanitize(ty.sig.text) end
         if cls == Code.CodeTyVector then return "ml_vector_" .. tostring(ty.lanes) .. "_" .. type_name(ty.elem) end
         if cls == Code.CodeTyImportedCFuncPtr then return "ml_cfuncptr_" .. sanitize(ty.sig.text) end
-        return CEmit.emit_type(CodeType.code_type_to_c(ty, {}))
+        return CEmit.emit_type(select(1, CodeType.code_type_to_c(CEm.CEmitMachine.dummy(), ty)))
     end
 
     local function reduction_name(kind)

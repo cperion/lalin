@@ -31,7 +31,7 @@ local tables = {
     },
 
     ["LalinType.ArrayLen"] = {
-        ArrayLenExpr = language_rejected("C_BACKEND_DESIGN.md §6", "Dynamic array lengths are rejected during typechecking; C storage arrays require ArrayLenConst before tree_to_code/code_to_c lowering."),
+        ArrayLenExpr = language_rejected("C_BACKEND_DESIGN.md §6", "Dynamic array lengths are rejected during typechecking; C storage arrays require ArrayLenConst before tree_lower/code_to_c lowering."),
         ArrayLenConst = supported("C_BACKEND_DESIGN.md §6", "Constant array lengths lower to fixed CBackendArray storage types."),
     },
 
@@ -81,7 +81,7 @@ local tables = {
     ["LalinTree.Place"] = {
         PlaceRef = supported("C_BACKEND_DESIGN.md §9", "Value references lower to residence-aware local/global places."),
         PlaceDeref = supported("C_BACKEND_DESIGN.md §9", "Pointer dereferences lower to typed or byte-addressed places."),
-        PlaceDot = phase_unreachable("C_BACKEND_DESIGN.md §9", "Raw field names must be resolved to PlaceField before tree_to_code lowering."),
+        PlaceDot = phase_unreachable("C_BACKEND_DESIGN.md §9", "Raw field names must be resolved to PlaceField before tree_lower lowering."),
         PlaceField = supported("C_BACKEND_DESIGN.md §9", "Resolved semantic field refs lower by layout offset and field type."),
         PlaceIndex = supported("C_BACKEND_DESIGN.md §9", "Array/pointer/view indexing lowers with target-aware element-size calculation."),
     },
@@ -89,7 +89,7 @@ local tables = {
     ["LalinTree.Expr"] = {
         ExprLit = supported("C_BACKEND_DESIGN.md §8", "Integer/float/bool/string/nil literals lower with exact literal preservation or diagnostics."),
         ExprRef = supported("C_BACKEND_DESIGN.md §8", "Resolved value references lower through exact symbol and residence tables."),
-        ExprDot = phase_unreachable("C_BACKEND_DESIGN.md §9", "Raw dot access must be resolved to ExprField before tree_to_code lowering."),
+        ExprDot = phase_unreachable("C_BACKEND_DESIGN.md §9", "Raw dot access must be resolved to ExprField before tree_lower lowering."),
         ExprUnary = supported("C_BACKEND_DESIGN.md §8", "Unary operators lower through UB-free helper or direct safe operations."),
         ExprBinary = supported("C_BACKEND_DESIGN.md §8", "Binary operators lower through UB-free arithmetic/bitwise/shift helpers."),
         ExprCompare = supported("C_BACKEND_DESIGN.md §8", "Comparisons lower to explicit bool8 compare rvalues."),
@@ -178,7 +178,7 @@ local tables = {
         ItemExtern = supported("C_BACKEND_DESIGN.md §17", "Extern items lower through the ExternFunc classification table."),
         ItemConst = supported("C_BACKEND_DESIGN.md §17", "Const items lower through the ConstItem classification table."),
         ItemStatic = supported("C_BACKEND_DESIGN.md §17", "Static items lower through exact data/global lowering."),
-        ItemImport = phase_unreachable("C_BACKEND_DESIGN.md §17", "Unresolved imports must not reach tree_to_code/code_to_c lowering; the pipeline reports them explicitly."),
+        ItemImport = phase_unreachable("C_BACKEND_DESIGN.md §17", "Unresolved imports must not reach tree_lower/code_to_c lowering; the pipeline reports them explicitly."),
         ItemType = supported("C_BACKEND_DESIGN.md §17", "Type items lower through layout-backed C declarations."),
         ItemRegion = phase_unreachable("C_BACKEND_DESIGN.md §17", "Closed region declarations are typechecked/frontend control artifacts and do not lower as module items."),
         ItemData = supported("C_BACKEND_DESIGN.md §16", "Data items lower to exact byte/global initializers."),
@@ -257,12 +257,12 @@ local tables = {
     },
 
     ["LalinCore.SurfaceCastOp"] = {
-        SurfaceCast = phase_unreachable("C_BACKEND_DESIGN.md §8", "Surface casts must be typechecked into machine casts before tree_to_code lowering."),
-        SurfaceTrunc = phase_unreachable("C_BACKEND_DESIGN.md §8", "Surface trunc casts must not reach tree_to_code lowering directly."),
-        SurfaceZExt = phase_unreachable("C_BACKEND_DESIGN.md §8", "Surface zero-extend casts must not reach tree_to_code lowering directly."),
-        SurfaceSExt = phase_unreachable("C_BACKEND_DESIGN.md §8", "Surface sign-extend casts must not reach tree_to_code lowering directly."),
-        SurfaceBitcast = phase_unreachable("C_BACKEND_DESIGN.md §8", "Surface bitcasts must not reach tree_to_code lowering directly."),
-        SurfaceSatCast = phase_unreachable("C_BACKEND_DESIGN.md §8", "Surface saturating casts must not reach tree_to_code lowering directly."),
+        SurfaceCast = phase_unreachable("C_BACKEND_DESIGN.md §8", "Surface casts must be typechecked into machine casts before tree_lower lowering."),
+        SurfaceTrunc = phase_unreachable("C_BACKEND_DESIGN.md §8", "Surface trunc casts must not reach tree_lower lowering directly."),
+        SurfaceZExt = phase_unreachable("C_BACKEND_DESIGN.md §8", "Surface zero-extend casts must not reach tree_lower lowering directly."),
+        SurfaceSExt = phase_unreachable("C_BACKEND_DESIGN.md §8", "Surface sign-extend casts must not reach tree_lower lowering directly."),
+        SurfaceBitcast = phase_unreachable("C_BACKEND_DESIGN.md §8", "Surface bitcasts must not reach tree_lower lowering directly."),
+        SurfaceSatCast = phase_unreachable("C_BACKEND_DESIGN.md §8", "Surface saturating casts must not reach tree_lower lowering directly."),
     },
 
     ["LalinCore.MachineCastOp"] = {

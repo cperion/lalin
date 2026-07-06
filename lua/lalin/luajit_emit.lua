@@ -8,7 +8,7 @@ local function bind_context(T)
     local Code = T.LalinCode
     local Value = T.LalinValue
     local LJ = T.LalinLuaJIT
-    local Back = T.LalinBack
+    local Backend = T.LalinBackend
 
     local api = {}
 
@@ -73,8 +73,8 @@ local function bind_context(T)
         local cls = asdl.classof(e.literal)
         if cls == Core.LitInt and is_cdata_reg(e.ty) and asdl.classof(e.ty.storage) == LJ.LJCTypeScalar then
             local scalar = e.ty.storage.scalar
-            if scalar == Back.BackI64 then return tostring(e.literal.raw) .. "LL" end
-            if scalar == Back.BackU64 then return tostring(e.literal.raw) .. "ULL" end
+            if scalar == Backend.BackI64 then return tostring(e.literal.raw) .. "LL" end
+            if scalar == Backend.BackU64 then return tostring(e.literal.raw) .. "ULL" end
         end
         return literal(e.literal)
     end
@@ -823,8 +823,8 @@ local function bind_context(T)
             local storage = phys and phys.storage
             if asdl.classof(storage) == LJ.LJCTypeScalar then
                 local scalar = storage.scalar
-                if scalar == Back.BackI64 then suffix = "LL"
-                elseif scalar == Back.BackU64 then suffix = "ULL" end
+                if scalar == Backend.BackI64 then suffix = "LL"
+                elseif scalar == Backend.BackU64 then suffix = "ULL" end
             end
             return tostring(lit.raw) .. suffix
         end

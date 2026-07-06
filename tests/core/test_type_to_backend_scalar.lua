@@ -2,14 +2,14 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local asdl = require("lalin.asdl")
 local A = require("lalin.schema_projection")
-local Scalar = require("lalin.type_to_back_scalar")
+local Scalar = require("lalin.type_to_backend_scalar")
 
 local T = asdl.context()
 A(T)
 local L = Scalar(T)
 local C = T.LalinCore
 local Ty = T.LalinType
-local B = T.LalinBack
+local B = T.LalinBackend
 
 local function known(ty, scalar)
     assert(L.result(ty) == Ty.TypeBackScalarKnown(scalar))
@@ -44,4 +44,4 @@ unavailable(Ty.TView(i32))
 known(Ty.TClosure({ i32 }, i32), B.BackPtr)
 unavailable(Ty.TNamed(Ty.TypeRefGlobal("Demo", "Pair")))
 
-print("lalin type_to_back_scalar ok")
+print("lalin type_to_backend_scalar ok")

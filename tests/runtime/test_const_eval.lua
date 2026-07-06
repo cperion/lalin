@@ -2,7 +2,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local asdl = require("lalin.asdl")
 local A = require("lalin.schema_projection")
-local Const = require("lalin.sem_const_eval")
+local Const = require("lalin.const_eval")
 
 local T = asdl.context()
 A(T)
@@ -48,4 +48,4 @@ local result = E.stmts({
 })
 assert(result == Sem.ConstReturnValue(Sem.ConstLocalEnv({ Sem.ConstLocalEntry(x, Sem.ConstInt(i32, "4")) }), Sem.ConstInt(i32, "10")))
 
-print("lalin sem_const_eval ok")
+print("lalin const_eval ok")

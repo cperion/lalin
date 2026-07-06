@@ -9,21 +9,21 @@ Schema(T)
 local Core = T.LalinCore
 local Ty = T.LalinType
 local Code = T.LalinCode
-local Back = T.LalinBack
+local Backend = T.LalinBackend
 local LJ = T.LalinLuaJIT
 local CType = require("lalin.luajit_ctype")(T)
 
 local function cls(value) return asdl.classof(value) end
 
-assert(CType.scalar_spelling(Back.BackI32) == "int32_t")
-assert(CType.scalar_spelling(Back.BackIndex) == "intptr_t")
-assert(CType.scalar_ctype(Back.BackI32) == LJ.LJCTypeScalar(Back.BackI32, "int32_t"))
-assert(CType.scalar_register_rep(Back.BackI32) == LJ.LJRegTraceInt32(32, Code.CodeSigned))
-assert(CType.scalar_register_rep(Back.BackU32) == LJ.LJRegTraceInt32(32, Code.CodeUnsigned))
-assert(CType.scalar_register_rep(Back.BackF64) == LJ.LJRegLuaNumber)
-assert(CType.scalar_register_rep(Back.BackBool) == LJ.LJRegLuaBoolean)
-assert(cls(CType.scalar_register_rep(Back.BackI64)) == LJ.LJRegCData)
-assert(cls(CType.scalar_register_rep(Back.BackPtr)) == LJ.LJRegCData)
+assert(CType.scalar_spelling(Backend.BackI32) == "int32_t")
+assert(CType.scalar_spelling(Backend.BackIndex) == "intptr_t")
+assert(CType.scalar_ctype(Backend.BackI32) == LJ.LJCTypeScalar(Backend.BackI32, "int32_t"))
+assert(CType.scalar_register_rep(Backend.BackI32) == LJ.LJRegTraceInt32(32, Code.CodeSigned))
+assert(CType.scalar_register_rep(Backend.BackU32) == LJ.LJRegTraceInt32(32, Code.CodeUnsigned))
+assert(CType.scalar_register_rep(Backend.BackF64) == LJ.LJRegLuaNumber)
+assert(CType.scalar_register_rep(Backend.BackBool) == LJ.LJRegLuaBoolean)
+assert(cls(CType.scalar_register_rep(Backend.BackI64)) == LJ.LJRegCData)
+assert(cls(CType.scalar_register_rep(Backend.BackPtr)) == LJ.LJRegCData)
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local u64 = Code.CodeTyInt(64, Code.CodeUnsigned)
@@ -31,12 +31,12 @@ local f64 = Code.CodeTyFloat(64)
 
 local p_i32 = CType.physical_type(i32, {})
 assert(p_i32.register == LJ.LJRegTraceInt32(32, Code.CodeSigned))
-assert(p_i32.storage == LJ.LJCTypeScalar(Back.BackI32, "int32_t"))
+assert(p_i32.storage == LJ.LJCTypeScalar(Backend.BackI32, "int32_t"))
 assert(p_i32.abi == p_i32.storage)
 
 local p_u64 = CType.physical_type(u64, {})
 assert(cls(p_u64.register) == LJ.LJRegCData)
-assert(p_u64.storage == LJ.LJCTypeScalar(Back.BackU64, "uint64_t"))
+assert(p_u64.storage == LJ.LJCTypeScalar(Backend.BackU64, "uint64_t"))
 
 local p_f64 = CType.physical_type(f64, {})
 assert(p_f64.register == LJ.LJRegLuaNumber)

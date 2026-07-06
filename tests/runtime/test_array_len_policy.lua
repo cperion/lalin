@@ -8,7 +8,7 @@ local Core = T.LalinCore
 local Ty = T.LalinType
 local Tr = T.LalinTree
 local Typecheck = require("lalin.tree_typecheck")(T)
-local Coverage = require("lalin.c_coverage")
+local Coverage = require("lalin.emit_c_coverage")
 
 local i32 = Ty.TScalar(Core.ScalarI32)
 local dyn_len = Ty.ArrayLenExpr(Tr.ExprLit(Tr.ExprTyped(i32), Core.LitInt("3")))

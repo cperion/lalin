@@ -2,7 +2,7 @@ local ffi = require("ffi")
 
 local function bind_context(T)
     local Link = T.LalinLink
-    local BackTarget = require("lalin.back_target_model")(T)
+    local BackTarget = require("lalin.backend_target_model")(T)
     assert(Link, "lalin.link_target_model(T) expects lalin.schema_projection in the context")
 
     local api = {}

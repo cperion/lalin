@@ -4,8 +4,8 @@ local function bind_context(T)
 
     local Core = T.LalinCore
     local C = T.LalinC
-    require("lalin.c_emit")(T)
-    local Coverage = require("lalin.c_coverage")
+    require("lalin.emit_c_lower")(T)
+    local Coverage = require("lalin.emit_c_coverage")
 
     local function is_c_name(s)
         return type(s) == "string" and s:match("^[A-Za-z_][A-Za-z0-9_]*$") ~= nil

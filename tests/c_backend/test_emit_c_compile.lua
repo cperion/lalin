@@ -1,7 +1,7 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local lalin = require("lalin")
-local c_gcc = require("lalin.c_gcc")
+local c_gcc = require("lalin.emit_c_compile")
 
 local ok, why = c_gcc.available()
 assert(type(ok) == "boolean", "available returns boolean")
@@ -31,4 +31,4 @@ local add = assert(session:symbol("add", "int32_t (*)(int32_t, int32_t)"))
 assert(add(20, 22) == 42, "gcc-compiled emit_c symbol should execute through LuaJIT FFI")
 session:free()
 
-io.write("lalin.c_gcc compile-run ok\n")
+io.write("lalin.emit_c_compile compile-run ok\n")

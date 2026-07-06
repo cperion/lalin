@@ -73,7 +73,7 @@ return schema. LalinType {
     TypeShapeUnknown,
   },
   sum. TypeBackScalarResult {
-    TypeBackScalarKnown { variant_unique, scalar [LalinBack.BackScalar], },
+    TypeBackScalarKnown { variant_unique, scalar [LalinBackend.BackScalar], },
     TypeBackScalarUnavailable {
       variant_unique,
       field. ty [LalinType.Type],
@@ -90,7 +90,7 @@ return schema. LalinType {
   },
   sum. AbiClass {
     AbiIgnore,
-    AbiDirect { variant_unique, scalar [LalinBack.BackScalar], },
+    AbiDirect { variant_unique, scalar [LalinBackend.BackScalar], },
     AbiIndirect { variant_unique, layout [LalinSem.MemLayout], },
     AbiDescriptor { variant_unique, layout [LalinSem.MemLayout], },
     AbiUnknown { variant_unique, shape [LalinType.TypeShape], },
@@ -105,16 +105,16 @@ return schema. LalinType {
       variant_unique,
       field. name [str],
       binding [LalinBind.Binding],
-      scalar [LalinBack.BackScalar],
-      field. value [LalinBack.BackValId],
+      scalar [LalinBackend.BackScalar],
+      field. value [LalinBackend.BackValId],
     },
     AbiParamView {
       variant_unique,
       field. name [str],
       binding [LalinBind.Binding],
-      data [LalinBack.BackValId],
-      len [LalinBack.BackValId],
-      stride [LalinBack.BackValId],
+      data [LalinBackend.BackValId],
+      len [LalinBackend.BackValId],
+      stride [LalinBackend.BackValId],
     },
     AbiParamRejected {
       variant_unique,
@@ -125,8 +125,8 @@ return schema. LalinType {
   },
   sum. AbiResultPlan {
     AbiResultVoid,
-    AbiResultScalar { variant_unique, scalar [LalinBack.BackScalar], },
-    AbiResultView { variant_unique, elem [LalinType.Type], out [LalinBack.BackValId], },
+    AbiResultScalar { variant_unique, scalar [LalinBackend.BackScalar], },
+    AbiResultView { variant_unique, elem [LalinType.Type], out [LalinBackend.BackValId], },
     AbiResultRejected { variant_unique, field. ty [LalinType.Type], reason [str], },
   },
   product. FuncAbiPlan {

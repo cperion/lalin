@@ -12,24 +12,24 @@ local function bind_context(T)
     local Core = T.LalinCore
     local Code = T.LalinCode
     local Value = T.LalinValue
-    local Back = T.LalinBack
+    local Backend = T.LalinBackend
 
     local api = {}
 
     local function type_info(ty)
-        if ty == Code.CodeTyBool8 then return { class = "bool", bits = 8, signed = false, scalar = Back.BackBool } end
-        if ty == Code.CodeTyIndex then return { class = "index", bits = 64, signed = false, scalar = Back.BackIndex } end
+        if ty == Code.CodeTyBool8 then return { class = "bool", bits = 8, signed = false, scalar = Backend.BackBool } end
+        if ty == Code.CodeTyIndex then return { class = "index", bits = 64, signed = false, scalar = Backend.BackIndex } end
         local cls = asdl.classof(ty)
         if cls == Code.CodeTyInt then
             local signed = ty.signedness == Code.CodeSigned
             local scalar
-            if ty.bits == 8 then scalar = signed and Back.BackI8 or Back.BackU8
-            elseif ty.bits == 16 then scalar = signed and Back.BackI16 or Back.BackU16
-            elseif ty.bits == 32 then scalar = signed and Back.BackI32 or Back.BackU32
-            elseif ty.bits == 64 then scalar = signed and Back.BackI64 or Back.BackU64 end
+            if ty.bits == 8 then scalar = signed and Backend.BackI8 or Backend.BackU8
+            elseif ty.bits == 16 then scalar = signed and Backend.BackI16 or Backend.BackU16
+            elseif ty.bits == 32 then scalar = signed and Backend.BackI32 or Backend.BackU32
+            elseif ty.bits == 64 then scalar = signed and Backend.BackI64 or Backend.BackU64 end
             return { class = "int", bits = ty.bits, signed = signed, scalar = scalar }
         elseif cls == Code.CodeTyFloat then
-            local scalar = ty.bits == 32 and Back.BackF32 or (ty.bits == 64 and Back.BackF64 or nil)
+            local scalar = ty.bits == 32 and Backend.BackF32 or (ty.bits == 64 and Backend.BackF64 or nil)
             return { class = "float", bits = ty.bits, signed = true, scalar = scalar }
         end
         return { class = "unsupported", reason = "unsupported reduction type " .. class_name(ty) }
@@ -62,22 +62,22 @@ local function bind_context(T)
     end
 
     local vector_int_bin = {
-        add = Back.BackVecIntAdd,
-        mul = Back.BackVecIntMul,
-        ["and"] = Back.BackVecBitAnd,
-        ["or"] = Back.BackVecBitOr,
-        xor = Back.BackVecBitXor,
+        add = Backend.BackVecIntAdd,
+        mul = Backend.BackVecIntMul,
+        ["and"] = Backend.BackVecBitAnd,
+        ["or"] = Backend.BackVecBitOr,
+        xor = Backend.BackVecBitXor,
     }
 
     local scalar_int_bin = {
-        add = Back.BackIntAdd,
-        mul = Back.BackIntMul,
+        add = Backend.BackIntAdd,
+        mul = Backend.BackIntMul,
     }
 
     local scalar_bit_bin = {
-        ["and"] = Back.BackBitAnd,
-        ["or"] = Back.BackBitOr,
-        xor = Back.BackBitXor,
+        ["and"] = Backend.BackBitAnd,
+        ["or"] = Backend.BackBitOr,
+        xor = Backend.BackBitXor,
     }
 
     local function identity_raw(name, info)
@@ -99,20 +99,20 @@ local function bind_context(T)
 
     local function minmax_compare(name, info)
         if info.class == "float" then
-            return name == "min" and Back.BackFCmpLe or Back.BackFCmpGe
+            return name == "min" and Backend.BackFCmpLe or Backend.BackFCmpGe
         end
         if info.signed then
-            return name == "min" and Back.BackSIcmpLe or Back.BackSIcmpGe
+            return name == "min" and Backend.BackSIcmpLe or Backend.BackSIcmpGe
         end
-        return name == "min" and Back.BackUIcmpLe or Back.BackUIcmpGe
+        return name == "min" and Backend.BackUIcmpLe or Backend.BackUIcmpGe
     end
 
     local function minmax_vec_compare(name, info)
         if info.class == "float" then return nil, "Back has no vector float compare for reductions" end
         if info.signed then
-            return name == "min" and Back.BackVecSIcmpLe or Back.BackVecSIcmpGe
+            return name == "min" and Backend.BackVecSIcmpLe or Backend.BackVecSIcmpGe
         end
-        return name == "min" and Back.BackVecUIcmpLe or Back.BackVecUIcmpGe
+        return name == "min" and Backend.BackVecUIcmpLe or Backend.BackVecUIcmpGe
     end
 
     local function entry(op, ty)

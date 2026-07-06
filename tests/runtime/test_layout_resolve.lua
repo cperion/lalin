@@ -2,7 +2,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local asdl = require("lalin.asdl")
 local A = require("lalin.schema_projection")
-local Layout = require("lalin.sem_layout_resolve")
+local Layout = require("lalin.layout_resolve")
 
 local T = asdl.context()
 A(T)
@@ -46,4 +46,4 @@ local module = Tr.Module(Tr.ModuleTyped("Demo"), {
 local resolved = L.module(module, env)
 assert(resolved.items[1].func.body[1].value.field == Sem.FieldByOffset("right", 4, i32, i32_rep))
 
-print("lalin sem_layout_resolve ok")
+print("lalin layout_resolve ok")

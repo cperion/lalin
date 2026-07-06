@@ -9,7 +9,7 @@ local M = {}
 
 local SCHEMA_MODULES = {
     "core",
-    "back",
+    "backend_schema",
     "c",
     "c_materialize",
     "luajit",
@@ -20,6 +20,9 @@ local SCHEMA_MODULES = {
     "sem",
     "tree",
     "code",
+    "code_backend",
+    "code_validate_schema",
+    "tree_lower",
     "graph",
     "flow",
     "value",
@@ -32,6 +35,7 @@ local SCHEMA_MODULES = {
     "exec",
     "schedule",
     "lower",
+    "emit_c",
     "compiler",
     "parse",
     "host",

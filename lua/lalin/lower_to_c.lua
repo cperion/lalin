@@ -19,6 +19,8 @@ local function bind_context(T)
     local Mem = T.LalinMem
     local Stencil = T.LalinStencil
     local CMat = T.LalinCMat
+    local CEm = T.LalinCEmit
+    local Graph = T.LalinGraph
     local asdl = require("lalin.asdl")
 
     local CodeToC = require("lalin.code_to_c")(T)
@@ -32,7 +34,7 @@ local function bind_context(T)
     local CodeSchedulePlan = require("lalin.code_schedule_plan")(T)
     local CodeLowerPlan = require("lalin.code_lower_plan")(T)
     local ExecPlan = require("lalin.exec_plan")(T)
-    local CMaterialize = require("lalin.c_materialize")(T)
+    local CMaterialize = require("lalin.emit_c_materialize")(T)
 
     local api = {}
 
@@ -89,14 +91,16 @@ local function bind_context(T)
 
     local function node_name(x) return tostring(x) end
 
-    local function make_c_type_projection(code_module)
-        local c_type_projection = { code_sigs = {}, code_sig_order = {} }
-        for _, sig in ipairs(code_module.sigs or {}) do c_type_projection.code_sigs[sig.id.text] = sig end
-        return c_type_projection
+    local function make_c_type_projection(code_module, target)
+        local spine = Lower.LowerBackSpine(code_module, Graph.CodeGraph(code_module.id, {}), target or C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian, true))
+        local machine = CEm.CEmitMachine.empty(spine)
+        return machine
     end
 
     local function c_ty(c_emission, ty)
-        return CodeType.code_type_to_c(ty, c_emission.c_type_projection)
+        local result, new_machine = CodeType.code_type_to_c(c_emission.c_type_projection, ty)
+        c_emission.c_type_projection = new_machine
+        return result
     end
 
     local function add_helper(c_emission, spec)
@@ -2109,7 +2113,7 @@ local function bind_context(T)
         local mem = CodeMemFacts.semantic_facts(code_module, graph, flow, value, nil)
         local effect = CodeEffectFacts.facts(code_module, graph, mem, nil)
         local kernels = CodeKernelPlan.plan(code_module, graph, flow, value, mem, effect)
-        local schedules = CodeSchedulePlan.plan(code_module, kernels, flow, value, mem, effect, opts and (opts.target_model or opts.back_target_model))
+        local schedules = CodeSchedulePlan.plan(code_module, kernels, flow, value, mem, effect, opts and (opts.target_model or opts.backend_target_model))
         local lower = CodeLowerPlan.plan(code_module, graph, kernels, schedules, Lower.LowerTargetC)
         flow = kernels.flow
         value = kernels.value
@@ -2138,7 +2142,7 @@ local function bind_context(T)
         for _, carrier in ipairs((lower and lower.carriers) or {}) do carrier_plan_by_id[carrier.carrier.text] = carrier end
         local c_emission = {
             unit = unit,
-            c_type_projection = make_c_type_projection(code_module),
+            c_type_projection = make_c_type_projection(code_module, nil),
             helper_by_key = {},
             next_helper = 0,
             next_tmp = 0,

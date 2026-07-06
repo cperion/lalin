@@ -1,6 +1,6 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
-local c_tcc = require("lalin.c_tcc")
+local c_tcc = require("lalin.emit_c_tcc")
 local ffi = require("ffi")
 
 local ok, why = c_tcc.available()
@@ -46,4 +46,4 @@ assert(via_host(7) == 22, "libtcc host symbol should be visible during relocatio
 host_session:free()
 triple_host:free()
 
-io.write("lalin.c_tcc libtcc compile-run ok\n")
+io.write("lalin.emit_c_tcc libtcc compile-run ok\n")

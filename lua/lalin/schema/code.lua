@@ -505,12 +505,12 @@ return schema. LalinCode {
     interned,
     sret [bool],
     result_ty [optional [LalinCode.CodeType]],
-    params [many [LalinBack.BackScalar]],
-    results [many [LalinBack.BackScalar]],
+    params [many [LalinBackend.BackScalar]],
+    results [many [LalinBackend.BackScalar]],
   },
   product. CodeBackLocalSlot {
     interned,
-    slot [LalinBack.BackStackSlotId],
+    slot [LalinBackend.BackStackSlotId],
     field. ty [LalinCode.CodeType],
     size [number],
     align [number],
@@ -565,7 +565,7 @@ return schema. LalinCode {
     effect_by_inst [many [LalinCode.CodeEffectByInstEntry]],
     readonly [LalinCode.CodeBackReadonlyProjection],
     layout_env [optional [LalinSem.LayoutEnv]],
-    target [optional [LalinBack.BackTarget]],
+    target [optional [LalinBackend.BackTarget]],
   },
   product. CodeTypeByValueEntry {
     interned,
@@ -579,19 +579,19 @@ return schema. LalinCode {
   },
   product. CodeBackFunctionFacts {
     func [LalinCode.CodeFuncId],
-    current_return_sret [optional [LalinBack.BackValId]],
+    current_return_sret [optional [LalinBackend.BackValId]],
     value_types [many [LalinCode.CodeTypeByValueEntry]],
     block_params [many [LalinCode.CodeParamsByBlockEntry]],
   },
   product. CodeLocalAddrByValueEntry {
     interned,
     value_key [str],
-    addr [LalinBack.BackValId],
+    addr [LalinBackend.BackValId],
   },
   product. CodeValueAddrByValueEntry {
     interned,
     value_key [str],
-    addr [LalinBack.BackValId],
+    addr [LalinBackend.BackValId],
   },
   product. CodeValueSizeByValueEntry {
     interned,
@@ -624,7 +624,6 @@ return schema. LalinCode {
     next_tmp [number],
   },
   product. CodeBackFunctionState {
-    cmds [many [LalinBack.Cmd]],
     aggregates [LalinCode.CodeBackAggregateState],
     closures [LalinCode.CodeBackClosureState],
     local_slots [LalinCode.CodeBackLocalSlotState],
@@ -653,19 +652,19 @@ return schema. LalinCode {
     state [LalinCode.CodeBackFunctionState],
   },
   product. CodeBackValueResult {
-    field. value [LalinBack.BackValId],
+    field. value [LalinBackend.BackValId],
     state [LalinCode.CodeBackFunctionState],
   },
   product. CodeBackAddressResult {
-    address [LalinBack.BackAddress],
+    address [LalinBackend.BackAddress],
     state [LalinCode.CodeBackFunctionState],
   },
   product. CodeBackMemoryInfoResult {
-    memory [LalinBack.BackMemoryInfo],
+    memory [LalinBackend.BackMemoryInfo],
     state [LalinCode.CodeBackFunctionState],
   },
   product. CodeBackPlaceResult {
-    address [LalinBack.BackAddress],
+    address [LalinBackend.BackAddress],
     state [LalinCode.CodeBackFunctionState],
   },
   product. CodeBlock {

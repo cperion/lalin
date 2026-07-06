@@ -22,12 +22,47 @@ local function bind_context(T)
 
     local api = {}
 
-    local function add_issue(ctx, issue)
-        ctx.issues[#ctx.issues + 1] = issue
-        local collector = ctx.collector
-        if collector and collector.emit then
-            pcall(function() collector:emit(issue, "code") end)
-        end
+    -- Machine: wraps the validation accumulator as an immutable wrapper.
+    -- Each "mutation" returns a new Machine with the accumulated changes.
+    local Machine = {}
+    Machine.__index = Machine
+
+    function Machine.new(sigs, data, globals, funcs, externs)
+        return setmetatable({
+            _issues = {},
+            _relocs = {},
+            _sigs = sigs,
+            _data = data,
+            _globals = globals,
+            _funcs = funcs,
+            _externs = externs,
+        }, Machine)
+    end
+
+    function Machine:issues() return self._issues end
+
+    function Machine:with_issue(issue)
+        local m = Machine.new(self._sigs, self._data, self._globals, self._funcs, self._externs)
+        for i = 1, #self._issues do m._issues[i] = self._issues[i] end
+        m._issues[#m._issues + 1] = issue
+        for k, v in pairs(self._relocs) do m._relocs[k] = v end
+        return m
+    end
+
+    function Machine:sig(id) return self._sigs[id.text] end
+    function Machine:data(id) return self._data[id.text] end
+    function Machine:global(id) return self._globals[id.text] end
+    function Machine:func(id) return self._funcs[id.text] end
+    function Machine:extern(id) return self._externs[id.text] end
+
+    function Machine:has_reloc(reloc_id) return self._relocs[reloc_id.text] end
+
+    function Machine:with_reloc(reloc)
+        local m = Machine.new(self._sigs, self._data, self._globals, self._funcs, self._externs)
+        for i = 1, #self._issues do m._issues[i] = self._issues[i] end
+        for k, v in pairs(self._relocs) do m._relocs[k] = v end
+        m._relocs[reloc.id.text] = true
+        return m
     end
 
     local function type_eq(a, b, seen)
@@ -36,7 +71,6 @@ local function bind_context(T)
         if ac == Code.CodeTyLease then return type_eq(a.base, b, seen) end
         if bc == Code.CodeTyLease then return type_eq(a, b.base, seen) end
         if ac ~= bc then
-            -- Opaque data pointers are intentionally compatible with typed data pointers.
             if ac == Code.CodeTyDataPtr and bc == Code.CodeTyDataPtr then return a.pointee == nil or b.pointee == nil end
             return false
         end
@@ -71,88 +105,79 @@ local function bind_context(T)
         return ty == Code.CodeTyIndex or cls == Code.CodeTyInt
     end
 
-    local function type_uses_code_sig(ty, ctx)
+    local function type_uses_code_sig(ty, machine)
         local cls = asdl.classof(ty)
         if cls == Code.CodeTyCodePtr or cls == Code.CodeTyClosure then
-            if ctx.sigs[ty.sig.text] == nil then add_issue(ctx, Code.CodeIssueMissingSig(ty.sig)) end
+            if machine:sig(ty.sig) == nil then machine = machine:with_issue(Code.CodeIssueMissingSig(ty.sig)) end
         elseif cls == Code.CodeTyDataPtr and ty.pointee ~= nil then
-            type_uses_code_sig(ty.pointee, ctx)
+            machine = type_uses_code_sig(ty.pointee, machine)
         elseif cls == Code.CodeTyArray or cls == Code.CodeTySlice or cls == Code.CodeTyView or cls == Code.CodeTyVector then
-            type_uses_code_sig(ty.elem, ctx)
+            machine = type_uses_code_sig(ty.elem, machine)
         elseif cls == Code.CodeTyLease then
-            type_uses_code_sig(ty.base, ctx)
+            machine = type_uses_code_sig(ty.base, machine)
         end
+        return machine
     end
 
-    local function expect_type(ctx, site, expected, actual)
+    local function expect_type(machine, site, expected, actual)
         if expected ~= nil and actual ~= nil and not type_eq(expected, actual) then
-            add_issue(ctx, Code.CodeIssueTypeMismatch(site, expected, actual))
-            return false
+            return machine:with_issue(Code.CodeIssueTypeMismatch(site, expected, actual))
         end
-        return true
+        return machine
     end
 
-    local function expect_bool(ctx, site, actual)
+    local function expect_bool(machine, site, actual)
         if actual ~= nil and not is_bool(actual) then
-            add_issue(ctx, Code.CodeIssueTypeMismatch(site, Code.CodeTyBool8, actual))
+            return machine:with_issue(Code.CodeIssueTypeMismatch(site, Code.CodeTyBool8, actual))
         end
+        return machine
     end
 
-    local function index_by(ctx, items, key_fn, dup_issue_fn)
-        local by = {}
-        for i = 1, #(items or {}) do
-            local item = items[i]
-            local key, ref = key_fn(item)
-            if by[key] ~= nil then add_issue(ctx, dup_issue_fn(ref)) else by[key] = item end
-        end
-        return by
-    end
-
-    local function check_align(ctx, site, align, access)
+    local function check_align(machine, site, align, access)
         if align ~= nil and not is_power_of_two(align) then
             if access ~= nil then
-                add_issue(ctx, Code.CodeIssueInvalidMemoryAccess(site, access))
+                return machine:with_issue(Code.CodeIssueInvalidMemoryAccess(site, access))
             else
-                add_issue(ctx, Code.CodeIssueUnsupportedSource(site, "invalid alignment " .. tostring(align)))
+                return machine:with_issue(Code.CodeIssueUnsupportedSource(site, "invalid alignment " .. tostring(align)))
             end
-            return false
         end
-        return true
+        return machine
     end
 
-    local function global_ref_exists(ctx, ref)
+    local function global_ref_exists(machine, ref)
         local cls = asdl.classof(ref)
+        local result
         if cls == Code.CodeGlobalRefData then
-            if ctx.data[ref.data.text] == nil then add_issue(ctx, Code.CodeIssueMissingData(ref.data)); return nil end
-            return ctx.data[ref.data.text]
+            result = machine:data(ref.data)
+            if result == nil then machine = machine:with_issue(Code.CodeIssueMissingData(ref.data)) end
         elseif cls == Code.CodeGlobalRefGlobal then
-            if ctx.globals[ref.global.text] == nil then add_issue(ctx, Code.CodeIssueMissingGlobal(ref.global)); return nil end
-            return ctx.globals[ref.global.text]
+            result = machine:global(ref.global)
+            if result == nil then machine = machine:with_issue(Code.CodeIssueMissingGlobal(ref.global)) end
         elseif cls == Code.CodeGlobalRefFunc then
-            if ctx.funcs[ref.func.text] == nil then add_issue(ctx, Code.CodeIssueMissingFunc(ref.func)); return nil end
-            return ctx.funcs[ref.func.text]
+            result = machine:func(ref.func)
+            if result == nil then machine = machine:with_issue(Code.CodeIssueMissingFunc(ref.func)) end
         elseif cls == Code.CodeGlobalRefExtern then
-            if ctx.externs[ref["extern"].text] == nil then add_issue(ctx, Code.CodeIssueMissingExtern(ref["extern"])); return nil end
-            return ctx.externs[ref["extern"].text]
+            result = machine:extern(ref["extern"])
+            if result == nil then machine = machine:with_issue(Code.CodeIssueMissingExtern(ref["extern"])) end
         end
-        return nil
+        return machine, result
     end
 
-    local function check_sig_ref(ctx, sig_id)
-        local sig = sig_id and ctx.sigs[sig_id.text] or nil
-        if sig_id and sig == nil then add_issue(ctx, Code.CodeIssueMissingSig(sig_id)) end
-        return sig
+    local function check_sig_ref(machine, sig_id)
+        local sig = sig_id and machine:sig(sig_id) or nil
+        if sig_id and sig == nil then machine = machine:with_issue(Code.CodeIssueMissingSig(sig_id)) end
+        return machine, sig
     end
 
-    local function check_memory_access(ctx, site, access, expected_mode)
-        if access == nil then return end
-        check_align(ctx, site, access.align, access)
+    local function check_memory_access(machine, site, access, expected_mode)
+        if access == nil then return machine end
+        machine = check_align(machine, site, access.align, access)
         if expected_mode == "read" and access.effect ~= Code.CodeMemoryRead and access.effect ~= Code.CodeMemoryReadWrite then
-            add_issue(ctx, Code.CodeIssueInvalidMemoryAccess(site, access))
+            machine = machine:with_issue(Code.CodeIssueInvalidMemoryAccess(site, access))
         elseif expected_mode == "write" and access.effect ~= Code.CodeMemoryWrite and access.effect ~= Code.CodeMemoryReadWrite then
-            add_issue(ctx, Code.CodeIssueInvalidMemoryAccess(site, access))
+            machine = machine:with_issue(Code.CodeIssueInvalidMemoryAccess(site, access))
         end
-        type_uses_code_sig(access.ty, ctx)
+        return type_uses_code_sig(access.ty, machine)
     end
 
     local function scalar_size(bits)
@@ -186,206 +211,228 @@ local function bind_context(T)
         return 0, 0
     end
 
-    local function check_init_bounds(ctx, site, container_id, size, init)
+    local function check_init_bounds(machine, site, container_id, size, init)
         local off, n = data_init_extent(init)
         if type(off) ~= "number" or off < 0 or type(n) ~= "number" or n < 0 or (size ~= nil and off + n > size) then
-            add_issue(ctx, Code.CodeIssueUnsupportedSource(site .. ":" .. container_id.text, "data initializer out of bounds"))
+            return machine:with_issue(Code.CodeIssueUnsupportedSource(site .. ":" .. container_id.text, "data initializer out of bounds"))
         end
+        return machine
     end
 
-    local function check_reloc(ctx, reloc)
-        if reloc == nil then return end
-        if ctx.relocs[reloc.id.text] then add_issue(ctx, Code.CodeIssueInvalidReloc(reloc, "duplicate reloc id")) end
-        ctx.relocs[reloc.id.text] = true
+    local function check_reloc(machine, reloc)
+        if reloc == nil then return machine end
+        if machine:has_reloc(reloc.id) then
+            machine = machine:with_issue(Code.CodeIssueInvalidReloc(reloc, "duplicate reloc id"))
+        end
+        machine = machine:with_reloc(reloc)
         if type(reloc.offset) ~= "number" or reloc.offset < 0 or reloc.offset % 1 ~= 0 then
-            add_issue(ctx, Code.CodeIssueInvalidReloc(reloc, "invalid relocation offset"))
+            machine = machine:with_issue(Code.CodeIssueInvalidReloc(reloc, "invalid relocation offset"))
         end
-        global_ref_exists(ctx, reloc.target)
+        machine, _ = global_ref_exists(machine, reloc.target)
+        return machine
     end
 
-    local function value_type(fctx, ctx, value)
+    local function value_type(fctx, machine, value)
         local ty = value and fctx.values[value.text]
-        if value ~= nil and ty == nil then add_issue(ctx, Code.CodeIssueMissingValue(value)) end
-        return ty
+        if value ~= nil and ty == nil then machine = machine:with_issue(Code.CodeIssueMissingValue(value)) end
+        return machine, ty
     end
 
-    local function view_elem_type(fctx, ctx, site, view)
-        local vty = value_type(fctx, ctx, view)
+    local function view_elem_type(fctx, machine, site, view)
+        local vty
+        machine, vty = value_type(fctx, machine, view)
         local cls = asdl.classof(vty)
         if cls == Code.CodeTyLease then
             vty = vty.base
             cls = asdl.classof(vty)
         end
         if vty ~= nil and cls ~= Code.CodeTyView then
-            add_issue(ctx, Code.CodeIssueTypeMismatch(site, Code.CodeTyView(Code.CodeTyVoid), vty))
-            return nil
+            machine = machine:with_issue(Code.CodeIssueTypeMismatch(site, Code.CodeTyView(Code.CodeTyVoid), vty))
+            return machine, nil
         end
-        return vty and vty.elem or nil
+        return machine, vty and vty.elem or nil
     end
 
-    local function slice_elem_type(fctx, ctx, site, slice)
-        local sty = value_type(fctx, ctx, slice)
+    local function slice_elem_type(fctx, machine, site, slice)
+        local sty
+        machine, sty = value_type(fctx, machine, slice)
         local cls = asdl.classof(sty)
         if cls == Code.CodeTyLease then
             sty = sty.base
             cls = asdl.classof(sty)
         end
         if sty ~= nil and cls ~= Code.CodeTySlice then
-            add_issue(ctx, Code.CodeIssueTypeMismatch(site, Code.CodeTySlice(Code.CodeTyVoid), sty))
-            return nil
+            machine = machine:with_issue(Code.CodeIssueTypeMismatch(site, Code.CodeTySlice(Code.CodeTyVoid), sty))
+            return machine, nil
         end
-        return sty and sty.elem or nil
+        return machine, sty and sty.elem or nil
     end
 
-    local function byte_span_type(fctx, ctx, site, span)
-        local sty = value_type(fctx, ctx, span)
+    local function byte_span_type(fctx, machine, site, span)
+        local sty
+        machine, sty = value_type(fctx, machine, span)
         local cls = asdl.classof(sty)
         if cls == Code.CodeTyLease then
             sty = sty.base
             cls = asdl.classof(sty)
         end
         if sty ~= nil and sty ~= Code.CodeTyByteSpan and cls ~= Code.CodeTyByteSpan then
-            add_issue(ctx, Code.CodeIssueTypeMismatch(site, Code.CodeTyByteSpan, sty))
-            return false
+            machine = machine:with_issue(Code.CodeIssueTypeMismatch(site, Code.CodeTyByteSpan, sty))
+            return machine, false
         end
-        return true
+        return machine, true
     end
 
     local place_type
-    place_type = function(ctx, fctx, place, site)
+    place_type = function(machine, fctx, place, site)
         local cls = asdl.classof(place)
         if cls == Code.CodePlaceLocal then
             local local_id = place.local_id
             local local_ = fctx.locals[local_id.text]
             if local_ == nil then
-                add_issue(ctx, Code.CodeIssueUnsupportedSource(site, "missing local " .. local_id.text))
+                machine = machine:with_issue(Code.CodeIssueUnsupportedSource(site, "missing local " .. local_id.text))
             else
-                expect_type(ctx, site .. ":local", local_.ty, place.ty)
+                machine = expect_type(machine, site .. ":local", local_.ty, place.ty)
             end
-            return place.ty
+            return machine, place.ty
         elseif cls == Code.CodePlaceGlobal then
-            local global = ctx.globals[place.global.text]
-            if global == nil then add_issue(ctx, Code.CodeIssueMissingGlobal(place.global))
-            else expect_type(ctx, site .. ":global", global.ty, place.ty) end
-            return place.ty
+            local global = machine:global(place.global)
+            if global == nil then machine = machine:with_issue(Code.CodeIssueMissingGlobal(place.global))
+            else machine = expect_type(machine, site .. ":global", global.ty, place.ty) end
+            return machine, place.ty
         elseif cls == Code.CodePlaceData then
-            if ctx.data[place.data.text] == nil then add_issue(ctx, Code.CodeIssueMissingData(place.data)) end
-            return place.ty
+            if machine:data(place.data) == nil then machine = machine:with_issue(Code.CodeIssueMissingData(place.data)) end
+            return machine, place.ty
         elseif cls == Code.CodePlaceDeref then
-            local aty = value_type(fctx, ctx, place.addr)
+            local aty
+            machine, aty = value_type(fctx, machine, place.addr)
             local ac = asdl.classof(aty)
             if aty ~= nil and ac ~= Code.CodeTyDataPtr then
-                if ac == Code.CodeTyCodePtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":deref", aty))
-                else add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":deref", Code.CodeTyDataPtr(nil), aty)) end
+                if ac == Code.CodeTyCodePtr then machine = machine:with_issue(Code.CodeIssueDataCodePointerConfusion(site .. ":deref", aty))
+                else machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":deref", Code.CodeTyDataPtr(nil), aty)) end
             end
-            check_align(ctx, site .. ":deref", place.align, nil)
-            return place.ty
+            machine = check_align(machine, site .. ":deref", place.align, nil)
+            return machine, place.ty
         elseif cls == Code.CodePlaceField then
-            place_type(ctx, fctx, place.base, site .. ":field.base")
-            check_align(ctx, site .. ":field", place.align, nil)
-            if place.offset < 0 or (place.size ~= nil and place.size < 0) then add_issue(ctx, Code.CodeIssueUnsupportedSource(site, "invalid field byte range")) end
-            return place.ty
+            machine, _ = place_type(machine, fctx, place.base, site .. ":field.base")
+            machine = check_align(machine, site .. ":field", place.align, nil)
+            if place.offset < 0 or (place.size ~= nil and place.size < 0) then machine = machine:with_issue(Code.CodeIssueUnsupportedSource(site, "invalid field byte range")) end
+            return machine, place.ty
         elseif cls == Code.CodePlaceIndex then
-            place_type(ctx, fctx, place.base, site .. ":index.base")
-            local ity = value_type(fctx, ctx, place.index)
-            if ity ~= nil and not is_integer_like(ity) then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":index", Code.CodeTyIndex, ity)) end
-            if type(place.elem_size) ~= "number" or place.elem_size <= 0 then add_issue(ctx, Code.CodeIssueUnsupportedSource(site, "invalid element size")) end
-            return place.ty
+            machine, _ = place_type(machine, fctx, place.base, site .. ":index.base")
+            local ity
+            machine, ity = value_type(fctx, machine, place.index)
+            if ity ~= nil and not is_integer_like(ity) then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":index", Code.CodeTyIndex, ity)) end
+            if type(place.elem_size) ~= "number" or place.elem_size <= 0 then machine = machine:with_issue(Code.CodeIssueUnsupportedSource(site, "invalid element size")) end
+            return machine, place.ty
         elseif cls == Code.CodePlaceBytes then
-            local bty = value_type(fctx, ctx, place.base)
+            local bty
+            machine, bty = value_type(fctx, machine, place.base)
             local bc = asdl.classof(bty)
             if bty ~= nil and bc ~= Code.CodeTyDataPtr then
-                if bc == Code.CodeTyCodePtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":bytes", bty))
-                else add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":bytes", Code.CodeTyDataPtr(nil), bty)) end
+                if bc == Code.CodeTyCodePtr then machine = machine:with_issue(Code.CodeIssueDataCodePointerConfusion(site .. ":bytes", bty))
+                else machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":bytes", Code.CodeTyDataPtr(nil), bty)) end
             end
-            check_align(ctx, site .. ":bytes", place.align, nil)
-            if place.offset < 0 or place.size < 0 then add_issue(ctx, Code.CodeIssueUnsupportedSource(site, "invalid byte place range")) end
-            return place.ty
+            machine = check_align(machine, site .. ":bytes", place.align, nil)
+            if place.offset < 0 or place.size < 0 then machine = machine:with_issue(Code.CodeIssueUnsupportedSource(site, "invalid byte place range")) end
+            return machine, place.ty
         end
-        add_issue(ctx, Code.CodeIssueUnsupportedSource(site, "unsupported place " .. class_name(place)))
-        return nil
+        machine = machine:with_issue(Code.CodeIssueUnsupportedSource(site, "unsupported place " .. class_name(place)))
+        return machine, nil
     end
 
-    local function check_transfer(ctx, fctx, site, dest, args)
+    local function check_transfer(machine, fctx, site, dest, args)
         local block = fctx.blocks[dest.text]
-        if block == nil then add_issue(ctx, Code.CodeIssueMissingBlock(dest)); return end
-        if #args ~= #block.params then add_issue(ctx, Code.CodeIssueJumpArity(dest, #block.params, #args)) end
+        if block == nil then machine = machine:with_issue(Code.CodeIssueMissingBlock(dest)); return machine end
+        if #args ~= #block.params then machine = machine:with_issue(Code.CodeIssueJumpArity(dest, #block.params, #args)) end
         local n = math.min(#args, #block.params)
         for i = 1, n do
-            local aty = value_type(fctx, ctx, args[i])
+            local aty
+            machine, aty = value_type(fctx, machine, args[i])
             if aty ~= nil and not type_eq(block.params[i].ty, aty) then
-                add_issue(ctx, Code.CodeIssueBlockParamMismatch(dest, i, block.params[i].ty, aty))
+                machine = machine:with_issue(Code.CodeIssueBlockParamMismatch(dest, i, block.params[i].ty, aty))
             end
         end
+        return machine
     end
 
-    local function check_call(ctx, fctx, site, sig_id, target, args, dst)
-        local sig = check_sig_ref(ctx, sig_id)
+    local function check_call(machine, fctx, site, sig_id, target, args, dst)
+        local sig
+        machine, sig = check_sig_ref(machine, sig_id)
         local tcls = asdl.classof(target)
         if tcls == Code.CodeCallDirect then
-            local fn = ctx.funcs[target.func.text]
-            if fn == nil then add_issue(ctx, Code.CodeIssueMissingFunc(target.func))
-            elseif sig_id ~= nil and fn.sig ~= sig_id then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":direct-sig", Code.CodeTyCodePtr(fn.sig), Code.CodeTyCodePtr(sig_id))) end
+            local fn = machine:func(target.func)
+            if fn == nil then machine = machine:with_issue(Code.CodeIssueMissingFunc(target.func))
+            elseif sig_id ~= nil and fn.sig ~= sig_id then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":direct-sig", Code.CodeTyCodePtr(fn.sig), Code.CodeTyCodePtr(sig_id))) end
         elseif tcls == Code.CodeCallExtern then
-            local ex = ctx.externs[target["extern"].text]
-            if ex == nil then add_issue(ctx, Code.CodeIssueMissingExtern(target["extern"]))
-            elseif sig_id ~= nil and ex.sig ~= sig_id then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":extern-sig", Code.CodeTyCodePtr(ex.sig), Code.CodeTyCodePtr(sig_id))) end
+            local ex = machine:extern(target["extern"])
+            if ex == nil then machine = machine:with_issue(Code.CodeIssueMissingExtern(target["extern"]))
+            elseif sig_id ~= nil and ex.sig ~= sig_id then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":extern-sig", Code.CodeTyCodePtr(ex.sig), Code.CodeTyCodePtr(sig_id))) end
         elseif tcls == Code.CodeCallIndirect then
-            check_sig_ref(ctx, target.sig)
-            if sig_id ~= nil and target.sig ~= sig_id then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":indirect-sig", Code.CodeTyCodePtr(target.sig), Code.CodeTyCodePtr(sig_id))) end
-            local callee_ty = value_type(fctx, ctx, target.callee)
+            machine, _ = check_sig_ref(machine, target.sig)
+            if sig_id ~= nil and target.sig ~= sig_id then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":indirect-sig", Code.CodeTyCodePtr(target.sig), Code.CodeTyCodePtr(sig_id))) end
+            local callee_ty
+            machine, callee_ty = value_type(fctx, machine, target.callee)
             if callee_ty ~= nil then
                 if asdl.classof(callee_ty) == Code.CodeTyCodePtr then
-                    if target.sig ~= callee_ty.sig then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":callee", Code.CodeTyCodePtr(target.sig), callee_ty)) end
+                    if target.sig ~= callee_ty.sig then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":callee", Code.CodeTyCodePtr(target.sig), callee_ty)) end
                 elseif asdl.classof(callee_ty) == Code.CodeTyDataPtr then
-                    add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":callee", callee_ty))
+                    machine = machine:with_issue(Code.CodeIssueDataCodePointerConfusion(site .. ":callee", callee_ty))
                 else
-                    add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":callee", Code.CodeTyCodePtr(target.sig), callee_ty))
+                    machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":callee", Code.CodeTyCodePtr(target.sig), callee_ty))
                 end
             end
         elseif tcls == Code.CodeCallClosure then
-            check_sig_ref(ctx, target.sig)
-            if sig_id ~= nil and target.sig ~= sig_id then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":closure-sig", Code.CodeTyClosure(target.sig), Code.CodeTyClosure(sig_id))) end
-            local closure_ty = value_type(fctx, ctx, target.closure)
+            machine, _ = check_sig_ref(machine, target.sig)
+            if sig_id ~= nil and target.sig ~= sig_id then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":closure-sig", Code.CodeTyClosure(target.sig), Code.CodeTyClosure(sig_id))) end
+            local closure_ty
+            machine, closure_ty = value_type(fctx, machine, target.closure)
             if closure_ty ~= nil then
                 if asdl.classof(closure_ty) == Code.CodeTyClosure then
-                    if target.sig ~= closure_ty.sig then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":closure", Code.CodeTyClosure(target.sig), closure_ty)) end
+                    if target.sig ~= closure_ty.sig then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":closure", Code.CodeTyClosure(target.sig), closure_ty)) end
                 else
-                    add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":closure", Code.CodeTyClosure(target.sig), closure_ty))
+                    machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":closure", Code.CodeTyClosure(target.sig), closure_ty))
                 end
             end
         else
-            add_issue(ctx, Code.CodeIssueUnsupportedSource(site, "unsupported call target " .. class_name(target)))
+            machine = machine:with_issue(Code.CodeIssueUnsupportedSource(site, "unsupported call target " .. class_name(target)))
         end
-        if sig == nil then return end
-        if #args ~= #sig.params then add_issue(ctx, Code.CodeIssueCallArity(sig.id, #sig.params, #args)) end
+        if sig == nil then return machine end
+        if #args ~= #sig.params then machine = machine:with_issue(Code.CodeIssueCallArity(sig.id, #sig.params, #args)) end
         local n = math.min(#args, #sig.params)
         for i = 1, n do
-            local aty = value_type(fctx, ctx, args[i])
-            if aty ~= nil then expect_type(ctx, site .. ":arg" .. tostring(i), sig.params[i], aty) end
+            local aty
+            machine, aty = value_type(fctx, machine, args[i])
+            if aty ~= nil then machine = expect_type(machine, site .. ":arg" .. tostring(i), sig.params[i], aty) end
         end
         if #sig.results == 0 then
-            if dst ~= nil then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":result", Code.CodeTyVoid, value_type(fctx, ctx, dst) or Code.CodeTyVoid)) end
+            if dst ~= nil then
+                local dty
+                machine, dty = value_type(fctx, machine, dst)
+                machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":result", Code.CodeTyVoid, dty or Code.CodeTyVoid))
+            end
         elseif #sig.results == 1 then
             if dst == nil then
-                add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":result", sig.results[1], Code.CodeTyVoid))
+                machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":result", sig.results[1], Code.CodeTyVoid))
             else
-                local dty = value_type(fctx, ctx, dst)
-                if dty ~= nil then expect_type(ctx, site .. ":result", sig.results[1], dty) end
+                local dty
+                machine, dty = value_type(fctx, machine, dst)
+                if dty ~= nil then machine = expect_type(machine, site .. ":result", sig.results[1], dty) end
             end
         else
-            add_issue(ctx, Code.CodeIssueUnsupportedSource(site, "multi-result call cannot be represented by one dst"))
+            machine = machine:with_issue(Code.CodeIssueUnsupportedSource(site, "multi-result call cannot be represented by one dst"))
         end
+        return machine
     end
 
-    local function register_dst(ctx, fctx, id, ty)
-        if id == nil then return end
-        if fctx.values[id.text] ~= nil then add_issue(ctx, Code.CodeIssueDuplicateValue(id)) end
+    local function register_dst(machine, fctx, id, ty)
+        if id == nil then return machine end
+        if fctx.values[id.text] ~= nil then machine = machine:with_issue(Code.CodeIssueDuplicateValue(id)) end
         fctx.values[id.text] = ty
-        type_uses_code_sig(ty, ctx)
+        return type_uses_code_sig(ty, machine)
     end
 
-    local function inst_dst_type(ctx, fctx, kind)
+    local function inst_dst_type(fctx, machine, kind)
         local cls = asdl.classof(kind)
         if cls == Code.CodeInstConst then return kind.dst, kind.const.ty
         elseif cls == Code.CodeInstAlias then return kind.dst, kind.ty
@@ -404,13 +451,15 @@ local function bind_context(T)
         elseif cls == Code.CodeInstArray then return kind.dst, kind.ty
         elseif cls == Code.CodeInstViewMake then return kind.dst, Code.CodeTyView(kind.elem_ty)
         elseif cls == Code.CodeInstViewData then
-            local elem = view_elem_type(fctx, ctx, "view.data", kind.view)
+            local elem
+            machine, elem = view_elem_type(fctx, machine, "view.data", kind.view)
             return kind.dst, Code.CodeTyDataPtr(elem)
         elseif cls == Code.CodeInstViewLen then return kind.dst, Code.CodeTyIndex
         elseif cls == Code.CodeInstViewStride then return kind.dst, Code.CodeTyIndex
         elseif cls == Code.CodeInstSliceMake then return kind.dst, Code.CodeTySlice(kind.elem_ty)
         elseif cls == Code.CodeInstSliceData then
-            local elem = slice_elem_type(fctx, ctx, "slice.data", kind.slice)
+            local elem
+            machine, elem = slice_elem_type(fctx, machine, "slice.data", kind.slice)
             return kind.dst, Code.CodeTyDataPtr(elem)
         elseif cls == Code.CodeInstSliceLen then return kind.dst, Code.CodeTyIndex
         elseif cls == Code.CodeInstByteSpanMake then return kind.dst, Code.CodeTyByteSpan
@@ -421,7 +470,7 @@ local function bind_context(T)
         elseif cls == Code.CodeInstVariantTag then return kind.dst, kind.tag_ty
         elseif cls == Code.CodeInstVariantPayload then return kind.dst, kind.variant.payload_ty
         elseif cls == Code.CodeInstCall then
-            return nil, nil -- checked after signature lookup
+            return nil, nil
         elseif cls == Code.CodeInstAtomicLoad then return kind.dst, kind.access.ty
         elseif cls == Code.CodeInstAtomicRmw then return kind.dst, kind.access.ty
         elseif cls == Code.CodeInstAtomicCas then return kind.dst, kind.access.ty
@@ -429,286 +478,356 @@ local function bind_context(T)
         return nil, nil
     end
 
-    local function register_function_defs(ctx, fctx, func)
-        for i = 1, #(func.params or {}) do register_dst(ctx, fctx, func.params[i].value, func.params[i].ty) end
-        for i = 1, #(func.locals or {}) do
-            local local_ = func.locals[i]
-            if fctx.locals[local_.id.text] ~= nil then add_issue(ctx, Code.CodeIssueUnsupportedSource("func:" .. func.name, "duplicate local " .. local_.id.text)) end
-            fctx.locals[local_.id.text] = local_
-            type_uses_code_sig(local_.ty, ctx)
+    local function index_by(machine, items, key_fn, dup_issue_fn)
+        local by = {}
+        for i = 1, #(items or {}) do
+            local item = items[i]
+            local key, ref = key_fn(item)
+            if by[key] ~= nil then machine = machine:with_issue(dup_issue_fn(ref)) else by[key] = item end
         end
-        fctx.blocks = index_by(ctx, func.blocks, function(b) return b.id.text, b.id end, function(id) return Code.CodeIssueDuplicateBlock(id) end)
-        for i = 1, #(func.blocks or {}) do
-            local block = func.blocks[i]
-            if block.term == nil then add_issue(ctx, Code.CodeIssueUnterminatedBlock(block.id)) end
-            if block.term ~= nil then
-                if fctx.terms[block.term.id.text] ~= nil then add_issue(ctx, Code.CodeIssueDuplicateTerm(block.term.id)) end
-                fctx.terms[block.term.id.text] = true
-            end
-            for j = 1, #(block.params or {}) do register_dst(ctx, fctx, block.params[j].value, block.params[j].ty) end
-            for j = 1, #(block.insts or {}) do
-                local inst = block.insts[j]
-                if fctx.insts[inst.id.text] ~= nil then add_issue(ctx, Code.CodeIssueDuplicateInst(inst.id)) end
-                fctx.insts[inst.id.text] = true
-                local dst, ty = inst_dst_type(ctx, fctx, inst.op)
-                if asdl.classof(inst.op) == Code.CodeInstCall then
-                    local sig = inst.op.sig and ctx.sigs[inst.op.sig.text] or nil
-                    if sig ~= nil and #sig.results == 1 then dst, ty = rawget(inst.op, "dst"), sig.results[1] end
-                end
-                if dst ~= nil then register_dst(ctx, fctx, dst, ty) end
-            end
-        end
+        return machine, by
     end
 
-    local function check_inst(ctx, fctx, func, block, inst)
+    local function register_function_defs(machine, fctx, func)
+        for i = 1, #(func.params or {}) do machine = register_dst(machine, fctx, func.params[i].value, func.params[i].ty) end
+        for i = 1, #(func.locals or {}) do
+            local local_ = func.locals[i]
+            if fctx.locals[local_.id.text] ~= nil then machine = machine:with_issue(Code.CodeIssueUnsupportedSource("func:" .. func.name, "duplicate local " .. local_.id.text)) end
+            fctx.locals[local_.id.text] = local_
+            machine = type_uses_code_sig(local_.ty, machine)
+        end
+        machine, fctx.blocks = index_by(machine, func.blocks, function(b) return b.id.text, b.id end, function(id) return Code.CodeIssueDuplicateBlock(id) end)
+        for i = 1, #(func.blocks or {}) do
+            local block = func.blocks[i]
+            if block.term == nil then machine = machine:with_issue(Code.CodeIssueUnterminatedBlock(block.id)) end
+            if block.term ~= nil then
+                if fctx.terms[block.term.id.text] ~= nil then machine = machine:with_issue(Code.CodeIssueDuplicateTerm(block.term.id)) end
+                fctx.terms[block.term.id.text] = true
+            end
+            for j = 1, #(block.params or {}) do machine = register_dst(machine, fctx, block.params[j].value, block.params[j].ty) end
+            for j = 1, #(block.insts or {}) do
+                local inst = block.insts[j]
+                if fctx.insts[inst.id.text] ~= nil then machine = machine:with_issue(Code.CodeIssueDuplicateInst(inst.id)) end
+                fctx.insts[inst.id.text] = true
+                local dst, ty = inst_dst_type(fctx, machine, inst.op)
+                if asdl.classof(inst.op) == Code.CodeInstCall then
+                    local sig = inst.op.sig and machine:sig(inst.op.sig) or nil
+                    if sig ~= nil and #sig.results == 1 then dst, ty = rawget(inst.op, "dst"), sig.results[1] end
+                end
+                if dst ~= nil then machine = register_dst(machine, fctx, dst, ty) end
+            end
+        end
+        return machine
+    end
+
+    local function check_inst(machine, fctx, func, block, inst)
         local site = "func:" .. func.name .. ":block:" .. block.name .. ":inst:" .. inst.id.text
         local k = inst.op
         local cls = asdl.classof(k)
         if cls == Code.CodeInstConst then
-            type_uses_code_sig(k.const.ty, ctx)
+            machine = type_uses_code_sig(k.const.ty, machine)
         elseif cls == Code.CodeInstAlias then
-            expect_type(ctx, site .. ":alias", k.ty, value_type(fctx, ctx, k.src))
+            local aty
+            machine, aty = value_type(fctx, machine, k.src)
+            machine = expect_type(machine, site .. ":alias", k.ty, aty)
         elseif cls == Code.CodeInstUnary then
-            expect_type(ctx, site .. ":unary", k.ty, value_type(fctx, ctx, k.value))
+            local vty; machine, vty = value_type(fctx, machine, k.value)
+            machine = expect_type(machine, site .. ":unary", k.ty, vty)
         elseif cls == Code.CodeInstBinary or cls == Code.CodeInstFloatBinary then
-            expect_type(ctx, site .. ":lhs", k.ty, value_type(fctx, ctx, k.lhs))
-            expect_type(ctx, site .. ":rhs", k.ty, value_type(fctx, ctx, k.rhs))
+            local lty, rty; machine, lty = value_type(fctx, machine, k.lhs); machine, rty = value_type(fctx, machine, k.rhs)
+            machine = expect_type(machine, site .. ":lhs", k.ty, lty)
+            machine = expect_type(machine, site .. ":rhs", k.ty, rty)
         elseif cls == Code.CodeInstCompare then
-            expect_type(ctx, site .. ":lhs", k.operand_ty, value_type(fctx, ctx, k.lhs))
-            expect_type(ctx, site .. ":rhs", k.operand_ty, value_type(fctx, ctx, k.rhs))
+            local lty, rty; machine, lty = value_type(fctx, machine, k.lhs); machine, rty = value_type(fctx, machine, k.rhs)
+            machine = expect_type(machine, site .. ":lhs", k.operand_ty, lty)
+            machine = expect_type(machine, site .. ":rhs", k.operand_ty, rty)
         elseif cls == Code.CodeInstCast then
-            expect_type(ctx, site .. ":cast", k.from, value_type(fctx, ctx, k.value))
+            local vty; machine, vty = value_type(fctx, machine, k.value)
+            machine = expect_type(machine, site .. ":cast", k.from, vty)
         elseif cls == Code.CodeInstSelect then
-            expect_bool(ctx, site .. ":cond", value_type(fctx, ctx, k.cond))
-            expect_type(ctx, site .. ":then", k.ty, value_type(fctx, ctx, k.then_value))
-            expect_type(ctx, site .. ":else", k.ty, value_type(fctx, ctx, k.else_value))
+            local cty, tty, ety
+            machine, cty = value_type(fctx, machine, k.cond)
+            machine = expect_bool(machine, site .. ":cond", cty)
+            machine, tty = value_type(fctx, machine, k.then_value)
+            machine = expect_type(machine, site .. ":then", k.ty, tty)
+            machine, ety = value_type(fctx, machine, k.else_value)
+            machine = expect_type(machine, site .. ":else", k.ty, ety)
         elseif cls == Code.CodeInstIntrinsic then
-            for i = 1, #k.args do value_type(fctx, ctx, k.args[i]) end
+            for i = 1, #k.args do machine, _ = value_type(fctx, machine, k.args[i]) end
         elseif cls == Code.CodeInstAddrOf then
-            local pty = place_type(ctx, fctx, k.place, site .. ":addr_of")
-            if asdl.classof(k.ptr_ty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":addr_of", k.ptr_ty))
-            elseif pty ~= nil and k.ptr_ty.pointee ~= nil then expect_type(ctx, site .. ":addr_of", k.ptr_ty.pointee, pty) end
+            local pty
+            machine, pty = place_type(machine, fctx, k.place, site .. ":addr_of")
+            if asdl.classof(k.ptr_ty) ~= Code.CodeTyDataPtr then machine = machine:with_issue(Code.CodeIssueDataCodePointerConfusion(site .. ":addr_of", k.ptr_ty))
+            elseif pty ~= nil and k.ptr_ty.pointee ~= nil then machine = expect_type(machine, site .. ":addr_of", k.ptr_ty.pointee, pty) end
         elseif cls == Code.CodeInstGlobalRef then
-            local target = global_ref_exists(ctx, k.ref)
+            local target
+            machine, target = global_ref_exists(machine, k.ref)
             local rcls = asdl.classof(k.ref)
             if rcls == Code.CodeGlobalRefFunc or rcls == Code.CodeGlobalRefExtern then
                 local sig = target and target.sig or nil
                 local expected = sig and Code.CodeTyCodePtr(sig) or nil
-                if asdl.classof(k.ptr_ty) ~= Code.CodeTyCodePtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":global_ref", k.ptr_ty))
-                elseif expected ~= nil then expect_type(ctx, site .. ":global_ref", expected, k.ptr_ty) end
+                if asdl.classof(k.ptr_ty) ~= Code.CodeTyCodePtr then machine = machine:with_issue(Code.CodeIssueDataCodePointerConfusion(site .. ":global_ref", k.ptr_ty))
+                elseif expected ~= nil then machine = expect_type(machine, site .. ":global_ref", expected, k.ptr_ty) end
             else
-                if asdl.classof(k.ptr_ty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":global_ref", k.ptr_ty)) end
+                if asdl.classof(k.ptr_ty) ~= Code.CodeTyDataPtr then machine = machine:with_issue(Code.CodeIssueDataCodePointerConfusion(site .. ":global_ref", k.ptr_ty)) end
             end
         elseif cls == Code.CodeInstPtrOffset then
-            if asdl.classof(k.ptr_ty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueDataCodePointerConfusion(site .. ":ptr_offset", k.ptr_ty)) end
-            local bty = value_type(fctx, ctx, k.base)
-            if bty ~= nil and asdl.classof(bty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":base", Code.CodeTyDataPtr(nil), bty)) end
-            local ity = value_type(fctx, ctx, k.index)
-            if ity ~= nil and not is_integer_like(ity) then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":index", Code.CodeTyIndex, ity)) end
-            if k.elem_size <= 0 then add_issue(ctx, Code.CodeIssueUnsupportedSource(site, "invalid element size")) end
+            if asdl.classof(k.ptr_ty) ~= Code.CodeTyDataPtr then machine = machine:with_issue(Code.CodeIssueDataCodePointerConfusion(site .. ":ptr_offset", k.ptr_ty)) end
+            local bty
+            machine, bty = value_type(fctx, machine, k.base)
+            if bty ~= nil and asdl.classof(bty) ~= Code.CodeTyDataPtr then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":base", Code.CodeTyDataPtr(nil), bty)) end
+            local ity
+            machine, ity = value_type(fctx, machine, k.index)
+            if ity ~= nil and not is_integer_like(ity) then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":index", Code.CodeTyIndex, ity)) end
+            if k.elem_size <= 0 then machine = machine:with_issue(Code.CodeIssueUnsupportedSource(site, "invalid element size")) end
         elseif cls == Code.CodeInstLoad then
-            local pty = place_type(ctx, fctx, k.place, site .. ":load")
-            check_memory_access(ctx, site .. ":load", k.access, "read")
-            if pty ~= nil then expect_type(ctx, site .. ":load", k.access.ty, pty) end
+            local pty
+            machine, pty = place_type(machine, fctx, k.place, site .. ":load")
+            machine = check_memory_access(machine, site .. ":load", k.access, "read")
+            if pty ~= nil then machine = expect_type(machine, site .. ":load", k.access.ty, pty) end
         elseif cls == Code.CodeInstStore then
-            local pty = place_type(ctx, fctx, k.place, site .. ":store")
-            check_memory_access(ctx, site .. ":store", k.access, "write")
-            if pty ~= nil then expect_type(ctx, site .. ":store.place", k.access.ty, pty) end
-            expect_type(ctx, site .. ":store.value", k.access.ty, value_type(fctx, ctx, k.value))
+            local pty
+            machine, pty = place_type(machine, fctx, k.place, site .. ":store")
+            machine = check_memory_access(machine, site .. ":store", k.access, "write")
+            if pty ~= nil then machine = expect_type(machine, site .. ":store.place", k.access.ty, pty) end
+            local svty; machine, svty = value_type(fctx, machine, k.value)
+            machine = expect_type(machine, site .. ":store.value", k.access.ty, svty)
         elseif cls == Code.CodeInstAggregate then
-            for i = 1, #k.fields do value_type(fctx, ctx, k.fields[i].value) end
+            for i = 1, #k.fields do machine, _ = value_type(fctx, machine, k.fields[i].value) end
         elseif cls == Code.CodeInstArray then
-            for i = 1, #k.elems do value_type(fctx, ctx, k.elems[i].value) end
+            for i = 1, #k.elems do machine, _ = value_type(fctx, machine, k.elems[i].value) end
         elseif cls == Code.CodeInstViewMake then
-            type_uses_code_sig(k.elem_ty, ctx)
+            machine = type_uses_code_sig(k.elem_ty, machine)
             local expected_data_ty = Code.CodeTyDataPtr(k.elem_ty)
-            local dty = value_type(fctx, ctx, k.data)
+            local dty
+            machine, dty = value_type(fctx, machine, k.data)
             if dty ~= nil and asdl.classof(dty) ~= Code.CodeTyDataPtr then
-                add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":view.data", Code.CodeTyDataPtr(nil), dty))
+                machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":view.data", Code.CodeTyDataPtr(nil), dty))
             elseif dty ~= nil and dty.pointee ~= nil then
-                expect_type(ctx, site .. ":view.data", expected_data_ty, dty)
+                machine = expect_type(machine, site .. ":view.data", expected_data_ty, dty)
             end
-            local lty = value_type(fctx, ctx, k.len)
-            if lty ~= nil and not is_integer_like(lty) then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":view.len", Code.CodeTyIndex, lty)) end
-            local sty = value_type(fctx, ctx, k.stride)
-            if sty ~= nil and not is_integer_like(sty) then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":view.stride", Code.CodeTyIndex, sty)) end
+            local lty
+            machine, lty = value_type(fctx, machine, k.len)
+            if lty ~= nil and not is_integer_like(lty) then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":view.len", Code.CodeTyIndex, lty)) end
+            local sty
+            machine, sty = value_type(fctx, machine, k.stride)
+            if sty ~= nil and not is_integer_like(sty) then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":view.stride", Code.CodeTyIndex, sty)) end
         elseif cls == Code.CodeInstViewData then
-            local elem = view_elem_type(fctx, ctx, site .. ":view.data", k.view)
-            if elem ~= nil then type_uses_code_sig(Code.CodeTyDataPtr(elem), ctx) end
+            local elem
+            machine, elem = view_elem_type(fctx, machine, site .. ":view.data", k.view)
+            if elem ~= nil then machine = type_uses_code_sig(Code.CodeTyDataPtr(elem), machine) end
         elseif cls == Code.CodeInstViewLen or cls == Code.CodeInstViewStride then
-            view_elem_type(fctx, ctx, site .. ":view", k.view)
+            machine, _ = view_elem_type(fctx, machine, site .. ":view", k.view)
         elseif cls == Code.CodeInstSliceMake then
-            type_uses_code_sig(k.elem_ty, ctx)
+            machine = type_uses_code_sig(k.elem_ty, machine)
             local expected_data_ty = Code.CodeTyDataPtr(k.elem_ty)
-            local dty = value_type(fctx, ctx, k.data)
+            local dty
+            machine, dty = value_type(fctx, machine, k.data)
             if dty ~= nil and asdl.classof(dty) ~= Code.CodeTyDataPtr then
-                add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":slice.data", Code.CodeTyDataPtr(nil), dty))
+                machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":slice.data", Code.CodeTyDataPtr(nil), dty))
             elseif dty ~= nil and dty.pointee ~= nil then
-                expect_type(ctx, site .. ":slice.data", expected_data_ty, dty)
+                machine = expect_type(machine, site .. ":slice.data", expected_data_ty, dty)
             end
-            local lty = value_type(fctx, ctx, k.len)
-            if lty ~= nil and not is_integer_like(lty) then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":slice.len", Code.CodeTyIndex, lty)) end
+            local lty
+            machine, lty = value_type(fctx, machine, k.len)
+            if lty ~= nil and not is_integer_like(lty) then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":slice.len", Code.CodeTyIndex, lty)) end
         elseif cls == Code.CodeInstSliceData then
-            local elem = slice_elem_type(fctx, ctx, site .. ":slice.data", k.slice)
-            if elem ~= nil then type_uses_code_sig(Code.CodeTyDataPtr(elem), ctx) end
+            local elem
+            machine, elem = slice_elem_type(fctx, machine, site .. ":slice.data", k.slice)
+            if elem ~= nil then machine = type_uses_code_sig(Code.CodeTyDataPtr(elem), machine) end
         elseif cls == Code.CodeInstSliceLen then
-            slice_elem_type(fctx, ctx, site .. ":slice", k.slice)
+            machine, _ = slice_elem_type(fctx, machine, site .. ":slice", k.slice)
         elseif cls == Code.CodeInstByteSpanMake then
             local expected_data_ty = Code.CodeTyDataPtr(Code.CodeTyInt(8, Code.CodeUnsigned))
-            local dty = value_type(fctx, ctx, k.data)
+            local dty
+            machine, dty = value_type(fctx, machine, k.data)
             if dty ~= nil and asdl.classof(dty) ~= Code.CodeTyDataPtr then
-                add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":bytespan.data", Code.CodeTyDataPtr(nil), dty))
+                machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":bytespan.data", Code.CodeTyDataPtr(nil), dty))
             elseif dty ~= nil and dty.pointee ~= nil then
-                expect_type(ctx, site .. ":bytespan.data", expected_data_ty, dty)
+                machine = expect_type(machine, site .. ":bytespan.data", expected_data_ty, dty)
             end
-            local lty = value_type(fctx, ctx, k.len)
-            if lty ~= nil and not is_integer_like(lty) then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":bytespan.len", Code.CodeTyIndex, lty)) end
+            local lty
+            machine, lty = value_type(fctx, machine, k.len)
+            if lty ~= nil and not is_integer_like(lty) then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":bytespan.len", Code.CodeTyIndex, lty)) end
         elseif cls == Code.CodeInstByteSpanData then
-            byte_span_type(fctx, ctx, site .. ":bytespan.data", k.span)
+            machine, _ = byte_span_type(fctx, machine, site .. ":bytespan.data", k.span)
         elseif cls == Code.CodeInstByteSpanLen then
-            byte_span_type(fctx, ctx, site .. ":bytespan", k.span)
+            machine, _ = byte_span_type(fctx, machine, site .. ":bytespan", k.span)
         elseif cls == Code.CodeInstClosure then
-            check_sig_ref(ctx, k.sig)
-            if asdl.classof(k.ty) ~= Code.CodeTyClosure then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":closure", Code.CodeTyClosure(k.sig), k.ty))
-            elseif k.ty.sig ~= k.sig then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":closure", Code.CodeTyClosure(k.sig), k.ty)) end
-            expect_type(ctx, site .. ":closure.fn", Code.CodeTyCodePtr(k.sig), value_type(fctx, ctx, k.fn))
-            local cty = value_type(fctx, ctx, k.ctx)
-            if cty ~= nil and asdl.classof(cty) ~= Code.CodeTyDataPtr then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":closure.ctx", Code.CodeTyDataPtr(nil), cty)) end
+            machine, _ = check_sig_ref(machine, k.sig)
+            if asdl.classof(k.ty) ~= Code.CodeTyClosure then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":closure", Code.CodeTyClosure(k.sig), k.ty))
+            elseif k.ty.sig ~= k.sig then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":closure", Code.CodeTyClosure(k.sig), k.ty)) end
+            local fnty; machine, fnty = value_type(fctx, machine, k.fn)
+            machine = expect_type(machine, site .. ":closure.fn", Code.CodeTyCodePtr(k.sig), fnty)
+            local cty
+            machine, cty = value_type(fctx, machine, k.ctx)
+            if cty ~= nil and asdl.classof(cty) ~= Code.CodeTyDataPtr then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":closure.ctx", Code.CodeTyDataPtr(nil), cty)) end
         elseif cls == Code.CodeInstVariantCtor then
             if k.payload ~= nil then
-                if k.variant.payload_ty == nil then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":variant.payload", Code.CodeTyVoid, value_type(fctx, ctx, k.payload) or Code.CodeTyVoid))
-                else expect_type(ctx, site .. ":variant.payload", k.variant.payload_ty, value_type(fctx, ctx, k.payload)) end
+                if k.variant.payload_ty == nil then
+                    local pty
+                    machine, pty = value_type(fctx, machine, k.payload)
+                    machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":variant.payload", Code.CodeTyVoid, pty or Code.CodeTyVoid))
+                else
+                    local pty; machine, pty = value_type(fctx, machine, k.payload)
+                    machine = expect_type(machine, site .. ":variant.payload", k.variant.payload_ty, pty)
+                end
             elseif k.variant.payload_ty ~= nil then
-                add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":variant.payload", k.variant.payload_ty, Code.CodeTyVoid))
+                machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":variant.payload", k.variant.payload_ty, Code.CodeTyVoid))
             end
         elseif cls == Code.CodeInstVariantTag then
-            if not is_integer_like(k.tag_ty) then add_issue(ctx, Code.CodeIssueTypeMismatch(site .. ":variant.tag", Code.CodeTyIndex, k.tag_ty)) end
-            value_type(fctx, ctx, k.value)
+            if not is_integer_like(k.tag_ty) then machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":variant.tag", Code.CodeTyIndex, k.tag_ty)) end
+            machine, _ = value_type(fctx, machine, k.value)
         elseif cls == Code.CodeInstVariantPayload then
-            value_type(fctx, ctx, k.value)
+            machine, _ = value_type(fctx, machine, k.value)
         elseif cls == Code.CodeInstCall then
-            check_call(ctx, fctx, site .. ":call", k.sig, k.target, k.args, k.dst)
+            machine = check_call(machine, fctx, site .. ":call", k.sig, k.target, k.args, k.dst)
         elseif cls == Code.CodeInstAtomicLoad then
-            local pty = place_type(ctx, fctx, k.place, site .. ":atomic_load")
-            check_memory_access(ctx, site .. ":atomic_load", k.access, "read")
-            if pty ~= nil then expect_type(ctx, site .. ":atomic_load", k.access.ty, pty) end
+            local pty
+            machine, pty = place_type(machine, fctx, k.place, site .. ":atomic_load")
+            machine = check_memory_access(machine, site .. ":atomic_load", k.access, "read")
+            if pty ~= nil then machine = expect_type(machine, site .. ":atomic_load", k.access.ty, pty) end
         elseif cls == Code.CodeInstAtomicStore then
-            local pty = place_type(ctx, fctx, k.place, site .. ":atomic_store")
-            check_memory_access(ctx, site .. ":atomic_store", k.access, "write")
-            if pty ~= nil then expect_type(ctx, site .. ":atomic_store.place", k.access.ty, pty) end
-            expect_type(ctx, site .. ":atomic_store.value", k.access.ty, value_type(fctx, ctx, k.value))
+            local pty
+            machine, pty = place_type(machine, fctx, k.place, site .. ":atomic_store")
+            machine = check_memory_access(machine, site .. ":atomic_store", k.access, "write")
+            if pty ~= nil then machine = expect_type(machine, site .. ":atomic_store.place", k.access.ty, pty) end
+            local asvty; machine, asvty = value_type(fctx, machine, k.value)
+            machine = expect_type(machine, site .. ":atomic_store.value", k.access.ty, asvty)
         elseif cls == Code.CodeInstAtomicRmw then
-            local pty = place_type(ctx, fctx, k.place, site .. ":atomic_rmw")
-            check_memory_access(ctx, site .. ":atomic_rmw", k.access, "write")
-            if pty ~= nil then expect_type(ctx, site .. ":atomic_rmw.place", k.access.ty, pty) end
-            expect_type(ctx, site .. ":atomic_rmw.value", k.access.ty, value_type(fctx, ctx, k.value))
+            local pty
+            machine, pty = place_type(machine, fctx, k.place, site .. ":atomic_rmw")
+            machine = check_memory_access(machine, site .. ":atomic_rmw", k.access, "write")
+            if pty ~= nil then machine = expect_type(machine, site .. ":atomic_rmw.place", k.access.ty, pty) end
+            local armvty; machine, armvty = value_type(fctx, machine, k.value)
+            machine = expect_type(machine, site .. ":atomic_rmw.value", k.access.ty, armvty)
         elseif cls == Code.CodeInstAtomicCas then
-            local pty = place_type(ctx, fctx, k.place, site .. ":atomic_cas")
-            check_memory_access(ctx, site .. ":atomic_cas", k.access, "write")
-            if pty ~= nil then expect_type(ctx, site .. ":atomic_cas.place", k.access.ty, pty) end
-            expect_type(ctx, site .. ":atomic_cas.expected", k.access.ty, value_type(fctx, ctx, k.expected))
-            expect_type(ctx, site .. ":atomic_cas.replacement", k.access.ty, value_type(fctx, ctx, k.replacement))
+            local pty
+            machine, pty = place_type(machine, fctx, k.place, site .. ":atomic_cas")
+            machine = check_memory_access(machine, site .. ":atomic_cas", k.access, "write")
+            if pty ~= nil then machine = expect_type(machine, site .. ":atomic_cas.place", k.access.ty, pty) end
+            local aevty, arpty
+            machine, aevty = value_type(fctx, machine, k.expected)
+            machine = expect_type(machine, site .. ":atomic_cas.expected", k.access.ty, aevty)
+            machine, arpty = value_type(fctx, machine, k.replacement)
+            machine = expect_type(machine, site .. ":atomic_cas.replacement", k.access.ty, arpty)
         elseif cls == Code.CodeInstAtomicFence then
             -- no value refs
         else
-            add_issue(ctx, Code.CodeIssueUnsupportedSource(site, "unsupported instruction " .. class_name(k)))
+            machine = machine:with_issue(Code.CodeIssueUnsupportedSource(site, "unsupported instruction " .. class_name(k)))
         end
+        return machine
     end
 
-    local function check_term(ctx, fctx, func, block)
+    local function check_term(machine, fctx, func, block)
         local term = block.term
-        if term == nil then return end
+        if term == nil then return machine end
         local site = "func:" .. func.name .. ":block:" .. block.name .. ":term:" .. term.id.text
         local k = term.op
         local cls = asdl.classof(k)
         if cls == Code.CodeTermJump then
-            check_transfer(ctx, fctx, site .. ":jump", k.dest, k.args)
+            machine = check_transfer(machine, fctx, site .. ":jump", k.dest, k.args)
         elseif cls == Code.CodeTermBranch then
-            expect_bool(ctx, site .. ":branch.cond", value_type(fctx, ctx, k.cond))
-            check_transfer(ctx, fctx, site .. ":branch.then", k.then_dest, k.then_args)
-            check_transfer(ctx, fctx, site .. ":branch.else", k.else_dest, k.else_args)
+            local bcty; machine, bcty = value_type(fctx, machine, k.cond)
+            machine = expect_bool(machine, site .. ":branch.cond", bcty)
+            machine = check_transfer(machine, fctx, site .. ":branch.then", k.then_dest, k.then_args)
+            machine = check_transfer(machine, fctx, site .. ":branch.else", k.else_dest, k.else_args)
         elseif cls == Code.CodeTermSwitch then
-            value_type(fctx, ctx, k.value)
-            for i = 1, #k.cases do check_transfer(ctx, fctx, site .. ":switch.case" .. tostring(i), k.cases[i].dest, k.cases[i].args) end
-            check_transfer(ctx, fctx, site .. ":switch.default", k.default_dest, k.default_args)
+            machine, _ = value_type(fctx, machine, k.value)
+            for i = 1, #k.cases do machine = check_transfer(machine, fctx, site .. ":switch.case" .. tostring(i), k.cases[i].dest, k.cases[i].args) end
+            machine = check_transfer(machine, fctx, site .. ":switch.default", k.default_dest, k.default_args)
         elseif cls == Code.CodeTermVariantSwitch then
-            value_type(fctx, ctx, k.tag)
-            for i = 1, #k.cases do check_transfer(ctx, fctx, site .. ":variant.case" .. tostring(i), k.cases[i].dest, k.cases[i].args) end
-            check_transfer(ctx, fctx, site .. ":variant.default", k.default_dest, k.default_args)
+            machine, _ = value_type(fctx, machine, k.tag)
+            for i = 1, #k.cases do machine = check_transfer(machine, fctx, site .. ":variant.case" .. tostring(i), k.cases[i].dest, k.cases[i].args) end
+            machine = check_transfer(machine, fctx, site .. ":variant.default", k.default_dest, k.default_args)
         elseif cls == Code.CodeTermReturn then
             local sig = fctx.sig
             if sig ~= nil then
-                if #k.values ~= #sig.results then add_issue(ctx, Code.CodeIssueCallArity(sig.id, #sig.results, #k.values)) end
+                if #k.values ~= #sig.results then machine = machine:with_issue(Code.CodeIssueCallArity(sig.id, #sig.results, #k.values)) end
                 local n = math.min(#k.values, #sig.results)
-                for i = 1, n do expect_type(ctx, site .. ":return" .. tostring(i), sig.results[i], value_type(fctx, ctx, k.values[i])) end
+                for i = 1, n do
+                    local vty
+                    machine, vty = value_type(fctx, machine, k.values[i])
+                    if vty ~= nil then machine = expect_type(machine, site .. ":return" .. tostring(i), sig.results[i], vty) end
+                end
             else
-                for i = 1, #k.values do value_type(fctx, ctx, k.values[i]) end
+                for i = 1, #k.values do machine, _ = value_type(fctx, machine, k.values[i]) end
             end
         elseif cls == Code.CodeTermTrap or cls == Code.CodeTermUnreachable then
             -- valid terminal forms
         else
-            add_issue(ctx, Code.CodeIssueInvalidTerminator(site, term.id))
+            machine = machine:with_issue(Code.CodeIssueInvalidTerminator(site, term.id))
         end
+        return machine
     end
 
-    local function validate_func(ctx, func)
-        local sig = check_sig_ref(ctx, func.sig)
+    local function validate_func(machine, func)
+        local sig
+        machine, sig = check_sig_ref(machine, func.sig)
         local fctx = { func = func, sig = sig, values = {}, locals = {}, blocks = {}, insts = {}, terms = {} }
         if sig ~= nil then
-            if #func.params ~= #sig.params then add_issue(ctx, Code.CodeIssueCallArity(sig.id, #sig.params, #func.params)) end
+            if #func.params ~= #sig.params then machine = machine:with_issue(Code.CodeIssueCallArity(sig.id, #sig.params, #func.params)) end
             local n = math.min(#func.params, #sig.params)
-            for i = 1, n do expect_type(ctx, "func:" .. func.name .. ":param" .. tostring(i), sig.params[i], func.params[i].ty) end
+            for i = 1, n do machine = expect_type(machine, "func:" .. func.name .. ":param" .. tostring(i), sig.params[i], func.params[i].ty) end
         end
-        register_function_defs(ctx, fctx, func)
-        if fctx.blocks[func.entry.text] == nil then add_issue(ctx, Code.CodeIssueMissingBlock(func.entry)) end
+        machine = register_function_defs(machine, fctx, func)
+        if fctx.blocks[func.entry.text] == nil then machine = machine:with_issue(Code.CodeIssueMissingBlock(func.entry)) end
         for i = 1, #(func.blocks or {}) do
             local block = func.blocks[i]
-            for j = 1, #(block.params or {}) do type_uses_code_sig(block.params[j].ty, ctx) end
-            for j = 1, #(block.insts or {}) do check_inst(ctx, fctx, func, block, block.insts[j]) end
-            check_term(ctx, fctx, func, block)
+            for j = 1, #(block.params or {}) do machine = type_uses_code_sig(block.params[j].ty, machine) end
+            for j = 1, #(block.insts or {}) do machine = check_inst(machine, fctx, func, block, block.insts[j]) end
+            machine = check_term(machine, fctx, func, block)
         end
+        return machine
     end
 
     local function validate(code_module, collector_or_opts)
         local collector = collector_or_opts
         if type(collector_or_opts) == "table" and collector_or_opts.collector ~= nil then collector = collector_or_opts.collector end
-        local ctx = { issues = {}, collector = collector, relocs = {} }
+        local machine = Machine.new({}, {}, {}, {}, {})
 
-        ctx.sigs = index_by(ctx, code_module.sigs, function(s) return s.id.text, s.id end, function(id) return Code.CodeIssueDuplicateSig(id) end)
-        ctx.data = index_by(ctx, code_module.data, function(d) return d.id.text, d.id end, function(id) return Code.CodeIssueDuplicateData(id) end)
-        ctx.globals = index_by(ctx, code_module.globals, function(g) return g.id.text, g.id end, function(id) return Code.CodeIssueDuplicateGlobal(id) end)
-        ctx.externs = index_by(ctx, code_module.externs, function(e) return e.id.text, e.id end, function(id) return Code.CodeIssueDuplicateExtern(id) end)
-        ctx.funcs = index_by(ctx, code_module.funcs, function(f) return f.id.text, f.id end, function(id) return Code.CodeIssueDuplicateFunc(id) end)
+        machine, machine._sigs = index_by(machine, code_module.sigs, function(s) return s.id.text, s.id end, function(id) return Code.CodeIssueDuplicateSig(id) end)
+        machine, machine._data = index_by(machine, code_module.data, function(d) return d.id.text, d.id end, function(id) return Code.CodeIssueDuplicateData(id) end)
+        machine, machine._globals = index_by(machine, code_module.globals, function(g) return g.id.text, g.id end, function(id) return Code.CodeIssueDuplicateGlobal(id) end)
+        machine, machine._externs = index_by(machine, code_module.externs, function(e) return e.id.text, e.id end, function(id) return Code.CodeIssueDuplicateExtern(id) end)
+        machine, machine._funcs = index_by(machine, code_module.funcs, function(f) return f.id.text, f.id end, function(id) return Code.CodeIssueDuplicateFunc(id) end)
 
         for i = 1, #(code_module.sigs or {}) do
             local sig = code_module.sigs[i]
-            for j = 1, #sig.params do type_uses_code_sig(sig.params[j], ctx) end
-            for j = 1, #sig.results do type_uses_code_sig(sig.results[j], ctx) end
+            for j = 1, #sig.params do machine = type_uses_code_sig(sig.params[j], machine) end
+            for j = 1, #sig.results do machine = type_uses_code_sig(sig.results[j], machine) end
         end
-        for i = 1, #(code_module.types or {}) do type_uses_code_sig(code_module.types[i].ty, ctx) end
-        for i = 1, #(code_module.externs or {}) do check_sig_ref(ctx, code_module.externs[i].sig) end
+        for i = 1, #(code_module.types or {}) do machine = type_uses_code_sig(code_module.types[i].ty, machine) end
+        for i = 1, #(code_module.externs or {}) do machine, _ = check_sig_ref(machine, code_module.externs[i].sig) end
         for i = 1, #(code_module.globals or {}) do
             local g = code_module.globals[i]
-            type_uses_code_sig(g.ty, ctx)
-            check_align(ctx, "global:" .. g.id.text, g.align, nil)
+            machine = type_uses_code_sig(g.ty, machine)
+            machine = check_align(machine, "global:" .. g.id.text, g.align, nil)
             for j = 1, #(g.inits or {}) do
                 local init = g.inits[j]
-                check_init_bounds(ctx, "global", g.id, g.size, init)
-                if asdl.classof(init) == Code.CodeDataReloc then check_reloc(ctx, init.reloc) end
+                machine = check_init_bounds(machine, "global", g.id, g.size, init)
+                if asdl.classof(init) == Code.CodeDataReloc then machine = check_reloc(machine, init.reloc) end
             end
         end
         for i = 1, #(code_module.data or {}) do
             local d = code_module.data[i]
-            check_align(ctx, "data:" .. d.id.text, d.align, nil)
+            machine = check_align(machine, "data:" .. d.id.text, d.align, nil)
             for j = 1, #(d.inits or {}) do
                 local init = d.inits[j]
-                check_init_bounds(ctx, "data", d.id, d.size, init)
-                if asdl.classof(init) == Code.CodeDataReloc then check_reloc(ctx, init.reloc) end
+                machine = check_init_bounds(machine, "data", d.id, d.size, init)
+                if asdl.classof(init) == Code.CodeDataReloc then machine = check_reloc(machine, init.reloc) end
             end
         end
-        for i = 1, #(code_module.funcs or {}) do validate_func(ctx, code_module.funcs[i]) end
+        for i = 1, #(code_module.funcs or {}) do machine = validate_func(machine, code_module.funcs[i]) end
 
-        return Code.CodeValidationReport(ctx.issues)
+        -- Support collector callback for backward compatibility
+        if collector and collector.emit then
+            for _, issue in ipairs(machine:issues()) do
+                pcall(function() collector:emit(issue, "code") end)
+            end
+        end
+
+        return Code.CodeValidationReport(machine:issues())
     end
 
     api.validate = validate

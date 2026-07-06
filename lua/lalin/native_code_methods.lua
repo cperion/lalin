@@ -9,6 +9,7 @@ local function bind_context(T)
     local Native = T.LalinNative
     local Sem = T.LalinSem
     local C = T.LalinC
+    local CEm = T.LalinCEmit
     local Support = require("lalin.native_template_support")(T)
     require("lalin.native_template_sources")(T)
     local CodeType = require("lalin.code_type")(T)
@@ -498,7 +499,7 @@ local function bind_context(T)
     end
 
     local function source_type_storage_layout(source_ty, target, layout_env, layout_plan)
-        local code_ty = CodeType.type_to_code(source_ty)
+        local code_ty = select(1, CodeType.type_to_code(T.LalinTreeLower.TreeLowerModuleSigState("_dummy", {}, {}), source_ty))
         local layout = require_known_source_layout(source_ty, layout_env, target, "field `" .. tostring(source_ty) .. "`")
         local storage = code_ty:native_storage_layout(target, layout_plan)
         if storage.size ~= layout.size or storage.alignment ~= layout.align then
@@ -631,7 +632,7 @@ local function bind_context(T)
         return Native.NativeCodeImportedCLayoutEntry(self.type, ty, self, storage, fields)
     end
 
-    function Code.CodeBackModuleFacts:native_code_type_layout_plan(module, target)
+    function Code.CodeBackendModuleMachine:native_code_type_layout_plan(module, target)
         if target == nil then internal_error("native Code type layout projection requires a NativeTarget") end
         local layout_env = self.layout_env
         local plan = Native.NativeCodeTypeLayoutPlan({}, {}, {})
@@ -647,7 +648,7 @@ local function bind_context(T)
     end
 
     function Code.CodeModule:native_code_type_layout_plan(facts, target)
-        if facts == nil then internal_error("native CodeModule type layout projection requires CodeBackModuleFacts") end
+        if facts == nil then internal_error("native CodeModule type layout projection requires CodeBackendModuleMachine") end
         return facts:native_code_type_layout_plan(self, target)
     end
 
@@ -1517,7 +1518,7 @@ local function bind_context(T)
         return Native.NativeCodeLoweringInput(module_plan, native_code_function_plan(func, module_sig_for_func(module, func), plan.target, module_plan.type_layouts))
     end
 
-    function Code.CodeBackModuleFacts:native_code_lowering_input(module, func, plan)
+    function Code.CodeBackendModuleMachine:native_code_lowering_input(module, func, plan)
         local type_layouts = self:native_code_type_layout_plan(module, plan.target)
         local module_plan = native_code_module_plan(module, plan.target, plan.runtime, type_layouts)
         return Native.NativeCodeLoweringInput(module_plan, native_code_function_plan(func, module_sig_for_func(module, func), plan.target, type_layouts))
@@ -3359,8 +3360,7 @@ local function bind_context(T)
         internal_error("native aggregate lowering is missing field layout for `" .. tostring(field.field_name) .. "`")
     end
 
-    local function append_descriptor_make(input, role, dst, kind, elem_ty, data_value, len_value, stride_value)
-        local layout_ty = kind == "view" and Code.CodeTyView(elem_ty) or (kind == "slice" and Code.CodeTySlice(elem_ty) or Code.CodeTyByteSpan)
+    local function append_descriptor_make(input, role, dst, kind_name, layout_ty, axis, data_value, len_value, stride_value)
         local layout = layout_ty:native_storage_layout(input.plan.target, input.lowering.module.type_layouts)
         local output = ensure_value_storage_slot(input.state, dst, layout, target_frame_alignment(input.plan.target))
         local ptr_scalar = Support.scalar_pointer(input.plan.target.pointer_bits)
@@ -3369,8 +3369,7 @@ local function bind_context(T)
         local len = placement_for_value(input.state, len_value)
         local stride = stride_value and placement_for_value(input.state, stride_value) or nil
         local elem_token = elem_ty and scalar_token(elem_ty:native_machine_scalar(input.plan.target)) or "bytes"
-        local id_tail = kind .. ".make." .. elem_token .. ".data.slot.len.slot" .. (stride and ".stride.slot" or "")
-        local axis = kind == "view" and Native.NativeCodeInstViewMakeAxis(elem_ty) or (kind == "slice" and Native.NativeCodeInstSliceMakeAxis(elem_ty) or Native.NativeCodeInstByteSpanMakeAxis)
+        local id_tail = kind_name .. ".make." .. elem_token .. ".data.slot.len.slot" .. (stride and ".stride.slot" or "")
         local family = Support.code_inst_frame_family(id_tail, input.plan.target, ptr_scalar, axis)
         local id_base = "native.hole.code.inst." .. id_tail
         local bindings = {
@@ -3388,21 +3387,21 @@ local function bind_context(T)
     end
 
     function Code.CodeInstViewMake:append_native_inst_template(input)
-        return append_descriptor_make(input, "view_make", self.dst, "view", self.elem_ty, self.data, self.len, self.stride)
+        return append_descriptor_make(input, "view_make", self.dst, "view", Code.CodeTyView(self.elem_ty), Native.NativeCodeInstViewMakeAxis(self.elem_ty), self.data, self.len, self.stride)
     end
 
     function Code.CodeInstSliceMake:append_native_inst_template(input)
-        return append_descriptor_make(input, "slice_make", self.dst, "slice", self.elem_ty, self.data, self.len, nil)
+        return append_descriptor_make(input, "slice_make", self.dst, "slice", Code.CodeTySlice(self.elem_ty), Native.NativeCodeInstSliceMakeAxis(self.elem_ty), self.data, self.len, nil)
     end
 
     function Code.CodeInstByteSpanMake:append_native_inst_template(input)
-        return append_descriptor_make(input, "bytespan_make", self.dst, "bytespan", nil, self.data, self.len, nil)
+        return append_descriptor_make(input, "bytespan_make", self.dst, "bytespan", Code.CodeTyByteSpan, Native.NativeCodeInstByteSpanMakeAxis, self.data, self.len, nil)
     end
 
-    local function append_descriptor_extract(input, role, dst, source_value, kind, field_name, scalar, axis)
+    local function append_descriptor_extract(input, role, dst, source_value, kind_name, field_name, scalar, axis)
         local source = placement_for_value(input.state, source_value)
         local output = ensure_value_storage_slot(input.state, dst, scalar_storage_layout_for_frame(scalar), target_frame_alignment(input.plan.target))
-        local id_tail = kind .. "." .. field_name .. ".to.slot"
+        local id_tail = kind_name .. "." .. field_name .. ".to.slot"
         local family = Support.code_inst_frame_family(id_tail, input.plan.target, scalar, axis)
         local id_base = "native.hole.code.inst." .. id_tail
         local node = append_family_node(input, role, family, { source }, { output }, {

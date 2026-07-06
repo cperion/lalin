@@ -4,6 +4,7 @@ local function bind_context(T)
 
     local Core = T.LalinCore
     local C = T.LalinC
+    local CEm = T.LalinCEmit
     local Exec = T.LalinExec
     local function append_all(out, xs) for i = 1, #(xs or {}) do out[#out + 1] = xs[i] end end
 
@@ -1207,19 +1208,14 @@ local function bind_context(T)
     local function helper_id(spec) return spec:c_helper_id() end
     local function helper_signature(use) return use:c_helper_signature() end
     local function emit_helper(use, emit_type) return use:c_emit_helper_lines(emit_type) end
-    local function register(ctx, spec)
+    -- Register a backend helper with the C emit machine.
+    -- Returns (id, new_machine) when machine is non-nil.
+    local function register(machine, spec)
         local id = spec:c_helper_id()
-        if ctx then
-            ctx.helpers_by_id = ctx.helpers_by_id or {}
-            ctx.helper_order = ctx.helper_order or {}
-            if ctx.helpers_by_id[id.text] == nil then
-                local use = C.CBackendHelperUse(id, spec)
-                ctx.helpers_by_id[id.text] = use
-                ctx.helper_order[#ctx.helper_order + 1] = use
-                if type(ctx.helpers) == "table" then ctx.helpers[id.text] = use end
-            end
-        end
-        return id
+        if machine == nil then return id, machine end
+        local entry = CEm.CEmitHelperEntry(id.text, CEm.CEmitHelper("", ""))
+        local new_machine = machine:with_helper(entry)
+        return id, new_machine
     end
 
     local function emit_includes(unit, out)

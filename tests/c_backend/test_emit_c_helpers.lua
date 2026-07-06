@@ -6,8 +6,8 @@ local T = asdl.context(); Schema(T)
 
 local Core = T.LalinCore
 local C = T.LalinC
-local H = require("lalin.c_helpers")(T)
-local Emit = require("lalin.c_emit")(T)
+local H = require("lalin.emit_c_helpers")(T)
+local Emit = require("lalin.emit_c_lower")(T)
 local CodeType = require("lalin.code_type")(T)
 
 local i32 = C.CBackendScalar(Core.ScalarI32)

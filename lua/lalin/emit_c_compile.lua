@@ -205,7 +205,7 @@ end
 
 function M.compile(c_source, opts)
     opts = opts or {}
-    assert(type(c_source) == "string", "lalin.c_gcc.compile expects emitted C source text")
+    assert(type(c_source) == "string", "lalin.emit_c_compile.compile expects emitted C source text")
     local ok, avail = M.available(opts)
     if not ok then return nil, avail end
 

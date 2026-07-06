@@ -5,9 +5,9 @@ return schema. LalinC {
   product. CTypeId { interned, module_name [str], spelling [str], },
   sum. CTypeShape {
     CVoid,
-    CScalar { variant_unique, scalar [LalinBack.BackScalar], },
+    CScalar { variant_unique, scalar [LalinBackend.BackScalar], },
     CPointer { variant_unique, pointee [LalinC.CTypeId], },
-    CEnum { variant_unique, scalar [LalinBack.BackScalar], },
+    CEnum { variant_unique, scalar [LalinBackend.BackScalar], },
     CArray { variant_unique, elem [LalinC.CTypeId], count [number], },
     CStruct,
     CUnion,

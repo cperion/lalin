@@ -37,10 +37,10 @@ end
 
 local function bind_context(T)
     local Ty = T.LalinType
-    local Back = T.LalinBack
+    local Backend = T.LalinBackend
     local Sem = T.LalinSem
 
-    local scalar_api = require("lalin.type_to_back_scalar")(T)
+    local scalar_api = require("lalin.type_to_backend_scalar")(T)
     local layout_api = require("lalin.type_size_align")(T)
     local classify_api = require("lalin.type_classify")(T)
 
@@ -60,7 +60,7 @@ local function bind_context(T)
 
             local r = scalar_api.result(ty)
             if schema.classof(r) == Ty.TypeBackScalarKnown then
-                if r.scalar == Back.BackVoid then return single(Ty.AbiIgnore) end
+                if r.scalar == Backend.BackVoid then return single(Ty.AbiIgnore) end
                 return single(Ty.AbiDirect(r.scalar))
             end
             if self.scalar == T.LalinCore.ScalarVoid then return single(Ty.AbiIgnore) end
@@ -68,11 +68,11 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Ty.TypeShapePointer) then
             return (function()
- return single(Ty.AbiDirect(Back.BackPtr))
+ return single(Ty.AbiDirect(Backend.BackPtr))
             end)(node, ...)
         elseif schema.isa(node, Ty.TypeShapeCallable) then
             return (function()
- return single(Ty.AbiDirect(Back.BackPtr))
+ return single(Ty.AbiDirect(Backend.BackPtr))
             end)(node, ...)
         elseif schema.isa(node, Ty.TypeShapeSlice) then
             return (function(_, ty, env)

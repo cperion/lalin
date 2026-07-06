@@ -40,7 +40,7 @@ local function bind_context(T)
     local B = T.LalinBind
     local Tr = T.LalinTree
 
-    local scalar_api = require("lalin.type_to_back_scalar")(T)
+    local scalar_api = require("lalin.type_to_backend_scalar")(T)
 
     local binding_facts
     local value_ref_facts

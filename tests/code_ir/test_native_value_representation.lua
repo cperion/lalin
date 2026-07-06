@@ -46,13 +46,13 @@ local source_i32 = Type.TScalar(Core.ScalarI32)
 local named_source = Type.TNamed(Type.TypeRefGlobal("native.value", "Named"))
 local named_ty = Code.CodeTyNamed("native.value", "Named", named_source)
 local named_sem_layout = Sem.LayoutNamed("native.value", "Named", { Sem.FieldLayout("value", 0, source_i32) }, 4, 4)
-local module_facts = Code.CodeBackModuleFacts(
+local module_facts = Code.CodeBackendModuleMachine(
     {},
     {},
     {},
     Code.CodeValueSemanticsProjection({}, {}),
     {},
-    Code.CodeBackReadonlyProjection({}),
+    Code.CodeBackendReadonlyProjection({}),
     Sem.LayoutEnv({ named_sem_layout }),
     nil
 )
@@ -143,7 +143,7 @@ local lowering_artifact = Native.NativeBankArtifact(Native.NativeBankId("native.
 local lowering_bank = Native.NativeLoadedBank(lowering_artifact, 1)
 local lowering_plan = Native.NativePlanInput(target, lowering_runtime, lowering_bank)
 local lowering_input = lowering_module:native_code_lowering_input(module_facts, lowering_func, lowering_plan)
-assert(#lowering_input.module.signatures == 1, "CodeBackModuleFacts native lowering should populate signature ABI entries")
+assert(#lowering_input.module.signatures == 1, "CodeBackendModuleMachine native lowering should populate signature ABI entries")
 assert(asdl.isa(lowering_input.module.addresses.data[1].projection.capability, Native.NativeCodeAddressConstantPoolEntry), "readonly CodeData should project to constant-pool address capability")
 assert(asdl.isa(lowering_input.module.data_storage[1].inits[1], Native.NativeCodeStaticBytesInit), "CodeData bytes init should become a typed native static init")
 assert(lowering_input.module.data_storage[1].backing.entry.bytes.bytes == "data", "CodeData constant-pool backing should materialize readonly bytes")

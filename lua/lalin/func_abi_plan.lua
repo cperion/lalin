@@ -7,9 +7,9 @@ local function bind_context(T)
     local C = T.LalinCore
     local Ty = T.LalinType
     local B = T.LalinBind
-    local Back = T.LalinBack
+    local Backend = T.LalinBackend
 
-    local scalar_api = require("lalin.type_to_back_scalar")(T)
+    local scalar_api = require("lalin.type_to_backend_scalar")(T)
     local classify_api = require("lalin.type_classify")(T)
 
     local function arg_binding_for_param(func_name, param, index)
@@ -28,14 +28,14 @@ local function bind_context(T)
             return Ty.AbiParamView(
                 param.name,
                 binding,
-                Back.BackValId("arg:" .. func_name .. ":" .. param.name .. ":data"),
-                Back.BackValId("arg:" .. func_name .. ":" .. param.name .. ":len"),
-                Back.BackValId("arg:" .. func_name .. ":" .. param.name .. ":stride")
+                Backend.BackValId("arg:" .. func_name .. ":" .. param.name .. ":data"),
+                Backend.BackValId("arg:" .. func_name .. ":" .. param.name .. ":len"),
+                Backend.BackValId("arg:" .. func_name .. ":" .. param.name .. ":stride")
             )
         end
         local scalar = back_scalar(param.ty)
-        if scalar ~= nil and scalar ~= Back.BackVoid then
-            return Ty.AbiParamScalar(param.name, binding, scalar, Back.BackValId("arg:" .. func_name .. ":" .. param.name))
+        if scalar ~= nil and scalar ~= Backend.BackVoid then
+            return Ty.AbiParamScalar(param.name, binding, scalar, Backend.BackValId("arg:" .. func_name .. ":" .. param.name))
         end
         -- Aggregate values have an executable ABI as an immutable by-address
         -- argument.  The source-level product remains a named aggregate; the
@@ -43,17 +43,17 @@ local function bind_context(T)
         -- Tree-to-back already treats aggregate bindings whose local value is a
         -- BackPtr as addressable aggregate values for field/index access.
         if asdl.classof(param.ty) == Ty.TNamed or asdl.classof(classify_api.classify(param.ty)) == Ty.TypeShapeAggregate then
-            return Ty.AbiParamScalar(param.name, binding, Back.BackPtr, Back.BackValId("arg:" .. func_name .. ":" .. param.name))
+            return Ty.AbiParamScalar(param.name, binding, Backend.BackPtr, Backend.BackValId("arg:" .. func_name .. ":" .. param.name))
         end
         if asdl.classof(param.ty) == Ty.TArray then
-            return Ty.AbiParamScalar(param.name, binding, Back.BackPtr, Back.BackValId("arg:" .. func_name .. ":" .. param.name))
+            return Ty.AbiParamScalar(param.name, binding, Backend.BackPtr, Backend.BackValId("arg:" .. func_name .. ":" .. param.name))
         end
         return Ty.AbiParamRejected(param.name, param.ty, "parameter type has no direct executable ABI yet")
     end
 
     local function result_plan(func_name, result_ty)
         if asdl.classof(result_ty) == Ty.TScalar and result_ty.scalar == C.ScalarVoid then return Ty.AbiResultVoid end
-        if asdl.classof(result_ty) == Ty.TView then return Ty.AbiResultView(result_ty.elem, Back.BackValId("arg:" .. func_name .. ":return:out")) end
+        if asdl.classof(result_ty) == Ty.TView then return Ty.AbiResultView(result_ty.elem, Backend.BackValId("arg:" .. func_name .. ":return:out")) end
         local scalar = back_scalar(result_ty)
         if scalar ~= nil then return Ty.AbiResultScalar(scalar) end
         return Ty.AbiResultRejected(result_ty, "result type has no direct executable ABI yet")

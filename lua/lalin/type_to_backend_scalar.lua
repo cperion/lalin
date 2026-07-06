@@ -4,7 +4,7 @@ local function bind_context(T)
 
     local Core = T.LalinCore
     local Ty = T.LalinType
-    local Back = T.LalinBack
+    local Backend = T.LalinBackend
 
     local classify_api = require("lalin.type_classify")(T)
 
@@ -13,55 +13,55 @@ local function bind_context(T)
     end
 
     function Core.ScalarBool:lower_core_scalar_to_back()
-        return Back.BackBool
+        return Backend.BackBool
     end
 
     function Core.ScalarI8:lower_core_scalar_to_back()
-        return Back.BackI8
+        return Backend.BackI8
     end
 
     function Core.ScalarI16:lower_core_scalar_to_back()
-        return Back.BackI16
+        return Backend.BackI16
     end
 
     function Core.ScalarI32:lower_core_scalar_to_back()
-        return Back.BackI32
+        return Backend.BackI32
     end
 
     function Core.ScalarI64:lower_core_scalar_to_back()
-        return Back.BackI64
+        return Backend.BackI64
     end
 
     function Core.ScalarU8:lower_core_scalar_to_back()
-        return Back.BackU8
+        return Backend.BackU8
     end
 
     function Core.ScalarU16:lower_core_scalar_to_back()
-        return Back.BackU16
+        return Backend.BackU16
     end
 
     function Core.ScalarU32:lower_core_scalar_to_back()
-        return Back.BackU32
+        return Backend.BackU32
     end
 
     function Core.ScalarU64:lower_core_scalar_to_back()
-        return Back.BackU64
+        return Backend.BackU64
     end
 
     function Core.ScalarF32:lower_core_scalar_to_back()
-        return Back.BackF32
+        return Backend.BackF32
     end
 
     function Core.ScalarF64:lower_core_scalar_to_back()
-        return Back.BackF64
+        return Backend.BackF64
     end
 
     function Core.ScalarRawPtr:lower_core_scalar_to_back()
-        return Back.BackPtr
+        return Backend.BackPtr
     end
 
     function Core.ScalarIndex:lower_core_scalar_to_back()
-        return Back.BackIndex
+        return Backend.BackIndex
     end
 
     function Ty.TypeShape:lower_type_shape_to_back_scalar(ty)
@@ -75,11 +75,11 @@ local function bind_context(T)
     end
 
     function Ty.TypeShapePointer:lower_type_shape_to_back_scalar()
-        return Ty.TypeBackScalarKnown(Back.BackPtr)
+        return Ty.TypeBackScalarKnown(Backend.BackPtr)
     end
 
     function Ty.TypeShapeCallable:lower_type_shape_to_back_scalar()
-        return Ty.TypeBackScalarKnown(Back.BackPtr)
+        return Ty.TypeBackScalarKnown(Backend.BackPtr)
     end
 
     function Ty.TypeShapeLease:lower_type_shape_to_back_scalar()
@@ -110,7 +110,7 @@ local function bind_context(T)
         -- Tree-to-back represents closure values as addresses of the two-word
         -- { fn, ctx } descriptor while preserving the source type as Ty.TClosure
         -- in semantic IR.
-        return Ty.TypeBackScalarKnown(Back.BackPtr)
+        return Ty.TypeBackScalarKnown(Backend.BackPtr)
     end
 
     local function type_to_back_scalar_result(ty)

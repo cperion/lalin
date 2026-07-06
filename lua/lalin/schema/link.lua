@@ -30,7 +30,7 @@ return schema. LalinLink {
   sum. LinkRelocationModel { LinkRelocStatic, LinkRelocPic, LinkRelocPie, },
   product. LinkTargetModel {
     interned,
-    backend [LalinBack.BackTargetModel],
+    backend [LalinBackend.BackTargetModel],
     platform [LalinLink.LinkPlatform],
     arch [LalinLink.LinkArch],
     object_format [LalinLink.LinkObjectFormat],

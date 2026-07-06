@@ -4,7 +4,7 @@ local asdl = require("lalin.asdl")
 local Schema = require("lalin.schema")
 local T = asdl.context()
 Schema(T)
-require("lalin.tree_to_code")(T)
+require("lalin.tree_lower")(T)
 
 local Core = T.LalinCore
 local Tr = T.LalinTree
@@ -39,7 +39,7 @@ assert_method(Tr.ItemConst(Tr.ConstItem("k", Ty.TScalar(Core.ScalarI32), Tr.Expr
 assert_method(Tr.ContractFactBounds(binding, binding), "lower_tree_contract_fact_to_code")
 assert_method(Tr.ContractFactNoAlias(binding), "lower_tree_contract_fact_to_code")
 
-local ok = pcall(require, "lalin.tree_to_code_rules")
-assert(not ok, "tree_to_code_rules must not exist")
+local ok = pcall(require, "lalin.tree_lower_rules")
+assert(not ok, "tree_lower_rules must not exist")
 
-io.write("lalin tree_to_code methods ok\n")
+io.write("lalin tree_lower methods ok\n")
