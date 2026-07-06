@@ -1,0 +1,326 @@
+{
+	"version": 1,
+	"workflowId": "wf-c-backend-redesign",
+	"planId": "main",
+	"revision": 1,
+	"nextId": 1,
+	"createdAt": "2026-07-06T21:10:17.871Z",
+	"updatedAt": "2026-07-06T21:10:17.871Z",
+	"tasks": [
+		{
+			"id": "T001",
+			"title": "schema/flow.lua: add trip_expr field to FlowTripCount variants",
+			"detail": "At lines 88-100, add trip_expr [optional [LalinValue.ValueExpr]] to all three FlowTripCount variants: FlowTripCountExact (after count field, before proof), FlowTripCountNonNegative (after count field), and FlowTripCountUnknown (after reason field). This lets the Flow pass store the synthetic trip count expression without waiting for Value registration.",
+			"file": "lua/lalin/schema/flow.lua",
+			"after": [],
+			"status": "todo",
+			"order": 1,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T002",
+			"title": "schema/mem.lua: add lower_c_alignment_fact and lower_cmat_alignment_fact leaf methods",
+			"detail": "After the MemAlignment sum definition (lines 163-168), add leaf methods that convert to CBackend and Stencil alignment facts. MemAlignment:lower_c_alignment_fact() returns CBackendAlignmentUnknown (default). MemAlignKnown:lower_c_alignment_fact() returns CBackendAlignmentKnown(self.bytes). MemAlignAtLeast:lower_c_alignment_fact() returns CBackendAlignmentKnown(self.bytes) (conservative minimum). MemAlignAssumed:lower_c_alignment_fact() returns CBackendAlignmentAssumed(self.bytes, 'mem proof'). Same pattern for lower_cmat_alignment_fact() returning StencilAlignmentKnown/Unknown. Note: must reference CBackend types via fully-qualified cross-schema names.",
+			"file": "lua/lalin/schema/mem.lua",
+			"after": [],
+			"status": "todo",
+			"order": 2,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T003",
+			"title": "schema/kernel.lua: add KernelRewriteKind sum and KernelRewritePlan product",
+			"detail": "Add new ASDL types after the existing KernelLoopPlanSelection sum (line 201). KernelRewriteKind sum with 6 leaves: KernelRewriteClosedForm(expression ValueExpr, accumulator optional KernelExpr), KernelRewriteMemcpy(dst_base CodeValueId, src_base CodeValueId, elem_size number, semantics MemDependenceFact), KernelRewriteScan(dst KernelLane, src KernelLane, reduction ReductionFact, mode KernelScanMode, trip_count ValueExpr), KernelRewriteFind(src KernelLane, predicate KernelExpr, result_local CodeValueId, trip_count ValueExpr), KernelRewriteReduce(reduction ReductionFact, identity ValueExpr, result_local CodeValueId, trip_count ValueExpr), KernelRewriteNone. KernelRewritePlan product with kind, loop_header_block CodeBlockId, loop_exit_blocks many CodeBlockId, covered_blocks many CodeBlockId, proofs many KernelProof.",
+			"file": "lua/lalin/schema/kernel.lua",
+			"after": [],
+			"status": "todo",
+			"order": 3,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T004",
+			"title": "schema/kernel.lua: add lower_rewrite_plan methods on KernelResult leaves",
+			"detail": "After the KernelRewritePlan product definition, add leaf methods on each KernelResult variant (lines 133-170). KernelResultClosedForm:lower_rewrite_plan(kernel_id, kplan) builds KernelRewriteClosedForm(self.closed_form.expr, nil) with exit/covered blocks from kplan.body.domain. KernelResultFind:lower_rewrite_plan builds KernelRewriteFind from src, pred, not_found. KernelResultReduction:lower_rewrite_plan builds KernelRewriteReduce. Other leaves: KernelResultCopy/Scan similar. KernelResultOriginalControl returns KernelRewriteNone. Default method on KernelResult returns KernelRewriteNone.",
+			"file": "lua/lalin/schema/kernel.lua",
+			"after": [],
+			"status": "todo",
+			"order": 4,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T005",
+			"title": "schema/lower.lua: add LowerRewriteApplication and LowerBlockMapping types",
+			"detail": "After the existing LowerEmitSelection sum (line 105), add LowerBlockMapping sum with LowerBlockEliminated(block CodeBlockId) and LowerBlockRewritten(block CodeBlockId, replacement CodeBlock). Add LowerRewriteApplication product with fragment LowerFragment, rewrite_plan KernelRewritePlan, replacement_blocks many CodeBlock, block_mappings many LowerBlockMapping.",
+			"file": "lua/lalin/schema/lower.lua",
+			"after": [],
+			"status": "todo",
+			"order": 5,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T006",
+			"title": "schema/c.lua: add CBackendAnnotationSpine and annotation facet types",
+			"detail": "After the existing CBackendFuncBody sum (line 513), add the full annotation facet vocabulary. In order: CBackendAnnotationSpine(interned, func_name CBackendName). CBackendLoopDirection sum (Forward, Backward, Unknown). CBackendLoopTailPlan sum (None, Scalar, Masked, Peel count number). CBackendAlignmentFact sum (Unknown, Known bytes number, Assumed bytes number level str). CBackendBoundsFact(start_offset number, length_bytes number). CBackendBranchPolarity sum (Likely, Unlikely). CBackendLoopAnnotation(interned, spine, header_label, body_labels many, back_edge_label, exit_labels many, induction_local optional, induction_ty optional, trip_count optional, direction, vectorizable bool, unroll_hint optional number, interleave_hint optional number, tail_plan). CBackendPointerAnnotation(interned, spine, local_ptr, alignment, restrict bool, non_trapping bool, bounds_range optional). CBackendBranchAnnotation(interned, spine, block_label, condition_local optional, polarity, reason str). CBackendFuncAnnotations(interned, spine, loops many, pointers many, branches many). CBackendUnitAnnotations(interned, module_name str, funcs many CBackendFuncAnnotations). All products are interned.",
+			"file": "lua/lalin/schema/c.lua",
+			"after": [],
+			"status": "todo",
+			"order": 6,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T007",
+			"title": "schema/c.lua: add align field to CBackendPlacePtrIndex",
+			"detail": "At line 243-249, add align [optional [number]] to CBackendPlacePtrIndex after the elem_size field. This lets the lowering pass through alignment facts from MemBackendAccessInfo to the CBackend place hierarchy. Pattern matches existing align fields on CBackendPlaceDeref (line 226) and CBackendPlaceBytes (line 257).",
+			"file": "lua/lalin/schema/c.lua",
+			"after": [],
+			"status": "todo",
+			"order": 7,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T008",
+			"title": "schema/c.lua: add CBackendRValueBuiltin and CBackendBuiltinKind",
+			"detail": "Extend the CBackendRValue sum (line 285) with a new leaf: CBackendRValueBuiltin { variant_unique, builtin [CBackendBuiltinKind], args [many [CBackendRValue]] }. Add CBackendBuiltinKind sum with leaves: CBackendBuiltinAssumeAligned, CBackendBuiltinExpect, CBackendBuiltinAssume. This provides first-class IR nodes for compiler builtins used by the hint-injection pass.",
+			"file": "lua/lalin/schema/c.lua",
+			"after": [],
+			"status": "todo",
+			"order": 8,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T009",
+			"title": "code_flow_facts.lua: compute trip_expr in semantic_facts",
+			"detail": "At line ~503, replace the hardcoded FlowTripCountUnknown with actual trip count computation. Before the out[#out+1] line, add a compute_trip_expr helper that builds ValueExpr from counted.start, counted.stop, counted.step, counted.stop_exclusive. For step=1 and exclusive: ValueExprBinary('sub', ValueExprValue(stop), ValueExprValue(start)). For non-unit step: ValueExprBinary('div', diff_expr, ValueExprValue(step)). For inclusive: add step adjustment. Attempt to resolve the CodeValueId via existing value defs/consts. If found: produce FlowTripCountExact(trip_value_id, trip_expr, nil). Otherwise: FlowTripCountUnknown(reason, trip_expr). The trip_expr is always populated even when unresolved. Also return FlowTripCountNonNegative when sign is provable.",
+			"file": "lua/lalin/code_flow_facts.lua",
+			"after": [
+				"T001"
+			],
+			"status": "todo",
+			"order": 9,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T010",
+			"title": "lower_to_c.lua: wire alignment in cmat_access_binding_for_lane",
+			"detail": "At line 671, replace the hardcoded `Stencil.StencilAlignmentUnknown` with `lane_backend_alignment(lane)`. Add a new local function lane_backend_alignment(lane) that iterates lane.backend_info, checks each info.alignment, and calls align:lower_cmat_alignment_fact() for non-Unknown alignments. Falls back to StencilAlignmentUnknown. This closes the alignment bridge: MemBackendAccessInfo → CMatAccessBinding → CBackendPlacePtrIndex.",
+			"file": "lua/lalin/lower_to_c.lua",
+			"after": [
+				"T002"
+			],
+			"status": "todo",
+			"order": 10,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T011",
+			"title": "lower_to_c.lua: pass schedule to computation_for_body",
+			"detail": "Modify computation_for_body (line 1175) to accept an optional schedule param (defaults to default_stencil_schedule()). Pass schedule into StencilComputation instead of hardcoded default_stencil_schedule(). Then modify the leaf emit_to_c methods (lines 1748-1756): LowerEmitScalarKernel and LowerEmitVectorKernel must look up the schedule by kernel ID from fragment_emit.schedules (already in LowerCEmitInput). Add resolve_schedule helper. LowerEmitVectorKernel uses real ScheduleVector when available, falling back to scalar. The emit_kernel_fragment function passes the schedule through to computation_for_body.",
+			"file": "lua/lalin/lower_to_c.lua",
+			"after": [],
+			"status": "todo",
+			"order": 11,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T012",
+			"title": "lower_to_c.lua: build CBackendFuncAnnotations in lower_semantic_func",
+			"detail": "In lower_semantic_func (line 2053), after the fragment loop and before apply_lower_c_carriers, build a CBackendFuncAnnotations from the kernel/flow facts. For each kernel fragment: (1) Loop annotation from FlowLoopFacts (header_label, body_labels, back_edge_label, exit_labels from GraphLoop; trip_count from kplan.body.domain.trip_count; direction from FlowLoopDirection; vectorizable from schedule==ScheduleVector; unroll/interleave/tail from schedule). (2) Pointer annotations from KernelLane.backend_info (alignment via lower_c_alignment_fact, restrict from MemContiguous+no_alias, non_trapping from MemNonTrapping). (3) Branch annotations from FlowInduction range (Likely for back-edge, Unlikely for exit). Return annotations alongside the CBackendFunc. Store func_annotations in c_emission table for later use.",
+			"file": "lua/lalin/lower_to_c.lua",
+			"after": [
+				"T006",
+				"T009",
+				"T011"
+			],
+			"status": "todo",
+			"order": 12,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T013",
+			"title": "lower_to_c.lua: integrate kernel rewrite application in lower_semantic_func",
+			"detail": "Before the fragment loop in lower_semantic_func (line 2053), add a new step: for each fragment with a kernel strategy that has a provable rewrite plan, call lower_kernel_rewrite.apply() → LowerRewriteApplication. Collect replacement blocks. Build a rewritten CodeFunc merging originals + replacements. Pass rewritten_func to CodeToC.func() for baseline lowering. Fragments that rewrite to KernelRewriteNone continue to the existing CMat inline path. Store rewrite applications in c_emission for the annotation builder.",
+			"file": "lua/lalin/lower_to_c.lua",
+			"after": [
+				"T004",
+				"T005",
+				"T012"
+			],
+			"status": "todo",
+			"order": 13,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T014",
+			"title": "lower_kernel_rewrite.lua: new file for Code IR rewrite from kernel proofs",
+			"detail": "New file. exports = { apply = function(kplan, fragment, code_func, graph_loop, value_facts) ... end }. Implement: lower_rewrite_closed_form(kplan, fragment, code_func, graph_loop, value_facts) — emits a single CodeBlock evaluating ValueExpr → CodeInst sequence, then CodeTermJump to exit blocks. lower_rewrite_memcpy — emits CodeBlock computing dst_base/src_base from lane bases, bytes = trip_count*elem_size, CodeInstCall to memcpy/memmove helper, jump to exit. lower_rewrite_scan, lower_rewrite_find, lower_rewrite_reduce — similar patterns with typed helper calls. All replacement blocks are pure CodeBlock nodes. The apply() dispatch switches on KernelRewriteKind. Returns LowerRewriteApplication.",
+			"file": "lua/lalin/lower_kernel_rewrite.lua",
+			"after": [
+				"T003",
+				"T005"
+			],
+			"status": "todo",
+			"order": 14,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T015",
+			"title": "emit_c_lower.lua: add c_inject_hints pass",
+			"detail": "Add a new pass c_inject_hints(func_annotations, f_blocks) that runs BEFORE plan_field_hoists (before line 867). Implement three sections: (1) Pointer alignment: for each CBackendPointerAnnotation with Known(N), prepend a CBackendAssign to the defining block: local = CBackendRValueBuiltin(AssumeAligned, {local, literal(N)}). (2) Loop pragmas: for each CBackendLoopAnnotation, inject CBackendComment('#pragma GCC ivdep') at header block if vectorizable; inject '#pragma GCC unroll N' if unroll_hint; inject '#pragma clang loop interleave(count=N)' if interleave_hint. (3) Branch hints: for each CBackendBranchAnnotation, wrap CBackendIfGoto condition: CBackendRValueBuiltin(Expect, {cond, literal(0 or 1)}). Add function stub for tail merging (c_merge_tails) to be implemented later. Wire func_annotations through the c_emission context so c_emit_func can call c_inject_hints before the optimizer pipeline.",
+			"file": "lua/lalin/emit_c_lower.lua",
+			"after": [
+				"T008",
+				"T012"
+			],
+			"status": "todo",
+			"order": 15,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T016",
+			"title": "emit_c_lower.lua: handle CBackendComment pragma emission",
+			"detail": "Modify the CBackendComment emission logic so that comments starting with '#pragma' are emitted directly (without '// ' prefix). Find the c_emit_stmt function or the comment emission path; check if text:sub(1,7) == '#pragma' and emit the text verbatim. All other comments stay as '// comment'.",
+			"file": "lua/lalin/emit_c_lower.lua",
+			"after": [
+				"T015"
+			],
+			"status": "todo",
+			"order": 16,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T017",
+			"title": "emit_c_lower.lua: add CBackendRValueBuiltin emission",
+			"detail": "Add c_emit_rvalue leaf methods for CBackendRValueBuiltin. The default method on CBackendRValue ignores unknown leaves. For CBackendBuiltinAssumeAligned: emit '__builtin_assume_aligned(' .. emit_rvalue(args[1]) .. ', ' .. emit_rvalue(args[2]) .. ')'. For CBackendBuiltinExpect: emit '__builtin_expect(' .. emit_rvalue(args[1]) .. ', ' .. emit_rvalue(args[2]) .. ')'. For CBackendBuiltinAssume: emit '__builtin_assume(' .. emit_rvalue(args[1]) .. ')'. Find the existing c_emit_rvalue pattern (around where CBackendRCompare, CBackendRCast, etc. are emitted) and add the new leaf methods.",
+			"file": "lua/lalin/emit_c_lower.lua",
+			"after": [
+				"T008",
+				"T015"
+			],
+			"status": "todo",
+			"order": 17,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T018",
+			"title": "emit_c_lower.lua: add c_merge_tails pass for tail plan emission",
+			"detail": "Implement c_merge_tails(func_annotations, f_blocks, block_by_label) called from c_inject_hints or after it. For each loop annotation with non-None tail_plan: if CBackendTailPeel(count), inject a pre-loop peel block that handles the first count iterations via a new CBackendBlock with CBackendGoto to main loop header. If CBackendTailScalar, inject a post-loop scalar block after the exit label that handles trip_count % vector_lanes remaining iterations. Tail blocks use standard CBackendBlock/CBackendStmt/CBackendTerminator nodes. Requires trip_count available (from Layer 1 fix) and vector_lanes from ScheduleVector (from Layer 5 fix). When trip_count or vector_lanes are unavailable, skip tail generation gracefully.",
+			"file": "lua/lalin/emit_c_lower.lua",
+			"after": [
+				"T009",
+				"T011",
+				"T015"
+			],
+			"status": "todo",
+			"order": 18,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T019",
+			"title": "emit_c_helpers.lua: add scan/find/reduce helper spec leaves",
+			"detail": "The file currently delegates to emit_c_lower.lua. Add new CBackendHelperSpec leaves in schema/c.lua for Scan, Find, Reduce (already accounted in T008), then add emission bodies. CBackendHelperScan: inline loop with restrict + assume_aligned, mode determines inclusive/exclusive scan. CBackendHelperFind: inline loop returning first matching index or not_found sentinel. CBackendHelperReduce: inline loop applying reducer with identity initial value. Each helper takes typed pointers, count, and operation-specific params. Bodies should include __builtin_assume_aligned on pointer args using the existing typed-memcpy pattern.",
+			"file": "lua/lalin/emit_c_helpers.lua",
+			"after": [
+				"T008"
+			],
+			"status": "todo",
+			"order": 19,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T020",
+			"title": "Tests: verify FlowTripCount carries trip_expr",
+			"detail": "Update or add a test that verifies semantic_facts produces FlowTripCountExact or FlowTripCountNonNegative with a non-nil trip_expr for counted loops. Check trip count expression for simple exclusive loops (step=1), exclusive loops with non-unit step, and inclusive loops. Run: luajit tests/run.lua schema to confirm schema compiles, then luajit tests/run.lua code_ir to exercise the flow facts path.",
+			"file": "tests/",
+			"after": [
+				"T009"
+			],
+			"status": "todo",
+			"order": 20,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T021",
+			"title": "Tests: verify alignment wire end-to-end",
+			"detail": "Write or update a test that confirms MemAlignmentKnown flows through cmat_access_binding_for_lane → CMatAccessBinding → CBackendPlacePtrIndex.align. Test that lane_backend_alignment returns correct Stencil alignment for lanes with MemBackendAccessInfo. Run: luajit tests/run.lua schema code_ir to confirm no regressions.",
+			"file": "tests/",
+			"after": [
+				"T010"
+			],
+			"status": "todo",
+			"order": 21,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T022",
+			"title": "Tests: verify annotation facet population",
+			"detail": "Add a test that confirms lower_semantic_func builds CBackendFuncAnnotations with loop annotations (from FlowLoopFacts), pointer annotations (from MemBackendAccessInfo), and branch annotations (from FlowInduction). Verify annotations are keyed correctly to CBackend block labels. Run: luajit tests/run.lua schema code_ir.",
+			"file": "tests/",
+			"after": [
+				"T012"
+			],
+			"status": "todo",
+			"order": 22,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		},
+		{
+			"id": "T023",
+			"title": "Tests: verify c_inject_hints produces valid C with pragmas",
+			"detail": "Add a test that feeds a CBackendFunc with CBackendFuncAnnotations through c_inject_hints and then emits to C text. Verify the output contains '#pragma GCC ivdep', '__builtin_assume_aligned', '__builtin_expect' when annotations are present. Verify no pragmas when annotations are empty. Run: luajit tests/run.lua code_ir.",
+			"file": "tests/",
+			"after": [
+				"T015",
+				"T016",
+				"T017"
+			],
+			"status": "todo",
+			"order": 23,
+			"notes": [],
+			"createdAt": "2026-07-06T21:10:17.871Z",
+			"updatedAt": "2026-07-06T21:10:17.871Z"
+		}
+	]
+}

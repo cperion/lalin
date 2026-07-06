@@ -5,6 +5,7 @@ local function bind_context(T)
     if T._lalin_api_cache.native_code_methods ~= nil then return T._lalin_api_cache.native_code_methods end
 
     local Code = T.LalinCode
+    local CodeBackend = T.LalinCodeBackend
     local Core = T.LalinCore
     local Native = T.LalinNative
     local Sem = T.LalinSem
@@ -632,7 +633,7 @@ local function bind_context(T)
         return Native.NativeCodeImportedCLayoutEntry(self.type, ty, self, storage, fields)
     end
 
-    function Code.CodeBackendModuleMachine:native_code_type_layout_plan(module, target)
+    function CodeBackend.CodeBackendModuleMachine:native_code_type_layout_plan(module, target)
         if target == nil then internal_error("native Code type layout projection requires a NativeTarget") end
         local layout_env = self.layout_env
         local plan = Native.NativeCodeTypeLayoutPlan({}, {}, {})
@@ -1518,7 +1519,7 @@ local function bind_context(T)
         return Native.NativeCodeLoweringInput(module_plan, native_code_function_plan(func, module_sig_for_func(module, func), plan.target, module_plan.type_layouts))
     end
 
-    function Code.CodeBackendModuleMachine:native_code_lowering_input(module, func, plan)
+    function CodeBackend.CodeBackendModuleMachine:native_code_lowering_input(module, func, plan)
         local type_layouts = self:native_code_type_layout_plan(module, plan.target)
         local module_plan = native_code_module_plan(module, plan.target, plan.runtime, type_layouts)
         return Native.NativeCodeLoweringInput(module_plan, native_code_function_plan(func, module_sig_for_func(module, func), plan.target, type_layouts))

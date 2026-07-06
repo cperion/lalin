@@ -6,6 +6,7 @@ local Schema = require("lalin.schema")
 local T = asdl.context()
 Schema(T)
 require("lalin.emit_c_lower")(T)
+require("lalin.lower_to_c")(T)
 
 local Code = T.LalinCode
 local Flow = T.LalinFlow
