@@ -112,6 +112,11 @@ return schema. LalinC {
     CBackendImportedCodePtr { variant_unique, sig [LalinC.CFuncSigId], },
     CBackendVector { variant_unique, elem [LalinC.CBackendType], lanes [number], },
   },
+  sum. CBackendDescriptorKind {
+    CBackendDescriptorSlice { variant_unique, elem [LalinC.CBackendType], },
+    CBackendDescriptorByteSpan,
+    CBackendDescriptorView { variant_unique, elem [LalinC.CBackendType], },
+  },
   product. CBackendParam {
     interned,
     field. name [LalinC.CBackendName],
