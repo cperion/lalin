@@ -515,8 +515,7 @@ primary.
 
 7. **Qualify fragments**
    - Upgrade fragments from plain string roles to qualified role identity.
-   - Account for LLPVM and existing dialect fragments under the same identity
-     model.
+   - Account for existing dialect fragments under the same identity model.
 
 8. **Finish diagnostics and docs**
    - Replace plain lowering `error(...)` paths with LLBL diagnostics.
@@ -527,7 +526,7 @@ primary.
 
 This design has a large blast radius. It touches `lua/llbl.lua`, LLBL syntax
 construction, Lua DSL slot matching, Lalin parsed AST/lowering, fragment/spread
-behavior, declaration stream parsing, and likely LLPVM role code.
+behavior, and declaration stream parsing.
 
 It also makes role identity more formal and forces existing custom role regions
 to align with kernel role algebra.
@@ -540,7 +539,7 @@ Known risks are part of the decision:
 
 - broader bracket admission can create greedy slot ambiguity
 - fragment identity must be precise or cross-dialect fragments may collide
-- LLPVM and Lalin custom spread behavior may break during migration
+- Lalin custom spread behavior may break during migration
 - parsed host-eval side-effect timing must remain controlled
 - schema-context-sensitive type projection must not be cached too early
 - top-level parsed `[generated]` requires real declaration-stream parser support

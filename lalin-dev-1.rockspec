@@ -40,6 +40,5 @@ build = {
         cp scripts/lalinfmt.lua "$(PREFIX)/bin/lalinfmt"
         cp lua/llb.lua "$(PREFIX)/share/lua/$(LUA_VERSION)/"
         cp -r lua/lalin "$(PREFIX)/share/lua/$(LUA_VERSION)/"
-        cp -r lua/llpvm "$(PREFIX)/share/lua/$(LUA_VERSION)/"
     ]],
 }

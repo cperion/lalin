@@ -100,7 +100,6 @@ Focused suites:
 luajit tests/run.lua frontend
 luajit tests/run.lua code_ir
 luajit tests/run.lua schema
-luajit tests/run.lua llpvm
 luajit tests/run.lua ui
 ```
 
@@ -124,7 +123,6 @@ lua/llbl.lua                  LLBL extensible language workbench substrate
 lua/lalin/                   Lalin compiler, schemas, DSL, and backend
 lua/lalin/dsl/               authoring heads and namespace surface
 lua/lalin/schema/            ASDL/schema definitions
-lua/llpvm/                   low-level VM/task dialect member
 lua/ui/                      UI kernel and widgets
 tests/                       standalone LuaJIT tests
 benchmarks/                  measurement scripts
@@ -173,7 +171,6 @@ The docs are intentionally small:
 - `docs/LLBL_GUIDE.md` - central LLBL workbench and region guide
 - `docs/LANGUAGE_REFERENCE.md` - public Lalin language reference
 - `docs/ARCHITECTURE.md` - language, compiler, backend, and lowering architecture
-- `docs/LLPVM_GUIDE.md` - low-level VM/task language member
 - `docs/UI_GUIDE.md` - UI package guide
 - `docs/CONVENTIONS.md` - naming, style, and repository conventions
 - `docs/DESIGN_BIBLE.md` - long-form design philosophy

@@ -43,7 +43,6 @@ Use exact subsystem prefixes:
 
 ```text
 llbl_      LLBL substrate concepts
-llpvm_    LLPVM concepts
 luajit_   LuaJIT backend concepts
 stencil_  stencil descriptor/materializer concepts
 schema_   schema projection/runtime concepts

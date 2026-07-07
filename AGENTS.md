@@ -285,7 +285,6 @@ luajit tests/run.lua
 luajit tests/run.lua frontend
 luajit tests/run.lua code_ir
 luajit tests/run.lua schema
-luajit tests/run.lua llpvm
 ```
 
 Useful focused checks:
@@ -350,7 +349,6 @@ lua/lalin/frontend_pipeline.lua
 lua/lalin/c_gcc.lua          GCC-over-emit_c shared-object runner
 lua/lalin/native_backend.lua experimental native C-stencil copy-patch backend facade
 lua/lalin/luajit_backend.lua explicit LuaTrace/LuaJIT bytecode backend facade
-lua/llpvm/                   LLPVM member
 ```
 
 ## Key Docs
@@ -361,7 +359,6 @@ docs/LANGUAGE_REFERENCE.md   public Lalin language reference
 docs/ARCHITECTURE.md         language, compiler, backend, and lowering architecture
 docs/RESIDUAL_NATIVE_ARCHITECTURE.md
                              experimental native C-stencil copy-patch architecture
-docs/LLPVM_GUIDE.md          low-level VM/task language member
 docs/UI_GUIDE.md             UI package guide
 docs/CONVENTIONS.md          naming, style, and repository conventions
 docs/DESIGN_BIBLE.md         long-form design philosophy

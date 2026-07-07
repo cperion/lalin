@@ -5,7 +5,7 @@ local T = asdl.context()
 require("lalin.schema_projection")(T)
 local dsl = require("lalin.dsl")(T)
 local llbl = require("llbl")
-local llpvm = require("llpvm.dsl")
+
 
 local env = dsl.make_env()
 
@@ -39,10 +39,6 @@ local decls = dsl.decls { Pair }
 local unit_with_spread = dsl.to_unit("DeclSpread", { env._(decls), make_pair }):ast()
 assert(#unit_with_spread.items == 2, "_(decl fragment) should splice declarations")
 
--- LLPVM fragments are also qualified and existing fragment expansion remains usable.
-local schema_fragment = llpvm.schema {}
-assert(llbl.is(schema_fragment, "Fragment"), "llpvm.schema should produce fragment")
-assert(schema_fragment.role_id and llbl.role_id_display(schema_fragment.role_id) == "LLPVMDsl.llpvm_decl",
-  "LLPVM schema fragment should carry qualified role id")
+-- Qualified fragment role IDs are verified above via LalinDSL stmts.
 
 io.write("lua dsl host_eval role ok\n")

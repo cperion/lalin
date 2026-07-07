@@ -444,7 +444,6 @@ metadata. It is not just a conflict-avoidance trick.
 ```lua
 lln.fn. add ...
 schema.product. Pair ...
-llpvm.task. compile ...
 region. pull ...
 ```
 
@@ -453,7 +452,6 @@ Language zones use callable namespaces:
 ```lua
 return {
   lln { ... },
-  llpvm { ... },
   schema { ... },
 }
 ```

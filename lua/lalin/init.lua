@@ -69,7 +69,6 @@ M.native_backend = require("lalin.native_backend")
 
 
 local llbl = require("llbl")
-local llpvm_dsl = require("llpvm.dsl")
 local schema_dsl = require("lalin.schema.dsl")
 M.schema_dsl = schema_dsl
 M.schema_namespace = schema_dsl.namespace()
@@ -103,13 +102,8 @@ local function parsed_decls_from(value)
     return decls
 end
 
-local function is_llpvm_value(value)
-    local mt = type(value) == "table" and getmetatable(value) or nil
-    return mt == llpvm_dsl.ProgramSpec or mt == llpvm_dsl.ProgramImage or mt == llpvm_dsl.TaskSpec
-end
-
 local function is_schema_value(value)
-    return schema_dsl.is_schema_value(value)
+	return schema_dsl.is_schema_value(value)
 end
 
 local function collect_schema_values(out, value, seen)
@@ -133,30 +127,6 @@ local function collect_schema_values(out, value, seen)
     end
     for i = 1, #value do collect_schema_values(out, value[i], seen) end
     for k, v in pairs(value) do if type(k) ~= "number" then collect_schema_values(out, v, seen) end end
-    return out
-end
-
-local function collect_llpvm_values(out, value, seen)
-    if type(value) ~= "table" then return out end
-    seen = seen or {}
-    if seen[value] then return out end
-    seen[value] = true
-    if is_llpvm_value(value) then
-        out[#out + 1] = value
-        return out
-    end
-    if llbl.is(value, "Zone") then
-        if value.member == "llpvm.dsl" or value.name == "llpvm" then
-            for _, item in ipairs(value.items or {}) do collect_llpvm_values(out, item, seen) end
-        end
-        return out
-    end
-    if llbl.is(value, "LanguageBundle") then
-        for _, z in ipairs(value.zones or {}) do collect_llpvm_values(out, z, seen) end
-        return out
-    end
-    for i = 1, #value do collect_llpvm_values(out, value[i], seen) end
-    for k, v in pairs(value) do if type(k) ~= "number" then collect_llpvm_values(out, v, seen) end end
     return out
 end
 
@@ -215,53 +185,6 @@ local function lalin_index(value, opts, language)
             }
         end
     end
-    return out
-end
-
-local function llpvm_diagnostics(value, bag, opts, language)
-    local targets = collect_llpvm_values({}, value)
-    for _, target in ipairs(targets) do
-        local ok, projected = pcall(llpvm_dsl.to_program, target)
-        if not ok then
-            family_add_error(bag, projected, target, "E_LLPVM_PROJECTION")
-        elseif projected ~= nil then
-            local mt = type(projected) == "table" and getmetatable(projected) or nil
-            if mt == llpvm_dsl.ProgramSpec then
-                local ok_bytecode, bytes_or_err = pcall(function() return projected:bytecode() end)
-                if not ok_bytecode then
-                    family_add_error(bag, bytes_or_err, target, "E_LLPVM_LOWER")
-                else
-                    for ev in llpvm_dsl.validate(bytes_or_err) do
-                        if ev.kind == "diagnostic" then
-                            bag:add(ev.diagnostic or llbl.diagnostic { code = ev.code, message = ev.message, primary = llbl.origin_of(target) })
-                        end
-                    end
-                end
-            elseif mt == llpvm_dsl.TaskSpec then
-                local ok_task, err = pcall(function() return projected:asdl() end)
-                if not ok_task then family_add_error(bag, err, target, "E_LLPVM_TASK") end
-            end
-        end
-    end
-    return bag
-end
-
-local function llpvm_index(value, opts, language)
-    local out = { symbols = {}, hovers = {}, diagnostics = {} }
-    local function visit(item)
-        if type(item) == "table" and item.name then
-            out.symbols[#out.symbols + 1] = {
-                name = tostring(item.name),
-                kind = "llpvm",
-                member = "llpvm.dsl",
-                origin = llbl.origin_of(item),
-            }
-        end
-        if type(item) == "table" then
-            for _, child in ipairs(item.body or {}) do visit(child) end
-        end
-    end
-    for _, item in ipairs(collect_llpvm_values({}, value)) do visit(item) end
     return out
 end
 
@@ -327,28 +250,6 @@ local function lalin_markdown(member, opts, language)
     }, "\n")
 end
 
-local function llpvm_markdown(member, opts, language)
-    return table.concat({
-        "## llpvm.dsl",
-        "",
-        "LLPVM is the low-level process/bytecode VM member of the Lalin language. It owns bytecode programs, task/process specs, validation, and inspection.",
-        "",
-        "Language source uses the `llpvm` namespace value. Call `llpvm { ... }` when a language value carries LLPVM programs next to Lalin declarations.",
-        "",
-        "```lua",
-        "llpvm {",
-        "  llpvm.task. compile {",
-        "    llpvm.input [lln.i32],",
-        "    llpvm.output [lln.i32],",
-        "    llpvm.event. progress [lln.i32],",
-        "  },",
-        "}",
-        "```",
-        "",
-        llbl.markdown_dialect(member.dialect, { level = 3, title = "LLPVM LLBL Surface" }),
-    }, "\n")
-end
-
 local function schema_markdown(member, opts, language)
     return table.concat({
         "## lalinschema.dsl",
@@ -370,59 +271,24 @@ local function schema_markdown(member, opts, language)
 end
 
 M.language = llbl.language. lalin {
-    prefer = {
-        cache = "llpvm.dsl",
-        entry = "llpvm.dsl",
-        event = "llpvm.dsl",
-        from = "llpvm.dsl",
-        input = "llpvm.dsl",
-        lang = "llpvm.dsl",
-        language = "llpvm.dsl",
-        llpvm = "llpvm.dsl",
-        lln = "lalin.dsl",
-        machine = "llpvm.dsl",
-        lalin = "lalin.dsl",
-        schema = "lalinschema.dsl",
-        op = "llpvm.dsl",
-        output = "llpvm.dsl",
-        phase = "llpvm.dsl",
-        pvm = "llpvm.dsl",
-        record = "llpvm.dsl",
-        root = "llpvm.dsl",
-        tape = "llpvm.dsl",
-        task = "llpvm.dsl",
-        to = "llpvm.dsl",
-        type = "llpvm.dsl",
-        world = "llpvm.dsl",
-    },
-    shared = {
-        "origin",
-        "fragment",
-        "generic-region",
-        "type_value",
-        "diagnostic",
-        "process",
-    },
-    reserved = {
-        "pvm",
-        "lang",
-        "type",
-        "op",
-        "world",
-        "tape",
-        "record",
-        "machine",
-        "phase",
-        "task",
-        "event",
-        "input",
-        "output",
-        "root",
-        "lln",
-        "lalin",
-        "llpvm",
-        "schema",
-    },
+	prefer = {
+		lln = "lalin.dsl",
+		lalin = "lalin.dsl",
+		schema = "lalinschema.dsl",
+	},
+	shared = {
+		"origin",
+		"fragment",
+		"generic-region",
+		"type_value",
+		"diagnostic",
+		"process",
+	},
+	reserved = {
+		"lln",
+		"lalin",
+		"schema",
+	},
     {
         name = "lalin.dsl",
         dialect = M.dsl.language,
@@ -477,36 +343,6 @@ M.language = llbl.language. lalin {
                 "fragments",
                 "namespaces",
                 "origins",
-            },
-        },
-    },
-    {
-        name = "llpvm.dsl",
-        dialect = llpvm_dsl.meta_language,
-        exports = function(opts) return llpvm_dsl.make_language_env(opts) end,
-        match = is_llpvm_value,
-        format = function(value, opts) return llpvm_dsl.format(value, opts) end,
-        diagnostics = llpvm_diagnostics,
-        index = llpvm_index,
-        markdown = llpvm_markdown,
-        requires = { "lalin.types", "lalin.schema" },
-        provides = { "llpvm.dsl" },
-        semantics = {
-            owns = {
-                "bytecode-program",
-                "bytecode-tape",
-                "process-task",
-                "pvm-image",
-            },
-            uses = {
-                "authoring-substrate",
-                "diagnostics",
-                "language-composition",
-                "fragments",
-                "namespaces",
-                "origins",
-                "native-type-values",
-                "type-language",
             },
         },
     },

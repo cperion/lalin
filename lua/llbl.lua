@@ -1000,7 +1000,7 @@ do
 --
 --   input product + state product + named exit protocol + transition body
 --
--- Lalin native regions, LLPVM phases, process machines, parsers, and GPS
+-- Lalin native regions, process machines, parsers, and GPS
 -- streams are lowerings/projections of this shared shape. LLBL owns the
 -- semantics and the bare `region.` head; member dialects consume or lower
 -- region descriptors through their own typed backends.
@@ -3435,7 +3435,6 @@ local LanguageBundle = {}; LanguageBundle.__index = LanguageBundle
 -- member dialect."
 --
 --   lalin { ... }  -> Zone(member="lalin.dsl")
---   llpvm    { ... }  -> Zone(member="llpvm.dsl")
 --
 -- Same-zone concatenation appends items. Mixed-zone concatenation creates a
 -- LanguageBundle.
@@ -6587,7 +6586,7 @@ local function append_llbl_syntax_primer(out)
   out[#out + 1] = ""
   out[#out + 1] = "Core forms:"
   out[#out + 1] = ""
-  out[#out + 1] = "- `namespace.head. name` uses Lua field lookup through an LLBL namespace to feed a name slot, for example `lalin.fn. add` or `llpvm.task. compile`."
+  out[#out + 1] = "- `namespace.head. name` uses Lua field lookup through an LLBL namespace to feed a name slot, for example `lalin.fn. add`."
   out[#out + 1] = "- `value [Type]` uses Lua indexing to attach a type or computed slot, for example `a [lalin.i32]`."
   out[#out + 1] = "- `head { ... }` uses Lua calls and tables to feed product, body, declaration, protocol, or record slots."
   out[#out + 1] = "- `name = value` inside a table remains native Lua record syntax and is used for record/fill/map-shaped data."
@@ -6595,7 +6594,7 @@ local function append_llbl_syntax_primer(out)
   out[#out + 1] = "- `left .. right` concatenates compatible product/list fragments or language zones."
   out[#out + 1] = "- `left + right` composes compatible sum/protocol alternatives."
   out[#out + 1] = "- `left * right` decorates sum/protocol alternatives with product-shaped payloads when the dialect role supports it."
-  out[#out + 1] = "- `lalin { ... }`, `llpvm { ... }`, `asdl { ... }`, and similar forms call LLBL namespace values to create language zones: explicit dialect scopes inside one Lua value."
+  out[#out + 1] = "- `lalin { ... }`, `schema { ... }`, and similar forms call LLBL namespace values to create language zones: explicit dialect scopes inside one Lua value."
   out[#out + 1] = ""
   out[#out + 1] = "In language environments, member DSLs are exposed through LLBL namespace values. The namespace is a semantic owner, not just a Lua table: tools can describe it, document it, and use its call form for zones."
   out[#out + 1] = ""
@@ -6646,7 +6645,7 @@ function Language:markdown(opts)
 
   out[#out + 1] = "## Zones"
   out[#out + 1] = ""
-  out[#out + 1] = "Zones are semantic partitions inside language values. Each member may expose a zone head such as `lalin { ... }` or `llpvm { ... }`."
+  out[#out + 1] = "Zones are semantic partitions inside language values. Each member may expose a zone head such as `lalin { ... }` or `schema { ... }`."
   out[#out + 1] = ""
 
   out[#out + 1] = "## Tooling"

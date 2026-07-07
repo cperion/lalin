@@ -1,5 +1,7 @@
 -- LalinPhase plan execution shell.
 --
+-- LalinPhase plan execution shell.
+--
 -- This is the runtime boundary for planned compiler packages. The executor is
 -- deliberately explicit: Lua/Lalin/C/external implementations all
 -- resolve through a registry key, with Lua/Lalin allowed to fall back to
@@ -7,8 +9,8 @@
 
 local llbl = require("llbl")
 local asdl = require("lalin.asdl")
-local LlTask = require("llpvm.task")
 
+local M = {}
 local M = {}
 
 local Executor = {}
@@ -97,11 +99,22 @@ local function execute_plan(ctx, executor, plan, input, opts)
     local run_events = {}
     local run_steps = {}
 
-    local function emit(kind, payload)
-        run_events[#run_events + 1] = LlTask.event(#run_events + 1, kind, payload)
-        return ctx:event(kind, payload)
+    local function task_event(seq, kind, payload)
+        return { seq = seq or 0, kind = tostring(kind or "event"), message = tostring(payload or "") }
     end
 
+    local function task_step(index, phase, machine, status)
+        return { index = index or 0, phase = tostring(phase or ""), machine = tostring(machine or ""), status = tostring(status or "done") }
+    end
+
+    local function task_run(name, status, events, steps)
+        return { task = tostring(name or "task"), status = tostring(status or "done"), events = events or {}, steps = steps or {} }
+    end
+
+    local function emit(kind, payload)
+        run_events[#run_events + 1] = task_event(#run_events + 1, kind, payload)
+        return ctx:event(kind, payload)
+    end
     emit("execute_start", { plan = plan, root = plan and plan.root and id_text(plan.root) or nil })
 
     local current = input
@@ -114,7 +127,7 @@ local function execute_plan(ctx, executor, plan, input, opts)
             local d = { severity = "error", code = "E_MACHINE_UNBOUND", message = "no binding for " .. tostring(kind) .. " implementation '" .. tostring(key) .. "'", step = step }
             report.ok = false
             report.diagnostics[#report.diagnostics + 1] = d
-            run_steps[#run_steps + 1] = LlTask.step(i, phase_name, id_text(step.machine), "failed")
+            run_steps[#run_steps + 1] = task_step(i, phase_name, id_text(step.machine), "failed")
             ctx:diagnostic(d)
             break
         end
@@ -123,7 +136,7 @@ local function execute_plan(ctx, executor, plan, input, opts)
             local d = { severity = "error", code = "E_MACHINE_FAILED", message = tostring(a), step = step }
             report.ok = false
             report.diagnostics[#report.diagnostics + 1] = d
-            run_steps[#run_steps + 1] = LlTask.step(i, phase_name, id_text(step.machine), "failed")
+            run_steps[#run_steps + 1] = task_step(i, phase_name, id_text(step.machine), "failed")
             ctx:diagnostic(d)
             break
         end
@@ -132,13 +145,13 @@ local function execute_plan(ctx, executor, plan, input, opts)
         local step_report = { step = step, input = current, output = output }
         current = output
         report.steps[#report.steps + 1] = step_report
-        run_steps[#run_steps + 1] = LlTask.step(i, phase_name, id_text(step.machine), "done")
+        run_steps[#run_steps + 1] = task_step(i, phase_name, id_text(step.machine), "done")
         emit("step_done", { index = i, phase = phase_name, output = output, diagnostics = diagnostics, step = step })
     end
 
     report.output = current
     emit("execute_done", { ok = report.ok, output = report.output, diagnostics = report.diagnostics })
-    report.run = LlTask.run(plan and plan.root and id_text(plan.root) or "phase_execute", report.ok and "done" or "failed", run_events, run_steps)
+    report.run = task_run(plan and plan.root and id_text(plan.root) or "phase_execute", report.ok and "done" or "failed", run_events, run_steps)
     return report
 end
 

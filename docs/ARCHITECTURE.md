@@ -581,7 +581,7 @@ The ownership boundary is:
 
 `region.` is the generic LLBL control-machine head. This is one of the main
 reasons LLBL composes the whole language: the same control algebra can describe
-native CFG, processes, parser steps, scheduler steps, LLPVM tasks, and backend
+native CFG, processes, parser steps, scheduler steps, and backend
 pull machines. A region is:
 
 ```text
@@ -602,8 +602,7 @@ diagnostic bags, backend buffers, and artifacts are materializers, not the
 region itself.
 
 Lalin consumes generic region descriptors when the body uses native Lalin
-`entry`, `block`, `jump`, and `emit` vocabulary. LLPVM consumes region-shaped
-work as phase/task machines. LLBL processes lower event protocols to GPS.
+`entry`, `block`, `jump`, and `emit` vocabulary. LLBL processes lower event protocols to GPS.
 
 Region composition has two runtime shapes:
 
@@ -660,7 +659,7 @@ local binding = language:resolve_symbol(sym)
 ```
 
 The binding says which language member exported the name, whether the source was
-generated, and whether the symbol is unresolved. Lalin, LLPVM, LalinSchema, and
+generated, and whether the symbol is unresolved. Lalin, LalinSchema, and
 other dialects decide what that binding means semantically.
 
 The language audit records more than ownership. It records:
@@ -699,11 +698,8 @@ LalinSchema owns schema/type-language semantics:
 - typed ASDL constructor families
 - schema projection into runtime values
 
-LLPVM owns low-level VM/task semantics:
-
-- bytecode images and borrowed buffers
-- worlds, tapes, machines, phases, tasks, and run records
-- process-shaped validation and inspection
+Lalin itself now carries its own VM semantics through region-shaped work and
+the compiler pipeline (CMat SOAC lowering, GPS). No separate VM dialect is needed.
 
 The reduction rule is strict: if two members can express the same semantic
 primitive, one member owns it and the other projects to it. Overlapping
