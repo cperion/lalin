@@ -82,21 +82,38 @@ local function bind_context(T)
 
     local api = {}
 
-    local function type_name(ty)
-        local cls = asdl.classof(ty)
-        if cls == Code.CodeTyInt then return (ty.signedness == Code.CodeSigned and "i" or "u") .. tostring(ty.bits) end
-        if cls == Code.CodeTyFloat then return "f" .. tostring(ty.bits) end
-        if ty == Code.CodeTyIndex then return "index" end
-        if ty == Code.CodeTyBool8 then return "bool8" end
-        return sanitize(CodeType.code_type_key(ty))
+    -- CodeType leaf methods for stencil artifact naming
+    function Code.CodeTyInt:stencil_artifact_type_name()
+        return (self.signedness == Code.CodeSigned and "i" or "u") .. tostring(self.bits)
     end
+    function Code.CodeTyFloat:stencil_artifact_type_name()
+        return "f" .. tostring(self.bits)
+    end
+    function Code.CodeTyIndex:stencil_artifact_type_name() return "index" end
+    function Code.CodeTyBool8:stencil_artifact_type_name() return "bool8" end
+    function Code.CodeTyArray:stencil_artifact_type_name()
+        return "ml_array_" .. tostring(self.count) .. "_" .. self.elem:stencil_artifact_type_name()
+    end
+    function Code.CodeTyVector:stencil_artifact_type_name()
+        return "ml_vector_" .. tostring(self.lanes) .. "_" .. self.elem:stencil_artifact_type_name()
+    end
+    function Code.CodeTyClosure:stencil_artifact_type_name()
+        return "ml_closure_" .. sanitize(self.sig.text)
+    end
+    function Code.CodeTyImportedCFuncPtr:stencil_artifact_type_name()
+        return "ml_cfuncptr_" .. sanitize(self.sig.text)
+    end
+    function Code.CodeType:stencil_artifact_type_name()
+        return sanitize(CodeType.code_type_key(self))
+    end
+
+    local function type_name(ty) return ty:stencil_artifact_type_name() end
 
     local function c_type(ty)
         local cls = asdl.classof(ty)
-        if cls == Code.CodeTyArray then return "ml_array_" .. tostring(ty.count) .. "_" .. type_name(ty.elem) end
-        if cls == Code.CodeTyClosure then return "ml_closure_" .. sanitize(ty.sig.text) end
-        if cls == Code.CodeTyVector then return "ml_vector_" .. tostring(ty.lanes) .. "_" .. type_name(ty.elem) end
-        if cls == Code.CodeTyImportedCFuncPtr then return "ml_cfuncptr_" .. sanitize(ty.sig.text) end
+        if cls == Code.CodeTyArray or cls == Code.CodeTyClosure or cls == Code.CodeTyVector or cls == Code.CodeTyImportedCFuncPtr then
+            return ty:stencil_artifact_type_name()
+        end
         return CEmit.emit_type(select(1, CodeType.code_type_to_c(CEm.CEmitMachine.dummy(), ty)))
     end
 
