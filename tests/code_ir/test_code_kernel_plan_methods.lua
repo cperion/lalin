@@ -81,3 +81,61 @@ local ok = pcall(require, "lalin.code_kernel_plan_rules")
 assert(not ok, "code_kernel_plan_rules must not exist")
 
 io.write("lalin code_kernel_plan methods ok\n")
+
+-- Multi-loop coverage: verify candidates do not leak across loop boundaries.
+do
+    local loop_id_a = T.LalinGraph.GraphLoopId("loop:a")
+    local loop_id_b = T.LalinGraph.GraphLoopId("loop:b")
+    local func_id = Code.CodeFuncId("fn:multi")
+
+    -- Two distinct reductions on different domain loops.
+    local domain_a = Flow.FlowDomainLoop(loop_id_a)
+    local domain_b = Flow.FlowDomainLoop(loop_id_b)
+    local acc = Code.CodeValueId("v:acc")
+    local ra = Value.ReductionFact(Value.AlgebraFactId("red:a"), domain_a, acc, Value.ReductionAdd, zero, zero, i32, nil, nil, proof)
+    local rb = Value.ReductionFact(Value.AlgebraFactId("red:b"), domain_b, acc, Value.ReductionMul, zero, zero, i32, nil, nil, proof)
+
+    -- Verify reduction filtering by domain.
+    local CodeValueFacts = require("lalin.code_value_facts")(T)
+    local value_facts = Value.ValueFactSet(Code.CodeModuleId("mod:test"), {}, { ra, rb }, {})
+
+    -- Loop A gets only reduction A.
+    local ra_list = {}
+    for _, r in ipairs(value_facts.reductions or {}) do
+        if asdl.classof(r.domain) == Flow.FlowDomainLoop and asdl.classof(domain_a) == Flow.FlowDomainLoop and r.domain.loop == domain_a.loop then
+            ra_list[#ra_list + 1] = r
+        end
+    end
+    assert(#ra_list == 1 and ra_list[1].id.text == "red:a", "domain filter: loop A sees only reduction A")
+
+    -- Loop B gets only reduction B.
+    local rb_list = {}
+    for _, r in ipairs(value_facts.reductions or {}) do
+        if asdl.classof(r.domain) == Flow.FlowDomainLoop and asdl.classof(domain_b) == Flow.FlowDomainLoop and r.domain.loop == domain_b.loop then
+            rb_list[#rb_list + 1] = r
+        end
+    end
+    assert(#rb_list == 1 and rb_list[1].id.text == "red:b", "domain filter: loop B sees only reduction B")
+
+    -- Two loop candidates with independent plans must not interfere.
+    local subject_a = Kernel.KernelSubjectLoop(loop_id_a)
+    local subject_b = Kernel.KernelSubjectLoop(loop_id_b)
+    local plan_a = Kernel.KernelLoopReductionCandidate(ra):select_kernel_loop_plan()
+    local plan_b = Kernel.KernelLoopReductionCandidate(rb):select_kernel_loop_plan()
+    assert(plan_a.reduction == ra, "plan A holds reduction A")
+    assert(plan_b.reduction == rb, "plan B holds reduction B")
+    assert(plan_a.reduction ~= plan_b.reduction, "reduction candidates do not alias")
+
+    -- Build loop plans and verify they carry their own domain.
+    local plans = {}
+    plan_a:add_selected_loop_plan(plans, subject_a, Kernel.KernelLoopPlanBuild(
+        domain_a, Flow.FlowTripCountUnknown("no trip"), nil, {}, {}, {}, {}))
+    plan_b:add_selected_loop_plan(plans, subject_b, Kernel.KernelLoopPlanBuild(
+        domain_b, Flow.FlowTripCountUnknown("no trip"), nil, {}, {}, {}, {}))
+    assert(#plans == 2, "two loop plans produced")
+    assert(asdl.classof(plans[1]) == Kernel.KernelPlanned, "plan 1 is KernelPlanned")
+    assert(asdl.classof(plans[2]) == Kernel.KernelPlanned, "plan 2 is KernelPlanned")
+    assert(plans[1].id.text ~= plans[2].id.text, "plan ids do not collide")
+    assert(plans[1].subject.loop.text == "loop:a", "plan 1 subject is loop A")
+    assert(plans[2].subject.loop.text == "loop:b", "plan 2 subject is loop B")
+end

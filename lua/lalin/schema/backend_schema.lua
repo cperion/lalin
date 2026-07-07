@@ -47,6 +47,12 @@ return schema. LalinBackend {
     BackFeatureBMI2,
     BackFeatureUnknown { variant_unique, field. name [str], },
   },
+  sum. TargetHeuristicReason {
+    TargetHeuristicLoopSize { instruction_count [number] },
+    TargetHeuristicCachePressure { estimated_bytes [number] },
+    TargetHeuristicVectorizationBenefit { lanes [number] },
+    TargetHeuristicUserOverride,
+  },
   sum. BackTargetFact {
     BackTargetPointerBits { variant_unique, bits [number], },
     BackTargetIndexBits { variant_unique, bits [number], },
@@ -61,6 +67,7 @@ return schema. LalinBackend {
       shape [LalinBackend.BackShape],
       unroll [number],
       rank [number],
+      reason [LalinBackend.TargetHeuristicReason],
     },
   },
   product. BackTargetModel {

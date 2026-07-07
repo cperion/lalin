@@ -133,6 +133,6 @@ return schema. LalinSem {
     interned,
     mod_name [str],
     env [LalinSem.LayoutEnv],
-    target [LalinHost.HostTargetModel],
+    target [optional [LalinHost.HostTargetModel]],
   },
 }
