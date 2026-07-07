@@ -312,184 +312,176 @@ local function bind_context(T)
     end
 
 
-    function resolve_expr(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ExprLit) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprRef) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprDot) then
-            return (function(self, env, target)
-
-            local base = one(resolve_expr, self.base, env, target)
-            local h = base.h
-            local base_ty = nil
-            local h_cls = schema.classof(h)
-            if h_cls == Tr.ExprTyped then base_ty = h.ty end
-            local lookup_ty = base_ty:sem_layout_base_type()
-            if lookup_ty ~= nil and schema.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
-            if lookup_ty ~= nil then
-                local field = only(Sem.FieldByName(self.name, lookup_ty):sem_resolve_field_ref(lookup_ty, env))
-                if schema.classof(field) == Sem.FieldByOffset then return single(Tr.ExprField(Tr.ExprTyped(field.ty), base, field)) end
-            end
-            return single(schema.with(self, { base = base }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprUnary) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprBinary) then
-            return (function(self, env, target)
- return single(schema.with(self, { lhs = one(resolve_expr, self.lhs, env, target), rhs = one(resolve_expr, self.rhs, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprCompare) then
-            return (function(self, env, target)
- return single(schema.with(self, { lhs = one(resolve_expr, self.lhs, env, target), rhs = one(resolve_expr, self.rhs, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprLogic) then
-            return (function(self, env, target)
- return single(schema.with(self, { lhs = one(resolve_expr, self.lhs, env, target), rhs = one(resolve_expr, self.rhs, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprCast) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprMachineCast) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprIntrinsic) then
-            return (function(self, env, target)
- return single(schema.with(self, { args = map_exprs(self.args, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprAddrOf) then
-            return (function(self, env, target)
- return single(schema.with(self, { place = only(self.place:sem_layout_resolve(env, target)) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprDeref) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprCall) then
-            return (function(self, env, target)
- return single(schema.with(self, { callee = one(resolve_expr, self.callee, env, target), args = map_exprs(self.args, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprLen) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprField) then
-            return (function(self, env, target)
-
-            local base = one(resolve_expr, self.base, env, target)
-            local h = base.h
-            local base_ty = nil
-            local h_cls = schema.classof(h)
-            if h_cls == Tr.ExprTyped then base_ty = h.ty end
-            base_ty = base_ty:sem_layout_base_type()
-            if base_ty ~= nil and schema.classof(base_ty) == Ty.TPtr then base_ty = base_ty.elem end
-            local field = self.field
-            if base_ty ~= nil then field = only(self.field:sem_resolve_field_ref(base_ty, env)) end
-            return single(schema.with(self, { base = base, field = field }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprIndex) then
-            return (function(self, env, target)
- return single(schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)), index = one(resolve_expr, self.index, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprAgg) then
-            return (function(self, env, target)
- local fields = {}; for i = 1, #self.fields do fields[#fields + 1] = schema.with(self.fields[i], { value = one(resolve_expr, self.fields[i].value, env, target) }) end; return single(schema.with(self, { fields = fields }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprArray) then
-            return (function(self, env, target)
- return single(schema.with(self, { elems = map_exprs(self.elems, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprIf) then
-            return (function(self, env, target)
- return single(schema.with(self, { cond = one(resolve_expr, self.cond, env, target), then_expr = one(resolve_expr, self.then_expr, env, target), else_expr = one(resolve_expr, self.else_expr, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprSelect) then
-            return (function(self, env, target)
- return single(schema.with(self, { cond = one(resolve_expr, self.cond, env, target), then_expr = one(resolve_expr, self.then_expr, env, target), else_expr = one(resolve_expr, self.else_expr, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprSwitch) then
-            return (function(self, env, target)
- local arms = {}; for i = 1, #self.arms do arms[#arms + 1] = schema.with(self.arms[i], { body = map_stmts(self.arms[i].body, env, target), result = one(resolve_expr, self.arms[i].result, env, target) }) end; local var_arms = {}; for i = 1, #(self.variant_arms or {}) do var_arms[#var_arms + 1] = schema.with(self.variant_arms[i], { body = map_stmts(self.variant_arms[i].body, env, target), result = one(resolve_expr, self.variant_arms[i].result, env, target) }) end; return single(schema.with(self, { value = one(resolve_expr, self.value, env, target), arms = arms, variant_arms = var_arms, default_body = map_stmts(self.default_body or {}, env, target), default_expr = one(resolve_expr, self.default_expr, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprControl) then
-            return (function(self, env, target)
- return single(schema.with(self, { region = only(self.region:sem_layout_resolve(env, target)) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprBlock) then
-            return (function(self, env, target)
- return single(schema.with(self, { stmts = map_stmts(self.stmts, env, target), result = one(resolve_expr, self.result, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprClosure) then
-            return (function(self, env, target)
- return single(schema.with(self, { body = map_stmts(self.body, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprView) then
-            return (function(self, env, target)
- return single(schema.with(self, { view = only(self.view:sem_layout_resolve(env, target)) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprLoad) then
-            return (function(self, env, target)
- return single(schema.with(self, { addr = one(resolve_expr, self.addr, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprAtomicLoad) then
-            return (function(self, env, target)
- return single(schema.with(self, { addr = one(resolve_expr, self.addr, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprAtomicRmw) then
-            return (function(self, env, target)
- return single(schema.with(self, { addr = one(resolve_expr, self.addr, env, target), value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprAtomicCas) then
-            return (function(self, env, target)
- return single(schema.with(self, { addr = one(resolve_expr, self.addr, env, target), expected = one(resolve_expr, self.expected, env, target), replacement = one(resolve_expr, self.replacement, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprSizeOf) then
-            return (function(self, env, target)
-
-            local layout_api = require("lalin.type_size_align")(T)
-            local result = layout_api.result(self.ty, env, target)
-            if schema.classof(result) == Ty.TypeMemLayoutKnown then
-                local size = tostring(result.layout.size)
-                return single(Tr.ExprLit(Tr.ExprTyped(index_ty()), C.LitInt(size)))
-            end
-            return single(Tr.ExprLit(Tr.ExprTyped(index_ty()), C.LitInt("0")))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprAlignOf) then
-            return (function(self, env, target)
-
-            local layout_api = require("lalin.type_size_align")(T)
-            local result = layout_api.result(self.ty, env, target)
-            if schema.classof(result) == Ty.TypeMemLayoutKnown then
-                local align = tostring(result.layout.align)
-                return single(Tr.ExprLit(Tr.ExprTyped(index_ty()), C.LitInt(align)))
-            end
-            return single(Tr.ExprLit(Tr.ExprTyped(index_ty()), C.LitInt("1")))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprNull) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprIsNull) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ExprCtor) then
-            return (function(self, env, target)
- return single(schema.with(self, { args = map_exprs(self.args, env, target) }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_expr: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    local function resolve_expr(node, ...)
+        return node:sem_layout_resolve(...)
     end
+
+    function Tr.Expr:sem_layout_resolve(env, target)
+        return { self }
+    end
+
+    function Tr.ExprUnary:sem_layout_resolve(env, target)
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target) }) }
+    end
+
+    function Tr.ExprBinary:sem_layout_resolve(env, target)
+        return { schema.with(self, { lhs = one(resolve_expr, self.lhs, env, target), rhs = one(resolve_expr, self.rhs, env, target) }) }
+    end
+
+    function Tr.ExprCompare:sem_layout_resolve(env, target)
+        return { schema.with(self, { lhs = one(resolve_expr, self.lhs, env, target), rhs = one(resolve_expr, self.rhs, env, target) }) }
+    end
+
+    function Tr.ExprLogic:sem_layout_resolve(env, target)
+        return { schema.with(self, { lhs = one(resolve_expr, self.lhs, env, target), rhs = one(resolve_expr, self.rhs, env, target) }) }
+    end
+
+    function Tr.ExprCast:sem_layout_resolve(env, target)
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target) }) }
+    end
+
+    function Tr.ExprMachineCast:sem_layout_resolve(env, target)
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target) }) }
+    end
+
+    function Tr.ExprIntrinsic:sem_layout_resolve(env, target)
+        return { schema.with(self, { args = map_exprs(self.args, env, target) }) }
+    end
+
+    function Tr.ExprAddrOf:sem_layout_resolve(env, target)
+        return { schema.with(self, { place = only(self.place:sem_layout_resolve(env, target)) }) }
+    end
+
+    function Tr.ExprDeref:sem_layout_resolve(env, target)
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target) }) }
+    end
+
+    function Tr.ExprCall:sem_layout_resolve(env, target)
+        return { schema.with(self, { callee = one(resolve_expr, self.callee, env, target), args = map_exprs(self.args, env, target) }) }
+    end
+
+    function Tr.ExprLen:sem_layout_resolve(env, target)
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target) }) }
+    end
+
+    function Tr.ExprAgg:sem_layout_resolve(env, target)
+        local fields = {}
+        for i = 1, #self.fields do fields[#fields + 1] = schema.with(self.fields[i], { value = one(resolve_expr, self.fields[i].value, env, target) }) end
+        return { schema.with(self, { fields = fields }) }
+    end
+
+    function Tr.ExprArray:sem_layout_resolve(env, target)
+        return { schema.with(self, { elems = map_exprs(self.elems, env, target) }) }
+    end
+
+    function Tr.ExprIf:sem_layout_resolve(env, target)
+        return { schema.with(self, { cond = one(resolve_expr, self.cond, env, target), then_expr = one(resolve_expr, self.then_expr, env, target), else_expr = one(resolve_expr, self.else_expr, env, target) }) }
+    end
+
+    function Tr.ExprSelect:sem_layout_resolve(env, target)
+        return { schema.with(self, { cond = one(resolve_expr, self.cond, env, target), then_expr = one(resolve_expr, self.then_expr, env, target), else_expr = one(resolve_expr, self.else_expr, env, target) }) }
+    end
+
+    function Tr.ExprSwitch:sem_layout_resolve(env, target)
+        local arms = {}
+        for i = 1, #self.arms do arms[#arms + 1] = schema.with(self.arms[i], { body = map_stmts(self.arms[i].body, env, target), result = one(resolve_expr, self.arms[i].result, env, target) }) end
+        local var_arms = {}
+        for i = 1, #(self.variant_arms or {}) do var_arms[#var_arms + 1] = schema.with(self.variant_arms[i], { body = map_stmts(self.variant_arms[i].body, env, target), result = one(resolve_expr, self.variant_arms[i].result, env, target) }) end
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target), arms = arms, variant_arms = var_arms, default_body = map_stmts(self.default_body or {}, env, target), default_expr = one(resolve_expr, self.default_expr, env, target) }) }
+    end
+
+    function Tr.ExprControl:sem_layout_resolve(env, target)
+        return { schema.with(self, { region = only(self.region:sem_layout_resolve(env, target)) }) }
+    end
+
+    function Tr.ExprBlock:sem_layout_resolve(env, target)
+        return { schema.with(self, { stmts = map_stmts(self.stmts, env, target), result = one(resolve_expr, self.result, env, target) }) }
+    end
+
+    function Tr.ExprClosure:sem_layout_resolve(env, target)
+        return { schema.with(self, { body = map_stmts(self.body, env, target) }) }
+    end
+
+    function Tr.ExprView:sem_layout_resolve(env, target)
+        return { schema.with(self, { view = only(self.view:sem_layout_resolve(env, target)) }) }
+    end
+
+    function Tr.ExprLoad:sem_layout_resolve(env, target)
+        return { schema.with(self, { addr = one(resolve_expr, self.addr, env, target) }) }
+    end
+
+    function Tr.ExprAtomicLoad:sem_layout_resolve(env, target)
+        return { schema.with(self, { addr = one(resolve_expr, self.addr, env, target) }) }
+    end
+
+    function Tr.ExprAtomicRmw:sem_layout_resolve(env, target)
+        return { schema.with(self, { addr = one(resolve_expr, self.addr, env, target), value = one(resolve_expr, self.value, env, target) }) }
+    end
+
+    function Tr.ExprAtomicCas:sem_layout_resolve(env, target)
+        return { schema.with(self, { addr = one(resolve_expr, self.addr, env, target), expected = one(resolve_expr, self.expected, env, target), replacement = one(resolve_expr, self.replacement, env, target) }) }
+    end
+
+    function Tr.ExprSizeOf:sem_layout_resolve(env, target)
+        local layout_api = require("lalin.type_size_align")(T)
+        local result = layout_api.result(self.ty, env, target)
+        if schema.classof(result) == Ty.TypeMemLayoutKnown then
+            local size = tostring(result.layout.size)
+            return { Tr.ExprLit(Tr.ExprTyped(index_ty()), C.LitInt(size)) }
+        end
+        return { Tr.ExprLit(Tr.ExprTyped(index_ty()), C.LitInt("0")) }
+    end
+
+    function Tr.ExprAlignOf:sem_layout_resolve(env, target)
+        local layout_api = require("lalin.type_size_align")(T)
+        local result = layout_api.result(self.ty, env, target)
+        if schema.classof(result) == Ty.TypeMemLayoutKnown then
+            local align = tostring(result.layout.align)
+            return { Tr.ExprLit(Tr.ExprTyped(index_ty()), C.LitInt(align)) }
+        end
+        return { Tr.ExprLit(Tr.ExprTyped(index_ty()), C.LitInt("1")) }
+    end
+
+    function Tr.ExprIsNull:sem_layout_resolve(env, target)
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target) }) }
+    end
+
+    function Tr.ExprCtor:sem_layout_resolve(env, target)
+        return { schema.with(self, { args = map_exprs(self.args, env, target) }) }
+    end
+
+    function Tr.ExprDot:sem_layout_resolve(env, target)
+        local base = one(resolve_expr, self.base, env, target)
+        local h = base.h
+        local base_ty = nil
+        local h_cls = schema.classof(h)
+        if h_cls == Tr.ExprTyped then base_ty = h.ty end
+        local lookup_ty = base_ty:sem_layout_base_type()
+        if lookup_ty ~= nil and schema.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
+        if lookup_ty ~= nil then
+            local field = only(Sem.FieldByName(self.name, lookup_ty):sem_resolve_field_ref(lookup_ty, env))
+            if schema.classof(field) == Sem.FieldByOffset then return { Tr.ExprField(Tr.ExprTyped(field.ty), base, field) } end
+        end
+        return { schema.with(self, { base = base }) }
+    end
+
+    function Tr.ExprField:sem_layout_resolve(env, target)
+        local base = one(resolve_expr, self.base, env, target)
+        local h = base.h
+        local base_ty = nil
+        local h_cls = schema.classof(h)
+        if h_cls == Tr.ExprTyped then base_ty = h.ty end
+        base_ty = base_ty:sem_layout_base_type()
+        if base_ty ~= nil and schema.classof(base_ty) == Ty.TPtr then base_ty = base_ty.elem end
+        local field = self.field
+        if base_ty ~= nil then field = only(self.field:sem_resolve_field_ref(base_ty, env)) end
+        return { schema.with(self, { base = base, field = field }) }
+    end
+
+    function Tr.ExprIndex:sem_layout_resolve(env, target)
+        return { schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)), index = one(resolve_expr, self.index, env, target) }) }
+    end
+
 
     local function resolve_entry_block(block, env, target)
         local params = {}
