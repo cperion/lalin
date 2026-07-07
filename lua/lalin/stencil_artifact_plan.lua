@@ -126,11 +126,8 @@ local function bind_context(T)
 
     -- StencilSink leaf methods
     function Stencil.StencilSinkStore:stencil_artifact_is_reduce() return false end
-    function Stencil.StencilSinkStore:stencil_artifact_vocab() return Stencil.StencilStore end
     function Stencil.StencilSinkReduce:stencil_artifact_is_reduce() return true end
-    function Stencil.StencilSinkReduce:stencil_artifact_vocab() return Stencil.StencilReduce end
     function Stencil.StencilSinkScan:stencil_artifact_is_reduce() return false end
-    function Stencil.StencilSinkScan:stencil_artifact_vocab() return Stencil.StencilScan end
     function Stencil.StencilSink:stencil_artifact_is_reduce() return false end
     function Stencil.StencilSinkStore:stencil_artifact_is_store() return true end
     function Stencil.StencilSink:stencil_artifact_is_store() return false end
@@ -486,26 +483,46 @@ local function bind_context(T)
     end
 
     local function predicate_checked(pred, operand_ty)
-        local cls = asdl.classof(pred)
-        if pred == Stencil.StencilPredNonZero or cls == Stencil.StencilPredNonZero then return pred end
-        if cls == Stencil.StencilPredCompareConst or cls == Stencil.StencilPredRange or cls == Stencil.StencilPredIsNaN or cls == Stencil.StencilPredIsInf or cls == Stencil.StencilPredIsFinite then
-            if not same_type(pred.operand_ty, operand_ty) then error("stencil_artifact_plan: predicate operand type does not match stencil element type", 3) end
-            if (cls == Stencil.StencilPredIsNaN or cls == Stencil.StencilPredIsInf or cls == Stencil.StencilPredIsFinite) and not operand_ty:stencil_artifact_is_float() then
-                error("stencil_artifact_plan: float-class predicate requires a float operand type", 3)
-            end
-            return pred
-        end
-        if cls == Stencil.StencilPredAnd or cls == Stencil.StencilPredOr then
-            for _, term in ipairs(pred.terms or {}) do predicate_checked(term, operand_ty) end
-            return pred
-        end
-        if cls == Stencil.StencilPredNot then
-            predicate_checked(pred.term, operand_ty)
-            return pred
-        end
-        error("stencil_artifact_plan: unsupported predicate", 3)
-        return pred
+        return pred:stencil_artifact_validate(operand_ty)
     end
+
+    function Stencil.StencilPredNonZero:stencil_artifact_validate(operand_ty) return self end
+    function Stencil.StencilPredCompareConst:stencil_artifact_validate(operand_ty)
+        if not same_type(self.operand_ty, operand_ty) then error("stencil_artifact_plan: predicate operand type does not match stencil element type", 3) end
+        return self
+    end
+    function Stencil.StencilPredRange:stencil_artifact_validate(operand_ty)
+        if not same_type(self.operand_ty, operand_ty) then error("stencil_artifact_plan: predicate operand type does not match stencil element type", 3) end
+        return self
+    end
+    function Stencil.StencilPredIsNaN:stencil_artifact_validate(operand_ty)
+        if not same_type(self.operand_ty, operand_ty) then error("stencil_artifact_plan: predicate operand type does not match stencil element type", 3) end
+        if not operand_ty:stencil_artifact_is_float() then error("stencil_artifact_plan: float-class predicate requires a float operand type", 3) end
+        return self
+    end
+    function Stencil.StencilPredIsInf:stencil_artifact_validate(operand_ty)
+        if not same_type(self.operand_ty, operand_ty) then error("stencil_artifact_plan: predicate operand type does not match stencil element type", 3) end
+        if not operand_ty:stencil_artifact_is_float() then error("stencil_artifact_plan: float-class predicate requires a float operand type", 3) end
+        return self
+    end
+    function Stencil.StencilPredIsFinite:stencil_artifact_validate(operand_ty)
+        if not same_type(self.operand_ty, operand_ty) then error("stencil_artifact_plan: predicate operand type does not match stencil element type", 3) end
+        if not operand_ty:stencil_artifact_is_float() then error("stencil_artifact_plan: float-class predicate requires a float operand type", 3) end
+        return self
+    end
+    function Stencil.StencilPredAnd:stencil_artifact_validate(operand_ty)
+        for _, term in ipairs(self.terms or {}) do term:stencil_artifact_validate(operand_ty) end
+        return self
+    end
+    function Stencil.StencilPredOr:stencil_artifact_validate(operand_ty)
+        for _, term in ipairs(self.terms or {}) do term:stencil_artifact_validate(operand_ty) end
+        return self
+    end
+    function Stencil.StencilPredNot:stencil_artifact_validate(operand_ty)
+        self.term:stencil_artifact_validate(operand_ty)
+        return self
+    end
+    function Stencil.StencilPredicate:stencil_artifact_validate(operand_ty) return self end
 
     local function supports_bitwise_ty(ty)
         return ty:stencil_artifact_is_int() or ty:stencil_artifact_is_integer_like() and not ty:stencil_artifact_is_int() and not ty:stencil_artifact_is_float()
@@ -662,53 +679,27 @@ local function bind_context(T)
         error("stencil_artifact_plan: descriptor mode requires a predicate point expression", 3)
     end
 
-    local function descriptor(vocab, stride, accesses, expr, reducer, attrs, mem, result_ty)
+    local function descriptor(sink, stride, accesses, expr, attrs, result_ty)
         attrs = attrs or {}
         local producer = producer_from_attrs(stride, attrs)
         local body = Stencil.StencilBodyPoint(expr or input_expr("xs"))
-        if vocab == "scatter_reduce" then
-            body = Stencil.StencilBodyPoint(assert(expr, "scatter_reduce descriptor requires expr"))
-            return Stencil.StencilDescriptor(
-                producer,
-                accesses,
-                body,
-                Stencil.StencilSinkScatterReduce(
-                    Stencil.StencilAccessRef(attrs.store_dst or "dst"),
-                    assert(reducer, "scatter_reduce descriptor requires reducer"),
-                    attrs.scatter_reduce_conflicts or Stencil.StencilScatterReduceSequential,
-                    assert(result_ty, "scatter_reduce descriptor requires result type")
-                )
-            )
-        end
-        if vocab == "reduce" then
-            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkReduce(assert(result_ty, "reduce descriptor requires result type"), reduce_scope_from_attrs(attrs), Stencil.StencilReduceFold(assert(reducer, "reduce descriptor requires reducer"))))
-        end
-        if vocab == "store" then
-            body = Stencil.StencilBodyPoint(assert(expr, "store descriptor requires expr"))
-            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkStore(Stencil.StencilAccessRef(attrs.store_dst or "dst"), attrs.store_mode or Stencil.StencilStoreElementwise))
-        end
-        if vocab == "scan" then
-            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkScan(Stencil.StencilAccessRef("dst"), scan_axis_from_attrs(attrs), assert(reducer, "scan descriptor requires reducer"), assert(attrs.mode, "scan descriptor requires mode"), assert(result_ty, "scan descriptor requires result type")))
-        end
-        if vocab == "find" then
-            expr = assert(expr, "find descriptor requires predicate expr")
-            body = Stencil.StencilBodyPoint(expr)
-            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkReduce(assert(result_ty, "find descriptor requires result type"), reduce_scope_from_attrs(attrs), Stencil.StencilReduceFind(predicate_expr_pred(expr), assert(attrs.not_found, "find descriptor requires not_found"))))
-        end
-        if vocab == "partition" then
-            body = Stencil.StencilBodyPoint(assert(expr, "partition descriptor requires predicate expr"))
-            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkStore(Stencil.StencilAccessRef("dst"), Stencil.StencilStorePartition(assert(attrs.semantics, "partition descriptor requires semantics"))))
-        end
-        if vocab == "count" then
-            expr = assert(expr, "count descriptor requires predicate expr")
-            body = Stencil.StencilBodyPoint(expr)
-            return Stencil.StencilDescriptor(producer, accesses, body, Stencil.StencilSinkReduce(assert(result_ty, "count descriptor requires result type"), reduce_scope_from_attrs(attrs), Stencil.StencilReduceCount(predicate_expr_pred(expr))))
-        end
-        error("stencil_artifact_plan: unsupported descriptor vocab", 3)
+        return sink:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
     end
 
-    local function descriptor_vocab(desc)
-        return desc and desc.sink and desc.sink:stencil_artifact_vocab() or nil
+    function Stencil.StencilSinkScatterReduce:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
+        return Stencil.StencilDescriptor(producer, accesses, body, self)
+    end
+    function Stencil.StencilSinkReduce:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
+        return Stencil.StencilDescriptor(producer, accesses, body, self)
+    end
+    function Stencil.StencilSinkStore:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
+        return Stencil.StencilDescriptor(producer, accesses, body, self)
+    end
+    function Stencil.StencilSinkScan:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
+        return Stencil.StencilDescriptor(producer, accesses, body, self)
+    end
+    function Stencil.StencilSink:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
+        error("stencil_artifact_plan: unsupported sink type for build_descriptor", 3)
     end
 
     local function descriptor_reduction_semantics(desc)
@@ -718,12 +709,17 @@ local function bind_context(T)
 
     local function descriptor_reducer(desc)
         if desc == nil then return nil end
-        local sink_cls = desc.sink and asdl.classof(desc.sink)
-        if sink_cls == Stencil.StencilSinkScan then return desc.sink.reducer end
-        if sink_cls == Stencil.StencilSinkScatterReduce then return desc.sink.reducer end
-        if sink_cls == Stencil.StencilSinkReduce and desc.sink.semantics:stencil_artifact_is_fold() then return desc.sink.semantics.reducer end
+        return desc.sink and desc.sink:stencil_artifact_reducer() or nil
+    end
+
+    function Stencil.StencilSinkScan:stencil_artifact_reducer() return self.reducer end
+    function Stencil.StencilSinkScatterReduce:stencil_artifact_reducer() return self.reducer end
+    function Stencil.StencilSinkReduce:stencil_artifact_reducer()
+        if self.semantics:stencil_artifact_is_fold() then return self.semantics.reducer end
         return nil
     end
+    function Stencil.StencilSinkStore:stencil_artifact_reducer() return nil end
+    function Stencil.StencilSink:stencil_artifact_reducer() return nil end
 
     local function descriptor_expr(desc)
         if desc == nil or not desc.body:stencil_artifact_is_point() then
@@ -1807,9 +1803,7 @@ local function bind_context(T)
         local stride = assert(info.step_num, "stencil_artifact_plan.reduce_array_artifact requires step_num")
         local supported, reason = api.reduce_array_supported(reduction, info)
         if not supported then error("stencil_artifact_plan: unsupported reduce_array artifact: " .. tostring(reason), 2) end
-        local desc = descriptor(
-            "reduce",
-            stride,
+        local desc = descriptor(Stencil.StencilSinkReduce(result_ty, info.reduce_scope or domain_reduce_scope(), Stencil.StencilReduceFold(reducer_desc(reduction, result_ty))), stride,
             {
                 shaped("xs", Stencil.StencilAccessRead, elem_ty, info.array_layout, stride),
                 scalar("acc", Stencil.StencilAccessReduce, result_ty, reducer_identity(reduction, result_ty)),
@@ -1949,7 +1943,7 @@ local function bind_context(T)
         local id = Stencil.StencilInstanceId("stencil:scatter_reduce_n:" .. type_name(item_ty) .. ":" .. reduction.op:stencil_artifact_name() .. ":to:" .. type_name(result_ty) .. ":" .. conflict_tag .. ":" .. tag .. ":" .. ptag)
         local symbol = Stencil.StencilSymbolId("ml_stencil_scatter_reduce_n_" .. type_name(item_ty) .. "_" .. reduction.op:stencil_artifact_name() .. "_to_" .. type_name(result_ty) .. "_" .. conflict_tag .. "_" .. tag .. "_" .. ptag)
         local reducer = reducer_desc(reduction, result_ty)
-        local desc = descriptor("scatter_reduce", stride, accesses, expr, reducer, { producer = producer, store_dst = dst_name, scatter_reduce_conflicts = conflicts }, memory({ scatter_reduce = true, scatter_reduce_conflicts = conflicts }), result_ty)
+        local desc = descriptor(Stencil.StencilSinkScatterReduce(Stencil.StencilAccessRef(dst_name), reducer, conflicts or Stencil.StencilScatterReduceSequential, result_ty), stride, accesses, expr, { producer = producer }, result_ty)
         local sink_reason = sink_materializer_reject_reason(desc)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported scatter_reduce_n sink/body: " .. tostring(sink_reason), 2) end
         local abi, args = descriptor_abi_args(desc)
@@ -1962,8 +1956,7 @@ local function bind_context(T)
         local elem_ty, stride = assert(info.elem_ty), assert(info.step_num or info.stride or 1)
         local id = Stencil.StencilInstanceId("stencil:count_array:" .. type_name(elem_ty) .. ":" .. pred:stencil_artifact_name() .. ":stride" .. tostring(stride))
         local symbol = Stencil.StencilSymbolId("ml_stencil_count_array_" .. type_name(elem_ty) .. "_" .. pred:stencil_artifact_name() .. "_s" .. tostring(stride))
-        local desc = descriptor(
-            "count",
+        local desc = descriptor(Stencil.StencilSinkReduce(i32_ty(), domain_reduce_scope(), Stencil.StencilReduceCount(pred)),
             stride,
             {
                 shaped("xs", Stencil.StencilAccessRead, elem_ty, info.array_layout or info.src_layout, stride),
@@ -2073,7 +2066,7 @@ local function bind_context(T)
         local producer_reason = producer_materializer_reject_reason(producer)
         if producer_reason ~= nil then error("stencil_artifact_plan: unsupported store_n producer: " .. tostring(producer_reason), 2) end
         local inputs, accesses, abi, args = store_n_inputs(info, stride, producer)
-        local desc = descriptor("store", stride, accesses, expr, nil, attrs(info, { producer = producer }), memory(), nil)
+        local desc = descriptor(Stencil.StencilSinkStore(Stencil.StencilAccessRef(info.store_dst or "dst"), info.store_mode or Stencil.StencilStoreElementwise), stride, accesses, expr, attrs(info, { producer = producer }), nil)
         local sink_reason = sink_materializer_reject_reason(desc)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported store_n sink/body: " .. tostring(sink_reason), 2) end
         local tag = sanitize("d" .. stable_hash128(descriptor_identity_repr(desc)))
@@ -2122,7 +2115,7 @@ local function bind_context(T)
             abi[#abi + 1] = result_ty
             args[#args + 1] = c_type(result_ty) .. " init"
         end
-        local desc = descriptor("reduce", stride, accesses, expr, reducer_desc(reduction, result_ty), { producer = producer, reduce_scope = scope }, memory(), result_ty)
+        local desc = descriptor(Stencil.StencilSinkReduce(result_ty, scope, Stencil.StencilReduceFold(reducer_desc(reduction, result_ty))), stride, accesses, expr, { producer = producer }, result_ty)
         local sink_reason = sink_materializer_reject_reason(desc)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported reduce_n sink/body: " .. tostring(sink_reason), 2) end
         local tag = sanitize((info.tag or ("arity" .. tostring(#inputs))) .. "_" .. stable_hash128(descriptor_identity_repr(desc)))
@@ -2162,7 +2155,7 @@ local function bind_context(T)
         abi[#abi + 1] = result_ty
         args[#args + 1] = c_type(result_ty) .. " init"
         local reducer = reducer_desc(reduction, result_ty)
-        local desc = descriptor("scan", stride, accesses, expr, reducer, { mode = mode, producer = producer, axis = info.axis or info.scan_axis }, memory(), result_ty)
+        local desc = descriptor(Stencil.StencilSinkScan(Stencil.StencilAccessRef("dst"), info.axis or info.scan_axis, reducer, mode, result_ty), stride, accesses, expr, { producer = producer }, result_ty)
         local sink_reason = sink_materializer_reject_reason(desc)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported scan_n sink/body: " .. tostring(sink_reason), 2) end
         local tag = sanitize((info.tag or ("arity" .. tostring(#inputs))) .. "_" .. stable_hash128(descriptor_identity_repr(desc)))
@@ -2534,7 +2527,6 @@ local function bind_context(T)
     api.point_compare_expr = point_compare_expr
     api.point_cast_expr = point_cast_expr
     api.point_select_expr = point_select_expr
-    api.descriptor_vocab = descriptor_vocab
     api.descriptor_accesses = descriptor_accesses
     api.descriptor_producer = descriptor_producer
     api.producer_shape = producer_shape
