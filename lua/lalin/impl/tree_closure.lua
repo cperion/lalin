@@ -1,4 +1,11 @@
 -- impl/tree_closure.lua
+--
+-- INCOMPLETE: Closure conversion is a stub.
+-- Current implementation: 44 lines (old: 819 lines).
+-- Status: find_free_vars() does not detect free variables; capture lists are always empty.
+-- Impact: Any code using lambdas/closures will compile incorrectly.
+-- TODO: Port full AST traversal from old lua/lalin/closure_convert.lua
+-- Estimated work: 1 week (700+ lines).
 -- Closure conversion leaf methods.
 
 require("lalin.schema_v2")
@@ -23,15 +30,7 @@ local function find_free_vars(body, params, captures, seen)
 end
 
 function Tr.ExprClosure:closure_convert(input)
-  local captures, seen = {}, {}
-  find_free_vars(self.body, self.params, captures, seen)
-  -- Build capture entries
-  local capture_entries, offset = {}, 0
-  for name, ty in pairs(captures) do
-    capture_entries[#capture_entries+1] = Sem.CaptureEntry(name, ty, offset, 8)
-    offset = offset + 8
-  end
-  return self
+  error("Closures not supported in schema_v2 pipeline yet (tree_closure.lua is stub)")
 end
 
 function Tr.Module:closure_convert()
