@@ -920,6 +920,67 @@ function M.compile_c_gcc(name_or_decls, decls_or_opts, maybe_opts)
     return M.compile_c(decls, opts)
 end
 
+function M.compile_v2(name, source_text, opts)
+  -- Public API: compile .lln source text through schema_v2 pipeline
+  -- and optionally build/load as shared object via GCC.
+  --
+  -- Returns a session with :symbol(name, ctype) and :free() when gcc=true.
+  -- Returns { source=..., header=... } when gcc=false (C text only).
+  --
+  -- Example:
+  --   local session = lalin.compile_v2("add",
+  --     "fn add(a[i32],b[i32])[i32] do return a+b end",
+  --     { gcc = true })
+  --   local add_fn = session:symbol("add", "int32_t (*)(int32_t, int32_t)")
+  --   print(add_fn(3, 4)) -- 7
+  --   session:free()
+  opts = opts or {}
+
+  local asdl = require("lalin.asdl")
+  local Compiler = require("lalin.schema_v2.compiler")
+  require("lalin.schema_v2")
+  require("lalin.impl.compiler_api")
+
+  local cs = Compiler.CompilerSession(source_text, name)
+
+  local use_gcc = opts.gcc or opts.runner == "gcc" or opts.build_so
+  local use_tcc = opts.tcc or opts.runner == "libtcc"
+
+  if use_gcc or use_tcc then
+    -- Full compile + GCC/TCC -> callable session
+    local gcc_opts = {
+      use_tcc = use_tcc,
+      runner = use_tcc and "libtcc" or "gcc",
+      name = name,
+      opt = opts.opt or 3,
+      out_dir = opts.out_dir or opts.build_dir,
+      cc = opts.cc or opts.compiler,
+    }
+    local session, err = cs:compile_gcc(gcc_opts)
+    if not session then
+      if asdl.classof and asdl.classof(err) and tostring(asdl.classof(err)):match("Error") then
+        error("compile_v2 GCC: " .. tostring(err.message), 2)
+      else
+        error("compile_v2 GCC: " .. tostring(err or "unknown error"), 2)
+      end
+    end
+    return session
+  else
+    -- C text only (like the old emit_c)
+    local result = cs:compile()
+    if result == nil then
+      error("compile_v2: compile returned nil", 2)
+    end
+    if asdl.classof(result) ~= Compiler.CompilerArtifactC then
+      error("compile_v2: " .. tostring(result.message), 2)
+    end
+    return {
+      source = result.source,
+      header = result.header,
+    }
+  end
+end
+
 function M.context(opts)
     return M.asdl.context(opts)
 end

@@ -209,7 +209,9 @@ return schema. LalinTreeCode {
     contract_facts [many [LalinCode.CodeFuncContractFact]],
   },
   product. TreeCodeItemLowerInput {
-    interned,
+    -- NOTE: NOT interned - must create fresh instance per compilation to
+    -- avoid state leaks through shared mutable funcs/data/globals tables.
+
     module_facts [LalinTreeCode.TreeCodeModuleFacts],
     sigs [LalinTreeCode.TreeCodeModuleSigState],
     registrations [LalinTreeCode.TreeCodeModuleRegistrationState],

@@ -190,8 +190,12 @@ end
 
 ----------------------------------------------------------------------
 -- Sig state (module-level, set per module lowering)
-----------------------------------------------------------------------
+-- NOTE: module_sig_state is reset per compilation to prevent state leaks.
 local module_sig_state = nil
+TreeCode.reset_module_sig_state = function() module_sig_state = nil end
+local function reset_module_sig_state()
+  module_sig_state = nil
+end
 
 local function type_to_code_s(ty)
   local code_ty, ss = CodeType.type_to_code(module_sig_state, ty)
