@@ -177,6 +177,7 @@ local function control_binding(region_id, label, param, index, is_entry)
 end
 
 local function tree_code_target(raw_target)
+  if raw_target == nil then return nil end
   local target = raw_target and raw_target.c_target or raw_target
   local ok, normalized = pcall(CodeType.normalize_target, target)
   if ok then return normalized end
@@ -2288,8 +2289,8 @@ function TreeCode.TreeCodeModuleSigState:tree_lower_sig_entry(sig)
 end
 function Tree.Module:tree_code_layout_env(target)
   local envs = self:tree_module_env(target)
-  if #envs > 0 then return envs[1].layouts end
-  return {}
+  local layouts = (#envs > 0 and envs[1].layouts) or {}
+  return Sem.LayoutEnv(layouts)
 end
 
 function Tree.Module:tree_code_module_parts(opts)
@@ -2826,6 +2827,9 @@ function Tree.FuncExportContract:sem_layout_resolve(env, target)
   local cts = {}; for i=1,#(self.contracts or {}) do cts[i]=self.contracts[i]:sem_layout_resolve(env, target) end
   return {asdl.with(self, {contracts = cts, body = sem_map_stmts(self.body, env, target)})}
 end
+
+-- Pipeline alias: lower_to_code is what the pipeline calls
+Tree.Module.lower_to_code = Tree.Module.lower_tree_module_to_code
 
 -- Const/Static layout
 function Tree.ConstItem:sem_layout_resolve(env, target)

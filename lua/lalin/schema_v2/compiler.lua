@@ -31,4 +31,15 @@ return schema. LalinCompiler {
     contracts [many [LalinCode.CodeFuncContractFact]],
     layout_env [LalinSem.LayoutEnv],
   },
+
+  product. CompilerSession {
+    interned,
+    source_text [str],
+    source_name [str],
+  },
+
+  sum. CompilerArtifact {
+    CompilerArtifactC { source [str], header [str] },
+    CompilerArtifactError { message [str] },
+  },
 }

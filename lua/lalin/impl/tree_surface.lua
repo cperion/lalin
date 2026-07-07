@@ -1,6 +1,9 @@
 -- impl/tree_surface.lua
 -- Surface type resolution — replaces local type names with global refs.
 -- Ported from surface_resolve.lua.
+-- impl/tree_surface.lua
+-- Surface type resolution — replaces local type names with global refs.
+-- Ported from surface_resolve.lua.
 
 require("lalin.schema_v2")
 local Ty   = require("lalin.schema_v2.type")
@@ -9,7 +12,40 @@ local B    = require("lalin.schema_v2.bind")
 local Sem  = require("lalin.schema_v2.sem")
 local asdl = require("lalin.asdl")
 
-function Tr.TypeDecl:tree_surface_resolve(mod_name) return self end
+-- Module-level entry point — pipeline calls tree_module:surface_resolve()
+function Tr.Module:surface_resolve()
+  local mod_name = self.h and self.h.module_name or "module"
+  local items = {}
+  for i = 1, #(self.items or {}) do
+    local item = self.items[i]
+    if item.func then
+      items[i] = Tr.ItemFunc(item.func:surface_resolve_item(mod_name))
+    elseif item.t then
+      items[i] = Tr.ItemType(item.t:tree_surface_resolve(mod_name))
+    elseif item.extern then
+      items[i] = item  -- externs pass through
+    else
+      items[i] = item
+    end
+  end
+  return Tr.Module(self.h, items)
+end
+
+function Tr.FuncLocal:surface_resolve_item(mod_name)
+  local params = {}
+  for i = 1, #(self.params or {}) do
+    local p = self.params[i]
+    params[i] = Ty.Param(p.name, p.ty:tree_surface_resolve_ty(mod_name), p.attrs)
+  end
+  local result = self.result and self.result:tree_surface_resolve_ty(mod_name) or nil
+  return Tr.FuncLocal(self.name, params, result, self.body, self.attrs)
+end
+
+function Tr.FuncExport:surface_resolve_item(mod_name)
+  return Tr.FuncLocal:surface_resolve_item(self, mod_name)
+end
+
+-- Type resolution methods (below are unchanged)
 function Tr.TypeDeclStruct:tree_surface_resolve(mod_name)
   local fields = {}
   for i = 1, #(self.fields or {}) do

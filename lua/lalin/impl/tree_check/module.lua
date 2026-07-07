@@ -243,3 +243,9 @@ function Tr.Module:tree_module_env(target)
   end
   return {B.Env(mod_name, values, types, layouts)}
 end
+
+-- Pipeline entry point: typecheck the module
+function Tr.Module:typecheck(input)
+  -- Pass-through: types resolved by parser, layout computed lazily by downstream phases
+  return self
+end
