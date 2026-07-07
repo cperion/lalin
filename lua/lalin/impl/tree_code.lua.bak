@@ -105,19 +105,19 @@ local function func_key(module_name, item_name)
 end
 
 local function code_func_id(item_name)
-  return Code.CodeFuncId("fn_" .. tostring(item_name))
+  return Code.CodeFuncId("fn:" .. tostring(item_name))
 end
 
 local function code_extern_id(name)
-  return Code.CodeExternId("extern_" .. tostring(name))
+  return Code.CodeExternId("extern:" .. tostring(name))
 end
 
 local function code_global_id(module_name, item_name)
-  return Code.CodeGlobalId("global_" .. tostring(module_name or "") .. "_" .. tostring(item_name or ""))
+  return Code.CodeGlobalId("global:" .. tostring(module_name or "") .. ":" .. tostring(item_name or ""))
 end
 
 local function code_data_id(id)
-  return Code.CodeDataId("data_" .. tostring(id and id.text or id))
+  return Code.CodeDataId("data:" .. tostring(id and id.text or id))
 end
 
 local function decoded_string_bytes(bytes)
@@ -161,7 +161,7 @@ end
 
 local function variant_binding(kind, variant, bind)
   return Bind.Binding(
-    Core.Id("variant:" .. kind .. "_" .. variant.name .. "_" .. bind.name),
+    Core.Id("variant:" .. kind .. ":" .. variant.name .. ":" .. bind.name),
     bind.name, bind.ty, Bind.BindingRoleLocalValue
   )
 end
@@ -171,7 +171,7 @@ local function control_binding(region_id, label, param, index, is_entry)
     and Bind.BindingRoleEntryBlockParam(region_id, label.name, index)
     or Bind.BindingRoleBlockParam(region_id, label.name, index)
   return Bind.Binding(
-    Core.Id("control:param:" .. region_id .. "_" .. label.name .. "_" .. param.name),
+    Core.Id("control:param:" .. region_id .. ":" .. label.name .. ":" .. param.name),
     param.name, param.ty, role
   )
 end
@@ -679,7 +679,7 @@ function Bind.BindingRoleGlobalStatic:tree_code_global_place(input, binding)
 end
 
 function Ty.Param:tree_code_param_binding(func_name, index)
-  return Bind.Binding(Core.Id("arg_" .. func_name .. "_" .. self.name), self.name, self.ty, Bind.BindingRoleArg(index - 1))
+  return Bind.Binding(Core.Id("arg:" .. func_name .. ":" .. self.name), self.name, self.ty, Bind.BindingRoleArg(index - 1))
 end
 
 ----------------------------------------------------------------------
@@ -687,25 +687,25 @@ end
 ----------------------------------------------------------------------
 function TreeCode.TreeCodeInput:tree_code_new_value(prefix)
   local counter = self:tree_code_state():tree_code_next_counter("value")
-  return TreeCode.TreeCodeValueIdResult(Code.CodeValueId("v_" .. sanitize(self:tree_code_func_name()) .. "_" .. sanitize(prefix or "tmp") .. tostring(counter.value)), counter.state)
+  return TreeCode.TreeCodeValueIdResult(Code.CodeValueId("v:" .. sanitize(self:tree_code_func_name()) .. ":" .. sanitize(prefix or "tmp") .. tostring(counter.value)), counter.state)
 end
 function TreeCode.TreeCodeInput:tree_code_new_inst(prefix)
   local counter = self:tree_code_state():tree_code_next_counter("inst")
-  return TreeCode.TreeCodeInstIdResult(Code.CodeInstId("inst_" .. sanitize(self:tree_code_func_name()) .. "_" .. sanitize(prefix or "i") .. tostring(counter.value)), counter.state)
+  return TreeCode.TreeCodeInstIdResult(Code.CodeInstId("inst:" .. sanitize(self:tree_code_func_name()) .. ":" .. sanitize(prefix or "i") .. tostring(counter.value)), counter.state)
 end
 function TreeCode.TreeCodeInput:tree_code_new_term(prefix)
   local counter = self:tree_code_state():tree_code_next_counter("term")
-  return TreeCode.TreeCodeTermIdResult(Code.CodeTermId("term_" .. sanitize(self:tree_code_func_name()) .. "_" .. sanitize(prefix or "t") .. tostring(counter.value)), counter.state)
+  return TreeCode.TreeCodeTermIdResult(Code.CodeTermId("term:" .. sanitize(self:tree_code_func_name()) .. ":" .. sanitize(prefix or "t") .. tostring(counter.value)), counter.state)
 end
 function TreeCode.TreeCodeInput:tree_code_new_block(prefix)
   local counter = self:tree_code_state():tree_code_next_counter("block")
-  return TreeCode.TreeCodeBlockIdResult(Code.CodeBlockId("block_" .. sanitize(self:tree_code_func_name()) .. "_" .. sanitize(prefix or "b") .. tostring(counter.value)), counter.state)
+  return TreeCode.TreeCodeBlockIdResult(Code.CodeBlockId("block:" .. sanitize(self:tree_code_func_name()) .. ":" .. sanitize(prefix or "b") .. tostring(counter.value)), counter.state)
 end
 function TreeCode.TreeCodeInput:tree_code_value_id_for_binding(binding)
-  return Code.CodeValueId("v_" .. sanitize(self:tree_code_func_name()) .. "_" .. sanitize(self:tree_code_state():tree_code_scoped_binding_key(binding)))
+  return Code.CodeValueId("v:" .. sanitize(self:tree_code_func_name()) .. ":" .. sanitize(self:tree_code_state():tree_code_scoped_binding_key(binding)))
 end
 function TreeCode.TreeCodeInput:tree_code_local_id_for_binding(binding)
-  return Code.CodeLocalId("local_" .. sanitize(self:tree_code_func_name()) .. "_" .. sanitize(self:tree_code_state():tree_code_scoped_binding_key(binding)))
+  return Code.CodeLocalId("local:" .. sanitize(self:tree_code_func_name()) .. ":" .. sanitize(self:tree_code_state():tree_code_scoped_binding_key(binding)))
 end
 function TreeCode.TreeCodeInput:tree_code_fresh_string_data(bytes)
   local module_facts = self:tree_code_module_facts()
@@ -713,7 +713,7 @@ function TreeCode.TreeCodeInput:tree_code_fresh_string_data(bytes)
   local next_string_data = ((emission.counters and emission.counters.string_data and emission.counters.string_data.next_value) or 0) + 1
   emission.counters.string_data = TreeCode.TreeCodeCounterEntry("string_data", next_string_data)
   local stem = "str_" .. sanitize(self:tree_code_func_name()) .. "_" .. tostring(next_string_data)
-  local id = Code.CodeDataId("data_" .. tostring(module_facts.module_name or "module") .. "_" .. stem)
+  local id = Code.CodeDataId("data:" .. tostring(module_facts.module_name or "module") .. ":" .. stem)
   local decoded = decoded_string_bytes(bytes)
   local nul_terminated = decoded .. "\0"
   emission.generated_data[#emission.generated_data + 1] = Code.CodeData(id, stem, Code.CodeLinkageLocal, #nul_terminated, 1, { Code.CodeDataBytes(0, nul_terminated) }, Code.CodeOriginGenerated("string literal " .. stem))
@@ -2173,7 +2173,7 @@ function Tree.Func:lower_tree_func_to_code(input)
   local residence = collect_address_taken_stmts(parts.body or {}, {addressed={}, mutable={}})
   local start = input:tree_code_func_lowering_start(parts.name, residence)
   local stmt_input = TreeCode.TreeCodeStmtInput(start.facts, start.state)
-  local entry = Code.CodeBlockId("block_" .. sanitize(parts.name) .. "_entry")
+  local entry = Code.CodeBlockId("block:" .. sanitize(parts.name) .. ":entry")
   stmt_input = stmt_input:tree_code_with_result_state(stmt_input:tree_code_start_block(entry, "entry", {}, origin_generated("entry block")))
   local code_params = {}; local sig_params = {}
   for i = 1, #(parts.params or {}) do
@@ -2193,7 +2193,7 @@ function Tree.Func:lower_tree_func_to_code(input)
       unsupported(self, "non-void function without return")
     end
   end
-  return Code.CodeFunc(Code.CodeFuncId("fn_" .. parts.name), parts.name, parts.linkage, sig, code_params, stmt_input:tree_code_state().emission.locals, entry, stmt_input:tree_code_state().emission.blocks, origin_generated("function " .. parts.name))
+  return Code.CodeFunc(Code.CodeFuncId("fn:" .. parts.name), parts.name, parts.linkage, sig, code_params, stmt_input:tree_code_state().emission.locals, entry, stmt_input:tree_code_state().emission.blocks, origin_generated("function " .. parts.name))
 end
 
 ----------------------------------------------------------------------
@@ -2318,13 +2318,13 @@ function Tree.Module:lower_tree_module_to_code(opts)
   local input = TreeCode.TreeCodeItemLowerInput(parts.module_facts, parts.sigs, parts.registrations, parts.emission, mod_name, funcs, data, globals)
   for i = 1, #(self.items or {}) do self.items[i]:lower_tree_item_to_code(input) end
   for i = 1, #parts.emission.generated_data do data[#data+1] = parts.emission.generated_data[i] end
-  return Code.CodeModule(Code.CodeModuleId("module_" .. sanitize(opts.module_id or self:tree_code_module_name())), module_sig_state.code_sig_order, {}, data, globals, parts.registrations.extern_order, input.funcs, origin_generated("tree_lower module"))
+  return Code.CodeModule(Code.CodeModuleId("module:" .. sanitize(opts.module_id or self:tree_code_module_name())), module_sig_state.code_sig_order, {}, data, globals, parts.registrations.extern_order, input.funcs, origin_generated("tree_lower module"))
 end
 
 function Tree.Module:lower_tree_module_contracts_to_code(opts)
   opts = opts or {}
   local parts = self:tree_code_module_parts(opts)
-  local mod_id = Code.CodeModuleId("module_" .. sanitize(opts.module_id or self:tree_code_module_name()))
+  local mod_id = Code.CodeModuleId("module:" .. sanitize(opts.module_id or self:tree_code_module_name()))
   local facts = {}
   local input = TreeCode.TreeCodeItemContractsInput(parts.module_facts, parts.sigs, parts.registrations, parts.emission, facts)
   for i = 1, #(self.items or {}) do self.items[i]:lower_tree_item_contracts_to_code(input) end
@@ -2353,7 +2353,7 @@ end
 -- Contract lowering
 ----------------------------------------------------------------------
 function TreeCode.TreeCodeContractInput:tree_code_value_for_binding(binding)
-  return Code.CodeValueId("v_" .. sanitize(self.func_name) .. "_" .. sanitize(binding:tree_code_binding_key()))
+  return Code.CodeValueId("v:" .. sanitize(self.func_name) .. ":" .. sanitize(binding:tree_code_binding_key()))
 end
 
 function TreeCode.TreeCodeContractInput:tree_code_value_for_expr(expr) return expr:tree_code_contract_value(self) end

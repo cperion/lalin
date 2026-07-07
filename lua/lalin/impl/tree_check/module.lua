@@ -95,28 +95,28 @@ end
 function Tr.Func:tree_module_func_entry(input) return {} end
 function Tr.FuncLocal:tree_module_func_entry(input)
   local ty = params_type(self.params, self.result, input.mod_name)
-  return {B.ValueEntry(self.name, B.Binding(C.Id("func:"..input.mod_name..":"..self.name), self.name, ty, B.BindingRoleGlobalFunc(input.mod_name, self.name)))}
+  return {B.ValueEntry(self.name, B.Binding(C.Id("func_"..input.mod_name.."_"..self.name), self.name, ty, B.BindingRoleGlobalFunc(input.mod_name, self.name)))}
 end
 function Tr.FuncExport:tree_module_func_entry(input)
   local ty = params_type(self.params, self.result, input.mod_name)
-  return {B.ValueEntry(self.name, B.Binding(C.Id("func:"..input.mod_name..":"..self.name), self.name, ty, B.BindingRoleGlobalFunc(input.mod_name, self.name)))}
+  return {B.ValueEntry(self.name, B.Binding(C.Id("func_"..input.mod_name.."_"..self.name), self.name, ty, B.BindingRoleGlobalFunc(input.mod_name, self.name)))}
 end
 function Tr.FuncLocalContract:tree_module_func_entry(input)
   local ty = params_type(self.params, self.result, input.mod_name)
-  return {B.ValueEntry(self.name, B.Binding(C.Id("func:"..input.mod_name..":"..self.name), self.name, ty, B.BindingRoleGlobalFunc(input.mod_name, self.name)))}
+  return {B.ValueEntry(self.name, B.Binding(C.Id("func_"..input.mod_name.."_"..self.name), self.name, ty, B.BindingRoleGlobalFunc(input.mod_name, self.name)))}
 end
 function Tr.FuncExportContract:tree_module_func_entry(input)
   local ty = params_type(self.params, self.result, input.mod_name)
-  return {B.ValueEntry(self.name, B.Binding(C.Id("func:"..input.mod_name..":"..self.name), self.name, ty, B.BindingRoleGlobalFunc(input.mod_name, self.name)))}
+  return {B.ValueEntry(self.name, B.Binding(C.Id("func_"..input.mod_name.."_"..self.name), self.name, ty, B.BindingRoleGlobalFunc(input.mod_name, self.name)))}
 end
 function Tr.ExternFunc:tree_module_extern_entry()
-  return {B.ValueEntry(self.name, B.Binding(C.Id("extern:"..self.name), self.name, params_type(self.params, self.result, ""), B.BindingRoleExtern(self.symbol)))}
+  return {B.ValueEntry(self.name, B.Binding(C.Id("extern_"..self.name), self.name, params_type(self.params, self.result, ""), B.BindingRoleExtern(self.symbol)))}
 end
 function Tr.ConstItem:tree_module_const_entry(input)
-  return {B.ValueEntry(self.name, B.Binding(C.Id("const:"..input.mod_name..":"..self.name), self.name, self.ty, B.BindingRoleGlobalConst(input.mod_name, self.name)))}
+  return {B.ValueEntry(self.name, B.Binding(C.Id("const_"..input.mod_name.."_"..self.name), self.name, self.ty, B.BindingRoleGlobalConst(input.mod_name, self.name)))}
 end
 function Tr.StaticItem:tree_module_static_entry(input)
-  return {B.ValueEntry(self.name, B.Binding(C.Id("static:"..input.mod_name..":"..self.name), self.name, self.ty, B.BindingRoleGlobalStatic(input.mod_name, self.name)))}
+  return {B.ValueEntry(self.name, B.Binding(C.Id("static_"..input.mod_name.."_"..self.name), self.name, self.ty, B.BindingRoleGlobalStatic(input.mod_name, self.name)))}
 end
 
 -- Type entries
@@ -259,23 +259,23 @@ function Tr.Module:typecheck(input)
     if item_class == Tr.ItemFunc then
       local func = item.func
       local ty = params_type(func.params, func.result, mod_name)
-      local binding = B.Binding(C.Id("func:"..mod_name..":"..func.name), func.name, ty,
+      local binding = B.Binding(C.Id("func_"..mod_name.."_"..func.name), func.name, ty,
         B.BindingRoleGlobalFunc(mod_name, func.name))
       values[#values+1] = B.ValueEntry(func.name, binding)
     elseif item_class == Tr.ItemExtern then
       local f = item.func
       values[#values+1] = B.ValueEntry(f.name,
-        B.Binding(C.Id("extern:"..f.name), f.name, params_type(f.params, f.result, ""),
+        B.Binding(C.Id("extern_"..f.name), f.name, params_type(f.params, f.result, ""),
           B.BindingRoleExtern(f.symbol)))
     elseif item_class == Tr.ItemConst then
       local c = item.c
       values[#values+1] = B.ValueEntry(c.name,
-        B.Binding(C.Id("const:"..mod_name..":"..c.name), c.name, c.ty,
+        B.Binding(C.Id("const_"..mod_name.."_"..c.name), c.name, c.ty,
           B.BindingRoleGlobalConst(mod_name, c.name)))
     elseif item_class == Tr.ItemStatic then
       local s = item.s
       values[#values+1] = B.ValueEntry(s.name,
-        B.Binding(C.Id("static:"..mod_name..":"..s.name), s.name, s.ty,
+        B.Binding(C.Id("static_"..mod_name.."_"..s.name), s.name, s.ty,
           B.BindingRoleGlobalStatic(mod_name, s.name)))
     elseif item_class == Tr.ItemType then
       local t = item.t
@@ -306,7 +306,7 @@ function Tr.Module:typecheck(input)
         local scope = module_scope
         for j = 1, #(func.params or {}) do
           local p = func.params[j]
-          local binding = B.Binding(C.Id("arg:" .. func.name .. ":" .. p.name), p.name, p.ty, B.BindingRoleArg(j - 1))
+          local binding = B.Binding(C.Id("arg_" .. func.name .. "_" .. p.name), p.name, p.ty, B.BindingRoleArg(j - 1))
           scope = scope:typecheck_tree_add_value(p.name, p.ty, binding)
         end
 

@@ -118,6 +118,8 @@ local function lower_code_func(cfunc, csig_by_id)
   for i = 1, param_count do
     param_locals[i] = locals[i]
   end
+  -- Remove params from locals to avoid double-declaration
+  for i = param_count, 1, -1 do table.remove(locals, i) end
 
   local visibility = Core.VisibilityExport
   if cfunc.linkage and cfunc.linkage == Code.CodeLinkageLocal then
