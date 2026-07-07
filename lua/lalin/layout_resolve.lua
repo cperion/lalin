@@ -82,7 +82,7 @@ local function bind_context(T)
 
     local function map_items(xs, env, target)
         local out = {}
-        for i = 1, #xs do out[#out + 1] = one(resolve_item, xs[i], env, target) end
+        for i = 1, #xs do out[#out + 1] = only(xs[i]:sem_layout_resolve(env, target)) end
         return out
     end
 
@@ -713,40 +713,26 @@ local function bind_context(T)
         end
     end
 
-    function resolve_item(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ItemFunc) then
-            return (function(self, env, target)
- return single(schema.with(self, { func = only(self.func:sem_layout_resolve(env, target)) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemExtern) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemConst) then
-            return (function(self, env, target)
- return single(schema.with(self, { c = only(self.c:sem_layout_resolve(env, target)) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemStatic) then
-            return (function(self, env, target)
- return single(schema.with(self, { s = only(self.s:sem_layout_resolve(env, target)) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemImport) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemType) then
-            return (function(self, env, target)
- return single(schema.with(self, { t = one(resolve_type_decl, self.t, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemRegion) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_item: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.Item:sem_layout_resolve(env, target)
+        return { self }
     end
+
+    function Tr.ItemFunc:sem_layout_resolve(env, target)
+        return { schema.with(self, { func = only(self.func:sem_layout_resolve(env, target)) }) }
+    end
+
+    function Tr.ItemConst:sem_layout_resolve(env, target)
+        return { schema.with(self, { c = only(self.c:sem_layout_resolve(env, target)) }) }
+    end
+
+    function Tr.ItemStatic:sem_layout_resolve(env, target)
+        return { schema.with(self, { s = only(self.s:sem_layout_resolve(env, target)) }) }
+    end
+
+    function Tr.ItemType:sem_layout_resolve(env, target)
+        return { schema.with(self, { t = only(self.t:sem_layout_resolve()) }) }
+    end
+
 
     function Tr.Module:sem_layout_resolve(env, target)
         local resolved_env = env
