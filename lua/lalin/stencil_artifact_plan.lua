@@ -29,6 +29,8 @@ local function stable_repr(v, seen)
     if tv == "boolean" or tv == "number" then return tostring(v) end
     if tv == "string" then return string.format("%q", v) end
     if tv ~= "table" then return tv .. ":" .. tostring(v) end
+    -- GATING: stable_repr is a cross-cutting serialization utility for hashing/fingerprinting,
+    -- not semantic dispatch. Uses classof to produce type-annotated stable strings for any ASDL value.
     local cls = asdl.classof(v)
     if tostring(cls) == "Class(LalinCode.CodeValueId)" then return tostring(cls) .. "{_}" end
     if tostring(cls):match("^Class%(LalinFlow%.FlowDomain") then return tostring(cls) .. "{_}" end
@@ -107,15 +109,25 @@ local function bind_context(T)
         return sanitize(CodeType.code_type_key(self))
     end
 
+    function Code.CodeType:stencil_artifact_c_type()
+        return CEmit.emit_type(select(1, CodeType.code_type_to_c(CEm.CEmitMachine.dummy(), self)))
+    end
+    function Code.CodeTyArray:stencil_artifact_c_type() return self:stencil_artifact_type_name() end
+    function Code.CodeTyClosure:stencil_artifact_c_type() return self:stencil_artifact_type_name() end
+    function Code.CodeTyVector:stencil_artifact_c_type() return self:stencil_artifact_type_name() end
+    function Code.CodeTyImportedCFuncPtr:stencil_artifact_c_type() return self:stencil_artifact_type_name() end
+
+    function Code.CodeType:stencil_artifact_is_code_scalar() return false end
+    function Code.CodeTyInt:stencil_artifact_is_code_scalar() return true end
+    function Code.CodeTyFloat:stencil_artifact_is_code_scalar() return true end
+
+
     local function type_name(ty) return ty:stencil_artifact_type_name() end
 
     local function c_type(ty)
-        local cls = asdl.classof(ty)
-        if cls == Code.CodeTyArray or cls == Code.CodeTyClosure or cls == Code.CodeTyVector or cls == Code.CodeTyImportedCFuncPtr then
-            return ty:stencil_artifact_type_name()
-        end
-        return CEmit.emit_type(select(1, CodeType.code_type_to_c(CEm.CEmitMachine.dummy(), ty)))
+        return ty:stencil_artifact_c_type()
     end
+
 
     ----------------------------------------------------------------------
     -- StencilAccessLayout leaf methods
@@ -131,6 +143,55 @@ local function bind_context(T)
     function Stencil.StencilSink:stencil_artifact_is_reduce() return false end
     function Stencil.StencilSinkStore:stencil_artifact_is_store() return true end
     function Stencil.StencilSink:stencil_artifact_is_store() return false end
+
+    -- StencilSink materializer and auto_vector leaf methods
+    function Stencil.StencilSink:stencil_artifact_sink_materializer_reject_reason(producer)
+        return "unknown stencil sink"
+    end
+    function Stencil.StencilSinkStore:stencil_artifact_sink_materializer_reject_reason(producer) return nil end
+    function Stencil.StencilSinkReduce:stencil_artifact_sink_materializer_reject_reason(producer)
+        return self.scope:stencil_artifact_materializer_reject_reason(producer)
+    end
+    function Stencil.StencilSinkScan:stencil_artifact_sink_materializer_reject_reason(producer)
+        return axis_ref_invalid_reason(self.axis, producer, "scan axis")
+    end
+    function Stencil.StencilSinkScatterReduce:stencil_artifact_sink_materializer_reject_reason(producer)
+        if self.conflicts == Stencil.StencilScatterReduceSequential or self.conflicts == Stencil.StencilScatterReduceUniqueIndices then return nil end
+        if self.conflicts:stencil_artifact_is_atomic() then return "atomic scatter-reduce is represented but not materialized yet" end
+        if self.conflicts == Stencil.StencilScatterReducePrivatized then return "privatized scatter-reduce is represented but not materialized yet" end
+        return "unknown scatter-reduce conflict semantics"
+    end
+
+    function Stencil.StencilSink:stencil_artifact_is_auto_vector() return false end
+    function Stencil.StencilSinkScan:stencil_artifact_is_auto_vector() return true end
+    function Stencil.StencilSinkScatterReduce:stencil_artifact_is_auto_vector() return false end
+    function Stencil.StencilSinkStore:stencil_artifact_is_auto_vector()
+        return not self.semantics:stencil_artifact_is_partition()
+    end
+    function Stencil.StencilSinkReduce:stencil_artifact_is_auto_vector()
+        return not self.semantics:stencil_artifact_is_find()
+    end
+
+    -- StencilReduceScope materializer and domain leaf methods
+    function Stencil.StencilReduceScope:stencil_artifact_materializer_reject_reason(producer)
+        return "unknown reduce sink scope"
+    end
+    function Stencil.StencilReduceScopeDomain:stencil_artifact_materializer_reject_reason(producer) return nil end
+    function Stencil.StencilReduceScopeAxes:stencil_artifact_materializer_reject_reason(producer)
+        local reason = axis_set_invalid_reason(self.axes, producer, "reduce axis scope")
+        if reason ~= nil then return reason end
+        return nil
+    end
+    function Stencil.StencilReduceScopeWindow:stencil_artifact_materializer_reject_reason(producer)
+        local shape = producer_shape(producer)
+        if not shape:stencil_artifact_is_window_nd() then return "window-local reduction requires a WindowND producer" end
+        local reason = axis_set_invalid_reason(self.axes, producer, "window reduction scope")
+        if reason ~= nil then return reason end
+        return nil
+    end
+
+    function Stencil.StencilReduceScope:stencil_artifact_is_domain() return false end
+    function Stencil.StencilReduceScopeDomain:stencil_artifact_is_domain() return true end
 
     -- StencilScatterReduceConflictSemantics leaf methods
     function Stencil.StencilScatterReduceAtomic:stencil_artifact_is_atomic() return true end
@@ -377,6 +438,42 @@ local function bind_context(T)
     function Stencil.StencilSchedule:stencil_artifact_is_vector() return false end
     function Stencil.StencilSchedule:stencil_artifact_is_scalar() return false end
     function Stencil.StencilSchedule:stencil_artifact_lane_count() return nil end
+    -- schedule key/suffix/name/cost leaf methods defined after helpers below
+
+    -- StencilRealizedSchedule leaf methods
+    function Stencil.StencilRealizedSchedule:stencil_artifact_is_realized_scalar() return false end
+    function Stencil.StencilRealizedScalar:stencil_artifact_is_realized_scalar() return true end
+    function Stencil.StencilRealizedSchedule:stencil_artifact_is_realized_vector() return false end
+    function Stencil.StencilRealizedVector:stencil_artifact_is_realized_vector() return true end
+    function Stencil.StencilRealizedUnrolled:stencil_artifact_is_realized_vector() return false end
+    function Stencil.StencilRealizedSchedule:stencil_artifact_is_realized_unrolled_with_factor(factor) return false end
+    function Stencil.StencilRealizedUnrolled:stencil_artifact_is_realized_unrolled_with_factor(factor)
+        return tonumber(self.factor) == tonumber(factor)
+    end
+
+    -- StencilRealizedScheduleEvidence leaf methods
+    function Stencil.StencilRealizedScheduleEvidence:stencil_artifact_append_diagnostic(out) end
+    function Stencil.StencilRealizedByConstruction:stencil_artifact_append_diagnostic(out)
+        out[#out + 1] = Stencil.StencilArtifactDiagnostic(
+            Stencil.StencilArtifactDiagnosticNote,
+            "realized-schedule",
+            self.reason
+        )
+    end
+    function Stencil.StencilRealizedCompilerRemark:stencil_artifact_append_diagnostic(out)
+        out[#out + 1] = Stencil.StencilArtifactDiagnostic(
+            Stencil.StencilArtifactDiagnosticRemark,
+            "compiler",
+            self.remark
+        )
+    end
+    function Stencil.StencilRealizedDisassembly:stencil_artifact_append_diagnostic(out)
+        out[#out + 1] = Stencil.StencilArtifactDiagnostic(
+            Stencil.StencilArtifactDiagnosticRemark,
+            "disassembly",
+            self.classification
+        )
+    end
 
     -- StencilLayout leaf methods
     function Stencil.StencilLayoutIndexed:stencil_artifact_is_indexed() return true end
@@ -396,9 +493,189 @@ local function bind_context(T)
     function Stencil.StencilLayout:stencil_artifact_parent_layout() return nil end
     function Stencil.StencilLayout:stencil_artifact_scale() return 0 end
 
+    -- has_dynamic_stride: true if the layout depends on a non-constant stride
+    function Stencil.StencilAccessLayout:stencil_artifact_has_dynamic_stride() return false end
+    function Stencil.StencilLayoutFieldProjection:stencil_artifact_has_dynamic_stride()
+        return self.parent:stencil_artifact_has_dynamic_stride()
+    end
+    function Stencil.StencilLayoutSoAComponent:stencil_artifact_has_dynamic_stride()
+        return self.parent:stencil_artifact_has_dynamic_stride()
+    end
+    function Stencil.StencilLayoutAffine1D:stencil_artifact_has_dynamic_stride()
+        return self.parent:stencil_artifact_has_dynamic_stride()
+    end
+    function Stencil.StencilLayoutAffineND:stencil_artifact_has_dynamic_stride()
+        return self.parent:stencil_artifact_has_dynamic_stride()
+    end
+    function Stencil.StencilLayoutIndexed:stencil_artifact_has_dynamic_stride()
+        return self.parent:stencil_artifact_has_dynamic_stride()
+    end
+    function Stencil.StencilLayoutViewDescriptor:stencil_artifact_has_dynamic_stride()
+        return self.stride_const == nil
+    end
+
+    -- has_affine_offset: true if any ancestor is affine with a dynamic offset
+    function Stencil.StencilAccessLayout:stencil_artifact_has_affine_offset() return false end
+    function Stencil.StencilLayoutFieldProjection:stencil_artifact_has_affine_offset()
+        return self.parent:stencil_artifact_has_affine_offset()
+    end
+    function Stencil.StencilLayoutSoAComponent:stencil_artifact_has_affine_offset()
+        return self.parent:stencil_artifact_has_affine_offset()
+    end
+    function Stencil.StencilLayoutIndexed:stencil_artifact_has_affine_offset()
+        return self.parent:stencil_artifact_has_affine_offset()
+    end
+    function Stencil.StencilLayoutAffine1D:stencil_artifact_has_affine_offset()
+        return self.offset ~= nil or self.parent:stencil_artifact_has_affine_offset()
+    end
+    function Stencil.StencilLayoutAffineND:stencil_artifact_has_affine_offset()
+        return self.offset ~= nil or self.parent:stencil_artifact_has_affine_offset()
+    end
+
+    -- field_layout: returns the innermost FieldProjection ancestor, or nil
+    function Stencil.StencilAccessLayout:stencil_artifact_field_layout() return nil end
+    function Stencil.StencilLayoutFieldProjection:stencil_artifact_field_layout() return self end
+    function Stencil.StencilLayoutAffine1D:stencil_artifact_field_layout()
+        return self.parent:stencil_artifact_field_layout()
+    end
+    function Stencil.StencilLayoutAffineND:stencil_artifact_field_layout()
+        return self.parent:stencil_artifact_field_layout()
+    end
+
+    -- layout_suffix_for: build a stable suffix string from the layout tree
+    function Stencil.StencilAccessLayout:stencil_artifact_layout_suffix_for(access) return "" end
+    function Stencil.StencilLayoutViewDescriptor:stencil_artifact_layout_suffix_for(access)
+        return "_view_" .. (self.stride_const ~= nil and ("s" .. tostring(self.stride_const)) or "sdyn")
+    end
+    function Stencil.StencilLayoutFieldProjection:stencil_artifact_layout_suffix_for(access)
+        return self.parent:stencil_artifact_layout_suffix_for(access) .. "_field_" .. sanitize(self.field_name) .. "_o" .. tostring(self.field_offset or 0)
+    end
+    function Stencil.StencilLayoutSoAComponent:stencil_artifact_layout_suffix_for(access)
+        return self.parent:stencil_artifact_layout_suffix_for(access) .. "_soa_" .. sanitize(self.field_name) .. "_c" .. tostring(self.component_index or 0)
+    end
+    function Stencil.StencilLayoutAffine1D:stencil_artifact_layout_suffix_for(access)
+        local scale = tonumber(self.scale) or 1
+        local scale_tag = scale < 0 and ("m" .. tostring(math.abs(scale))) or ("p" .. tostring(scale))
+        local offset_tag = self.offset ~= nil and "odyn" or "o0"
+        return self.parent:stencil_artifact_layout_suffix_for(access) .. "_aff1d_" .. scale_tag .. "_" .. offset_tag
+    end
+    function Stencil.StencilLayoutAffineND:stencil_artifact_layout_suffix_for(access)
+        local parts = {}
+        for _, term in ipairs(self.terms or {}) do
+            parts[#parts + 1] = "a" .. tostring(term.axis.index)
+        end
+        local offset_tag = self.offset ~= nil and "odyn" or "o0"
+        return self.parent:stencil_artifact_layout_suffix_for(access) .. "_affnd_" .. table.concat(parts, "x") .. "_" .. offset_tag
+    end
+    function Stencil.StencilLayoutSliceDescriptor:stencil_artifact_layout_suffix_for(access)
+        return "_slice"
+    end
+    function Stencil.StencilLayoutByteSpanDescriptor:stencil_artifact_layout_suffix_for(access)
+        return "_bytespan"
+    end
+
+    -- collect_layout_inputs: gather indexed access names from the layout tree
+    function Stencil.StencilAccessLayout:stencil_artifact_collect_layout_inputs(seen, out) end
+    function Stencil.StencilLayoutIndexed:stencil_artifact_collect_layout_inputs(seen, out)
+        local name = self.index.name
+        if not seen[name] then
+            seen[name] = true
+            out[#out + 1] = name
+        end
+        self.parent:stencil_artifact_collect_layout_inputs(seen, out)
+    end
+    function Stencil.StencilLayoutFieldProjection:stencil_artifact_collect_layout_inputs(seen, out)
+        self.parent:stencil_artifact_collect_layout_inputs(seen, out)
+    end
+    function Stencil.StencilLayoutSoAComponent:stencil_artifact_collect_layout_inputs(seen, out)
+        self.parent:stencil_artifact_collect_layout_inputs(seen, out)
+    end
+
     -- StencilPointExpr leaf methods
     function Stencil.StencilPointInput:stencil_artifact_is_input() return true end
     function Stencil.StencilPointExpr:stencil_artifact_is_input() return false end
+
+    -- predicate extraction: Predicate and Select carry a pred; others error
+    function Stencil.StencilPointExpr:stencil_artifact_point_predicate()
+        error("stencil_artifact_plan: descriptor mode requires a predicate point expression", 3)
+    end
+    function Stencil.StencilPointPredicate:stencil_artifact_point_predicate() return self.pred end
+    function Stencil.StencilPointSelect:stencil_artifact_point_predicate() return self.pred end
+
+    -- window input validation: returns nil on success, error string on failure
+    function Stencil.StencilPointExpr:stencil_artifact_window_input_reason(producer) return nil end
+    function Stencil.StencilPointWindowInput:stencil_artifact_window_input_reason(producer)
+        local shape = producer_shape(producer)
+        if not shape:stencil_artifact_is_window_nd() then return "window-relative point input requires a WindowND producer" end
+        local seen = {}
+        for i, offset in ipairs(self.offsets or {}) do
+            local reason = axis_ref_invalid_reason(offset.axis, producer, "window input offset " .. tostring(i))
+            if reason ~= nil then return reason end
+            if seen[offset.axis.index] then return "window input repeats axis " .. tostring(offset.axis.index) end
+            seen[offset.axis.index] = true
+        end
+        return nil
+    end
+    function Stencil.StencilPointUnary:stencil_artifact_window_input_reason(producer)
+        return self.arg:stencil_artifact_window_input_reason(producer)
+    end
+    function Stencil.StencilPointCast:stencil_artifact_window_input_reason(producer)
+        return self.arg:stencil_artifact_window_input_reason(producer)
+    end
+    function Stencil.StencilPointPredicate:stencil_artifact_window_input_reason(producer)
+        return self.arg:stencil_artifact_window_input_reason(producer)
+    end
+    function Stencil.StencilPointBinary:stencil_artifact_window_input_reason(producer)
+        return self.left:stencil_artifact_window_input_reason(producer) or self.right:stencil_artifact_window_input_reason(producer)
+    end
+    function Stencil.StencilPointCompare:stencil_artifact_window_input_reason(producer)
+        return self.left:stencil_artifact_window_input_reason(producer) or self.right:stencil_artifact_window_input_reason(producer)
+    end
+    function Stencil.StencilPointSelect:stencil_artifact_window_input_reason(producer)
+        return self.cond:stencil_artifact_window_input_reason(producer)
+            or self.then_expr:stencil_artifact_window_input_reason(producer)
+            or self.else_expr:stencil_artifact_window_input_reason(producer)
+    end
+
+    -- collect referenced access names
+    function Stencil.StencilPointExpr:stencil_artifact_collect_inputs(seen, out) end
+    function Stencil.StencilPointInput:stencil_artifact_collect_inputs(seen, out)
+        local name = self.access.name
+        if not seen[name] then
+            seen[name] = true
+            out[#out + 1] = name
+        end
+    end
+    function Stencil.StencilPointWindowInput:stencil_artifact_collect_inputs(seen, out)
+        local name = self.access.name
+        if not seen[name] then
+            seen[name] = true
+            out[#out + 1] = name
+        end
+    end
+    function Stencil.StencilPointUnary:stencil_artifact_collect_inputs(seen, out)
+        self.arg:stencil_artifact_collect_inputs(seen, out)
+    end
+    function Stencil.StencilPointCast:stencil_artifact_collect_inputs(seen, out)
+        self.arg:stencil_artifact_collect_inputs(seen, out)
+    end
+    function Stencil.StencilPointPredicate:stencil_artifact_collect_inputs(seen, out)
+        self.arg:stencil_artifact_collect_inputs(seen, out)
+    end
+    function Stencil.StencilPointBinary:stencil_artifact_collect_inputs(seen, out)
+        self.left:stencil_artifact_collect_inputs(seen, out)
+        self.right:stencil_artifact_collect_inputs(seen, out)
+    end
+    function Stencil.StencilPointCompare:stencil_artifact_collect_inputs(seen, out)
+        self.left:stencil_artifact_collect_inputs(seen, out)
+        self.right:stencil_artifact_collect_inputs(seen, out)
+    end
+    function Stencil.StencilPointSelect:stencil_artifact_collect_inputs(seen, out)
+        self.cond:stencil_artifact_collect_inputs(seen, out)
+        self.then_expr:stencil_artifact_collect_inputs(seen, out)
+        self.else_expr:stencil_artifact_collect_inputs(seen, out)
+    end
+    function Stencil.StencilPointConst:stencil_artifact_collect_inputs(seen, out) end
 
     -- CodeType leaf methods
     function Code.CodeTyDataPtr:stencil_artifact_is_data_ptr() return true end
@@ -578,6 +855,8 @@ local function bind_context(T)
 
     local function same_type(a, b)
         if a == b then return true end
+    -- GATING: same_type must check class equality first — comparing Int.bits against Float.bits is nonsense.
+    -- The classof gate is a structural necessity, not behavioral dispatch.
         local ac, bc = asdl.classof(a), asdl.classof(b)
         if ac ~= bc then return false end
         if ac == Code.CodeTyInt then return a.bits == b.bits and a.signedness == b.signedness end
@@ -600,8 +879,7 @@ local function bind_context(T)
     end
 
     local function is_scalar(ty)
-        local cls = asdl.classof(ty)
-        return cls == Code.CodeTyInt or cls == Code.CodeTyFloat or ty:stencil_artifact_is_integer_like() and not ty:stencil_artifact_is_int() or ty:stencil_artifact_is_integer_like() and not ty:stencil_artifact_is_int() and not ty:stencil_artifact_is_float()
+        return ty:stencil_artifact_is_code_scalar()
     end
 
     local function default_int_semantics()
@@ -609,6 +887,8 @@ local function bind_context(T)
     end
 
     local function element_int_semantics(ty, info)
+    -- GATING: element_int_semantics gates on type class — only integer-like types (Int, Index, Bool8)
+    -- carry integer semantics. This is a type classification gate, not behavioral dispatch.
         local cls = asdl.classof(ty)
         if cls ~= Code.CodeTyInt and ty ~= Code.CodeTyIndex and ty ~= Code.CodeTyBool8 then return nil end
         return info and (info.int_semantics or info.semantics) or default_int_semantics()
@@ -841,9 +1121,7 @@ local function bind_context(T)
     end
 
     local function predicate_expr_pred(expr)
-        local cls = asdl.classof(expr)
-        if cls == Stencil.StencilPointPredicate or cls == Stencil.StencilPointSelect then return expr.pred end
-        error("stencil_artifact_plan: descriptor mode requires a predicate point expression", 3)
+        return expr:stencil_artifact_point_predicate()
     end
 
     local function descriptor(sink, stride, accesses, expr, attrs, result_ty)
@@ -935,6 +1213,8 @@ local function bind_context(T)
                 return string.format("%q", v)
             end
             if tv ~= "table" then return tv .. ":" .. tostring(v) end
+    -- GATING: access_repr is a cross-cutting serialization utility for stable descriptor identity,
+    -- not semantic dispatch. Uses classof to distinguish StencilAccessRef from other ASDL values.
             local cls = asdl.classof(v)
             if cls == Stencil.StencilAccessRef then
                 return tostring(cls) .. "{name=" .. string.format("%q", access_map[v.name] or v.name) .. "}"
@@ -1059,47 +1339,11 @@ local function bind_context(T)
     end
 
     local function expr_window_input_reason(expr, producer)
-        local cls = asdl.classof(expr)
-        if cls == Stencil.StencilPointWindowInput then
-            local shape = producer_shape(producer)
-            if not shape:stencil_artifact_is_window_nd() then return "window-relative point input requires a WindowND producer" end
-            local seen = {}
-            for i, offset in ipairs(expr.offsets or {}) do
-                local reason = axis_ref_invalid_reason(offset.axis, producer, "window input offset " .. tostring(i))
-                if reason ~= nil then return reason end
-                if seen[offset.axis.index] then return "window input repeats axis " .. tostring(offset.axis.index) end
-                seen[offset.axis.index] = true
-            end
-            return nil
-        end
-        if cls == Stencil.StencilPointUnary or cls == Stencil.StencilPointCast or cls == Stencil.StencilPointPredicate then
-            return expr_window_input_reason(expr.arg, producer)
-        end
-        if cls == Stencil.StencilPointBinary or cls == Stencil.StencilPointCompare then
-            return expr_window_input_reason(expr.left, producer) or expr_window_input_reason(expr.right, producer)
-        end
-        if cls == Stencil.StencilPointSelect then
-            return expr_window_input_reason(expr.cond, producer) or expr_window_input_reason(expr.then_expr, producer) or expr_window_input_reason(expr.else_expr, producer)
-        end
-        return nil
+        return expr:stencil_artifact_window_input_reason(producer)
     end
 
     local function reduce_scope_materializer_reject_reason(scope, producer)
-        local cls = asdl.classof(scope)
-        if scope == Stencil.StencilReduceScopeDomain or cls == Stencil.StencilReduceScopeDomain then return nil end
-        if cls == Stencil.StencilReduceScopeAxes then
-            local reason = axis_set_invalid_reason(scope.axes, producer, "reduce axis scope")
-            if reason ~= nil then return reason end
-            return nil
-        end
-        if cls == Stencil.StencilReduceScopeWindow then
-            local shape = producer_shape(producer)
-            if not shape:stencil_artifact_is_window_nd() then return "window-local reduction requires a WindowND producer" end
-            local reason = axis_set_invalid_reason(scope.axes, producer, "window reduction scope")
-            if reason ~= nil then return reason end
-            return nil
-        end
-        return "unknown reduce sink scope"
+        return scope:stencil_artifact_materializer_reject_reason(producer)
     end
 
     local function sink_materializer_reject_reason(desc)
@@ -1107,24 +1351,7 @@ local function bind_context(T)
         local producer = descriptor_producer(desc)
         local body_reason = expr_window_input_reason(descriptor_expr(desc), producer)
         if body_reason ~= nil then return body_reason end
-        local sink = desc.sink
-        local sink_cls = asdl.classof(sink)
-        if sink_cls == Stencil.StencilSinkReduce then
-            return reduce_scope_materializer_reject_reason(sink.scope, producer)
-        end
-        if sink_cls == Stencil.StencilSinkScan then
-            local reason = axis_ref_invalid_reason(sink.axis, producer, "scan axis")
-            if reason ~= nil then return reason end
-            return nil
-        end
-        if sink_cls == Stencil.StencilSinkStore then return nil end
-        if sink_cls == Stencil.StencilSinkScatterReduce then
-            if sink.conflicts == Stencil.StencilScatterReduceSequential or sink.conflicts == Stencil.StencilScatterReduceUniqueIndices then return nil end
-            if sink.conflicts:stencil_artifact_is_atomic() then return "atomic scatter-reduce is represented but not materialized yet" end
-            if sink.conflicts == Stencil.StencilScatterReducePrivatized then return "privatized scatter-reduce is represented but not materialized yet" end
-            return "unknown scatter-reduce conflict semantics"
-        end
-        return "unknown stencil sink"
+        return desc.sink:stencil_artifact_sink_materializer_reject_reason(producer)
     end
 
     local function unsupported_sink_reject(desc)
@@ -1141,21 +1368,7 @@ local function bind_context(T)
     end
 
     local function realized_matches_request(schedule, realized)
-        local scls = asdl.classof(schedule)
-        local rcls = asdl.classof(realized)
-        if scls == Stencil.StencilScheduleScalar then return rcls == Stencil.StencilRealizedScalar end
-        if scls == Stencil.StencilScheduleAutoVector then return rcls == Stencil.StencilRealizedVector end
-        if scls == Stencil.StencilScheduleUnrolled then
-            return rcls == Stencil.StencilRealizedUnrolled and tonumber(realized.factor) == tonumber(schedule.factor)
-        end
-        if scls == Stencil.StencilScheduleVector then
-            local lanes = schedule_lane_count(schedule)
-            return rcls == Stencil.StencilRealizedVector
-                and (lanes == nil or tonumber(realized.lanes) == lanes)
-                and tonumber(realized.unroll) == tonumber(schedule.vector_unroll)
-                and tonumber(realized.interleave) == tonumber(schedule.interleave)
-        end
-        return false
+        return schedule:stencil_artifact_matches_realized(realized)
     end
 
     local function schedule_rejects_for_realized(schedule, realized)
@@ -1198,6 +1411,8 @@ local function bind_context(T)
             local text = rawget(value, "text")
             if text ~= nil then return text end
         end
+    -- GATING: variant_name is a cross-cutting utility that extracts human-readable names from
+    -- tostring(ASDL class). Not semantic dispatch — it operates on the string representation.
         local cls = asdl.classof(value)
         local s = tostring(cls or value)
         return s:match("([%w_]+)%)$") or s:match("%.([%w_]+)$") or s
@@ -1219,27 +1434,75 @@ local function bind_context(T)
         }, "/")
     end
 
+    -- StencilSchedule key / suffix / name / cost leaf methods
+    -- (must be after variant_name, compiler_policy_key, schedule_lane_count)
+
+    function Stencil.StencilSchedule:stencil_artifact_schedule_key()
+        return "schedule:" .. variant_name(self)
+    end
+    function Stencil.StencilScheduleScalar:stencil_artifact_schedule_key()
+        return "scalar:" .. compiler_policy_key(self.compiler)
+    end
+    function Stencil.StencilScheduleAutoVector:stencil_artifact_schedule_key()
+        return "autovector:" .. compiler_policy_key(self.compiler)
+    end
+    function Stencil.StencilScheduleUnrolled:stencil_artifact_schedule_key()
+        return "unrolled:" .. tostring(self.factor) .. ":" .. compiler_policy_key(self.compiler)
+    end
+    function Stencil.StencilScheduleVector:stencil_artifact_schedule_key()
+        return table.concat({
+            "vector",
+            variant_name(self.feature),
+            variant_name(self.lane_policy),
+            tostring(schedule_lane_count(self) or "target"),
+            variant_name(self.required_alignment),
+            variant_name(self.tail),
+            variant_name(self.reduction),
+            variant_name(self.vector_compiler),
+            tostring(self.vector_unroll),
+            tostring(self.interleave),
+            compiler_policy_key(self.compiler),
+        }, ":")
+    end
+
+    function Stencil.StencilSchedule:stencil_artifact_schedule_suffix() return "", "" end
+    function Stencil.StencilScheduleVector:stencil_artifact_schedule_suffix()
+        local lanes = schedule_lane_count(self)
+        local lane_suffix = lanes and tostring(lanes) or "target"
+        local unroll = tonumber(self.vector_unroll) or 1
+        local interleave = tonumber(self.interleave) or 1
+        return ":v" .. lane_suffix .. (unroll > 1 and (":vu" .. tostring(unroll)) or "") .. (interleave > 1 and (":i" .. tostring(interleave)) or ""),
+            "_v" .. lane_suffix .. (unroll > 1 and ("_vu" .. tostring(unroll)) or "") .. (interleave > 1 and ("_i" .. tostring(interleave)) or "")
+    end
+    function Stencil.StencilScheduleUnrolled:stencil_artifact_schedule_suffix()
+        return ":u" .. tostring(self.factor), "_u" .. tostring(self.factor)
+    end
+
+    function Stencil.StencilSchedule:stencil_artifact_schedule_candidate_name() return "schedule" end
+    function Stencil.StencilScheduleScalar:stencil_artifact_schedule_candidate_name() return "scalar" end
+    function Stencil.StencilScheduleAutoVector:stencil_artifact_schedule_candidate_name() return "autovector" end
+    function Stencil.StencilScheduleUnrolled:stencil_artifact_schedule_candidate_name()
+        return "unrolled:" .. tostring(self.factor)
+    end
+    function Stencil.StencilScheduleVector:stencil_artifact_schedule_candidate_name()
+        return "vector:" .. tostring(schedule_lane_count(self) or "target") .. ":u" .. tostring(self.vector_unroll or 1) .. ":i" .. tostring(self.interleave or 1)
+    end
+
+    function Stencil.StencilSchedule:stencil_artifact_schedule_candidate_cost() return 1000000 end
+    function Stencil.StencilScheduleScalar:stencil_artifact_schedule_candidate_cost() return 100000 end
+    function Stencil.StencilScheduleAutoVector:stencil_artifact_schedule_candidate_cost() return 25000 end
+    function Stencil.StencilScheduleUnrolled:stencil_artifact_schedule_candidate_cost()
+        return math.floor(60000 / math.max(1, tonumber(self.factor) or 1))
+    end
+    function Stencil.StencilScheduleVector:stencil_artifact_schedule_candidate_cost()
+        local lanes = schedule_lane_count(self) or 4
+        local unroll = tonumber(self.vector_unroll) or 1
+        local interleave = tonumber(self.interleave) or 1
+        return math.floor(100000 / math.max(1, lanes * unroll * interleave))
+    end
+
     local function schedule_key(schedule)
-        local cls = asdl.classof(schedule)
-        if cls == Stencil.StencilScheduleScalar then return "scalar:" .. compiler_policy_key(schedule.compiler) end
-        if cls == Stencil.StencilScheduleAutoVector then return "autovector:" .. compiler_policy_key(schedule.compiler) end
-        if cls == Stencil.StencilScheduleUnrolled then return "unrolled:" .. tostring(schedule.factor) .. ":" .. compiler_policy_key(schedule.compiler) end
-        if cls == Stencil.StencilScheduleVector then
-            return table.concat({
-                "vector",
-                variant_name(schedule.feature),
-                variant_name(schedule.lane_policy),
-                tostring(schedule_lane_count(schedule) or "target"),
-                variant_name(schedule.required_alignment),
-                variant_name(schedule.tail),
-                variant_name(schedule.reduction),
-                variant_name(schedule.vector_compiler),
-                tostring(schedule.vector_unroll),
-                tostring(schedule.interleave),
-                compiler_policy_key(schedule.compiler),
-            }, ":")
-        end
-        return "schedule:" .. variant_name(schedule)
+        return schedule:stencil_artifact_schedule_key()
     end
 
     local function artifact_fingerprint(instance0, provider, symbol, signature)
@@ -1258,26 +1521,7 @@ local function bind_context(T)
     local function append_realized_diagnostics(out, realized)
         if realized == nil then return end
         for _, evidence in ipairs(realized.evidence or {}) do
-            local cls = asdl.classof(evidence)
-            if cls == Stencil.StencilRealizedByConstruction then
-                out[#out + 1] = Stencil.StencilArtifactDiagnostic(
-                    Stencil.StencilArtifactDiagnosticNote,
-                    "realized-schedule",
-                    evidence.reason
-                )
-            elseif cls == Stencil.StencilRealizedCompilerRemark then
-                out[#out + 1] = Stencil.StencilArtifactDiagnostic(
-                    Stencil.StencilArtifactDiagnosticRemark,
-                    "compiler",
-                    evidence.remark
-                )
-            elseif cls == Stencil.StencilRealizedDisassembly then
-                out[#out + 1] = Stencil.StencilArtifactDiagnostic(
-                    Stencil.StencilArtifactDiagnosticRemark,
-                    "disassembly",
-                    evidence.classification
-                )
-            end
+            evidence:stencil_artifact_append_diagnostic(out)
         end
     end
 
@@ -1465,6 +1709,8 @@ local function bind_context(T)
             end
         end
 
+    -- GATING: checks whether trip_count is already a StencilTripCountFact domain value.
+    -- Classof distinguishes domain facts from raw info tables — a data classification gate.
         local trip_count_cls = asdl.classof(trip_count)
         if trip_count_cls == Stencil.StencilTripCountMultipleOf or trip_count_cls == Stencil.StencilTripCountExact then
             add_proof_obligation(
@@ -1497,6 +1743,8 @@ local function bind_context(T)
     local function trip_count_fact(info)
         if info == nil then return Stencil.StencilTripCountDynamic end
         local fact = info.trip_count or info.trip_count_fact
+    -- GATING: checks whether fact is already a valid StencilTripCountFact. If so, return it directly.
+    -- If not (raw info), convert from info fields. Classof distinguishes domain values from raw info.
         local cls = asdl.classof(fact)
         if cls == Stencil.StencilTripCountUnknown
             or cls == Stencil.StencilTripCountDynamic
@@ -1532,16 +1780,8 @@ local function bind_context(T)
     end
 
     local function auto_vector_descriptor(desc)
-        local sink_cls = desc and desc.sink and asdl.classof(desc.sink) or nil
-        if sink_cls == Stencil.StencilSinkScan then return true end
-        if sink_cls == Stencil.StencilSinkScatterReduce then return false end
-        if sink_cls == Stencil.StencilSinkStore then
-            return not desc.sink.semantics:stencil_artifact_is_partition()
-        end
-        if sink_cls == Stencil.StencilSinkReduce then
-            return not desc.sink.semantics:stencil_artifact_is_find()
-        end
-        return false
+        if desc == nil or desc.sink == nil then return false end
+        return desc.sink:stencil_artifact_is_auto_vector()
     end
 
     local function unroll_factor(info)
@@ -1587,44 +1827,15 @@ local function bind_context(T)
     end
 
     local function schedule_suffix(schedule)
-        local cls = asdl.classof(schedule)
-        if cls == Stencil.StencilScheduleVector then
-            local lanes = schedule_lane_count(schedule)
-            local lane_suffix = lanes and tostring(lanes) or "target"
-            local unroll = tonumber(schedule.vector_unroll) or 1
-            local interleave = tonumber(schedule.interleave) or 1
-            return ":v" .. lane_suffix .. (unroll > 1 and (":vu" .. tostring(unroll)) or "") .. (interleave > 1 and (":i" .. tostring(interleave)) or ""),
-                "_v" .. lane_suffix .. (unroll > 1 and ("_vu" .. tostring(unroll)) or "") .. (interleave > 1 and ("_i" .. tostring(interleave)) or "")
-        end
-        if cls == Stencil.StencilScheduleUnrolled then
-            return ":u" .. tostring(schedule.factor), "_u" .. tostring(schedule.factor)
-        end
-        return "", ""
+        return schedule:stencil_artifact_schedule_suffix()
     end
 
     local function schedule_candidate_name(schedule)
-        local cls = asdl.classof(schedule)
-        if cls == Stencil.StencilScheduleScalar then return "scalar" end
-        if cls == Stencil.StencilScheduleAutoVector then return "autovector" end
-        if cls == Stencil.StencilScheduleUnrolled then return "unrolled:" .. tostring(schedule.factor) end
-        if cls == Stencil.StencilScheduleVector then
-            return "vector:" .. tostring(schedule_lane_count(schedule) or "target") .. ":u" .. tostring(schedule.vector_unroll or 1) .. ":i" .. tostring(schedule.interleave or 1)
-        end
-        return "schedule"
+        return schedule:stencil_artifact_schedule_candidate_name()
     end
 
     local function schedule_candidate_cost(schedule)
-        local cls = asdl.classof(schedule)
-        if cls == Stencil.StencilScheduleVector then
-            local lanes = schedule_lane_count(schedule) or 4
-            local unroll = tonumber(schedule.vector_unroll) or 1
-            local interleave = tonumber(schedule.interleave) or 1
-            return math.floor(100000 / math.max(1, lanes * unroll * interleave))
-        end
-        if cls == Stencil.StencilScheduleAutoVector then return 25000 end
-        if cls == Stencil.StencilScheduleUnrolled then return math.floor(60000 / math.max(1, tonumber(schedule.factor) or 1)) end
-        if cls == Stencil.StencilScheduleScalar then return 100000 end
-        return 1000000
+        return schedule:stencil_artifact_schedule_candidate_cost()
     end
 
     local function schedule_candidate(schedule, status, reason, rejects)
@@ -1690,23 +1901,11 @@ local function bind_context(T)
     end
 
     local function layout_has_dynamic_stride(layout)
-        local cls = asdl.classof(layout)
-        if cls == Stencil.StencilLayoutFieldProjection then return layout_has_dynamic_stride(layout.parent) end
-        if cls == Stencil.StencilLayoutSoAComponent then return layout_has_dynamic_stride(layout.parent) end
-        if cls == Stencil.StencilLayoutAffine1D then return layout_has_dynamic_stride(layout.parent) end
-        if cls == Stencil.StencilLayoutAffineND then return layout_has_dynamic_stride(layout.parent) end
-        if cls == Stencil.StencilLayoutIndexed then return layout_has_dynamic_stride(layout.parent) end
-        return cls == Stencil.StencilLayoutViewDescriptor and layout.stride_const == nil
+        return layout:stencil_artifact_has_dynamic_stride()
     end
 
     local function layout_has_affine_offset(layout)
-        local cls = asdl.classof(layout)
-        if cls == Stencil.StencilLayoutFieldProjection then return layout_has_affine_offset(layout.parent) end
-        if cls == Stencil.StencilLayoutSoAComponent then return layout_has_affine_offset(layout.parent) end
-        if cls == Stencil.StencilLayoutIndexed then return layout_has_affine_offset(layout.parent) end
-        if cls == Stencil.StencilLayoutAffine1D then return layout.offset ~= nil or layout_has_affine_offset(layout.parent) end
-        if cls == Stencil.StencilLayoutAffineND then return layout.offset ~= nil or layout_has_affine_offset(layout.parent) end
-        return false
+        return layout:stencil_artifact_has_affine_offset()
     end
 
     local function dynamic_stride_accesses(desc)
@@ -1765,11 +1964,7 @@ local function bind_context(T)
     end
 
     local function field_layout(layout)
-        local cls = asdl.classof(layout)
-        if cls == Stencil.StencilLayoutFieldProjection then return layout end
-        if cls == Stencil.StencilLayoutAffine1D then return field_layout(layout.parent) end
-        if cls == Stencil.StencilLayoutAffineND then return field_layout(layout.parent) end
-        return nil
+        return layout:stencil_artifact_field_layout()
     end
 
     local function pointer_accesses(desc)
@@ -1811,38 +2006,7 @@ local function bind_context(T)
     end
 
     local function layout_suffix_for(access, layout)
-        local top = access.layout
-        local cls = asdl.classof(layout)
-        if cls == Stencil.StencilLayoutViewDescriptor then
-            return "_view_" .. (layout.stride_const ~= nil and ("s" .. tostring(layout.stride_const)) or "sdyn")
-        end
-        if cls == Stencil.StencilLayoutFieldProjection then
-            return layout_suffix_for(access, layout.parent) .. "_field_" .. sanitize(layout.field_name) .. "_o" .. tostring(layout.field_offset or 0)
-        end
-        if cls == Stencil.StencilLayoutSoAComponent then
-            return layout_suffix_for(access, layout.parent) .. "_soa_" .. sanitize(layout.field_name) .. "_c" .. tostring(layout.component_index or 0)
-        end
-        if cls == Stencil.StencilLayoutAffine1D then
-            local scale = tonumber(layout.scale) or 1
-            local scale_tag = scale < 0 and ("m" .. tostring(math.abs(scale))) or ("p" .. tostring(scale))
-            local offset_tag = layout.offset ~= nil and "odyn" or "o0"
-            return layout_suffix_for(access, layout.parent) .. "_aff1d_" .. scale_tag .. "_" .. offset_tag
-        end
-        if cls == Stencil.StencilLayoutAffineND then
-            local parts = {}
-            for _, term in ipairs(layout.terms or {}) do
-                parts[#parts + 1] = "a" .. tostring(term.axis.index)
-            end
-            local offset_tag = layout.offset ~= nil and "odyn" or "o0"
-            return layout_suffix_for(access, layout.parent) .. "_affnd_" .. table.concat(parts, "x") .. "_" .. offset_tag
-        end
-        if cls == Stencil.StencilLayoutSliceDescriptor then
-            return "_slice"
-        end
-        if cls == Stencil.StencilLayoutByteSpanDescriptor then
-            return "_bytespan"
-        end
-        return ""
+        return layout:stencil_artifact_layout_suffix_for(access)
     end
 
     local function layout_suffix(access, access_name)
@@ -2165,8 +2329,7 @@ local function bind_context(T)
         if not ok then error("stencil_artifact_plan: unsupported reduce_n reduction: " .. tostring(reason), 2) end
         local inputs = assert(info.inputs, "stencil_artifact_plan.reduce_n_artifact requires inputs")
         local scope = info.scope or info.reduce_scope or domain_reduce_scope()
-        local scope_cls = asdl.classof(scope)
-        local scoped_output = not (scope == Stencil.StencilReduceScopeDomain or scope_cls == Stencil.StencilReduceScopeDomain)
+        local scoped_output = not scope:stencil_artifact_is_domain()
         local accesses = {}
         local abi = {}
         local args = {}
@@ -2368,42 +2531,12 @@ local function bind_context(T)
     local function collect_expr_inputs(expr, seen, out)
         seen = seen or {}
         out = out or {}
-        local cls = asdl.classof(expr)
-        if cls == Stencil.StencilPointInput or cls == Stencil.StencilPointWindowInput then
-            local name = expr.access.name
-            if not seen[name] then
-                seen[name] = true
-                out[#out + 1] = name
-            end
-        elseif cls == Stencil.StencilPointUnary or cls == Stencil.StencilPointCast or cls == Stencil.StencilPointPredicate then
-            collect_expr_inputs(expr.arg, seen, out)
-        elseif cls == Stencil.StencilPointBinary or cls == Stencil.StencilPointCompare then
-            collect_expr_inputs(expr.left, seen, out)
-            collect_expr_inputs(expr.right, seen, out)
-        elseif cls == Stencil.StencilPointSelect then
-            collect_expr_inputs(expr.cond, seen, out)
-            collect_expr_inputs(expr.then_expr, seen, out)
-            collect_expr_inputs(expr.else_expr, seen, out)
-        elseif cls == Stencil.StencilPointConst then
-            return out
-        else
-            error("stencil_artifact_plan: unsupported apply expression", 3)
-        end
+        expr:stencil_artifact_collect_inputs(seen, out)
         return out
     end
 
     local function collect_layout_inputs(layout, seen, out)
-        local cls = asdl.classof(layout)
-        if cls == Stencil.StencilLayoutIndexed then
-            local name = layout.index.name
-            if not seen[name] then
-                seen[name] = true
-                out[#out + 1] = name
-            end
-            collect_layout_inputs(layout.parent, seen, out)
-        elseif cls == Stencil.StencilLayoutFieldProjection or cls == Stencil.StencilLayoutSoAComponent then
-            collect_layout_inputs(layout.parent, seen, out)
-        end
+        layout:stencil_artifact_collect_layout_inputs(seen, out)
     end
 
     local function expr_inputs_for_shape(desc, expr)
