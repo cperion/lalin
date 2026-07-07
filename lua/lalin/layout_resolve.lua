@@ -99,52 +99,50 @@ local function bind_context(T)
         return out
     end
 
-    function type_ref_layout(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Ty.TypeRefGlobal) then
-            return (function(ref, env)
-
-            for i = 1, #env.layouts do
-                local layout = env.layouts[i]
-                if schema.classof(layout) == Sem.LayoutNamed and layout.module_name == ref.module_name and layout.type_name == ref.type_name then
-                    return single(layout)
-                end
-            end
-            return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TypeRefLocal) then
-            return (function(ref, env)
-
-            for i = 1, #env.layouts do
-                local layout = env.layouts[i]
-                if schema.classof(layout) == Sem.LayoutLocal and layout.sym == ref.sym then
-                    return single(layout)
-                end
-            end
-            return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TypeRefPath) then
-            return (function(ref, env)
-
-            if #ref.path.parts == 1 then
-                local name = ref.path.parts[1].text
-                for i = 1, #env.layouts do
-                    local layout = env.layouts[i]
-                    if schema.classof(layout) == Sem.LayoutNamed and layout.type_name == name then return single(layout) end
-                end
-            end
-            return {}
-            end)(node, ...)
-        else
-            error("phase lalin_sem_type_ref_layout: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Ty.TypeRef:sem_layout_resolve(env)
+        return {}
     end
+
+    function Ty.TypeRefGlobal:sem_layout_resolve(env)
+        for i = 1, #env.layouts do
+            local layout = env.layouts[i]
+            if schema.classof(layout) == Sem.LayoutNamed and layout.module_name == self.module_name and layout.type_name == self.type_name then
+                return { layout }
+            end
+        end
+        return {}
+    end
+
+    function Ty.TypeRefLocal:sem_layout_resolve(env)
+        for i = 1, #env.layouts do
+            local layout = env.layouts[i]
+            if schema.classof(layout) == Sem.LayoutLocal and layout.sym == self.sym then
+                return { layout }
+            end
+        end
+        return {}
+    end
+
+    function Ty.TypeRefPath:sem_layout_resolve(env)
+        if #self.path.parts == 1 then
+            local name = self.path.parts[1].text
+            for i = 1, #env.layouts do
+                local layout = env.layouts[i]
+                if schema.classof(layout) == Sem.LayoutNamed and layout.type_name == name then
+                    return { layout }
+                end
+            end
+        end
+        return {}
+    end
+
+
 
     function type_layout(node, ...)
         local cls = schema.classof(node)
         if schema.isa(node, Ty.TNamed) then
             return (function(self, env, target)
- return type_ref_layout(self.ref, env)
+ return self.ref:sem_layout_resolve(env)
             end)(node, ...)
         elseif schema.isa(node, Ty.TScalar) then
             return (function()
