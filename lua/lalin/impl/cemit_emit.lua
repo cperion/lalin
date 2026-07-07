@@ -16,7 +16,7 @@ local Code  = require("lalin.schema_v2.code")
 function Cemit.CEmitMachine:emit_module(code_module, lower_module)
   local source = self:emit_source(code_module, lower_module)
   local header = self:emit_header(code_module)
-  return Cemit.CEmitArtifact(source, header, "", source .. "\n" .. header)
+  return { source = source, header = header }
 end
 
 function Cemit.CEmitMachine:emit_source(code_module, lower_module)

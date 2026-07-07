@@ -1,0 +1,435 @@
+-- lalin.syntax_v2.decl
+-- Declaration parser producing LalinParse intermediate types directly.
+-- Type annotations are stored as source strings; to_module evaluates them.
+
+local Ast = require("lalin.syntax_v2.ast")
+local Type = require("lalin.syntax_v2.type")
+local Stmt = require("lalin.syntax_v2.stmt")
+local Expr = require("lalin.syntax_v2.expr")
+
+-- Load schema_v2 types
+require("lalin.schema_v2")
+local P    = package.loaded["lalin.schema_v2.parse"]
+local Tree = package.loaded["lalin.schema_v2.tree"]
+local Core = package.loaded["lalin.schema_v2.core"]
+
+local Decl = {}
+local parse_entry_block
+
+local function optional_do(lex)
+  lex:next_if("do")
+end
+
+-- Parse a possibly qualified name: returns name, qualifier
+local function parse_qualified_name(lex, label)
+  local name = lex:expect_name(label or "name").value
+  local qualifier = nil
+  if lex:peek().value == "." then
+    qualifier = {}
+    qualifier[#qualifier + 1] = name
+    while lex:peek().value == "." do
+      lex:next()
+      local part = lex:expect_name(label or "qualified name part").value
+      qualifier[#qualifier + 1] = part
+    end
+    name = table.remove(qualifier)
+  end
+  return name, qualifier
+end
+
+-- Parse a function/region name with Lua-style method definitions (A.B:name)
+local function parse_callable_name(lex, label)
+  local first = lex:expect_name(label or "name")
+  local parts = { first.value }
+  while lex:peek().value == "." do
+    lex:next()
+    parts[#parts + 1] = lex:expect_name(label or "qualified name part").value
+  end
+  if lex:peek().value == ":" then
+    lex:next()
+    local method = lex:expect_name(label or "method name").value
+    return method, parts, true
+  end
+  local name = table.remove(parts)
+  return name, (#parts > 0 and parts or nil), false
+end
+
+local function implicit_self_field(lex, start, qualifier)
+  if qualifier == nil or #qualifier == 0 then
+    lex:error_at(start, "implicit self method declaration requires an owning struct path")
+  end
+  local owner = table.concat(qualifier, ".")
+  local source = "ptr [" .. owner .. "]"
+  return P.ParsedField("self", source, false, true)
+end
+
+function Decl.parse_host_eval(lex, ctx, role)
+  local raw, open, close = Ast.consume_balanced_from_open(lex)
+  local refs = Ast.extract_refs(raw)
+  Ast.add_refs(ctx, refs)
+  return Ast.host_eval(raw, refs, Ast.origin(lex, open, close, "parsed:host_eval"), role or (ctx and ctx.expected_role) or "decls")
+end
+
+function Decl.parse_decl_stream(lex, ctx)
+  return Decl.parse_host_eval(lex, ctx, (ctx and ctx.expected_role) or "decls")
+end
+
+function Decl.parse_meta_assign(lex, ctx, entry_start)
+  local start = entry_start or lex:peek()
+  local lhs = { lex:expect_name("meta assignment target").value }
+  while lex:next_if(".") do
+    lhs[#lhs + 1] = lex:expect_name("meta assignment target part").value
+  end
+  if #lhs < 2 then
+    lex:error_at(start, "meta assignment target must be a field path such as `Type.metamethods.__methodmissing`")
+  end
+  lex:expect("=")
+  local value_source = ""
+  local meta_ref = nil
+  if lex:peek().value == "[" then
+    local raw, open, close = Ast.consume_balanced_from_open(lex)
+    local refs = Ast.extract_refs(raw)
+    Ast.add_refs(ctx, refs)
+    value_source = raw
+  else
+    local first = lex:expect_name("meta assignment value").value
+    local path = { first }
+    while lex:next_if(".") do
+      path[#path + 1] = lex:expect_name("meta assignment value part").value
+    end
+    local names = {}
+    for i, p in ipairs(path) do names[i] = Core.Name(p) end
+    meta_ref = P.ParsedMetaRef(names)
+  end
+  local target_names = {}
+  for i, t in ipairs(lhs) do target_names[i] = Core.Name(t) end
+  return P.ParsedMetaAssign(target_names, value_source, meta_ref)
+end
+
+function Decl.parse_fn(lex, ctx, entry_start)
+  local start = entry_start or ctx.entry_token
+  local name = nil
+  local qualifier = nil
+  local implicit_self = false
+  if lex:peek().kind == "name" and (lex:peek(1).value == "(" or lex:peek(1).value == "." or lex:peek(1).value == ":") then
+    name, qualifier, implicit_self = parse_callable_name(lex, "function name")
+  end
+  if name == nil and lex:peek().value ~= "(" then
+    lex:error_at(lex:peek(), "expected function name or parameter list")
+  end
+  local raw_params = Type.parse_params(lex, ctx)
+  if implicit_self then
+    local first_param = raw_params[1]
+    if first_param and require("lalin.asdl").classof(first_param) == P.ParsedField and first_param.name == "self" then
+      lex:error_at(start, "colon method declarations inject `self`; use dot syntax for an explicit receiver type")
+    end
+    table.insert(raw_params, 1, implicit_self_field(lex, start, qualifier))
+  end
+  -- Separate ParsedField params from HostEval product splices
+  local params = {}
+  for _, p in ipairs(raw_params) do
+    if require("lalin.asdl").classof(p) == P.ParsedField then
+      params[#params + 1] = p
+    else
+      -- Product splice HostEval: skip for now, handled in to_module
+    end
+  end
+  local result_source = ""
+  if lex:peek().value == "[" then result_source = Type.parse(lex, ctx) end
+  optional_do(lex)
+  local body
+  local has_control = false
+  if lex:peek().value == "entry" or lex:peek().value == "block" then
+    has_control = true
+    body = {}
+    while not lex:at_eof() and lex:peek().value ~= "end" do
+      if lex:peek().value ~= "entry" and lex:peek().value ~= "block" then
+        lex:error_at(lex:peek(), "expected function entry/block or end")
+      end
+      body[#body + 1] = parse_entry_block(lex, ctx).body -- flatten entry blocks
+    end
+  else
+    body = Stmt.parse_block(lex, ctx, { "end" })
+  end
+  lex:expect("end")
+  local qual_names = {}
+  if qualifier then for i, q in ipairs(qualifier) do qual_names[i] = Core.Name(q) end end
+  return P.ParsedFunc(name or "", qual_names, implicit_self, params, result_source, body, has_control)
+end
+
+function Decl.parse_struct(lex, ctx, entry_start)
+  local start = entry_start or ctx.entry_token
+  local name = lex:expect_name("struct name")
+  optional_do(lex)
+  local raw_fields = Type.parse_field_block(lex, ctx, "end")
+  lex:expect("end")
+  local fields = {}
+  for _, f in ipairs(raw_fields) do
+    if require("lalin.asdl").classof(f) == P.ParsedField then fields[#fields + 1] = f end
+  end
+  return P.ParsedStruct(name.value, fields)
+end
+
+local function parse_extern_symbol_value(lex)
+  local t = lex:peek()
+  if t.kind == "string" then
+    lex:next()
+    local loader = loadstring or load
+    local fn, err = loader("return " .. tostring(t.raw or t.value), lex and lex.name or "=(lalin extern symbol)")
+    if not fn then lex:error_at(t, "invalid extern symbol string: " .. tostring(err)) end
+    local ok, value = pcall(fn)
+    if not ok or type(value) ~= "string" then lex:error_at(t, "invalid extern symbol string") end
+    return value
+  elseif t.kind == "name" then
+    lex:next()
+    return t.value
+  end
+  lex:error_at(t, "expected extern symbol string or name")
+end
+
+function Decl.parse_extern(lex, ctx, entry_start)
+  local start = entry_start or ctx.entry_token
+  local name, qualifier = parse_qualified_name(lex, "extern name")
+  local raw_params = Type.parse_params(lex, ctx)
+  local result_source = ""
+  if lex:peek().value == "[" then result_source = Type.parse(lex, ctx) end
+  local symbol = ""
+
+  optional_do(lex)
+  lex:skip_separators()
+  while not lex:at_eof() and lex:peek().value ~= "end" do
+    local key = lex:expect_name("extern fact").value
+    if key == "symbol" then
+      lex:next_if("=")
+      symbol = parse_extern_symbol_value(lex)
+    else
+      lex:error_at(lex.last, "expected extern fact `symbol`")
+    end
+    lex:skip_separators()
+  end
+  lex:expect("end")
+  local params = {}
+  for _, p in ipairs(raw_params) do
+    if require("lalin.asdl").classof(p) == P.ParsedField then params[#params + 1] = p end
+  end
+  local qual_names = {}
+  if qualifier then for i, q in ipairs(qualifier) do qual_names[i] = Core.Name(q) end end
+  return P.ParsedExtern(name, qual_names, params, result_source, symbol or "")
+end
+
+function Decl.parse_union(lex, ctx, entry_start)
+  local start = entry_start or ctx.entry_token
+  local name = lex:expect_name("union name")
+  optional_do(lex)
+  local variants = {}
+  while not lex:at_eof() and lex:peek().value ~= "end" do
+    if lex:peek().value == "[" then
+      -- HostEval splice for variants — skip for now
+      Decl.parse_host_eval(lex, ctx, "variants")
+    else
+      local vstart = lex:expect_name("variant name")
+      local raw_fields = {}
+      if lex:peek().value == "(" then raw_fields = Type.parse_params(lex, ctx) end
+      local fields = {}
+      for _, f in ipairs(raw_fields) do
+        if require("lalin.asdl").classof(f) == P.ParsedField then fields[#fields + 1] = f end
+      end
+      variants[#variants + 1] = P.ParsedVariant(vstart.value, fields)
+    end
+    lex:skip_separators()
+  end
+  lex:expect("end")
+  return P.ParsedUnion(name.value, variants)
+end
+
+local function parse_handle_type(lex, ctx, label)
+  if lex:peek().value ~= "[" then
+    lex:error_at(lex:peek(), "expected " .. (label or "handle type") .. " in `[type]` form")
+  end
+  return Type.parse(lex, ctx)
+end
+
+local function parse_handle_invalid(lex)
+  local t = lex:peek()
+  if t.kind == "number" or t.kind == "string" or t.kind == "name" then
+    lex:next()
+    return t.raw or t.value
+  end
+  lex:error_at(t, "expected handle invalid representation")
+end
+
+function Decl.parse_handle(lex, ctx, entry_start)
+  local start = entry_start or ctx.entry_token
+  local name, qualifier = parse_qualified_name(lex, "handle name")
+  local repr_source = ""
+  local invalid = ""
+  local domain_source = ""
+  local target_source = ""
+
+  if lex:peek().value == "[" then
+    repr_source = parse_handle_type(lex, ctx, "handle representation")
+  end
+  if lex:peek().value == "invalid" then
+    lex:next()
+    lex:next_if("=")
+    invalid = parse_handle_invalid(lex)
+  end
+
+  optional_do(lex)
+  lex:skip_separators()
+  while not lex:at_eof() and lex:peek().value ~= "end" do
+    local key = lex:expect_name("handle fact").value
+    if key == "repr" then
+      repr_source = parse_handle_type(lex, ctx, "handle representation")
+    elseif key == "invalid" then
+      lex:next_if("=")
+      invalid = parse_handle_invalid(lex)
+    elseif key == "domain" then
+      domain_source = parse_handle_type(lex, ctx, "handle domain")
+    elseif key == "target" then
+      target_source = parse_handle_type(lex, ctx, "handle target")
+    else
+      lex:error_at(lex.last, "expected handle fact `repr`, `invalid`, `domain`, or `target`")
+    end
+    lex:skip_separators()
+  end
+  lex:expect("end")
+  local qual_names = {}
+  if qualifier then for i, q in ipairs(qualifier) do qual_names[i] = Core.Name(q) end end
+  return P.ParsedHandle(name, qual_names, repr_source, invalid or "", domain_source, target_source)
+end
+
+parse_entry_block = function(lex, ctx)
+  local start = lex:next() -- entry or block
+  local kind = start.value
+  local name = lex:expect_name(kind .. " name")
+  local state = {}
+  if lex:peek().value == "(" then state = Type.parse_params(lex, ctx) end
+  optional_do(lex)
+  local body = Stmt.parse_block(lex, ctx, { "end" })
+  lex:expect("end")
+  local fields = {}
+  for _, f in ipairs(state) do
+    if require("lalin.asdl").classof(f) == P.ParsedField then fields[#fields + 1] = f end
+  end
+  return P.ParsedEntryBlock(kind, name.value, fields, body)
+end
+
+-- Parse a continuation exit entry: name(fields)
+local function parse_one_exit(lex, ctx)
+  local name = lex:expect_name("continuation name")
+  local raw_fields = {}
+  if lex:peek().value == "(" then
+    lex:next() -- (
+    if not lex:next_if(")") then
+      repeat
+        local t = lex:peek()
+        local t1 = lex:peek(1)
+        if t.kind == "name" and t1 and t1.value == "[" then
+          raw_fields[#raw_fields + 1] = Type.parse_field(lex, ctx)
+        elseif t.value == "[" then
+          Type.parse_product_splice(lex, ctx) -- splice, skip
+        else
+          lex:error_at(t, "expected continuation field `name [type]` or anonymous `[type]`")
+        end
+      until not lex:next_if(",")
+      lex:expect(")")
+    end
+  end
+  local fields = {}
+  for _, f in ipairs(raw_fields) do
+    if require("lalin.asdl").classof(f) == P.ParsedField then fields[#fields + 1] = f end
+  end
+  return P.ParsedExit(name.value, fields)
+end
+
+function Decl.parse_region(lex, ctx, entry_start)
+  local start = entry_start or ctx.entry_token
+  local name, qualifier, implicit_self = parse_callable_name(lex, "region name")
+
+  local inputs, exits
+  lex:expect("(")
+  inputs = {}
+  exits = {}
+
+  if lex:peek().value == ";" then
+    lex:next() -- ;
+    if not lex:next_if(")") then
+      repeat
+        if lex:peek().value == "[" then
+          Decl.parse_host_eval(lex, ctx, "conts")
+        else
+          exits[#exits + 1] = parse_one_exit(lex, ctx)
+        end
+      until not lex:next_if(",")
+      lex:expect(")")
+    end
+  elseif lex:peek().value == ")" then
+    lex:next()
+  else
+    repeat
+      if lex:peek().value == "[" then
+        Type.parse_product_splice(lex, ctx)
+      else
+        inputs[#inputs + 1] = Type.parse_field(lex, ctx)
+      end
+    until not lex:next_if(",") or lex:peek().value == ";"
+    if lex:next_if(";") then
+      if not lex:next_if(")") then
+        repeat
+          if lex:peek().value == "[" then
+            Decl.parse_host_eval(lex, ctx, "conts")
+          else
+            exits[#exits + 1] = parse_one_exit(lex, ctx)
+          end
+        until not lex:next_if(",")
+        lex:expect(")")
+      end
+    else
+      lex:expect(")")
+    end
+  end
+
+  if implicit_self then
+    local first_input = inputs[1]
+    if first_input and first_input.name == "self" then
+      lex:error_at(start, "colon region declarations inject `self`; use dot syntax for an explicit receiver type")
+    end
+    table.insert(inputs, 1, implicit_self_field(lex, start, qualifier))
+  end
+
+  local contracts = {}
+  while not lex:at_eof() and lex:peek().value == "requires" do
+    contracts[#contracts + 1] = Stmt.parse(lex, ctx)
+  end
+
+  local blocks = {}
+  while not lex:at_eof() and lex:peek().value ~= "end" do
+    if lex:peek().value ~= "entry" and lex:peek().value ~= "block" then
+      lex:error_at(lex:peek(), "expected region requires/entry/block or end")
+    end
+    blocks[#blocks + 1] = parse_entry_block(lex, ctx)
+  end
+  lex:expect("end")
+  local qual_names = {}
+  if qualifier then for i, q in ipairs(qualifier) do qual_names[i] = Core.Name(q) end end
+  -- Region intermediate is NOT yet in Parse schema; return ParsedDecl-compatible placeholder
+  -- For now, store as ParsedFunc with empty body (region lowering not in v2 yet)
+  return P.ParsedFunc(name or "", qual_names, implicit_self, inputs, "", {}, false)
+end
+
+function Decl.parse_expr_fragment(lex, ctx)
+  local start = ctx.entry_token
+  local expr = Expr.parse(lex, ctx)
+  lex:expect("end")
+  return P.ParsedExprFragment(expr)
+end
+
+function Decl.parse_stmt_fragment(lex, ctx)
+  local start = ctx.entry_token
+  local body = Stmt.parse_block(lex, ctx, { "end" })
+  lex:expect("end")
+  return P.ParsedStmtFragment(body)
+end
+
+return Decl

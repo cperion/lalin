@@ -231,7 +231,7 @@ local function bind_context(T)
     -- TreeLowerModuleSigState — sig accumulator for tree→code lowering
     -- =====================================================================
 
-    local TL = T.LalinTreeLower
+    local TL = T.LalinTreeLower or T.LalinTreeCode
 
     local function sig_state_lookup(sig_state, key)
         for _, entry in ipairs(sig_state.code_sigs or {}) do
@@ -243,9 +243,11 @@ local function bind_context(T)
     local function sig_state_with_sig(sig_state, sig)
         local key = sig.id.text
         if sig_state_lookup(sig_state, key) ~= nil then return sig_state end
-        local new_sigs = append(sig_state.code_sigs, TL.TreeLowerSigEntry(key, sig))
+        local SigEntry = TL.TreeLowerSigEntry or TL.TreeCodeSigEntry
+        local SigState = TL.TreeLowerModuleSigState or TL.TreeCodeModuleSigState
+        local new_sigs = append(sig_state.code_sigs, SigEntry(key, sig))
         local new_order = append(sig_state.code_sig_order, sig)
-        return TL.TreeLowerModuleSigState(sig_state.module_name, new_sigs, new_order)
+        return SigState(sig_state.module_name, new_sigs, new_order)
     end
 
     -- =====================================================================

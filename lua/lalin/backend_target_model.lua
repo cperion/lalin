@@ -41,10 +41,10 @@ local function bind_context(T)
             Backend.BackTargetSupportsVectorOp(Backend.BackVec(Backend.BackU32, 4), "compare_select"),
             Backend.BackTargetSupportsVectorOp(Backend.BackVec(Backend.BackI64, 2), "compare_select"),
             Backend.BackTargetSupportsVectorOp(Backend.BackVec(Backend.BackU64, 2), "compare_select"),
-            Backend.BackTargetPrefersUnroll(shape_vec(Backend.BackI32, 4), 1, 50),
-            Backend.BackTargetPrefersUnroll(shape_vec(Backend.BackU32, 4), 1, 50),
-            Backend.BackTargetPrefersUnroll(shape_vec(Backend.BackI64, 2), 1, 50),
-            Backend.BackTargetPrefersUnroll(shape_vec(Backend.BackU64, 2), 1, 50),
+            Backend.BackTargetPrefersUnroll(shape_vec(Backend.BackI32, 4), 1, 50, Backend.TargetHeuristicLoopSize(50)),
+            Backend.BackTargetPrefersUnroll(shape_vec(Backend.BackU32, 4), 1, 50, Backend.TargetHeuristicLoopSize(50)),
+            Backend.BackTargetPrefersUnroll(shape_vec(Backend.BackI64, 2), 1, 50, Backend.TargetHeuristicLoopSize(50)),
+            Backend.BackTargetPrefersUnroll(shape_vec(Backend.BackU64, 2), 1, 50, Backend.TargetHeuristicLoopSize(50)),
         })
     end
 

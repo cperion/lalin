@@ -3,7 +3,6 @@
 
 require("lalin.schema_v2")
 local Compiler = require("lalin.schema_v2.compiler")
-local Lalin     = require("lalin")
 
 -- Ensure all phase methods are installed
 require("lalin.impl.tree_surface")
@@ -28,19 +27,16 @@ require("lalin.impl.stencil_c")
 require("lalin.impl.exec_plan")
 
 function Compiler.CompilerSession:compile()
-  -- Parse source → parsed AST
-  local decls_result = { pcall(Lalin.loadstring, self.source_text, self.source_name) }
-  if not decls_result[1] then
-    return Compiler.CompilerArtifactError("parse: " .. tostring(decls_result[2]))
+  -- Parse source → LalinTree Module
+  local Document = require("lalin.syntax_v2.document")
+  local parse_ok, doc = pcall(Document.parse, self.source_text, self.source_name)
+  if not parse_ok then
+    return Compiler.CompilerArtifactError("parse: " .. tostring(doc))
   end
-  local decls, doc = table.unpack(decls_result)
 
-  -- Convert parsed AST → LalinTree ASDL
-  local T = require("lalin.schema_v2")
-  local to_tree = require("lalin.syntax.to_tree")(T)
-  local tree_module = to_tree.doc_module(doc, decls)
-  if not tree_module then
-    return Compiler.CompilerArtifactError("to_tree: failed to convert document")
+  local module_ok, tree_module = pcall(Document.to_module, doc, self.source_name)
+  if not module_ok then
+    return Compiler.CompilerArtifactError("to_module: " .. tostring(tree_module))
   end
 
   -- Phase 1: Surface resolve
@@ -63,12 +59,17 @@ function Compiler.CompilerSession:compile()
   end
 
   -- Phase 4: Lower to code
-  local lower_ok, code_result = pcall(function() return checked:lower_to_code({}) end)
+  local T = require("lalin.schema_v2")
+  local backend_target = require("lalin.backend_target_model")(T)
+  local back_target = backend_target.default_native()
+  local host_target = backend_target.host_target(back_target)
+  local lower_ok, code_module, contracts = pcall(function()
+    return checked:lower_tree_module_with_contracts_to_code({ target = host_target })
+  end)
   if not lower_ok then
-    return Compiler.CompilerArtifactError("lower_to_code: " .. tostring(code_result))
+    return Compiler.CompilerArtifactError("lower_to_code: " .. tostring(code_module))
   end
-  local code_module = code_result.module
-  local contracts   = code_result.contracts
+  if contracts == nil then contracts = {} end
 
   -- Phase 5: Build CFG
   local graph_ok, graph = pcall(function() return code_module:build_graph() end)
@@ -88,10 +89,33 @@ function Compiler.CompilerSession:compile()
   local lower_plan = code_module:plan_lowering(graph, kernels, schedules)
 
   -- Phase 8: Emit C
-  local c_unit   = lower_plan:emit_c(code_module)
-  local artifact = c_unit:emit_module(code_module, lower_plan)
+  local c_unit = lower_plan:emit_c(code_module)
 
-  return artifact
+  -- Phase 9: CEmit - convert to source/header text
+  local Cemit = require("lalin.schema_v2.cemit")
+  local C_schema = require("lalin.schema_v2.c")
+  local Lower_schema = require("lalin.schema_v2.lower")
+  local Graph_schema = require("lalin.schema_v2.graph")
+
+  -- Create a spine for CEmitMachine
+  local target = C_schema.CBackendTarget(
+    C_schema.CBackendC99,
+    C_schema.CBackendHostedNative,
+    64, 64,
+    C_schema.CBackendLittleEndian,
+    true
+  )
+  local spine = Lower_schema.LowerBackSpine(
+    code_module,
+    graph,
+    target
+  )
+  local cemit_machine = Cemit.CEmitMachine(spine, {}, {}, {}, {})
+  local artifact = cemit_machine:emit_module(code_module, lower_plan)
+
+  -- Package as CompilerArtifact
+  local Compiler = require("lalin.schema_v2.compiler")
+  return Compiler.CompilerArtifactC(artifact.source, artifact.header)
 end
 
 return Compiler
