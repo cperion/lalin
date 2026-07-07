@@ -393,3 +393,80 @@ Use this when reasoning about schema design, dispatch architecture, semantic
 separation, or any question where the ASDL doctrine is the authority. Team members
 working on compiler semantics should invoke `/asdl` before making architectural
 decisions.
+
+## Herdr — Team Communication Cheatsheet
+
+We use herdr for multi-agent coordination. All agents work in the same
+workspace (`w4`) at `/home/cedric/dev/lalin`. Each agent is a pane (terminal split).
+
+### Status
+```bash
+herdr pane list --workspace w4    # all panes + agent_status (idle/working/done)
+herdr pane list --workspace w4 | python3 -c "
+import sys,json; d=json.load(sys.stdin)
+for p in d['result']['panes']:
+    print(f'{p[\"pane_id\"]} {p[\"agent_status\"]}')"
+```
+
+### Send text to a running agent
+```bash
+herdr pane send-text <pane_id> \"your message\"
+herdr pane send-keys <pane_id> Enter    # press Enter to submit
+```
+`send-text` types into the terminal. `send-keys` presses keys (Enter, escape, etc.).
+Use this to send prompts to a running `pi` agent.
+
+### Read agent output
+```bash
+herdr pane read <pane_id> --source recent --lines 30        # recent scrollback
+herdr pane read <pane_id> --source visible --lines 30       # current viewport
+herdr pane read <pane_id> --source recent-unwrapped --lines 30  # joined wraps
+```
+`--source recent-unwrapped` joins soft-wrapped lines, best for matching text.
+
+### Wait for agent state
+```bash
+herdr wait agent-status <pane_id> --status done --timeout 300000  # wait 5 min
+herdr wait agent-status <pane_id> --status idle --timeout 10000   # 10 sec
+```
+Status values: `idle`, `working`, `blocked`, `done`, `unknown`.
+
+### Wait for output text
+```bash
+herdr wait output <pane_id> --match \"ready\" --timeout 30000
+herdr wait output <pane_id> --match \"error.*line\" --regex --timeout 60000
+```
+
+### Split panes (spawn teammates)
+```bash
+# Split current pane right, get new pane ID
+NEW=$(herdr pane split w4:p1 --direction right --no-focus | python3 -c \"
+import sys,json; print(json.load(sys.stdin)['result']['pane']['pane_id'])\")
+
+# Start pi in the new pane
+herdr pane send-text \"$NEW\" \"pi\" && herdr pane send-keys \"$NEW\" Enter
+```
+
+### Run a shell command in a pane
+```bash
+herdr pane run <pane_id> \"ls -la\"     # runs command, NOT pi input
+```
+Note: `pane run` executes a shell command. For pi input, use `send-text` + `send-keys`.
+
+### Tab management
+```bash
+herdr tab create --workspace w4 --label \"agents\"    # new tab
+herdr tab list --workspace w4
+```
+
+### Close
+```bash
+herdr pane close <pane_id>
+```
+
+### Current layout (known panes)
+| Pane | Who |
+|------|-----|
+| w4:p1 | Coordinator (us) |
+| w4:p7 | ASDL Guru |
+| w4:pZ | Parser rewrite agent |

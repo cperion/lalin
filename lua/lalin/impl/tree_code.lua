@@ -2825,7 +2825,6 @@ function Tree.FuncLocalContract:sem_layout_resolve(env, target)
 end
 function Tree.FuncExportContract:sem_layout_resolve(env, target)
   local cts = {}; for i=1,#(self.contracts or {}) do cts[i]=self.contracts[i]:sem_layout_resolve(env, target) end
-  return {asdl.with(self, {contracts = cts, body = sem_map_stmts(self.body, env, target)})}
 end
 
 -- Pipeline alias: lower_to_code is what the pipeline calls
