@@ -9,6 +9,8 @@ local B   = require("lalin.schema_v2.bind")
 local Sem = require("lalin.schema_v2.sem")
 local Tr  = require("lalin.schema_v2.tree")
 local asdl = require("lalin.asdl")
+local TypeSizeAlign = require("lalin.type_size_align")
+local layout_api = TypeSizeAlign(require("lalin.schema_v2"))
 -- Leaf methods for classof-free pattern matching
 function Ty.TypeRef:is_type_ref_path() return false end
 function Ty.TypeRefPath:is_type_ref_path() return true end
@@ -24,7 +26,8 @@ local function is_value_entry(x) return type(x) == 'table' and x.is_value_entry 
 local function is_type_entry(x) return type(x) == 'table' and x.is_type_entry and x:is_type_entry() end
 
 local function path_type_name(path)
-  return nil
+  if not path or not path.parts or #path.parts == 0 then return nil end
+  return path.parts[1].text or path.parts[1].name
 end
 
 -- Module header name
