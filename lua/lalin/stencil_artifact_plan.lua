@@ -1808,10 +1808,9 @@ local function bind_context(T)
                 shaped("xs", Stencil.StencilAccessRead, elem_ty, info.array_layout, stride),
                 scalar("acc", Stencil.StencilAccessReduce, result_ty, reducer_identity(reduction, result_ty)),
             },
+
             nil,
-            reducer_desc(reduction, result_ty),
             info,
-            memory(),
             result_ty
         )
         local selected_schedule = schedule_for_descriptor_with_info(desc, info)
@@ -1840,18 +1839,14 @@ local function bind_context(T)
         local ptag = producer_tag(producer)
         local id = Stencil.StencilInstanceId("stencil:scan_array:" .. type_name(elem_ty) .. ":" .. reduction.op:stencil_artifact_name() .. ":to:" .. type_name(result_ty) .. ":" .. mode:stencil_artifact_name() .. ":" .. ptag)
         local symbol = Stencil.StencilSymbolId("ml_stencil_scan_array_" .. type_name(elem_ty) .. "_" .. reduction.op:stencil_artifact_name() .. "_to_" .. type_name(result_ty) .. "_" .. mode:stencil_artifact_name() .. "_" .. ptag)
-        local desc = descriptor(
-            "scan",
-            stride,
+        local desc = descriptor(Stencil.StencilSinkScan(Stencil.StencilAccessRef("dst"), info.axis or info.scan_axis, reducer_desc(reduction, result_ty), mode, result_ty), stride,
             {
                 shaped("dst", Stencil.StencilAccessWrite, result_ty, info.dst_layout, stride),
                 shaped("xs", Stencil.StencilAccessRead, elem_ty, info.array_layout or info.src_layout, stride),
                 scalar("acc", Stencil.StencilAccessReduce, result_ty, reducer_identity(reduction, result_ty)),
             },
             nil,
-            reducer_desc(reduction, result_ty),
             { mode = mode, producer = producer, axis = info.axis or info.scan_axis },
-            memory(),
             result_ty
         )
         local sink_reason = sink_materializer_reject_reason(desc)
@@ -1880,7 +1875,6 @@ local function bind_context(T)
             point_predicate_expr(predicate_checked(pred, elem_ty), input_expr("xs"), i32_ty()),
             nil,
             attrs(info, { not_found = not_found }),
-            memory(),
             i32_ty()
         )
         local abi, args = descriptor_abi_args(desc)
@@ -1965,7 +1959,6 @@ local function bind_context(T)
             point_predicate_expr(predicate_checked(pred, elem_ty), input_expr("xs"), i32_ty()),
             nil,
             info,
-            memory(),
             i32_ty()
         )
         local abi, args = descriptor_abi_args(desc)
