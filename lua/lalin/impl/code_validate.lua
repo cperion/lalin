@@ -11,7 +11,7 @@ local CV   = CodeValidation
 local asdl = require("lalin.asdl")
 
 local function class_name(x)
-  local cls = WARNING_CLASSOF(x) or x
+  local cls = asdl.classof(x) or x
   return tostring(cls):match("Class%((.-)%)") or tostring(cls)
 end
 
@@ -43,7 +43,7 @@ end
 
 -- Validate CodeModule
 local function validate_module(m, module)
-  if WARNING_CLASSOF(module) ~= Code.CodeModule then
+  if asdl.classof(module) ~= Code.CodeModule then
     m = add_issue(m, Code.CodeIssueUnsupportedSource("module", Code.CodeUnsupportedControlStructure("not a module")))
     return m
   end
@@ -74,7 +74,7 @@ end
 
 -- Validate CodeSig
 local function validate_sig(m, sig)
-  if WARNING_CLASSOF(sig) ~= Code.CodeSig then
+  if asdl.classof(sig) ~= Code.CodeSig then
     return add_issue(m, Code.CodeIssueMissingSig(sig.id))
   end
   return m
@@ -82,7 +82,7 @@ end
 
 -- Validate CodeTypeDecl
 local function validate_type_decl(m, decl)
-  if WARNING_CLASSOF(decl) ~= Code.CodeTypeDecl then
+  if asdl.classof(decl) ~= Code.CodeTypeDecl then
     return add_issue(m, Code.CodeIssueUnsupportedSource("type_decl", Code.CodeUnsupportedControlStructure("invalid type decl")))
   end
   return m
@@ -90,7 +90,7 @@ end
 
 -- Validate CodeFunc
 local function validate_func(m, module, func)
-  if WARNING_CLASSOF(func) ~= Code.CodeFunc then
+  if asdl.classof(func) ~= Code.CodeFunc then
     return add_issue(m, Code.CodeIssueMissingFunc(func.id))
   end
 
@@ -155,7 +155,7 @@ end
 
 -- Validate CodeInst
 local function validate_inst(m, inst)
-  if WARNING_CLASSOF(inst) ~= Code.CodeInst then
+  if asdl.classof(inst) ~= Code.CodeInst then
     return add_issue(m, Code.CodeIssueInvalidTerminator("inst", inst.id))
   end
   return m
@@ -164,14 +164,14 @@ end
 -- Validate CodeTerm
 local function validate_term(m, func, block, block_by_id)
   local term = block.term
-  if WARNING_CLASSOF(term) ~= Code.CodeTerm then
+  if asdl.classof(term) ~= Code.CodeTerm then
     return add_issue(m, Code.CodeIssueInvalidTerminator("term", term.id))
   end
 
   -- Validate destinations exist
   local op = term.op
   if op then
-    local cls = WARNING_CLASSOF(op)
+    local cls = asdl.classof(op)
     if cls == Code.CodeTermJump then
       if op.dest and not block_by_id[op.dest.text] then
         m = add_issue(m, Code.CodeIssueMissingBlock(op.dest))

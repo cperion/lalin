@@ -15,6 +15,7 @@ local Ty       = require("lalin.schema_v2.type")
 local Bind     = require("lalin.schema_v2.bind")
 local asdl     = require("lalin.asdl")
 local TypeSizeAlign = require("lalin.type_size_align")
+local CodeType = require("lalin.code_type")(require("lalin.schema_v2"))
 
 ----------------------------------------------------------------------
 -- helpers
