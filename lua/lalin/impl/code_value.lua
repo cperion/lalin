@@ -22,7 +22,7 @@ local function sanitize(s)
   return s
 end
 
-local function identity(reason) return Value.AlgebraProofIdentity(reason, Value.AlgebraIdentityAddZero) end
+local function identity(reason) return Value.AlgebraProofIdentity(Value.AlgebraIdentityAddZero) end
 
 local function int_const_expr(ty, raw)
   return Value.ValueExprConst(Code.CodeConstLiteral(ty, Core.LitInt(tostring(raw))))

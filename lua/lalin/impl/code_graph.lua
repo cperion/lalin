@@ -27,7 +27,10 @@ local function inst_ref(func, block, inst)
 end
 
 local function add_use(uses, value, ref, term_block, role)
-  if value ~= nil then uses[#uses + 1] = Graph.GraphUse(value, ref, term_block, role) end
+  if value ~= nil then
+    if type(role) == "string" then role = Graph.UseRoleOperand end
+    uses[#uses + 1] = Graph.GraphUse(value, ref, term_block, role)
+  end
 end
 
 local function add_dest_edge(edges, func, block_by_id, from, dest, kind)

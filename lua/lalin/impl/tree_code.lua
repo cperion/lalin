@@ -2318,7 +2318,7 @@ function Tree.Module:lower_tree_module_to_code(opts)
   local input = TreeCode.TreeCodeItemLowerInput(parts.module_facts, parts.sigs, parts.registrations, parts.emission, mod_name, funcs, data, globals)
   for i = 1, #(self.items or {}) do self.items[i]:lower_tree_item_to_code(input) end
   for i = 1, #parts.emission.generated_data do data[#data+1] = parts.emission.generated_data[i] end
-  return Code.CodeModule(Code.CodeModuleId("module:" .. sanitize(opts.module_id or self:tree_code_module_name())), module_sig_state.code_sig_order, {}, data, globals, parts.registrations.extern_order, funcs, origin_generated("tree_lower module"))
+  return Code.CodeModule(Code.CodeModuleId("module:" .. sanitize(opts.module_id or self:tree_code_module_name())), module_sig_state.code_sig_order, {}, data, globals, parts.registrations.extern_order, input.funcs, origin_generated("tree_lower module"))
 end
 
 function Tree.Module:lower_tree_module_contracts_to_code(opts)
