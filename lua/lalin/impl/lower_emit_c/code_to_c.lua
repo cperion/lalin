@@ -185,30 +185,37 @@ function Code.CodePlace:lower_code_place_to_c(c_emission)
   error("code_to_c: unsupported place for C emission", 3)
 end
 function Code.CodePlaceLocal:lower_code_place_to_c(c_emission)
-  return C.CBackendPlaceLocal(c_emission:local_name(self.local_id))
+  local cty = self.ty:code_to_c_backend_type()
+  return C.CBackendPlaceLocal(self.local_id:code_to_c_local_id(), cty)
 end
 function Code.CodePlaceGlobal:lower_code_place_to_c(c_emission)
-  return C.CBackendPlaceGlobal(self.global_id.text)
+  local cty = self.ty:code_to_c_backend_type()
+  return C.CBackendPlaceGlobal(C.CBackendGlobalId(self.global.text), cty)
 end
 function Code.CodePlaceData:lower_code_place_to_c(c_emission)
-  return C.CBackendPlaceGlobal("__data_" .. self.data_id.text)
+  local cty = self.ty:code_to_c_backend_type()
+  return C.CBackendPlaceGlobal(C.CBackendGlobalId("__data_" .. self.data.text), cty)
 end
 function Code.CodePlaceDeref:lower_code_place_to_c(c_emission)
-  local base = self.base:lower_code_place_to_c(c_emission)
-  return C.CBackendPlaceDeref(base)
+  local cty = self.ty:code_to_c_backend_type()
+  local addr_atom = C.CBackendAtomLocal(self.addr:code_to_c_local_id())
+  return C.CBackendPlaceDeref(addr_atom, cty, self.align)
 end
 function Code.CodePlaceField:lower_code_place_to_c(c_emission)
+  local cty = self.ty:code_to_c_backend_type()
   local base = self.base:lower_code_place_to_c(c_emission)
-  return C.CBackendPlaceField(base, C.CBackendName(self.field:code_to_c_field_name()), nil, self.byte_offset, nil, nil)
+  return C.CBackendPlaceField(base, C.CBackendName(self.field:code_to_c_field_name()), cty, self.offset, self.size, self.align)
 end
 function Code.CodePlaceIndex:lower_code_place_to_c(c_emission)
+  local cty = self.ty:code_to_c_backend_type()
   local base = self.base:lower_code_place_to_c(c_emission)
-  local idx = c_emission:atom(self.index)
-  return C.CBackendPlaceIndex(base, idx, self.elem_size)
+  local idx = C.CBackendAtomLocal(self.index:code_to_c_local_id())
+  return C.CBackendPlaceIndex(base, idx, cty, self.elem_size)
 end
 function Code.CodePlaceBytes:lower_code_place_to_c(c_emission)
-  local base = self.base:lower_code_place_to_c(c_emission)
-  return C.CBackendPlaceBytes(base, self.byte_offset)
+  local cty = self.ty:code_to_c_backend_type()
+  local base_atom = C.CBackendAtomLocal(self.base:code_to_c_local_id())
+  return C.CBackendPlaceBytes(base_atom, self.offset, cty, self.size, self.align)
 end
 
 ----------------------------------------------------------------------
@@ -281,41 +288,41 @@ function Code.CodeGlobalRef:lower_code_global_ref_to_c_name(c_emission)
   error("code_to_c: unsupported global ref", 3)
 end
 function Code.CodeGlobalRefFunc:lower_code_global_ref_to_c_name(c_emission)
-  return c_emission:func_name(self.func)
+  return C.CBackendName(self.func.text)
 end
 function Code.CodeGlobalRefExtern:lower_code_global_ref_to_c_name(c_emission)
-  return self.extern.spelling or self.extern.text
+  return C.CBackendName(self.extern.text)
 end
 function Code.CodeGlobalRefGlobal:lower_code_global_ref_to_c_name(c_emission)
-  return "__global_" .. self.global.text
+  return C.CBackendName("__global_" .. self.global.text)
 end
 function Code.CodeGlobalRefData:lower_code_global_ref_to_c_name(c_emission)
-  return "__data_" .. self.data.text
+  return C.CBackendName("__data_" .. self.data.text)
 end
 
 function Code.CodeGlobalRef:lower_code_global_ref_to_c_sig(c_emission)
   return nil
 end
 function Code.CodeGlobalRefFunc:lower_code_global_ref_to_c_sig(c_emission)
-  return c_emission:func_sig(self.func)
+  return C.CBackendFuncSigId(self.func.text .. "_sig")
 end
 function Code.CodeGlobalRefExtern:lower_code_global_ref_to_c_sig(c_emission)
-  return c_emission:extern_sig(self.extern)
+  return C.CBackendFuncSigId(self.extern.text .. "_sig")
 end
 
 function Code.CodeGlobalRef:lower_code_global_ref_to_c_assign(c_emission, dst)
   error("code_to_c: unsupported global ref assign", 3)
 end
 function Code.CodeGlobalRefFunc:lower_code_global_ref_to_c_assign(c_emission, dst)
-  local name = c_emission:func_name(self.func)
-  local sig_id = c_emission:func_sig(self.func)
-  return C.CBackendAssign(dst, C.CBackendRFuncAddr(C.CBackendName(name), sig_id))
+  local name = self:lower_code_global_ref_to_c_name()
+  local sig_id = self:lower_code_global_ref_to_c_sig()
+  return C.CBackendAssign(dst, C.CBackendRFuncAddr(name, sig_id))
 end
 
 function Code.CodeGlobalRefExtern:lower_code_global_ref_to_c_assign(c_emission, dst)
-  local name = self.extern.spelling or self.extern.text
-  local sig_id = c_emission:extern_sig(self.extern)
-  return C.CBackendAssign(dst, C.CBackendRExternAddr(C.CBackendName(name), sig_id))
+  local name = self:lower_code_global_ref_to_c_name()
+  local sig_id = self:lower_code_global_ref_to_c_sig()
+  return C.CBackendAssign(dst, C.CBackendRExternAddr(name, sig_id))
 end
 
 ----------------------------------------------------------------------
@@ -335,20 +342,20 @@ function Code.CodeCallTarget:lower_code_call_target_to_c(c_emission)
   error("code_to_c: unsupported call target", 3)
 end
 function Code.CodeCallDirect:lower_code_call_target_to_c(c_emission)
-  return C.CBackendCallDirect(C.CBackendName(c_emission:func_name(self.func)))
+  return C.CBackendCallDirect(C.CBackendName(self.func.text))
 end
 
 function Code.CodeCallExtern:lower_code_call_target_to_c(c_emission)
-  return C.CBackendCallExtern(C.CBackendName(self.extern.spelling or self.extern.text))
+  return C.CBackendCallExtern(C.CBackendName(self.extern.text))
 end
 
 function Code.CodeCallIndirect:lower_code_call_target_to_c(c_emission)
-  local _, callee = self.callee:code_to_c_materialize_atom(c_emission)
-  return C.CBackendCallIndirect(callee)
+  local callee_atom = C.CBackendAtomLocal(self.callee:code_to_c_local_id())
+  return C.CBackendCallIndirect(callee_atom, C.CBackendFuncSigId(self.sig.text))
 end
 function Code.CodeCallClosure:lower_code_call_target_to_c(c_emission)
-  local _, closure = self.closure:code_to_c_materialize_atom(c_emission)
-  return C.CBackendCallClosure(closure)
+  local closure_atom = C.CBackendAtomLocal(self.closure:code_to_c_local_id())
+  return C.CBackendCallClosure(closure_atom, C.CBackendFuncSigId(self.sig.text))
 end
 
 ----------------------------------------------------------------------
@@ -393,6 +400,10 @@ end
 ----------------------------------------------------------------------
 
 function Code.CodeValueId:code_to_c_local_id()
+  return C.CBackendLocalId(self.text)
+end
+
+function Code.CodeLocalId:code_to_c_local_id()
   return C.CBackendLocalId(self.text)
 end
 
@@ -461,6 +472,166 @@ function Code.CodeInstAlias:lower_code_inst_to_c(inst, lowered)
   -- Alias is a no-op; the value id is just another name for the same local
   -- We register the mapping so subsequent uses resolve correctly
   -- For now: no stmt emission needed
+end
+
+----------------------------------------------------------------------
+-- CodeInstUnary: negate, bitnot, boolnot via helper call
+----------------------------------------------------------------------
+
+function Code.CodeInstUnary:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local ty = self.ty:code_to_c_backend_type()
+  local spec = C.CBackendHelperUnary(self.op, ty)
+  local helper_id = C.CBackendHelperId("helper_" .. self.dst.text)
+  lowered.helpers[#lowered.helpers + 1] = C.CBackendHelperUse(helper_id, spec)
+  local val_atom = C.CBackendAtomLocal(self.value:code_to_c_local_id())
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendHelperCall(dst_id, helper_id, { val_atom })
+end
+
+----------------------------------------------------------------------
+-- CodeInstCast: type cast via assign
+----------------------------------------------------------------------
+
+function Code.CodeInstCast:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local to_ty = self.to:code_to_c_backend_type()
+  local src_atom = C.CBackendAtomLocal(self.value:code_to_c_local_id())
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendAssign(dst_id, C.CBackendRCast(self.op, to_ty, src_atom))
+end
+
+----------------------------------------------------------------------
+-- CodeInstCompare: EQ, NE, LT, LE, GT, GE → RCompare assign
+----------------------------------------------------------------------
+
+function Code.CodeInstCompare:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local operand_ty = self.operand_ty:code_to_c_backend_type()
+  local lhs_atom = C.CBackendAtomLocal(self.lhs:code_to_c_local_id())
+  local rhs_atom = C.CBackendAtomLocal(self.rhs:code_to_c_local_id())
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendAssign(dst_id, C.CBackendRCompare(self.op, operand_ty, lhs_atom, rhs_atom))
+end
+
+----------------------------------------------------------------------
+-- CodeInstSelect: ternary select → RSelect assign
+----------------------------------------------------------------------
+
+function Code.CodeInstSelect:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local ty = self.ty:code_to_c_backend_type()
+  local cond_atom = C.CBackendAtomLocal(self.cond:code_to_c_local_id())
+  local then_atom = C.CBackendAtomLocal(self.then_value:code_to_c_local_id())
+  local else_atom = C.CBackendAtomLocal(self.else_value:code_to_c_local_id())
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendAssign(dst_id, C.CBackendRSelect(ty, cond_atom, then_atom, else_atom))
+end
+
+----------------------------------------------------------------------
+-- CodeInstFloatBinary: float binary op via helper call
+----------------------------------------------------------------------
+
+function Code.CodeInstFloatBinary:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local ty = self.ty:code_to_c_backend_type()
+  local spec = C.CBackendHelperFloatBinary(self.op, ty)
+  local helper_id = C.CBackendHelperId("helper_" .. self.dst.text)
+  lowered.helpers[#lowered.helpers + 1] = C.CBackendHelperUse(helper_id, spec)
+  local lhs_atom = C.CBackendAtomLocal(self.lhs:code_to_c_local_id())
+  local rhs_atom = C.CBackendAtomLocal(self.rhs:code_to_c_local_id())
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendHelperCall(dst_id, helper_id, { lhs_atom, rhs_atom })
+end
+
+----------------------------------------------------------------------
+-- CodeInstIntrinsicValue / CodeInstIntrinsicVoid → helper call
+----------------------------------------------------------------------
+
+function Code.CodeInstIntrinsicValue:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local ty = self.ty:code_to_c_backend_type()
+  local spec = C.CBackendHelperIntrinsic(self.op, ty)
+  local helper_id = C.CBackendHelperId("helper_" .. self.dst.text)
+  lowered.helpers[#lowered.helpers + 1] = C.CBackendHelperUse(helper_id, spec)
+  local args = {}
+  for i = 1, #(self.args or {}) do
+    args[i] = C.CBackendAtomLocal(self.args[i]:code_to_c_local_id())
+  end
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendHelperCall(dst_id, helper_id, args)
+end
+
+function Code.CodeInstIntrinsicVoid:lower_code_inst_to_c(inst, lowered)
+  local ty = self.ty:code_to_c_backend_type()
+  local spec = C.CBackendHelperIntrinsic(self.op, ty)
+  local helper_id = C.CBackendHelperId("helper_intrinsic_void")
+  lowered.helpers[#lowered.helpers + 1] = C.CBackendHelperUse(helper_id, spec)
+  local args = {}
+  for i = 1, #(self.args or {}) do
+    args[i] = C.CBackendAtomLocal(self.args[i]:code_to_c_local_id())
+  end
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendHelperCall(nil, helper_id, args)
+end
+
+----------------------------------------------------------------------
+-- CodeInstLoad: load from place
+----------------------------------------------------------------------
+
+function Code.CodeInstLoad:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local place = self.place:lower_code_place_to_c(nil)
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendPlaceLoad(dst_id, place)
+end
+
+----------------------------------------------------------------------
+-- CodeInstStore: store to place
+----------------------------------------------------------------------
+
+function Code.CodeInstStore:lower_code_inst_to_c(inst, lowered)
+  local place = self.place:lower_code_place_to_c(nil)
+  local val_atom = C.CBackendAtomLocal(self.value:code_to_c_local_id())
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendPlaceStore(place, val_atom)
+end
+
+----------------------------------------------------------------------
+-- CodeInstAddrOf: address-of place → assign
+----------------------------------------------------------------------
+
+function Code.CodeInstAddrOf:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local place = self.place:lower_code_place_to_c(nil)
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendAssign(dst_id, C.CBackendRAddrOfPlace(place))
+end
+
+----------------------------------------------------------------------
+-- CodeInstPtrOffset: pointer offset arithmetic → assign
+----------------------------------------------------------------------
+
+function Code.CodeInstPtrOffset:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local base_atom = C.CBackendAtomLocal(self.base:code_to_c_local_id())
+  local idx_atom = C.CBackendAtomLocal(self.index:code_to_c_local_id())
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendAssign(dst_id, C.CBackendRPtrOffset(base_atom, idx_atom, self.elem_size, self.const_offset))
+end
+
+----------------------------------------------------------------------
+-- CodeInstGlobalRef: function / extern reference → assign
+----------------------------------------------------------------------
+
+function Code.CodeInstGlobalRef:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  -- Use the instance (not type) method to get assign stmt
+  local assign = self.ref:lower_code_global_ref_to_c_assign(nil, dst_id)
+  lowered.stmts[#lowered.stmts + 1] = assign
+end
+
+----------------------------------------------------------------------
+-- CodeInstCall: direct / extern / indirect call
+----------------------------------------------------------------------
+
+function Code.CodeInstCall:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst and self.dst:code_to_c_local_id() or nil
+  local target = self.target:lower_code_call_target_to_c(nil)
+  local args = {}
+  for i = 1, #(self.args or {}) do
+    args[i] = C.CBackendAtomLocal(self.args[i]:code_to_c_local_id())
+  end
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendCall(dst_id, target, args)
 end
 
 ----------------------------------------------------------------------
