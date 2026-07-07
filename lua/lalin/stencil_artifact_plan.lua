@@ -198,19 +198,6 @@ local function bind_context(T)
     function Stencil.StencilScatterReduceAtomic:stencil_artifact_name() return "atomic" end
     function Stencil.StencilScatterReducePrivatized:stencil_artifact_name() return "privatized" end
 
-    -- Replacement one-liner delegates (keep old names for call sites)
-    local function reduction_name(kind) return kind:stencil_artifact_name() end
-    local function unary_name(op) return op:stencil_artifact_name() end
-    local function binary_name(op) return op:stencil_artifact_name() end
-    local function cmp_name(op) return op:stencil_artifact_name() end
-    local function pred_name(pred) return pred:stencil_artifact_name() end
-    local function select_name(pred) return pred:stencil_artifact_name() end
-    local function cast_name(op) return op:stencil_artifact_name() end
-    local function scan_mode_name(mode) return mode:stencil_artifact_name() end
-    local function copy_semantics_name(s) return s:stencil_artifact_name() end
-    local function partition_semantics_name(s) return s:stencil_artifact_name() end
-    local function scatter_conflict_name(c) return c:stencil_artifact_name() end
-    local function scatter_reduce_conflict_name(c) return c:stencil_artifact_name() end
 
     local function proof_list(plan)
         local eq = plan and plan.body and plan.body.equivalence
@@ -221,11 +208,11 @@ local function bind_context(T)
     function Kernel.KernelEquivalenceRejected:stencil_artifact_proofs() return {} end
 
     local function reduce_instance_id(elem_ty, result_ty, reduction, stride)
-        return Stencil.StencilInstanceId("stencil:reduce_array:" .. type_name(elem_ty) .. ":" .. reduction_name(reduction) .. ":to:" .. type_name(result_ty) .. ":stride" .. tostring(stride))
+        return Stencil.StencilInstanceId("stencil:reduce_array:" .. type_name(elem_ty) .. ":" .. reduction:stencil_artifact_name() .. ":to:" .. type_name(result_ty) .. ":stride" .. tostring(stride))
     end
 
     local function reduce_symbol_id(elem_ty, result_ty, reduction, stride)
-        return Stencil.StencilSymbolId("ml_stencil_reduce_array_" .. type_name(elem_ty) .. "_" .. reduction_name(reduction) .. "_to_" .. type_name(result_ty) .. "_s" .. tostring(stride))
+        return Stencil.StencilSymbolId("ml_stencil_reduce_array_" .. type_name(elem_ty) .. "_" .. reduction:stencil_artifact_name() .. "_to_" .. type_name(result_ty) .. "_s" .. tostring(stride))
     end
 
     local function scalar_param_ty(ty)
@@ -258,10 +245,6 @@ local function bind_context(T)
     local function int32_decl(symbol, args)
         return "int32_t " .. symbol.text .. "(" .. table.concat(args, ", ") .. ");"
     end
-
-    local function is_int(ty) return ty:stencil_artifact_is_int() end
-    local function is_integer_like(ty) return ty:stencil_artifact_is_integer_like() end
-    local function is_float(ty) return ty:stencil_artifact_is_float() end
 
     -- Boolean type predicate leaf methods
     function Code.CodeTyInt:stencil_artifact_is_int() return true end
@@ -385,7 +368,7 @@ local function bind_context(T)
         if pred == Stencil.StencilPredNonZero or cls == Stencil.StencilPredNonZero then return pred end
         if cls == Stencil.StencilPredCompareConst or cls == Stencil.StencilPredRange or cls == Stencil.StencilPredIsNaN or cls == Stencil.StencilPredIsInf or cls == Stencil.StencilPredIsFinite then
             if not same_type(pred.operand_ty, operand_ty) then error("stencil_artifact_plan: predicate operand type does not match stencil element type", 3) end
-            if (cls == Stencil.StencilPredIsNaN or cls == Stencil.StencilPredIsInf or cls == Stencil.StencilPredIsFinite) and not is_float(operand_ty) then
+            if (cls == Stencil.StencilPredIsNaN or cls == Stencil.StencilPredIsInf or cls == Stencil.StencilPredIsFinite) and not operand_ty:stencil_artifact_is_float() then
                 error("stencil_artifact_plan: float-class predicate requires a float operand type", 3)
             end
             return pred
@@ -422,7 +405,7 @@ local function bind_context(T)
         local ok_type, err = pcall(function() c_type(elem_ty); c_type(result_ty) end)
         if not ok_type then return false, tostring(err) end
         local op = reduction.op
-        if is_integer_like(result_ty) then
+        if result_ty:stencil_artifact_is_integer_like() then
             if op == Value.ReductionAdd or op == Value.ReductionMul
                 or op == Value.ReductionAnd or op == Value.ReductionOr or op == Value.ReductionXor
                 or op == Value.ReductionMin or op == Value.ReductionMax then
@@ -436,7 +419,7 @@ local function bind_context(T)
             end
             return false, "bool8 reduce_array stencil only supports and/or/xor"
         end
-        if is_float(result_ty) then
+        if result_ty:stencil_artifact_is_float() then
             if op == Value.ReductionAdd or op == Value.ReductionMul
                 or op == Value.ReductionMin or op == Value.ReductionMax then
                 return true
@@ -1730,7 +1713,7 @@ local function bind_context(T)
             id,
             desc,
             abi_with_dynamic_strides(desc, abi, result_ty),
-            proof_list(plan),
+            (plan and plan.body and plan.body.equivalence and plan.body.equivalence:stencil_artifact_proofs() or {}),
             info
         )
         return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, args))
@@ -1745,8 +1728,8 @@ local function bind_context(T)
         local ok, reason = api.reduce_array_supported(reduction, { elem_ty = elem_ty, result_ty = result_ty })
         if not ok then error("stencil_artifact_plan: unsupported scan_array artifact: " .. tostring(reason), 2) end
         local ptag = producer_tag(producer)
-        local id = Stencil.StencilInstanceId("stencil:scan_array:" .. type_name(elem_ty) .. ":" .. reduction_name(reduction.op) .. ":to:" .. type_name(result_ty) .. ":" .. scan_mode_name(mode) .. ":" .. ptag)
-        local symbol = Stencil.StencilSymbolId("ml_stencil_scan_array_" .. type_name(elem_ty) .. "_" .. reduction_name(reduction.op) .. "_to_" .. type_name(result_ty) .. "_" .. scan_mode_name(mode) .. "_" .. ptag)
+        local id = Stencil.StencilInstanceId("stencil:scan_array:" .. type_name(elem_ty) .. ":" .. reduction.op:stencil_artifact_name() .. ":to:" .. type_name(result_ty) .. ":" .. mode:stencil_artifact_name() .. ":" .. ptag)
+        local symbol = Stencil.StencilSymbolId("ml_stencil_scan_array_" .. type_name(elem_ty) .. "_" .. reduction.op:stencil_artifact_name() .. "_to_" .. type_name(result_ty) .. "_" .. mode:stencil_artifact_name() .. "_" .. ptag)
         local desc = descriptor(
             "scan",
             stride,
@@ -1769,14 +1752,14 @@ local function bind_context(T)
         abi[#abi + 1] = result_ty
         args[#args + 1] = c_type(result_ty) .. " init"
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, result_ty), proof_list(plan), info)
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, result_ty), (plan and plan.body and plan.body.equivalence and plan.body.equivalence:stencil_artifact_proofs() or {}), info)
         return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, args))
     end
 
     function api.find_array_artifact(pred, info)
         local elem_ty, stride = assert(info.elem_ty), assert(info.step_num or info.stride or 1)
-        local id = Stencil.StencilInstanceId("stencil:find_array:" .. type_name(elem_ty) .. ":" .. pred_name(pred) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_find_array_" .. type_name(elem_ty) .. "_" .. pred_name(pred) .. "_s" .. tostring(stride))        local not_found = Value.ValueExprConst(Code.CodeConstLiteral(i32_ty(), Core.LitInt("-1")))
+        local id = Stencil.StencilInstanceId("stencil:find_array:" .. type_name(elem_ty) .. ":" .. pred:stencil_artifact_name() .. ":stride" .. tostring(stride))
+        local symbol = Stencil.StencilSymbolId("ml_stencil_find_array_" .. type_name(elem_ty) .. "_" .. pred:stencil_artifact_name() .. "_s" .. tostring(stride))        local not_found = Value.ValueExprConst(Code.CodeConstLiteral(i32_ty(), Core.LitInt("-1")))
         local desc = descriptor(
             "find",
             stride,
@@ -1799,8 +1782,8 @@ local function bind_context(T)
     function api.partition_array_artifact(pred, info)
         local elem_ty, stride = assert(info.elem_ty), assert(info.step_num or info.stride or 1)
         local semantics = info.semantics or Stencil.StencilPartitionStable
-        local id = Stencil.StencilInstanceId("stencil:partition_array:" .. type_name(elem_ty) .. ":" .. pred_name(pred) .. ":" .. partition_semantics_name(semantics) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_partition_array_" .. type_name(elem_ty) .. "_" .. pred_name(pred) .. "_" .. partition_semantics_name(semantics) .. "_s" .. tostring(stride))
+        local id = Stencil.StencilInstanceId("stencil:partition_array:" .. type_name(elem_ty) .. ":" .. pred:stencil_artifact_name() .. ":" .. semantics:stencil_artifact_name() .. ":stride" .. tostring(stride))
+        local symbol = Stencil.StencilSymbolId("ml_stencil_partition_array_" .. type_name(elem_ty) .. "_" .. pred:stencil_artifact_name() .. "_" .. semantics:stencil_artifact_name() .. "_s" .. tostring(stride))
         local desc = descriptor(
             "partition",
             stride,
@@ -1846,23 +1829,23 @@ local function bind_context(T)
         local tag = sanitize(info.tag or ("arity" .. tostring(#inputs)))
         local ptag = producer_tag(producer)
         local conflicts = info.conflicts or info.scatter_reduce_conflicts or Stencil.StencilScatterReduceSequential
-        local conflict_tag = scatter_reduce_conflict_name(conflicts)
-        local id = Stencil.StencilInstanceId("stencil:scatter_reduce_n:" .. type_name(item_ty) .. ":" .. reduction_name(reduction.op) .. ":to:" .. type_name(result_ty) .. ":" .. conflict_tag .. ":" .. tag .. ":" .. ptag)
-        local symbol = Stencil.StencilSymbolId("ml_stencil_scatter_reduce_n_" .. type_name(item_ty) .. "_" .. reduction_name(reduction.op) .. "_to_" .. type_name(result_ty) .. "_" .. conflict_tag .. "_" .. tag .. "_" .. ptag)
+        local conflict_tag = conflicts:stencil_artifact_name()
+        local id = Stencil.StencilInstanceId("stencil:scatter_reduce_n:" .. type_name(item_ty) .. ":" .. reduction.op:stencil_artifact_name() .. ":to:" .. type_name(result_ty) .. ":" .. conflict_tag .. ":" .. tag .. ":" .. ptag)
+        local symbol = Stencil.StencilSymbolId("ml_stencil_scatter_reduce_n_" .. type_name(item_ty) .. "_" .. reduction.op:stencil_artifact_name() .. "_to_" .. type_name(result_ty) .. "_" .. conflict_tag .. "_" .. tag .. "_" .. ptag)
         local reducer = reducer_desc(reduction, result_ty)
         local desc = descriptor("scatter_reduce", stride, accesses, expr, reducer, { producer = producer, store_dst = dst_name, scatter_reduce_conflicts = conflicts }, memory({ scatter_reduce = true, scatter_reduce_conflicts = conflicts }), result_ty)
         local sink_reason = sink_materializer_reject_reason(desc)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported scatter_reduce_n sink/body: " .. tostring(sink_reason), 2) end
         local abi, args = descriptor_abi_args(desc)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), proof_list(plan), info)
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), (plan and plan.body and plan.body.equivalence and plan.body.equivalence:stencil_artifact_proofs() or {}), info)
         return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
     end
 
     function api.count_array_artifact(pred, info)
         local elem_ty, stride = assert(info.elem_ty), assert(info.step_num or info.stride or 1)
-        local id = Stencil.StencilInstanceId("stencil:count_array:" .. type_name(elem_ty) .. ":" .. pred_name(pred) .. ":stride" .. tostring(stride))
-        local symbol = Stencil.StencilSymbolId("ml_stencil_count_array_" .. type_name(elem_ty) .. "_" .. pred_name(pred) .. "_s" .. tostring(stride))
+        local id = Stencil.StencilInstanceId("stencil:count_array:" .. type_name(elem_ty) .. ":" .. pred:stencil_artifact_name() .. ":stride" .. tostring(stride))
+        local symbol = Stencil.StencilSymbolId("ml_stencil_count_array_" .. type_name(elem_ty) .. "_" .. pred:stencil_artifact_name() .. "_s" .. tostring(stride))
         local desc = descriptor(
             "count",
             stride,
@@ -2028,10 +2011,10 @@ local function bind_context(T)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported reduce_n sink/body: " .. tostring(sink_reason), 2) end
         local tag = sanitize((info.tag or ("arity" .. tostring(#inputs))) .. "_" .. stable_hash128(descriptor_identity_repr(desc)))
         local ptag = producer_tag(producer)
-        local id = Stencil.StencilInstanceId("stencil:reduce_n:" .. type_name(item_ty) .. ":" .. reduction_name(reduction.op) .. ":to:" .. type_name(result_ty) .. ":" .. tag .. ":" .. ptag)
-        local symbol = Stencil.StencilSymbolId("ml_stencil_reduce_n_" .. type_name(item_ty) .. "_" .. reduction_name(reduction.op) .. "_to_" .. type_name(result_ty) .. "_" .. tag .. "_" .. ptag)
+        local id = Stencil.StencilInstanceId("stencil:reduce_n:" .. type_name(item_ty) .. ":" .. reduction.op:stencil_artifact_name() .. ":to:" .. type_name(result_ty) .. ":" .. tag .. ":" .. ptag)
+        local symbol = Stencil.StencilSymbolId("ml_stencil_reduce_n_" .. type_name(item_ty) .. "_" .. reduction.op:stencil_artifact_name() .. "_to_" .. type_name(result_ty) .. "_" .. tag .. "_" .. ptag)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, scoped_output and nil or result_ty), proof_list(plan), info)
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, scoped_output and nil or result_ty), (plan and plan.body and plan.body.equivalence and plan.body.equivalence:stencil_artifact_proofs() or {}), info)
         if scoped_output then return artifact(inst, symbol, void_desc_decl(symbol, desc, args)) end
         return artifact(inst, symbol, result_desc_decl(symbol, result_ty, desc, args))
     end
@@ -2068,10 +2051,10 @@ local function bind_context(T)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported scan_n sink/body: " .. tostring(sink_reason), 2) end
         local tag = sanitize((info.tag or ("arity" .. tostring(#inputs))) .. "_" .. stable_hash128(descriptor_identity_repr(desc)))
         local ptag = producer_tag(producer)
-        local id = Stencil.StencilInstanceId("stencil:scan_n:" .. type_name(item_ty) .. ":" .. reduction_name(reduction.op) .. ":to:" .. type_name(result_ty) .. ":" .. scan_mode_name(mode) .. ":" .. tag .. ":" .. ptag)
-        local symbol = Stencil.StencilSymbolId("ml_stencil_scan_n_" .. type_name(item_ty) .. "_" .. reduction_name(reduction.op) .. "_to_" .. type_name(result_ty) .. "_" .. scan_mode_name(mode) .. "_" .. tag .. "_" .. ptag)
+        local id = Stencil.StencilInstanceId("stencil:scan_n:" .. type_name(item_ty) .. ":" .. reduction.op:stencil_artifact_name() .. ":to:" .. type_name(result_ty) .. ":" .. mode:stencil_artifact_name() .. ":" .. tag .. ":" .. ptag)
+        local symbol = Stencil.StencilSymbolId("ml_stencil_scan_n_" .. type_name(item_ty) .. "_" .. reduction.op:stencil_artifact_name() .. "_to_" .. type_name(result_ty) .. "_" .. mode:stencil_artifact_name() .. "_" .. tag .. "_" .. ptag)
         local inst
-        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), proof_list(plan), info)
+        inst, symbol = scheduled_instance(id, symbol, desc, abi_with_dynamic_strides(desc, abi, nil), (plan and plan.body and plan.body.equivalence and plan.body.equivalence:stencil_artifact_proofs() or {}), info)
         return artifact(inst, symbol, void_desc_decl(symbol, desc, args))
     end
 
