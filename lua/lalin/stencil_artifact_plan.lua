@@ -442,6 +442,104 @@ local function bind_context(T)
     function Stencil.StencilLayout:stencil_artifact_parent_layout() return nil end
     function Stencil.StencilLayout:stencil_artifact_scale() return 0 end
 
+    -- has_dynamic_stride: true if the layout depends on a non-constant stride
+    function Stencil.StencilAccessLayout:stencil_artifact_has_dynamic_stride() return false end
+    function Stencil.StencilLayoutFieldProjection:stencil_artifact_has_dynamic_stride()
+        return self.parent:stencil_artifact_has_dynamic_stride()
+    end
+    function Stencil.StencilLayoutSoAComponent:stencil_artifact_has_dynamic_stride()
+        return self.parent:stencil_artifact_has_dynamic_stride()
+    end
+    function Stencil.StencilLayoutAffine1D:stencil_artifact_has_dynamic_stride()
+        return self.parent:stencil_artifact_has_dynamic_stride()
+    end
+    function Stencil.StencilLayoutAffineND:stencil_artifact_has_dynamic_stride()
+        return self.parent:stencil_artifact_has_dynamic_stride()
+    end
+    function Stencil.StencilLayoutIndexed:stencil_artifact_has_dynamic_stride()
+        return self.parent:stencil_artifact_has_dynamic_stride()
+    end
+    function Stencil.StencilLayoutViewDescriptor:stencil_artifact_has_dynamic_stride()
+        return self.stride_const == nil
+    end
+
+    -- has_affine_offset: true if any ancestor is affine with a dynamic offset
+    function Stencil.StencilAccessLayout:stencil_artifact_has_affine_offset() return false end
+    function Stencil.StencilLayoutFieldProjection:stencil_artifact_has_affine_offset()
+        return self.parent:stencil_artifact_has_affine_offset()
+    end
+    function Stencil.StencilLayoutSoAComponent:stencil_artifact_has_affine_offset()
+        return self.parent:stencil_artifact_has_affine_offset()
+    end
+    function Stencil.StencilLayoutIndexed:stencil_artifact_has_affine_offset()
+        return self.parent:stencil_artifact_has_affine_offset()
+    end
+    function Stencil.StencilLayoutAffine1D:stencil_artifact_has_affine_offset()
+        return self.offset ~= nil or self.parent:stencil_artifact_has_affine_offset()
+    end
+    function Stencil.StencilLayoutAffineND:stencil_artifact_has_affine_offset()
+        return self.offset ~= nil or self.parent:stencil_artifact_has_affine_offset()
+    end
+
+    -- field_layout: returns the innermost FieldProjection ancestor, or nil
+    function Stencil.StencilAccessLayout:stencil_artifact_field_layout() return nil end
+    function Stencil.StencilLayoutFieldProjection:stencil_artifact_field_layout() return self end
+    function Stencil.StencilLayoutAffine1D:stencil_artifact_field_layout()
+        return self.parent:stencil_artifact_field_layout()
+    end
+    function Stencil.StencilLayoutAffineND:stencil_artifact_field_layout()
+        return self.parent:stencil_artifact_field_layout()
+    end
+
+    -- layout_suffix_for: build a stable suffix string from the layout tree
+    function Stencil.StencilAccessLayout:stencil_artifact_layout_suffix_for(access) return "" end
+    function Stencil.StencilLayoutViewDescriptor:stencil_artifact_layout_suffix_for(access)
+        return "_view_" .. (self.stride_const ~= nil and ("s" .. tostring(self.stride_const)) or "sdyn")
+    end
+    function Stencil.StencilLayoutFieldProjection:stencil_artifact_layout_suffix_for(access)
+        return self.parent:stencil_artifact_layout_suffix_for(access) .. "_field_" .. sanitize(self.field_name) .. "_o" .. tostring(self.field_offset or 0)
+    end
+    function Stencil.StencilLayoutSoAComponent:stencil_artifact_layout_suffix_for(access)
+        return self.parent:stencil_artifact_layout_suffix_for(access) .. "_soa_" .. sanitize(self.field_name) .. "_c" .. tostring(self.component_index or 0)
+    end
+    function Stencil.StencilLayoutAffine1D:stencil_artifact_layout_suffix_for(access)
+        local scale = tonumber(self.scale) or 1
+        local scale_tag = scale < 0 and ("m" .. tostring(math.abs(scale))) or ("p" .. tostring(scale))
+        local offset_tag = self.offset ~= nil and "odyn" or "o0"
+        return self.parent:stencil_artifact_layout_suffix_for(access) .. "_aff1d_" .. scale_tag .. "_" .. offset_tag
+    end
+    function Stencil.StencilLayoutAffineND:stencil_artifact_layout_suffix_for(access)
+        local parts = {}
+        for _, term in ipairs(self.terms or {}) do
+            parts[#parts + 1] = "a" .. tostring(term.axis.index)
+        end
+        local offset_tag = self.offset ~= nil and "odyn" or "o0"
+        return self.parent:stencil_artifact_layout_suffix_for(access) .. "_affnd_" .. table.concat(parts, "x") .. "_" .. offset_tag
+    end
+    function Stencil.StencilLayoutSliceDescriptor:stencil_artifact_layout_suffix_for(access)
+        return "_slice"
+    end
+    function Stencil.StencilLayoutByteSpanDescriptor:stencil_artifact_layout_suffix_for(access)
+        return "_bytespan"
+    end
+
+    -- collect_layout_inputs: gather indexed access names from the layout tree
+    function Stencil.StencilAccessLayout:stencil_artifact_collect_layout_inputs(seen, out) end
+    function Stencil.StencilLayoutIndexed:stencil_artifact_collect_layout_inputs(seen, out)
+        local name = self.index.name
+        if not seen[name] then
+            seen[name] = true
+            out[#out + 1] = name
+        end
+        self.parent:stencil_artifact_collect_layout_inputs(seen, out)
+    end
+    function Stencil.StencilLayoutFieldProjection:stencil_artifact_collect_layout_inputs(seen, out)
+        self.parent:stencil_artifact_collect_layout_inputs(seen, out)
+    end
+    function Stencil.StencilLayoutSoAComponent:stencil_artifact_collect_layout_inputs(seen, out)
+        self.parent:stencil_artifact_collect_layout_inputs(seen, out)
+    end
+
     -- StencilPointExpr leaf methods
     function Stencil.StencilPointInput:stencil_artifact_is_input() return true end
     function Stencil.StencilPointExpr:stencil_artifact_is_input() return false end
@@ -1779,23 +1877,11 @@ local function bind_context(T)
     end
 
     local function layout_has_dynamic_stride(layout)
-        local cls = asdl.classof(layout)
-        if cls == Stencil.StencilLayoutFieldProjection then return layout_has_dynamic_stride(layout.parent) end
-        if cls == Stencil.StencilLayoutSoAComponent then return layout_has_dynamic_stride(layout.parent) end
-        if cls == Stencil.StencilLayoutAffine1D then return layout_has_dynamic_stride(layout.parent) end
-        if cls == Stencil.StencilLayoutAffineND then return layout_has_dynamic_stride(layout.parent) end
-        if cls == Stencil.StencilLayoutIndexed then return layout_has_dynamic_stride(layout.parent) end
-        return cls == Stencil.StencilLayoutViewDescriptor and layout.stride_const == nil
+        return layout:stencil_artifact_has_dynamic_stride()
     end
 
     local function layout_has_affine_offset(layout)
-        local cls = asdl.classof(layout)
-        if cls == Stencil.StencilLayoutFieldProjection then return layout_has_affine_offset(layout.parent) end
-        if cls == Stencil.StencilLayoutSoAComponent then return layout_has_affine_offset(layout.parent) end
-        if cls == Stencil.StencilLayoutIndexed then return layout_has_affine_offset(layout.parent) end
-        if cls == Stencil.StencilLayoutAffine1D then return layout.offset ~= nil or layout_has_affine_offset(layout.parent) end
-        if cls == Stencil.StencilLayoutAffineND then return layout.offset ~= nil or layout_has_affine_offset(layout.parent) end
-        return false
+        return layout:stencil_artifact_has_affine_offset()
     end
 
     local function dynamic_stride_accesses(desc)
@@ -1854,11 +1940,7 @@ local function bind_context(T)
     end
 
     local function field_layout(layout)
-        local cls = asdl.classof(layout)
-        if cls == Stencil.StencilLayoutFieldProjection then return layout end
-        if cls == Stencil.StencilLayoutAffine1D then return field_layout(layout.parent) end
-        if cls == Stencil.StencilLayoutAffineND then return field_layout(layout.parent) end
-        return nil
+        return layout:stencil_artifact_field_layout()
     end
 
     local function pointer_accesses(desc)
@@ -1900,38 +1982,7 @@ local function bind_context(T)
     end
 
     local function layout_suffix_for(access, layout)
-        local top = access.layout
-        local cls = asdl.classof(layout)
-        if cls == Stencil.StencilLayoutViewDescriptor then
-            return "_view_" .. (layout.stride_const ~= nil and ("s" .. tostring(layout.stride_const)) or "sdyn")
-        end
-        if cls == Stencil.StencilLayoutFieldProjection then
-            return layout_suffix_for(access, layout.parent) .. "_field_" .. sanitize(layout.field_name) .. "_o" .. tostring(layout.field_offset or 0)
-        end
-        if cls == Stencil.StencilLayoutSoAComponent then
-            return layout_suffix_for(access, layout.parent) .. "_soa_" .. sanitize(layout.field_name) .. "_c" .. tostring(layout.component_index or 0)
-        end
-        if cls == Stencil.StencilLayoutAffine1D then
-            local scale = tonumber(layout.scale) or 1
-            local scale_tag = scale < 0 and ("m" .. tostring(math.abs(scale))) or ("p" .. tostring(scale))
-            local offset_tag = layout.offset ~= nil and "odyn" or "o0"
-            return layout_suffix_for(access, layout.parent) .. "_aff1d_" .. scale_tag .. "_" .. offset_tag
-        end
-        if cls == Stencil.StencilLayoutAffineND then
-            local parts = {}
-            for _, term in ipairs(layout.terms or {}) do
-                parts[#parts + 1] = "a" .. tostring(term.axis.index)
-            end
-            local offset_tag = layout.offset ~= nil and "odyn" or "o0"
-            return layout_suffix_for(access, layout.parent) .. "_affnd_" .. table.concat(parts, "x") .. "_" .. offset_tag
-        end
-        if cls == Stencil.StencilLayoutSliceDescriptor then
-            return "_slice"
-        end
-        if cls == Stencil.StencilLayoutByteSpanDescriptor then
-            return "_bytespan"
-        end
-        return ""
+        return layout:stencil_artifact_layout_suffix_for(access)
     end
 
     local function layout_suffix(access, access_name)
@@ -2462,17 +2513,7 @@ local function bind_context(T)
     end
 
     local function collect_layout_inputs(layout, seen, out)
-        local cls = asdl.classof(layout)
-        if cls == Stencil.StencilLayoutIndexed then
-            local name = layout.index.name
-            if not seen[name] then
-                seen[name] = true
-                out[#out + 1] = name
-            end
-            collect_layout_inputs(layout.parent, seen, out)
-        elseif cls == Stencil.StencilLayoutFieldProjection or cls == Stencil.StencilLayoutSoAComponent then
-            collect_layout_inputs(layout.parent, seen, out)
-        end
+        layout:stencil_artifact_collect_layout_inputs(seen, out)
     end
 
     local function expr_inputs_for_shape(desc, expr)
