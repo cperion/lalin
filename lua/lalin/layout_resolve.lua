@@ -51,8 +51,6 @@ local function bind_context(T)
     local resolve_view
     local resolve_domain
     local resolve_index_base
-    local resolve_control_stmt_region
-    local resolve_control_expr_region
     local resolve_stmt
     local resolve_func
     local resolve_const
@@ -453,7 +451,7 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.ExprControl) then
             return (function(self, env, target)
- return single(schema.with(self, { region = one(resolve_control_expr_region, self.region, env, target) }))
+ return single(schema.with(self, { region = only(self.region:sem_layout_resolve(env, target)) }))
             end)(node, ...)
         elseif schema.isa(node, Tr.ExprBlock) then
             return (function(self, env, target)
@@ -532,33 +530,19 @@ local function bind_context(T)
         return schema.with(block, { body = map_stmts(block.body, env, target) })
     end
 
-    function resolve_control_stmt_region(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ControlStmtRegion) then
-            return (function(self, env, target)
-
-            local blocks = {}
-            for i = 1, #self.blocks do blocks[#blocks + 1] = resolve_control_block(self.blocks[i], env, target) end
-            return single(schema.with(self, { entry = resolve_entry_block(self.entry, env, target), blocks = blocks }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_control_stmt_region: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.ControlStmtRegion:sem_layout_resolve(env, target)
+        local blocks = {}
+        for i = 1, #self.blocks do blocks[#blocks + 1] = resolve_control_block(self.blocks[i], env, target) end
+        return { schema.with(self, { entry = resolve_entry_block(self.entry, env, target), blocks = blocks }) }
     end
 
-    function resolve_control_expr_region(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ControlExprRegion) then
-            return (function(self, env, target)
 
-            local blocks = {}
-            for i = 1, #self.blocks do blocks[#blocks + 1] = resolve_control_block(self.blocks[i], env, target) end
-            return single(schema.with(self, { entry = resolve_entry_block(self.entry, env, target), blocks = blocks }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_control_expr_region: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.ControlExprRegion:sem_layout_resolve(env, target)
+        local blocks = {}
+        for i = 1, #self.blocks do blocks[#blocks + 1] = resolve_control_block(self.blocks[i], env, target) end
+        return { schema.with(self, { entry = resolve_entry_block(self.entry, env, target), blocks = blocks }) }
     end
+
 
     function resolve_stmt(node, ...)
         local cls = schema.classof(node)
@@ -624,7 +608,7 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.StmtControl) then
             return (function(self, env, target)
- return single(schema.with(self, { region = one(resolve_control_stmt_region, self.region, env, target) }))
+ return single(schema.with(self, { region = only(self.region:sem_layout_resolve(env, target)) }))
             end)(node, ...)
         elseif schema.isa(node, Tr.StmtTrap) then
             return (function(self)
