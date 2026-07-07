@@ -211,8 +211,8 @@ return function(T)
         local value = type_expr_expect(self.value, input, input.return_ty)
         if (input.return_ty:typecheck_tree_accept_nil_literal() or asdl.classof(input.return_ty) == Ty.TPtr)
             and tostring(value.ty) == tostring(Ty.TScalar(C.ScalarVoid))
-            and tostring(asdl.classof(value.expr)):find("LalinTree.ExprLit", 1, true)
-            and tostring(asdl.classof(value.expr.value)):find("LalinCore.LitNil", 1, true)
+            and asdl.classof(value.expr) == Tr.ExprLit
+            and asdl.isa(value.expr.value, C.LitNil)
         then
             value = Tr.TypeExprResult(Tr.ExprLit(Tr.ExprTyped(input.return_ty), value.expr.value), input.return_ty, value.issues)
         end

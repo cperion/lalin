@@ -1,4 +1,5 @@
 return function(T)
+    local asdl = require("lalin.asdl")
     local C = T.LalinCore
     local B = T.LalinBind
     local Sem = T.LalinSem
@@ -245,7 +246,7 @@ return function(T)
         if lhs.ty:typecheck_tree_is_integer_scalar()
             and rhs.ty:typecheck_tree_is_integer_scalar()
             and rawget(rhs.expr, "value") ~= nil
-            and tostring(asdl.classof(rawget(rhs.expr, "value"))):find("LalinCore.Lit", 1, true)
+            and asdl.isa(rawget(rhs.expr, "value"), C.Literal)
         then
             rhs = Tr.TypeExprResult(Tr.ExprLit(Tr.ExprTyped(lhs.ty), rhs.expr.value), lhs.ty, rhs.issues)
         end
