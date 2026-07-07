@@ -229,7 +229,7 @@ end
 
 function Code.CodePlaceDeref:code_to_c_materialize_place(c_emission)
   local stmts, addr = self.addr:code_to_c_materialize_atom(c_emission)
-  return stmts, C.CBackendPlaceDeref(C.CBackendPlaceAtom(addr))
+  return stmts, C.CBackendPlaceDeref(addr, self.ty:code_to_c_backend_type(), nil)
 end
 
 function Code.CodePlaceField:code_to_c_materialize_place(c_emission)
@@ -255,7 +255,7 @@ end
 function Code.CodeInstLoad:code_to_c_materialize_base_value(c_emission)
   local stmts, place = self.place:code_to_c_materialize_place(c_emission)
   local dst = c_emission:temp(self.ty)
-  stmts[#stmts + 1] = C.CBackendStmtLoad(dst, place)
+  stmts[#stmts + 1] = C.CBackendPlaceLoad(dst, place)
   return stmts, dst
 end
 
@@ -267,7 +267,7 @@ function Code.CodeInstCast:code_to_c_materialize_base_value(c_emission)
   local stmts, src = self.value:code_to_c_materialize_atom(c_emission)
   if self.op ~= nil then
     local dst = c_emission:temp(self.to)
-    stmts[#stmts + 1] = C.CBackendStmtCast(dst, src, self.op)
+    stmts[#stmts + 1] = C.CBackendAssign(dst, C.CBackendRCast(self.op, self.to:code_to_c_backend_type(), src))
     return stmts, dst
   end
   return stmts, src
@@ -307,12 +307,15 @@ function Code.CodeGlobalRef:lower_code_global_ref_to_c_assign(c_emission, dst)
   error("code_to_c: unsupported global ref assign", 3)
 end
 function Code.CodeGlobalRefFunc:lower_code_global_ref_to_c_assign(c_emission, dst)
-  local name = self:lower_code_global_ref_to_c_name(c_emission)
-  return C.CBackendStmtAssign(dst, C.CBackendAtomSymbol(name, nil))
+  local name = c_emission:func_name(self.func)
+  local sig_id = c_emission:func_sig(self.func)
+  return C.CBackendAssign(dst, C.CBackendRFuncAddr(C.CBackendName(name), sig_id))
 end
+
 function Code.CodeGlobalRefExtern:lower_code_global_ref_to_c_assign(c_emission, dst)
-  local name = self:lower_code_global_ref_to_c_name(c_emission)
-  return C.CBackendStmtAssign(dst, C.CBackendAtomSymbol(name, nil))
+  local name = self.extern.spelling or self.extern.text
+  local sig_id = c_emission:extern_sig(self.extern)
+  return C.CBackendAssign(dst, C.CBackendRExternAddr(C.CBackendName(name), sig_id))
 end
 
 ----------------------------------------------------------------------
@@ -332,11 +335,13 @@ function Code.CodeCallTarget:lower_code_call_target_to_c(c_emission)
   error("code_to_c: unsupported call target", 3)
 end
 function Code.CodeCallDirect:lower_code_call_target_to_c(c_emission)
-  return C.CBackendCallTarget(c_emission:func_name(self.func))
+  return C.CBackendCallDirect(C.CBackendName(c_emission:func_name(self.func)))
 end
+
 function Code.CodeCallExtern:lower_code_call_target_to_c(c_emission)
-  return C.CBackendCallTarget(self.extern.spelling or self.extern.text)
+  return C.CBackendCallExtern(C.CBackendName(self.extern.spelling or self.extern.text))
 end
+
 function Code.CodeCallIndirect:lower_code_call_target_to_c(c_emission)
   local _, callee = self.callee:code_to_c_materialize_atom(c_emission)
   return C.CBackendCallIndirect(callee)
@@ -344,4 +349,148 @@ end
 function Code.CodeCallClosure:lower_code_call_target_to_c(c_emission)
   local _, closure = self.closure:code_to_c_materialize_atom(c_emission)
   return C.CBackendCallClosure(closure)
+end
+
+----------------------------------------------------------------------
+-- CodeType → code_to_c_backend_type (scalar CBackendType mapping)
+----------------------------------------------------------------------
+
+function Code.CodeType:code_to_c_backend_type()
+  error("code_to_c: unsupported CodeType for backend conversion: " .. tostring(self), 3)
+end
+function Code.CodeTyVoid:code_to_c_backend_type() return C.CBackendVoid end
+function Code.CodeTyBool8:code_to_c_backend_type() return C.CBackendBool8 end
+function Code.CodeTyInt:code_to_c_backend_type()
+  local scalar
+  if self.signedness == Code.CodeSigned then
+    if     self.bits == 8  then scalar = Core.ScalarI8
+    elseif self.bits == 16 then scalar = Core.ScalarI16
+    elseif self.bits == 32 then scalar = Core.ScalarI32
+    elseif self.bits == 64 then scalar = Core.ScalarI64
+    end
+  else
+    if     self.bits == 8  then scalar = Core.ScalarU8
+    elseif self.bits == 16 then scalar = Core.ScalarU16
+    elseif self.bits == 32 then scalar = Core.ScalarU32
+    elseif self.bits == 64 then scalar = Core.ScalarU64
+    end
+  end
+  if scalar == nil then error("code_to_c: unsupported int bits: " .. tostring(self.bits), 3) end
+  return C.CBackendScalar(scalar)
+end
+function Code.CodeTyFloat:code_to_c_backend_type()
+  local scalar = self.bits == 32 and Core.ScalarF32 or Core.ScalarF64
+  return C.CBackendScalar(scalar)
+end
+function Code.CodeTyIndex:code_to_c_backend_type() return C.CBackendIndex end
+function Code.CodeTyDataPtr:code_to_c_backend_type()
+  local pointee = self.pointee and self.pointee:code_to_c_backend_type() or nil
+  return C.CBackendDataPtr(pointee)
+end
+
+----------------------------------------------------------------------
+-- CodeValueId / CodeParam → CBackendLocalId / CBackendLocal mapping
+----------------------------------------------------------------------
+
+function Code.CodeValueId:code_to_c_local_id()
+  return C.CBackendLocalId(self.text)
+end
+
+function Code.CodeParam:code_to_c_local()
+  return C.CBackendLocal(
+    self.value:code_to_c_local_id(),
+    C.CBackendName(self.name),
+    self.ty:code_to_c_backend_type()
+  )
+end
+
+----------------------------------------------------------------------
+-- Scalar instruction lowering: CodeInst → CBackendStmt[]
+----------------------------------------------------------------------
+
+function Code.CodeInst:lower_to_c_backend(lowered)
+  -- lowered = { stmts = [], helpers = {}, locals = {}, sigs = {} } accumulator
+  local op = self.op
+  if op == nil then return end
+  op:lower_code_inst_to_c(self, lowered)
+end
+
+function Code.CodeInstOp:lower_code_inst_to_c(inst, lowered)
+  -- parent default: unsupported
+  error("code_to_c: unsupported instruction for lowering: " .. tostring(self), 3)
+end
+
+function Code.CodeInstConst:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local ty = self.const.ty:code_to_c_backend_type()
+  local lit = self.const:code_to_c_literal()
+  local atom
+  if lit ~= nil then
+    local lit_val = self.const.literal
+    if lit_val ~= nil then
+      atom = C.CBackendAtomLiteral(ty, lit_val)
+    else
+      atom = C.CBackendAtomNull(ty)
+    end
+  else
+    atom = C.CBackendAtomNull(ty)
+  end
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendAssign(dst_id, C.CBackendRAtom(atom))
+end
+
+function Code.CodeInstBinary:lower_code_inst_to_c(inst, lowered)
+  -- Scalar binary: use a helper call
+  local dst_id = self.dst:code_to_c_local_id()
+  local ty = self.ty:code_to_c_backend_type()
+  local sem = self.semantics
+  local overflow
+  if sem and sem.overflow then
+    overflow = C.CBackendIntWrap
+  else
+    overflow = C.CBackendIntWrap
+  end
+  local spec = C.CBackendHelperIntBinary(self.op, ty, overflow)
+  local helper_id = C.CBackendHelperId("helper_" .. self.dst.text)
+  lowered.helpers[#lowered.helpers + 1] = C.CBackendHelperUse(helper_id, spec)
+  local lhs_atom = C.CBackendAtomLocal(self.lhs:code_to_c_local_id())
+  local rhs_atom = C.CBackendAtomLocal(self.rhs:code_to_c_local_id())
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendHelperCall(dst_id, helper_id, { lhs_atom, rhs_atom })
+end
+
+function Code.CodeInstAlias:lower_code_inst_to_c(inst, lowered)
+  -- Alias is a no-op; the value id is just another name for the same local
+  -- We register the mapping so subsequent uses resolve correctly
+  -- For now: no stmt emission needed
+end
+
+----------------------------------------------------------------------
+-- Terminator lowering: CodeTermOp → CBackendTerminator
+----------------------------------------------------------------------
+
+function Code.CodeTerm:lower_to_c_backend_term(lowered)
+  if self.op then
+    return self.op:lower_code_term_to_c(self, lowered)
+  end
+  return C.CBackendTrap
+end
+
+function Code.CodeTermOp:lower_code_term_to_c(term, lowered)
+  error("code_to_c: unsupported terminator for lowering: " .. tostring(self), 3)
+end
+
+function Code.CodeTermReturn:lower_code_term_to_c(term, lowered)
+  if #(self.values or {}) == 0 then
+    return C.CBackendReturnVoid
+  end
+  local val = self.values[1]
+  local atom = C.CBackendAtomLocal(val:code_to_c_local_id())
+  return C.CBackendReturn(atom)
+end
+
+function Code.CodeTermTrap:lower_code_term_to_c(term, lowered)
+  return C.CBackendTrap
+end
+
+function Code.CodeTermUnreachable:lower_code_term_to_c(term, lowered)
+  return C.CBackendTrap
 end
