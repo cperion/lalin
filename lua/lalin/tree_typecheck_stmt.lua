@@ -706,81 +706,76 @@ return function(T)
         return out
     end
 
-    local function append_splice_blocks(blocks, splice, stmt_input, extra_blocks, issues, region_id)
-        for i = 1, #(splice.blocks or {}) do
-            local block = splice.blocks[i]
-            local nested_blocks = {}
-            local body = expand_control_body(block.body or {}, expansion_scope_for_block_params(stmt_input, region_id, block, issues), nested_blocks, issues, region_id)
-            blocks[#blocks + 1] = Tr.ControlBlock(block.label, block.params, body)
-            for j = 1, #nested_blocks do blocks[#blocks + 1] = nested_blocks[j] end
-        end
+    ------------------------------------------------------------------------
+    -- Control expansion: leaf methods on Tr.Stmt
+    -- Parent default: pass-through (no expansion needed)
+    ------------------------------------------------------------------------
+    function Tr.Stmt:typecheck_tree_expand_control(stmt_input, extra_blocks, issues, region_id)
+        return self
     end
 
-    local function expand_control_stmt(stmt, stmt_input, extra_blocks, issues, region_id)
-        local cls = asdl.classof(stmt)
-        if cls == Tr.StmtRegionEmit or cls == Tr.StmtRegionCall then
-            local r = stmt:typecheck_tree_expand_region_invoke(Tr.RegionInvokeExpandInput(stmt_input.scope))
-            if asdl.classof(r) == Tr.RegionInvokeExpanded then
-                append_splice_blocks(extra_blocks, r.splice, stmt_input, extra_blocks, issues, region_id)
-                return r.splice.entry_stmt
-            end
-            issues[#issues + 1] = Tr.TypeIssueRegionInvoke(r.reject)
-            return Tr.StmtTrap(Tr.StmtSurface)
-        elseif cls == Tr.StmtIf then
-            local then_body = expand_control_body(stmt.then_body or {}, stmt_input, extra_blocks, issues, region_id)
-            local else_body = expand_control_body(stmt.else_body or {}, stmt_input, extra_blocks, issues, region_id)
-            return Tr.StmtIf(stmt.h, stmt.cond, then_body, else_body)
-        elseif cls == Tr.StmtSwitch then
-            local arms, variant_arms = {}, {}
-            for i = 1, #(stmt.arms or {}) do
-                arms[i] = Tr.SwitchStmtArm(stmt.arms[i].key, expand_control_body(stmt.arms[i].body or {}, stmt_input, extra_blocks, issues, region_id))
-            end
-            for i = 1, #(stmt.variant_arms or {}) do
-                variant_arms[i] = Tr.SwitchVariantStmtArm(stmt.variant_arms[i].variant_name, stmt.variant_arms[i].binds, expand_control_body(stmt.variant_arms[i].body or {}, stmt_input, extra_blocks, issues, region_id))
-            end
-            return Tr.StmtSwitch(stmt.h, stmt.value, arms, variant_arms, expand_control_body(stmt.default_body or {}, stmt_input, extra_blocks, issues, region_id))
+    function Tr.StmtRegionEmit:typecheck_tree_expand_control(stmt_input, extra_blocks, issues, region_id)
+        local r = self:typecheck_tree_expand_region_invoke(Tr.RegionInvokeExpandInput(stmt_input.scope))
+        if asdl.classof(r) == Tr.RegionInvokeExpanded then
+            append_splice_blocks(extra_blocks, r.splice, stmt_input, extra_blocks, issues, region_id)
+            return r.splice.entry_stmt
         end
-        return stmt
+        issues[#issues + 1] = Tr.TypeIssueRegionInvoke(r.reject)
+        return Tr.StmtTrap(Tr.StmtSurface)
     end
 
-    local function expansion_input_after_stmt(stmt_input, stmt)
-        local cls = asdl.classof(stmt)
-        if cls == Tr.StmtLet or cls == Tr.StmtVar then
-            return stmt_input:typecheck_tree_with_scope(stmt_input.scope:typecheck_tree_add_value(B.ValueEntry(stmt.binding.name, stmt.binding)))
+    function Tr.StmtRegionCall:typecheck_tree_expand_control(stmt_input, extra_blocks, issues, region_id)
+        local r = self:typecheck_tree_expand_region_invoke(Tr.RegionInvokeExpandInput(stmt_input.scope))
+        if asdl.classof(r) == Tr.RegionInvokeExpanded then
+            append_splice_blocks(extra_blocks, r.splice, stmt_input, extra_blocks, issues, region_id)
+            return r.splice.entry_stmt
         end
+        issues[#issues + 1] = Tr.TypeIssueRegionInvoke(r.reject)
+        return Tr.StmtTrap(Tr.StmtSurface)
+    end
+
+    function Tr.StmtIf:typecheck_tree_expand_control(stmt_input, extra_blocks, issues, region_id)
+        local then_body = expand_control_body(self.then_body or {}, stmt_input, extra_blocks, issues, region_id)
+        local else_body = expand_control_body(self.else_body or {}, stmt_input, extra_blocks, issues, region_id)
+        return Tr.StmtIf(self.h, self.cond, then_body, else_body)
+    end
+
+    function Tr.StmtSwitch:typecheck_tree_expand_control(stmt_input, extra_blocks, issues, region_id)
+        local arms, variant_arms = {}, {}
+        for i = 1, #(self.arms or {}) do
+            arms[i] = Tr.SwitchStmtArm(self.arms[i].key, expand_control_body(self.arms[i].body or {}, stmt_input, extra_blocks, issues, region_id))
+        end
+        for i = 1, #(self.variant_arms or {}) do
+            variant_arms[i] = Tr.SwitchVariantStmtArm(self.variant_arms[i].variant_name, self.variant_arms[i].binds, expand_control_body(self.variant_arms[i].body or {}, stmt_input, extra_blocks, issues, region_id))
+        end
+        return Tr.StmtSwitch(self.h, self.value, arms, variant_arms, expand_control_body(self.default_body or {}, stmt_input, extra_blocks, issues, region_id))
+    end
+
+    ------------------------------------------------------------------------
+    -- Expansion input: leaf methods on Tr.Stmt
+    -- Parent default: identity (scope unchanged)
+    ------------------------------------------------------------------------
+    function Tr.Stmt:typecheck_tree_expansion_input(stmt_input)
         return stmt_input
+    end
+
+    function Tr.StmtLet:typecheck_tree_expansion_input(stmt_input)
+        return stmt_input:typecheck_tree_with_scope(stmt_input.scope:typecheck_tree_add_value(B.ValueEntry(self.binding.name, self.binding)))
+    end
+
+    function Tr.StmtVar:typecheck_tree_expansion_input(stmt_input)
+        return stmt_input:typecheck_tree_with_scope(stmt_input.scope:typecheck_tree_add_value(B.ValueEntry(self.binding.name, self.binding)))
     end
 
     expand_control_body = function(body, stmt_input, extra_blocks, issues, region_id)
         local out = {}
         local current_input = stmt_input
         for i = 1, #(body or {}) do
-            out[i] = expand_control_stmt(body[i], current_input, extra_blocks, issues, region_id)
-            current_input = expansion_input_after_stmt(current_input, out[i])
+            out[i] = body[i]:typecheck_tree_expand_control(current_input, extra_blocks, issues, region_id)
+            current_input = out[i]:typecheck_tree_expansion_input(current_input)
         end
         return out
     end
-
-    local function expansion_input_for_entry(stmt_input, region_id, entry, issues)
-        local out = stmt_input
-        for i = 1, #(entry.params or {}) do
-            local next_input, _, param_issues = entry.params[i]:typecheck_tree_add_to_scope(out, region_id, entry.label, i)
-            out = next_input
-            append_all(issues, param_issues)
-        end
-        return out
-    end
-
-    local function expansion_input_for_block(stmt_input, region_id, block, issues)
-        local out = stmt_input
-        for i = 1, #(block.params or {}) do
-            local next_input, _, param_issues = block.params[i]:typecheck_tree_add_to_scope(out, region_id, block.label, i)
-            out = next_input
-            append_all(issues, param_issues)
-        end
-        return out
-    end
-
     function Tr.ControlStmtRegion:typecheck_tree_control_stmt_region(input)
         local stmt_input = input.stmt:typecheck_tree_with_yield(Tr.TypeYieldVoid)
         local expansion_issues = {}
