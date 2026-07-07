@@ -6,6 +6,7 @@ local function bind_context(T)
     local C = T.LalinC
     local CEm = T.LalinCEmit
     local Exec = T.LalinExec
+    local asdl = require("lalin.asdl")
     local function append_all(out, xs) for i = 1, #(xs or {}) do out[#out + 1] = xs[i] end end
 
     local function sanitize(s)
@@ -126,14 +127,14 @@ local function bind_context(T)
     function C.CBackendArray:c_emit_visit_implicit(add_descriptor, add_closure) self.elem:c_emit_visit_implicit(add_descriptor, add_closure) end
     function C.CBackendArray:c_emit_is_array() return true end
     function C.CBackendArray:c_emit_needs_compound_decl_only() return true end
-    function C.CBackendSliceDescriptor:c_emit_type() return self:c_emit_descriptor_type_name("slice") end
-    function C.CBackendSliceDescriptor:c_emit_visit_implicit(add_descriptor, add_closure) add_descriptor("slice", self); self.elem:c_emit_visit_implicit(add_descriptor, add_closure) end
+    function C.CBackendSliceDescriptor:c_emit_type() return C.CBackendDescriptorSlice(self.elem):c_emit_descriptor_type_name() end
+    function C.CBackendSliceDescriptor:c_emit_visit_implicit(add_descriptor, add_closure) add_descriptor(C.CBackendDescriptorSlice(self.elem)); self.elem:c_emit_visit_implicit(add_descriptor, add_closure) end
     function C.CBackendSliceDescriptor:c_emit_needs_compound_decl_only() return true end
     function C.CBackendByteSpanDescriptor:c_emit_type() return "ml_bytespan" end
-    function C.CBackendByteSpanDescriptor:c_emit_visit_implicit(add_descriptor, add_closure) add_descriptor("bytespan", self) end
+    function C.CBackendByteSpanDescriptor:c_emit_visit_implicit(add_descriptor, add_closure) add_descriptor(C.CBackendDescriptorByteSpan) end
     function C.CBackendByteSpanDescriptor:c_emit_needs_compound_decl_only() return true end
-    function C.CBackendViewDescriptor:c_emit_type() return self:c_emit_descriptor_type_name("view") end
-    function C.CBackendViewDescriptor:c_emit_visit_implicit(add_descriptor, add_closure) add_descriptor("view", self); self.elem:c_emit_visit_implicit(add_descriptor, add_closure) end
+    function C.CBackendViewDescriptor:c_emit_type() return C.CBackendDescriptorView(self.elem):c_emit_descriptor_type_name() end
+    function C.CBackendViewDescriptor:c_emit_visit_implicit(add_descriptor, add_closure) add_descriptor(C.CBackendDescriptorView(self.elem)); self.elem:c_emit_visit_implicit(add_descriptor, add_closure) end
     function C.CBackendViewDescriptor:c_emit_needs_compound_decl_only() return true end
     function C.CBackendClosureDescriptor:c_emit_type() return "ml_closure_" .. sanitize(self.sig.text) end
     function C.CBackendClosureDescriptor:c_emit_visit_implicit(add_descriptor, add_closure)
@@ -148,14 +149,22 @@ local function bind_context(T)
     function C.CBackendVector:c_emit_named_deps(out) self.elem:c_emit_named_deps(out) end
     function C.CBackendVector:c_emit_decl(name) return self.elem:c_emit_type() .. " " .. name .. "[" .. tostring(self.lanes) .. "]" end
 
-    function C.CBackendType:c_emit_descriptor_type_name(kind)
-        if kind == "bytespan" then return "ml_bytespan" end
+    function C.CBackendDescriptorSlice:c_emit_descriptor_type_name()
         local elem = "any"
         if self.elem then
             elem = sanitize((self.elem.c_emit_type and self.elem:c_emit_type() or tostring(self.elem)):gsub("%*", "ptr"))
         end
-        return "ml_" .. kind .. "_" .. elem
+        return "ml_slice_" .. elem
     end
+    function C.CBackendDescriptorByteSpan:c_emit_descriptor_type_name() return "ml_bytespan" end
+    function C.CBackendDescriptorView:c_emit_descriptor_type_name()
+        local elem = "any"
+        if self.elem then
+            elem = sanitize((self.elem.c_emit_type and self.elem:c_emit_type() or tostring(self.elem)):gsub("%*", "ptr"))
+        end
+        return "ml_view_" .. elem
+    end
+
 
     function C.CBackendAtom:c_emit_atom() error("missing c_emit_atom leaf method", 2) end
     function C.CBackendAtom:c_emit_local_text() return nil end
@@ -642,9 +651,9 @@ local function bind_context(T)
 
     local function collect_implicit_types(unit)
         local closure_types, closure_order, descriptor_types, descriptor_order = {}, {}, {}, {}
-        local function add_descriptor(kind, ty)
-            local name = ty:c_emit_descriptor_type_name(kind)
-            if descriptor_types[name] == nil then descriptor_types[name] = { kind = kind, ty = ty }; descriptor_order[#descriptor_order + 1] = name end
+        local function add_descriptor(desc)
+            local name = desc:c_emit_descriptor_type_name()
+            if descriptor_types[name] == nil then descriptor_types[name] = desc; descriptor_order[#descriptor_order + 1] = name end
         end
         local function add_closure(name, ty) if closure_types[name] == nil then closure_types[name] = ty; closure_order[#closure_order + 1] = name end end
         local function visit_ty(ty) ty:c_emit_visit_implicit(add_descriptor, add_closure) end
@@ -683,9 +692,11 @@ local function bind_context(T)
     local function emit_descriptor_type_decls(descriptor_types, descriptor_order, out)
         for i = 1, #descriptor_order do
             local name, d = descriptor_order[i], descriptor_types[descriptor_order[i]]
-            if d.kind == "slice" then out[#out + 1] = "struct " .. name .. " { " .. C.CBackendDataPtr(d.ty.elem):c_emit_type() .. " data; ml_index len; };"
-            elseif d.kind == "bytespan" then out[#out + 1] = "struct " .. name .. " { uint8_t* data; ml_index len; };"
-            else out[#out + 1] = "struct " .. name .. " { " .. C.CBackendDataPtr(d.ty.elem):c_emit_type() .. " data; ml_index len; ml_index stride; };" end
+            local dcls = asdl.classof(d)
+            if dcls == C.CBackendDescriptorSlice then out[#out + 1] = "struct " .. name .. " { " .. C.CBackendDataPtr(d.elem):c_emit_type() .. " data; ml_index len; };"
+            elseif dcls == C.CBackendDescriptorByteSpan then out[#out + 1] = "struct " .. name .. " { uint8_t* data; ml_index len; };"
+            elseif dcls == C.CBackendDescriptorView then out[#out + 1] = "struct " .. name .. " { " .. C.CBackendDataPtr(d.elem):c_emit_type() .. " data; ml_index len; ml_index stride; };"
+            end
         end
     end
     local function emit_closure_type_decls(closure_types, closure_order, out) for i = 1, #closure_order do local name = closure_order[i]; out[#out + 1] = "struct " .. name .. " { " .. closure_types[name].sig.text .. " fn; void* ctx; };" end end
