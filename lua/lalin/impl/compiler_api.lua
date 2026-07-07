@@ -130,7 +130,7 @@ function Compiler.CompilerSession:compile()
     target
   )
   local cemit_machine = Cemit.CEmitMachine(spine, {}, {}, {}, {})
-  local artifact = cemit_machine:emit_module(code_module, lower_plan)
+  local artifact = cemit_machine:emit_module(c_unit)
 
   -- Package as CompilerArtifact
   local Compiler = require("lalin.schema_v2.compiler")
