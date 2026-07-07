@@ -1,5 +1,7 @@
 # Lalin Target Phase Architecture
 
+> ⚠️ **ASPIRATIONAL** — This document describes a target organizational model that differs from the current codebase. Many file names and schema conventions described here do not yet match the active tree. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for current-state documentation.
+
 This documents the target architecture for Lalin's ASDL schema and method
 organization, designed around the compiler's actual phase pipeline. Every
 artifact — schema product, implementation file, and method — is placed in the
