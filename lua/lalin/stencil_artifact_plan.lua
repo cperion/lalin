@@ -109,6 +109,128 @@ local function bind_context(T)
 
     local function type_name(ty) return ty:stencil_artifact_type_name() end
 
+    local function c_type(ty)
+        local cls = asdl.classof(ty)
+        if cls == Code.CodeTyArray or cls == Code.CodeTyClosure or cls == Code.CodeTyVector or cls == Code.CodeTyImportedCFuncPtr then
+            return ty:stencil_artifact_type_name()
+        end
+        return CEmit.emit_type(select(1, CodeType.code_type_to_c(CEm.CEmitMachine.dummy(), ty)))
+    end
+
+    ----------------------------------------------------------------------
+    -- StencilAccessLayout leaf methods
+    function Stencil.StencilLayoutScalar:stencil_artifact_is_scalar() return true end
+    function Stencil.StencilLayoutScalar:stencil_artifact_abi_ty(access_ty) return access_ty end
+    function Stencil.StencilAccessLayout:stencil_artifact_is_scalar() return false end
+    function Stencil.StencilAccessLayout:stencil_artifact_abi_ty(access_ty) return Code.CodeTyDataPtr(access_ty) end
+
+    -- StencilSink leaf methods
+    function Stencil.StencilSinkStore:stencil_artifact_is_reduce() return false end
+    function Stencil.StencilSinkStore:stencil_artifact_vocab() return Stencil.StencilStore end
+    function Stencil.StencilSinkReduce:stencil_artifact_is_reduce() return true end
+    function Stencil.StencilSinkReduce:stencil_artifact_vocab() return Stencil.StencilReduce end
+    function Stencil.StencilSinkScan:stencil_artifact_is_reduce() return false end
+    function Stencil.StencilSinkScan:stencil_artifact_vocab() return Stencil.StencilScan end
+    function Stencil.StencilSink:stencil_artifact_is_reduce() return false end
+    function Stencil.StencilSinkStore:stencil_artifact_is_store() return true end
+    function Stencil.StencilSink:stencil_artifact_is_store() return false end
+
+    -- StencilScatterReduceConflictSemantics leaf methods
+    function Stencil.StencilScatterReduceAtomic:stencil_artifact_is_atomic() return true end
+    function Stencil.StencilScatterReduceConflictSemantics:stencil_artifact_is_atomic() return false end
+
+    -- StencilProducer leaf methods
+    function Stencil.StencilProducer:stencil_artifact_is_producer() return true end
+    function Stencil.StencilAccessLayout:stencil_artifact_is_producer() return false end
+
+    -- StencilLanePolicy leaf methods
+    function Stencil.StencilLaneFixed:stencil_artifact_is_fixed_lane() return true end
+    function Stencil.StencilLanePolicy:stencil_artifact_is_fixed_lane() return false end
+    -- StencilReduceSemantics / StencilSinkSemantics leaf methods
+    function Stencil.StencilReduceFold:stencil_artifact_is_fold() return true end
+    function Stencil.StencilReduceFold:stencil_artifact_is_partition() return false end
+    function Stencil.StencilReduceFold:stencil_artifact_is_find() return false end
+    function Stencil.StencilStorePartition:stencil_artifact_is_fold() return false end
+    function Stencil.StencilStorePartition:stencil_artifact_is_partition() return true end
+    function Stencil.StencilStorePartition:stencil_artifact_is_find() return false end
+    function Stencil.StencilReduceFind:stencil_artifact_is_fold() return false end
+    function Stencil.StencilReduceFind:stencil_artifact_is_partition() return false end
+    function Stencil.StencilReduceFind:stencil_artifact_is_find() return true end
+    function Stencil.StencilSinkSemantics:stencil_artifact_is_fold() return false end
+    function Stencil.StencilSinkSemantics:stencil_artifact_is_partition() return false end
+    function Stencil.StencilSinkSemantics:stencil_artifact_is_find() return false end
+
+    -- StencilBody leaf methods
+    function Stencil.StencilBodyPoint:stencil_artifact_is_point() return true end
+    function Stencil.StencilBody:stencil_artifact_is_point() return false end
+
+    -- StencilProducer / StencilProducerShape leaf methods
+    function Stencil.StencilProducer:stencil_artifact_shape() return self.shape end
+    function Stencil.StencilProduceRange1D:stencil_artifact_is_range_1d() return true end
+    function Stencil.StencilProduceRange1D:stencil_artifact_is_window_nd() return false end
+    function Stencil.StencilProduceRange1D:stencil_artifact_range_step() return tonumber(self.step) or 1 end
+    function Stencil.StencilProduceRange1D:stencil_artifact_producer_tag() return (self.order == Stencil.StencilProducerBackward and "b" or "f") .. "s" .. tostring(self.step) end
+    function Stencil.StencilProduceWindowND:stencil_artifact_is_range_1d() return false end
+    function Stencil.StencilProduceWindowND:stencil_artifact_is_window_nd() return true end
+    function Stencil.StencilProduceWindowND:stencil_artifact_range_step() return 1 end
+    function Stencil.StencilProducerShape:stencil_artifact_is_range_1d() return false end
+    function Stencil.StencilProducerShape:stencil_artifact_is_window_nd() return false end
+    function Stencil.StencilProducerShape:stencil_artifact_range_step() return nil end
+    function Stencil.StencilProducerShape:stencil_artifact_producer_tag() return "" end
+
+    -- StencilSchedule leaf methods
+    function Stencil.StencilScheduleVector:stencil_artifact_is_vector() return true end
+    function Stencil.StencilScheduleVector:stencil_artifact_is_scalar() return false end
+    function Stencil.StencilScheduleVector:stencil_artifact_lane_count()
+        local policy = self.lane_policy
+        if policy and policy and policy:stencil_artifact_is_fixed_lane() then return tonumber(policy.lanes) end
+        return nil
+    end
+    function Stencil.StencilScheduleScalar:stencil_artifact_is_vector() return false end
+    function Stencil.StencilScheduleScalar:stencil_artifact_is_scalar() return true end
+    function Stencil.StencilScheduleScalar:stencil_artifact_lane_count() return nil end
+    function Stencil.StencilSchedule:stencil_artifact_is_vector() return false end
+    function Stencil.StencilSchedule:stencil_artifact_is_scalar() return false end
+    function Stencil.StencilSchedule:stencil_artifact_lane_count() return nil end
+
+    -- StencilLayout leaf methods
+    function Stencil.StencilLayoutIndexed:stencil_artifact_is_indexed() return true end
+    function Stencil.StencilLayoutIndexed:stencil_artifact_is_field_or_soa() return false end
+    function Stencil.StencilLayoutFieldProjection:stencil_artifact_is_indexed() return false end
+    function Stencil.StencilLayoutFieldProjection:stencil_artifact_is_field_or_soa() return true end
+    function Stencil.StencilLayoutFieldProjection:stencil_artifact_parent_layout() return self.parent end
+    function Stencil.StencilLayoutSoAComponent:stencil_artifact_is_indexed() return false end
+    function Stencil.StencilLayoutSoAComponent:stencil_artifact_is_field_or_soa() return true end
+    function Stencil.StencilLayoutSoAComponent:stencil_artifact_parent_layout() return self.parent end
+    function Stencil.StencilLayoutAffine1D:stencil_artifact_is_indexed() return false end
+    function Stencil.StencilLayoutAffine1D:stencil_artifact_is_field_or_soa() return false end
+    function Stencil.StencilLayoutAffine1D:stencil_artifact_scale() return tonumber(self.scale) or 0 end
+    function Stencil.StencilLayoutAffine1D:stencil_artifact_parent_layout() return self.parent end
+    function Stencil.StencilLayout:stencil_artifact_is_indexed() return false end
+    function Stencil.StencilLayout:stencil_artifact_is_field_or_soa() return false end
+    function Stencil.StencilLayout:stencil_artifact_parent_layout() return nil end
+    function Stencil.StencilLayout:stencil_artifact_scale() return 0 end
+
+    -- StencilPointExpr leaf methods
+    function Stencil.StencilPointInput:stencil_artifact_is_input() return true end
+    function Stencil.StencilPointExpr:stencil_artifact_is_input() return false end
+
+    -- CodeType leaf methods
+    function Code.CodeTyDataPtr:stencil_artifact_is_data_ptr() return true end
+    function Code.CodeType:stencil_artifact_is_data_ptr() return false end
+
+    -- StencilAlignment leaf methods
+    function Stencil.StencilAlignmentKnown:stencil_artifact_alignment_bytes() return tonumber(self.bytes) end
+    function Stencil.StencilAlignment:stencil_artifact_alignment_bytes() return nil end
+
+    -- StencilScheduleReject leaf methods
+    function Stencil.StencilScheduleRejectCompilerMatrix:stencil_artifact_is_compiler_matrix() return true end
+    function Stencil.StencilScheduleReject:stencil_artifact_is_compiler_matrix() return false end
+
+    -- StencilReject leaf methods
+    function Stencil.StencilRejectSchedule:stencil_artifact_is_schedule_reject() return true end
+    function Stencil.StencilReject:stencil_artifact_is_schedule_reject() return false end
+
     -- Leaf methods for stencil artifact naming (eliminate string dispatch)
 
     -- ReductionOp
@@ -224,12 +346,12 @@ local function bind_context(T)
     end
 
     local function access_abi_ty(access)
-        if asdl.classof(access.layout) == Stencil.StencilLayoutScalar then return access.ty end
+        if access.layout:stencil_artifact_is_scalar() then return access.ty end
         return Code.CodeTyDataPtr(access.ty)
     end
 
     local function access_arg_decl(access, mutable)
-        if asdl.classof(access.layout) == Stencil.StencilLayoutScalar then return c_type(access.ty) .. " " .. access.name end
+        if access.layout:stencil_artifact_is_scalar() then return c_type(access.ty) .. " " .. access.name end
         if mutable then return c_type(access.ty) .. " *" .. access.name end
         return const_elem_ptr_decl(access.ty, access.name)
     end
@@ -294,7 +416,7 @@ local function bind_context(T)
 
     local function is_scalar(ty)
         local cls = asdl.classof(ty)
-        return cls == Code.CodeTyInt or cls == Code.CodeTyFloat or ty == Code.CodeTyIndex or ty == Code.CodeTyBool8
+        return cls == Code.CodeTyInt or cls == Code.CodeTyFloat or ty:stencil_artifact_is_integer_like() and not ty:stencil_artifact_is_int() or ty:stencil_artifact_is_integer_like() and not ty:stencil_artifact_is_int() and not ty:stencil_artifact_is_float()
     end
 
     local function default_int_semantics()
@@ -308,7 +430,7 @@ local function bind_context(T)
     end
 
     local function element_float_mode(ty, info)
-        if asdl.classof(ty) ~= Code.CodeTyFloat then return nil end
+        if not ty:stencil_artifact_is_float() then return nil end
         return info and info.float_mode or Code.CodeFloatStrict
     end
 
@@ -386,15 +508,15 @@ local function bind_context(T)
     end
 
     local function supports_bitwise_ty(ty)
-        return asdl.classof(ty) == Code.CodeTyInt or ty == Code.CodeTyBool8
+        return ty:stencil_artifact_is_int() or ty:stencil_artifact_is_integer_like() and not ty:stencil_artifact_is_int() and not ty:stencil_artifact_is_float()
     end
 
     local function supports_div_ty(ty)
-        return asdl.classof(ty) == Code.CodeTyInt or asdl.classof(ty) == Code.CodeTyFloat or ty == Code.CodeTyIndex
+        return ty:stencil_artifact_is_int() or ty:stencil_artifact_is_float() or ty:stencil_artifact_is_integer_like() and not ty:stencil_artifact_is_int()
     end
 
     local function supports_integer_arithmetic_ty(ty)
-        return asdl.classof(ty) == Code.CodeTyInt or ty == Code.CodeTyIndex
+        return ty:stencil_artifact_is_int() or ty:stencil_artifact_is_integer_like() and not ty:stencil_artifact_is_int()
     end
 
     function api.reduce_array_supported(reduction, info)
@@ -586,30 +708,25 @@ local function bind_context(T)
     end
 
     local function descriptor_vocab(desc)
-        local sink_cls = desc and desc.sink and asdl.classof(desc.sink) or nil
-        if sink_cls == Stencil.StencilSinkStore then return Stencil.StencilStore end
-        if sink_cls == Stencil.StencilSinkReduce then return Stencil.StencilReduce end
-        if sink_cls == Stencil.StencilSinkScan then return Stencil.StencilScan end
-        if sink_cls == Stencil.StencilSinkScatterReduce then return Stencil.StencilScatterReduce end
-        return nil
+        return desc and desc.sink and desc.sink:stencil_artifact_vocab() or nil
     end
 
     local function descriptor_reduction_semantics(desc)
-        if desc == nil or asdl.classof(desc.sink) ~= Stencil.StencilSinkReduce then return nil end
+        if desc == nil or not desc.sink:stencil_artifact_is_reduce() then return nil end
         return desc.sink.semantics
     end
 
     local function descriptor_reducer(desc)
         if desc == nil then return nil end
-        local sink_cls = asdl.classof(desc.sink)
+        local sink_cls = desc.sink and asdl.classof(desc.sink)
         if sink_cls == Stencil.StencilSinkScan then return desc.sink.reducer end
         if sink_cls == Stencil.StencilSinkScatterReduce then return desc.sink.reducer end
-        if sink_cls == Stencil.StencilSinkReduce and asdl.classof(desc.sink.semantics) == Stencil.StencilReduceFold then return desc.sink.semantics.reducer end
+        if sink_cls == Stencil.StencilSinkReduce and desc.sink.semantics:stencil_artifact_is_fold() then return desc.sink.semantics.reducer end
         return nil
     end
 
     local function descriptor_expr(desc)
-        if desc == nil or asdl.classof(desc.body) ~= Stencil.StencilBodyPoint then
+        if desc == nil or not desc.body:stencil_artifact_is_point() then
             error("stencil_artifact_plan: descriptor body is not an apply expression", 3)
         end
         return desc.body.expr
@@ -698,7 +815,7 @@ local function bind_context(T)
 
     local function producer_shape(producer)
         if producer == nil then return nil end
-        if asdl.classof(producer) == Stencil.StencilProducer then return producer.shape end
+        if producer:stencil_artifact_is_producer() then return producer.shape end
         return producer
     end
 
@@ -832,7 +949,7 @@ local function bind_context(T)
         local cls = asdl.classof(expr)
         if cls == Stencil.StencilPointWindowInput then
             local shape = producer_shape(producer)
-            if asdl.classof(shape) ~= Stencil.StencilProduceWindowND then return "window-relative point input requires a WindowND producer" end
+            if not shape:stencil_artifact_is_window_nd() then return "window-relative point input requires a WindowND producer" end
             local seen = {}
             for i, offset in ipairs(expr.offsets or {}) do
                 local reason = axis_ref_invalid_reason(offset.axis, producer, "window input offset " .. tostring(i))
@@ -864,7 +981,7 @@ local function bind_context(T)
         end
         if cls == Stencil.StencilReduceScopeWindow then
             local shape = producer_shape(producer)
-            if asdl.classof(shape) ~= Stencil.StencilProduceWindowND then return "window-local reduction requires a WindowND producer" end
+            if not shape:stencil_artifact_is_window_nd() then return "window-local reduction requires a WindowND producer" end
             local reason = axis_set_invalid_reason(scope.axes, producer, "window reduction scope")
             if reason ~= nil then return reason end
             return nil
@@ -890,7 +1007,7 @@ local function bind_context(T)
         if sink_cls == Stencil.StencilSinkStore then return nil end
         if sink_cls == Stencil.StencilSinkScatterReduce then
             if sink.conflicts == Stencil.StencilScatterReduceSequential or sink.conflicts == Stencil.StencilScatterReduceUniqueIndices then return nil end
-            if asdl.classof(sink.conflicts) == Stencil.StencilScatterReduceAtomic then return "atomic scatter-reduce is represented but not materialized yet" end
+            if sink.conflicts:stencil_artifact_is_atomic() then return "atomic scatter-reduce is represented but not materialized yet" end
             if sink.conflicts == Stencil.StencilScatterReducePrivatized then return "privatized scatter-reduce is represented but not materialized yet" end
             return "unknown scatter-reduce conflict semantics"
         end
@@ -904,9 +1021,9 @@ local function bind_context(T)
     end
 
     local function schedule_lane_count(schedule)
-        if asdl.classof(schedule) ~= Stencil.StencilScheduleVector then return nil end
+        if not schedule:stencil_artifact_is_vector() then return nil end
         local policy = schedule.lane_policy
-        if asdl.classof(policy) == Stencil.StencilLaneFixed then return tonumber(policy.lanes) end
+        if policy and policy:stencil_artifact_is_fixed_lane() then return tonumber(policy.lanes) end
         return nil
     end
 
@@ -940,7 +1057,7 @@ local function bind_context(T)
     end
 
     local function compiler_matrix_rejects(schedule)
-        if asdl.classof(schedule) ~= Stencil.StencilScheduleVector then return {} end
+        if not schedule:stencil_artifact_is_vector() then return {} end
         local compiler = schedule.compiler
         local vector_compiler = schedule.vector_compiler
         local cc = compiler and compiler.compiler or nil
@@ -1057,7 +1174,7 @@ local function bind_context(T)
         local has_compiler_matrix_reject = false
         for _, reject in ipairs(artifact.schedule_rejects or {}) do
             rejects[#rejects + 1] = reject
-            if asdl.classof(reject) == Stencil.StencilScheduleRejectCompilerMatrix then has_compiler_matrix_reject = true end
+            if reject:stencil_artifact_is_compiler_matrix() then has_compiler_matrix_reject = true end
         end
         if not has_compiler_matrix_reject then
             for _, reject in ipairs(compiler_matrix_rejects(artifact.instance.schedule)) do rejects[#rejects + 1] = reject end
@@ -1085,14 +1202,13 @@ local function bind_context(T)
     end
 
     local function layout_unit_stride(layout)
-        local cls = asdl.classof(layout)
-        if cls == Stencil.StencilLayoutFieldProjection then return layout_unit_stride(layout.parent) end
-        if cls == Stencil.StencilLayoutSoAComponent then return layout_unit_stride(layout.parent) end
-        if cls == Stencil.StencilLayoutAffine1D then return math.abs(tonumber(layout.scale) or 0) == 1 and layout_unit_stride(layout.parent) end
-        if cls == Stencil.StencilLayoutAffineND then return false end
-        if cls == Stencil.StencilLayoutContiguous or cls == Stencil.StencilLayoutIndexed then return tonumber(layout.stride) == 1 end
-        if cls == Stencil.StencilLayoutSliceDescriptor or cls == Stencil.StencilLayoutByteSpanDescriptor then return true end
-        if cls == Stencil.StencilLayoutViewDescriptor then return layout.stride_const == 1 end
+        if layout:stencil_artifact_is_field_or_soa() and layout:stencil_artifact_parent_layout() then
+            return layout_unit_stride(layout:stencil_artifact_parent_layout())
+        end
+        if not layout:stencil_artifact_is_indexed() and not layout:stencil_artifact_is_field_or_soa() then
+            return math.abs(layout:stencil_artifact_scale()) == 1 and layout:stencil_artifact_parent_layout()
+                and layout_unit_stride(layout:stencil_artifact_parent_layout())
+        end
         return false
     end
 
@@ -1130,7 +1246,7 @@ local function bind_context(T)
     end
 
     local function is_memory_access(access)
-        return asdl.classof(access.layout) ~= Stencil.StencilLayoutScalar
+        return not access.layout:stencil_artifact_is_scalar()
     end
 
     local function proof_origin(origin, fallback)
@@ -1214,7 +1330,7 @@ local function bind_context(T)
                     nil
                 )
             end
-            if asdl.classof(fact.alignment) == Stencil.StencilAlignmentKnown then
+            if fact.alignment:stencil_artifact_alignment_bytes() ~= nil then
                 add_proof_obligation(
                     out,
                     Stencil.StencilProofAlignment(fact.access, fact.alignment),
@@ -1307,10 +1423,10 @@ local function bind_context(T)
         if sink_cls == Stencil.StencilSinkScan then return true end
         if sink_cls == Stencil.StencilSinkScatterReduce then return false end
         if sink_cls == Stencil.StencilSinkStore then
-            return asdl.classof(desc.sink.semantics) ~= Stencil.StencilStorePartition
+            return not desc.sink.semantics:stencil_artifact_is_partition()
         end
         if sink_cls == Stencil.StencilSinkReduce then
-            return asdl.classof(desc.sink.semantics) ~= Stencil.StencilReduceFind
+            return not desc.sink.semantics:stencil_artifact_is_find()
         end
         return false
     end
@@ -1324,15 +1440,15 @@ local function bind_context(T)
     end
 
     local function schedule_vector_lanes(kind)
-        if Schedule == nil or asdl.classof(kind) ~= Schedule.ScheduleVector then return nil end
-        if asdl.classof(kind.lanes) ~= Schedule.LaneVector then return nil end
+        if Schedule == nil or not kind:stencil_artifact_is_vector() then return nil end
+        if not kind.lanes:stencil_artifact_is_fixed_lane() then return nil end
         return tonumber(kind.lanes.lanes)
     end
 
     local function schedule_for_descriptor_with_info(desc, info)
         local policy = default_compiler_policy()
         local sched = info and info.schedule or nil
-        if Schedule ~= nil and asdl.classof(sched) == Schedule.ScheduleVector then
+        if Schedule ~= nil and sched:stencil_artifact_is_vector() then
             local lanes = schedule_vector_lanes(sched)
             if lanes ~= nil and lanes > 1 then
                 return Stencil.StencilScheduleVector(
@@ -1419,7 +1535,7 @@ local function bind_context(T)
             artifact.schedule_rejects or {}
         )
         local candidates = { selected }
-        if asdl.classof(schedule) ~= Stencil.StencilScheduleScalar then
+        if not schedule:stencil_artifact_is_scalar() then
             candidates[#candidates + 1] = schedule_candidate(
                 Stencil.StencilScheduleScalar(compiler),
                 Stencil.StencilScheduleCandidateViable,
@@ -1438,7 +1554,7 @@ local function bind_context(T)
     local function no_selection_provenance(vocab, rejects, reason)
         local schedule_rejects = {}
         for _, reject in ipairs(rejects or {}) do
-            if asdl.classof(reject) == Stencil.StencilRejectSchedule then schedule_rejects[#schedule_rejects + 1] = reject.reject end
+            if reject:stencil_artifact_is_schedule_reject() then schedule_rejects[#schedule_rejects + 1] = reject.reject end
         end
         local candidate = Stencil.StencilScheduleCandidate(
             "none:" .. tostring(vocab),
@@ -1546,7 +1662,7 @@ local function bind_context(T)
     local function pointer_accesses(desc)
         local out = {}
         for _, access in ipairs(descriptor_accesses(desc)) do
-            if asdl.classof(access.layout) ~= Stencil.StencilLayoutScalar then out[#out + 1] = access end
+            if not access.layout:stencil_artifact_is_scalar() then out[#out + 1] = access end
         end
         return out
     end
@@ -1571,7 +1687,7 @@ local function bind_context(T)
         local access_i = 1
         for i = 1, #(params or {}) do
             local p = params[i]
-            if asdl.classof(p) == Code.CodeTyDataPtr and accesses[access_i] ~= nil then
+            if p:stencil_artifact_is_data_ptr() and accesses[access_i] ~= nil then
                 out[i] = abi_param_type_for_access(accesses[access_i], p)
                 access_i = access_i + 1
             else
@@ -1916,7 +2032,7 @@ local function bind_context(T)
     function descriptor_abi_args(desc, trailing)
         local abi, args = {}, {}
         for _, access in ipairs(descriptor_accesses(desc)) do
-            if asdl.classof(access.layout) ~= Stencil.StencilLayoutScalar then
+            if not access.layout:stencil_artifact_is_scalar() then
                 local role = access.role
                 if role == Stencil.StencilAccessRead or role == Stencil.StencilAccessWrite or role == Stencil.StencilAccessReadWrite or role == Stencil.StencilAccessIndex then
                     abi[#abi + 1] = access_abi_ty(access)
@@ -2074,7 +2190,7 @@ local function bind_context(T)
     local function producer_stride(desc)
         local producer = descriptor_producer(desc)
         local shape = producer_shape(producer)
-        if asdl.classof(shape) == Stencil.StencilProduceRange1D and producer_materialized(producer) then return tonumber(shape.step) or 1 end
+        if shape:stencil_artifact_is_range_1d() and producer_materialized(producer) then return shape:stencil_artifact_range_step() end
         local reason = producer_materializer_reject_reason(producer)
         error("stencil_artifact_plan: unsupported stencil producer for artifact shape: " .. tostring(reason), 3)
     end
@@ -2136,7 +2252,7 @@ local function bind_context(T)
 
     local function indexed_ty(access)
         local top = access.layout
-        if asdl.classof(top) ~= Stencil.StencilLayoutIndexed then
+        if not top:stencil_artifact_is_indexed() then
             error("stencil_artifact_plan: descriptor access is not indexed: " .. tostring(access.name), 3)
         end
         return top.index_ty
@@ -2171,7 +2287,7 @@ local function bind_context(T)
     end
 
     local function expr_input_name(expr)
-        if asdl.classof(expr) == Stencil.StencilPointInput then return expr.access.name end
+        if expr:stencil_artifact_is_input() then return expr.access.name end
         return nil
     end
 
