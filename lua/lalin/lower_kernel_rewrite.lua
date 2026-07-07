@@ -45,23 +45,7 @@ local function bind_context(T)
         local kind = rewrite_plan.kind
 
         -- Dispatch on KernelRewriteKind using ASDL leaf methods
-        local kind_class = asdl.classof(kind)
-
-        if kind_class == "KernelRewriteClosedForm" then
-            return api.lower_rewrite_closed_form(kplan, fragment, graph, flow, c_emission, kind)
-        elseif kind_class == "KernelRewriteReduce" then
-            return api.lower_rewrite_reduce(kplan, fragment, graph, flow, c_emission, kind)
-        elseif kind_class == "KernelRewriteMemcpy" then
-            return api.lower_rewrite_memcpy(kplan, fragment, graph, flow, c_emission, kind)
-        elseif kind_class == "KernelRewriteScan" then
-            return api.lower_rewrite_scan(kplan, fragment, graph, flow, c_emission, kind)
-        elseif kind_class == "KernelRewriteFind" then
-            return api.lower_rewrite_find(kplan, fragment, graph, flow, c_emission, kind)
-        else
-            -- KernelRewriteNone or other: no rewrite possible
-            return nil
-        end
-    end
+        return kind:lower_rewrite_apply(kplan, fragment, graph, flow, c_emission)
 
     ------------------------------------------------------------------------
     -- Closed-form rewrite: replace loop with computed expression + jump.
@@ -267,8 +251,24 @@ local function bind_context(T)
     api.kplan_loop = kplan_loop
     api.edge_fact_by_key = edge_fact_by_key
 
-    T._lalin_api_cache.lower_kernel_rewrite = api
-    return api
-end
+    -- KernelRewriteKind leaf methods
+    function Kernel.KernelRewriteClosedForm:lower_rewrite_apply(kplan, fragment, graph, flow, c_emission)
+        return api.lower_rewrite_closed_form(kplan, fragment, graph, flow, c_emission, self)
+    end
+    function Kernel.KernelRewriteReduce:lower_rewrite_apply(kplan, fragment, graph, flow, c_emission)
+        return api.lower_rewrite_reduce(kplan, fragment, graph, flow, c_emission, self)
+    end
+    function Kernel.KernelRewriteMemcpy:lower_rewrite_apply(kplan, fragment, graph, flow, c_emission)
+        return api.lower_rewrite_memcpy(kplan, fragment, graph, flow, c_emission, self)
+    end
+    function Kernel.KernelRewriteScan:lower_rewrite_apply(kplan, fragment, graph, flow, c_emission)
+        return api.lower_rewrite_scan(kplan, fragment, graph, flow, c_emission, self)
+    end
+    function Kernel.KernelRewriteFind:lower_rewrite_apply(kplan, fragment, graph, flow, c_emission)
+        return api.lower_rewrite_find(kplan, fragment, graph, flow, c_emission, self)
+    end
+    function Kernel.KernelRewriteNone:lower_rewrite_apply(kplan, fragment, graph, flow, c_emission)
+        return nil
+    end
 
 return bind_context
