@@ -111,4 +111,14 @@ return schema. LalinSem {
     FlowReturns,
     FlowTerminates,
   },
+  product. CaptureEntry { interned, name [str], ty [LalinType.Type], offset [number], size [number], },
+  product. ClosureScopeEntry { interned, name [str], ty [LalinType.Type], },
+  product. ClosureRewriteState {
+    interned,
+    module_name [str],
+    owner [str],
+    counter [number],
+    helpers [many [LalinTree.Item]],
+    scopes [many [LalinSem.ClosureScopeEntry]],
+  },
 }
