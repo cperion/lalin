@@ -554,7 +554,7 @@ local function bind_context(T)
     end
 
 
-    function Tr.Contract:sem_layout_resolve(env, target)
+    function Tr.FuncContract:sem_layout_resolve(env, target)
         return self
     end
 

@@ -14,6 +14,7 @@ local function bind_context(T)
     local Exec = T.LalinExec
     local Kernel = T.LalinKernel
     local Stencil = T.LalinStencil
+    local Flow = T.LalinFlow
 
     local CodeGraph = require("lalin.code_graph")(T)
     local CodeFlowFacts = require("lalin.code_flow_facts")(T)
@@ -23,7 +24,6 @@ local function bind_context(T)
     local CodeKernelPlan = require("lalin.code_kernel_plan")(T)
 
     local api = {}
-    local kernel_blocks
 
     function Kernel.KernelPlan:exec_kernel_plan_id() return nil end
     function Kernel.KernelPlanned:exec_kernel_plan_id() return self.id end
@@ -42,7 +42,7 @@ local function bind_context(T)
     end
 
     function Exec.ExecSelectStencil:add_exec_stencil(entries, by_func, entry, index, kernel_plan, loop_by_id, artifact, func_id)
-        local blocks = kernel_blocks(kernel_plan, loop_by_id)
+        local blocks = kernel_plan.subject:exec_kernel_blocks(loop_by_id)
         local fragment = Exec.ExecFragment(
             Exec.ExecFragmentId("exec:" .. sanitize(func_id.text) .. ":stencil:" .. tostring(index)),
             func_id,
@@ -98,24 +98,6 @@ local function bind_context(T)
         return loop_to_func, loop_by_id
     end
 
-    local function domain_func_id(domain, loop_to_func)
-        local cls = asdl.classof(domain)
-        if cls == T.LalinFlow.FlowDomainFunction then return domain.func end
-        if cls == T.LalinFlow.FlowDomainBlockRange then return domain.func end
-        if cls == T.LalinFlow.FlowDomainLoop then return loop_to_func[domain.loop.text] end
-        return nil
-    end
-
-    local function kernel_func_id(kernel_plan, loop_to_func)
-        local subject = kernel_plan and kernel_plan.subject or nil
-        local cls = asdl.classof(subject)
-        if cls == T.LalinKernel.KernelSubjectFunction then return subject.func end
-        if cls == T.LalinKernel.KernelSubjectFragment then return subject.func end
-        if cls == T.LalinKernel.KernelSubjectLoop then return loop_to_func[subject.loop.text] end
-        if cls == T.LalinKernel.KernelSubjectDomain then return domain_func_id(subject.domain, loop_to_func) end
-        return nil
-    end
-
     local function append_unique_block(out, seen, id)
         if id ~= nil and not seen[id.text] then
             seen[id.text] = true
@@ -123,27 +105,60 @@ local function bind_context(T)
         end
     end
 
-    local function domain_blocks(domain, loop_by_id)
-        local cls = asdl.classof(domain)
-        if cls == T.LalinFlow.FlowDomainBlockRange then return { domain.entry, domain.exit } end
-        if cls == T.LalinFlow.FlowDomainLoop then
-            local loop = loop_by_id[domain.loop.text]
-            local out, seen = {}, {}
-            append_unique_block(out, seen, loop and loop.header and loop.header.block)
-            for _, block in ipairs(loop and loop.body or {}) do append_unique_block(out, seen, block.block) end
-            return out
-        end
-        return {}
+    -- FlowDomain leaf methods: exec_domain_func_id / exec_domain_blocks
+    function Flow.FlowDomainFunction:exec_domain_func_id(loop_to_func)
+        return self.func
+    end
+    function Flow.FlowDomainBlockRange:exec_domain_func_id(loop_to_func)
+        return self.func
+    end
+    function Flow.FlowDomainLoop:exec_domain_func_id(loop_to_func)
+        return loop_to_func[self.loop.text]
     end
 
-    kernel_blocks = function(kernel_plan, loop_by_id)
-        local subject = kernel_plan and kernel_plan.subject or nil
-        local cls = asdl.classof(subject)
-        if cls == T.LalinKernel.KernelSubjectFragment then return { subject.entry, subject.exit } end
-        if cls == T.LalinKernel.KernelSubjectLoop then return domain_blocks(T.LalinFlow.FlowDomainLoop(subject.loop), loop_by_id) end
-        if cls == T.LalinKernel.KernelSubjectDomain then return domain_blocks(subject.domain, loop_by_id) end
+    function Flow.FlowDomainFunction:exec_domain_blocks(loop_by_id)
         return {}
     end
+    function Flow.FlowDomainBlockRange:exec_domain_blocks(loop_by_id)
+        return { self.entry, self.exit }
+    end
+    function Flow.FlowDomainLoop:exec_domain_blocks(loop_by_id)
+        local loop = loop_by_id[self.loop.text]
+        local out, seen = {}, {}
+        append_unique_block(out, seen, loop and loop.header and loop.header.block)
+        for _, block in ipairs(loop and loop.body or {}) do append_unique_block(out, seen, block.block) end
+        return out
+    end
+
+    -- KernelSubject leaf methods: exec_kernel_func_id / exec_kernel_blocks
+    function Kernel.KernelSubjectFunction:exec_kernel_func_id(loop_to_func)
+        return self.func
+    end
+    function Kernel.KernelSubjectFragment:exec_kernel_func_id(loop_to_func)
+        return self.func
+    end
+    function Kernel.KernelSubjectLoop:exec_kernel_func_id(loop_to_func)
+        return loop_to_func[self.loop.text]
+    end
+    function Kernel.KernelSubjectDomain:exec_kernel_func_id(loop_to_func)
+        return self.domain:exec_domain_func_id(loop_to_func)
+    end
+
+    function Kernel.KernelSubjectFunction:exec_kernel_blocks(loop_by_id)
+        return {}
+    end
+    function Kernel.KernelSubjectFragment:exec_kernel_blocks(loop_by_id)
+        return { self.entry, self.exit }
+    end
+    function Kernel.KernelSubjectLoop:exec_kernel_blocks(loop_by_id)
+        return Flow.FlowDomainLoop(self.loop):exec_domain_blocks(loop_by_id)
+    end
+    function Kernel.KernelSubjectDomain:exec_kernel_blocks(loop_by_id)
+        return self.domain:exec_domain_blocks(loop_by_id)
+    end
+
+
+
 
     local function kernel_plan_index(kernels)
         local out = {}
@@ -163,7 +178,7 @@ local function bind_context(T)
             local selection = entry.selection
             local artifact = selection:exec_plan_artifact(by_instance)
             local kernel_plan = by_kernel[entry.kernel.text]
-            local func_id = kernel_func_id(kernel_plan, loop_to_func)
+            local func_id = kernel_plan and kernel_plan.subject and kernel_plan.subject:exec_kernel_func_id(loop_to_func)
             local exec_selection = selection:select_exec_stencil(Exec.ExecStencilInput(
                 artifact,
                 func_id,

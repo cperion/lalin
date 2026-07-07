@@ -44,7 +44,9 @@ local function bind_context(T)
 
     local layout_api = require("lalin.type_size_align")(T)
 
-    local layout_api = require("lalin.type_size_align")(T)
+    local H = T.LalinHost
+
+    local DEFAULT_TARGET = H.HostTargetModel(64, 64, H.HostEndianLittle)
 
     local module_env
 
@@ -333,6 +335,7 @@ local function bind_context(T)
 
 
     function Tr.Module:tree_module_env(target)
+        target = target or DEFAULT_TARGET
         local mod_name = self.h:tree_module_name()
         local values = {}
         local types = {}
@@ -358,6 +361,7 @@ local function bind_context(T)
 
     return {
         env = function(module, target) return only(module:tree_module_env(target)) end,
+        module_name = function(header) return header:tree_module_name() end,
     }
 
 end

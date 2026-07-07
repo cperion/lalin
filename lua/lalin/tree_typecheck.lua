@@ -1859,7 +1859,7 @@ local function bind_context(T)
     end
 
     function Tr.Module:with_tree_region_seals(module_name)
-        local facts = self:typecheck_tree_module_facts(Tr.TypeModuleFactsInput(module_name or only(module_type_api.module_name(self.h))))
+        local facts = self:typecheck_tree_module_facts(Tr.TypeModuleFactsInput(module_name or module_type_api.module_name(self.h)))
         if #(facts.region_seals or {}) == 0 then return self end
         local items = clone_values(self.items)
         for i, protocol in ipairs(facts.region_protocols or {}) do
@@ -1884,7 +1884,7 @@ local function bind_context(T)
     end
 
     local function type_module_with_layout_env(module, extra_layout_env, target, collector, analysis_ctx)
-        module = module:with_tree_region_seals(only(module_type_api.module_name(module.h)))
+        module = module:with_tree_region_seals(module_type_api.module_name(module.h))
         local base_env = module_type_api.env(module, target)
         local facts = module:typecheck_tree_module_facts(Tr.TypeModuleFactsInput(base_env.module_name))
         local module_scope = Tr.TypeValueScope(base_env.module_name, base_env.values, base_env.types, base_env.layouts, facts)

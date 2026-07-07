@@ -74,7 +74,8 @@ local function bind_context(T)
         local process_ctx = opts.process_ctx
         local is_c = opts.root == "emit_c" or opts.codegen == "c" or opts.backend == "c" or opts.c_target ~= nil
         local target_model = opts.target_model or opts.backend_target_model or BackTarget.default_native()
-        local target = is_c and CodeType.default_target(opts.c_target or opts) or (opts.target or BackTarget.host_target(target_model))
+        local host_target = opts.target or BackTarget.host_target(target_model)
+        local target = is_c and CodeType.default_target(opts.c_target or opts) or host_target
         local analysis_ctx = opts.analysis_ctx or {}
         local collector = opts.collector or Errors.ThrowingCollector(
             Errors.SpanResolvers.RESOLVERS,
@@ -85,7 +86,7 @@ local function bind_context(T)
         local layout_env = opts.layout_env
         do
             local ModuleType = require("lalin.tree_module_type")(T)
-            local generated_env = ModuleType.env(checked.module, target)
+            local generated_env = ModuleType.env(checked.module, host_target)
             if layout_env == nil then
                 layout_env = T.LalinSem.LayoutEnv(generated_env.layouts)
             else
@@ -102,7 +103,7 @@ local function bind_context(T)
             end
         end
         progress(process_ctx, "layout_env", { layout_env = layout_env, target = is_c and "c" or "back" })
-        local resolved = Layout.module(checked.module, layout_env, target)
+        local resolved = Layout.module(checked.module, layout_env, host_target)
         progress(process_ctx, "layout_resolve", { module = resolved, target = is_c and "c" or "back" })
         if is_c then assert_no_c_phase_unreachable(resolved, opts.site or "C frontend") end
         local code_module, code_contracts = TreeToCode.module_with_contracts(resolved, { layout_env = layout_env, target = target, module_id = opts.module_id })

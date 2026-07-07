@@ -57,6 +57,7 @@ local function bind_context(T)
 
         -- Dispatch on KernelRewriteKind using ASDL leaf methods
         return kind:lower_rewrite_apply(kplan, fragment, graph, flow, c_emission)
+    end
 
     ------------------------------------------------------------------------
     -- Closed-form rewrite: replace loop with computed expression + jump.
@@ -281,5 +282,8 @@ local function bind_context(T)
     function Kernel.KernelRewriteNone:lower_rewrite_apply(kplan, fragment, graph, flow, c_emission)
         return nil
     end
+
+    return api
+end
 
 return bind_context
