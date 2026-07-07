@@ -346,7 +346,7 @@ lua/lalin/dsl/               Lalin authoring heads
 lua/lalin/schema/            ASDL/schema definitions
 lua/lalin/frontend_pipeline.lua
                              DSL/tree/typecheck/code pipeline
-lua/lalin/c_gcc.lua          GCC-over-emit_c shared-object runner
+lua/lalin/emit_c_compile.lua   GCC-over-emit_c shared-object runner
 lua/lalin/native_backend.lua experimental native C-stencil copy-patch backend facade
 lua/lalin/luajit_backend.lua explicit LuaTrace/LuaJIT bytecode backend facade
 ```
