@@ -577,7 +577,7 @@ local function bind_context(T)
     function Stencil.StencilPointPredicate:luatrace_store_predicate_plan(access_plans)
         local input_name = self.arg:luatrace_input_name()
         local input = input_name ~= nil and access_plans:access_named(input_name) or nil
-        local numeric = input ~= nil and lua_numeric_pred_expr(self.pred, "__ml_x", input.ty) ~= nil
+        local numeric = input ~= nil and lua_numeric_pred_expr(self.pred, "__ml_x", input:point_ty()) ~= nil
         if numeric then return LT.LTPredicateNumericStore("helper_branchless_measured_slower") end
         return LT.LTPredicateLuaSelect("numeric_predicate_unavailable")
     end
@@ -1278,7 +1278,7 @@ local function bind_context(T)
         local input_params = {}
         for _, input in ipairs(self.inputs or {}) do
             if input.name ~= dst_name then
-                if input.layout:luatrace_is_scalar_layout() then
+                if input:point_layout():luatrace_is_scalar_layout() then
                     scalar_params[#scalar_params + 1] = input.name
                 else
                     input_params[#input_params + 1] = input.name

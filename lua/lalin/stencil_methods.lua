@@ -11,6 +11,62 @@ local function bind_context(T)
     local Stencil = T.LalinStencil
     local Value = T.LalinValue
 
+    -- StencilMachinePointInput leaf accessor methods
+    -- Each leaf provides its relevant fields; parent defaults return nil/false.
+
+    function SM.StencilMachinePointInputScalar:point_ty() return nil end
+    function SM.StencilMachinePointInputScalar:point_elem_ty() return nil end
+    function SM.StencilMachinePointInputScalar:point_layout() return self.layout end
+    function SM.StencilMachinePointInputScalar:point_role() return Stencil.StencilAccessRead end
+    function SM.StencilMachinePointInputScalar:point_is_primary() return true end
+    function SM.StencilMachinePointInputScalar:point_scalar_value() return self.scalar_value end
+    function SM.StencilMachinePointInputScalar:point_lane() return nil end
+    function SM.StencilMachinePointInputScalar:point_index() return nil end
+    function SM.StencilMachinePointInputScalar:point_base() return nil end
+    function SM.StencilMachinePointInputScalar:point_base_expr() return nil end
+    function SM.StencilMachinePointInputScalar:point_index_lane() return nil end
+    function SM.StencilMachinePointInputScalar:point_window_offsets() return {} end
+
+    function SM.StencilMachinePointInputLane:point_ty() return self.ty end
+    function SM.StencilMachinePointInputLane:point_elem_ty() return nil end
+    function SM.StencilMachinePointInputLane:point_layout() return nil end
+    function SM.StencilMachinePointInputLane:point_role() return nil end
+    function SM.StencilMachinePointInputLane:point_is_primary() return false end
+    function SM.StencilMachinePointInputLane:point_scalar_value() return nil end
+    function SM.StencilMachinePointInputLane:point_lane() return self.lane end
+    function SM.StencilMachinePointInputLane:point_index() return self.index end
+    function SM.StencilMachinePointInputLane:point_base() return nil end
+    function SM.StencilMachinePointInputLane:point_base_expr() return nil end
+    function SM.StencilMachinePointInputLane:point_index_lane() return nil end
+    function SM.StencilMachinePointInputLane:point_window_offsets() return {} end
+
+    function SM.StencilMachinePointInputIndex:point_ty() return self.ty end
+    function SM.StencilMachinePointInputIndex:point_elem_ty() return self.elem_ty end
+    function SM.StencilMachinePointInputIndex:point_layout() return self.layout end
+    function SM.StencilMachinePointInputIndex:point_role() return Stencil.StencilAccessIndex end
+    function SM.StencilMachinePointInputIndex:point_is_primary() return self.index_primary end
+    function SM.StencilMachinePointInputIndex:point_scalar_value() return nil end
+    function SM.StencilMachinePointInputIndex:point_lane() return nil end
+    function SM.StencilMachinePointInputIndex:point_index() return nil end
+    function SM.StencilMachinePointInputIndex:point_base() return self.base end
+    function SM.StencilMachinePointInputIndex:point_base_expr() return self.base_expr end
+    function SM.StencilMachinePointInputIndex:point_index_lane() return self.index_lane end
+    function SM.StencilMachinePointInputIndex:point_window_offsets() return {} end
+
+    -- Parent sum defaults (for code that hasn't been migrated yet)
+    function SM.StencilMachinePointInput:point_ty() return nil end
+    function SM.StencilMachinePointInput:point_elem_ty() return nil end
+    function SM.StencilMachinePointInput:point_layout() return nil end
+    function SM.StencilMachinePointInput:point_role() return nil end
+    function SM.StencilMachinePointInput:point_is_primary() return false end
+    function SM.StencilMachinePointInput:point_scalar_value() return nil end
+    function SM.StencilMachinePointInput:point_lane() return nil end
+    function SM.StencilMachinePointInput:point_index() return nil end
+    function SM.StencilMachinePointInput:point_base() return nil end
+    function SM.StencilMachinePointInput:point_base_expr() return nil end
+    function SM.StencilMachinePointInput:point_index_lane() return nil end
+    function SM.StencilMachinePointInput:point_window_offsets() return {} end
+
     function Code.CodeConst:stencil_const_int() return nil end
     function Code.CodeConstLiteral:stencil_const_int()
         if asdl.classof(self.literal) == Core.LitInt then return tonumber(self.literal.raw) end
@@ -383,7 +439,7 @@ local function bind_context(T)
 
     function SM.StencilMachinePointExprFacts:all_inputs_primary()
         for _, input in ipairs(self.inputs or {}) do
-            if input.index_primary ~= true then return false end
+            if input:point_is_primary() ~= true then return false end
         end
         return true
     end
@@ -436,32 +492,23 @@ local function bind_context(T)
     end
 
     function Stencil.StencilPointConst:stencil_compare_const_predicate_for_input(input, cmp)
-        return input, Stencil.StencilPredCompareConst(cmp, input.ty, self.value)
+        return input, Stencil.StencilPredCompareConst(cmp, input:point_ty(), self.value)
     end
 
     local function point_input_for_load(expr, state)
         local key = lane_key(expr.lane, expr.index)
         local existing = state.by_key[key]
-        if existing ~= nil then return input_expr(existing.name), existing.ty end
+        if existing ~= nil then return input_expr(existing.name), existing:point_ty() end
         local name = "x" .. tostring(#state.inputs + 1)
-        local input = SM.StencilMachinePointInput(
+        local input = SM.StencilMachinePointInputLane(
             name,
             expr.lane,
             expr.index,
-            nil,
-            nil,
-            nil,
-            expr.lane.elem_ty,
-            nil,
-            nil,
-            nil,
-            false,
-            nil,
-            {}
+            expr.lane.elem_ty
         )
         state.by_key[key] = input
         state.inputs[#state.inputs + 1] = input
-        return input_expr(name), input.ty
+        return input_expr(name), input:point_ty()
     end
 
     function SM.StencilMachineExprFact:to_stencil_point_expr()
@@ -569,7 +616,7 @@ local function bind_context(T)
 
     function SM.StencilMachinePointExprFacts:select_index_lane()
         local input = self.expr:stencil_index_input(self)
-        if input ~= nil then return { lane = input.lane, index = input.index } end
+        if input ~= nil then return { lane = input:point_lane(), index = input:point_index() } end
         return nil
     end
 
@@ -590,7 +637,7 @@ local function bind_context(T)
     local function specialize_scalar_inputs(inputs, ty)
         local out = {}
         for i, input in ipairs(inputs or {}) do
-            if input.scalar_value ~= nil and input.ty == nil then
+            if input:point_scalar_value() ~= nil and input:point_ty() == nil then
                 out[i] = asdl.with(input, { ty = ty })
             else
                 out[i] = input
@@ -638,10 +685,10 @@ local function bind_context(T)
             and (point_facts.result_ty or self.dst_elem_ty):stencil_supported_type() and self.dst_elem_ty:stencil_supported_type() then
             local inputs, ok = copy_inputs(point_facts.inputs), true
             for i, input in ipairs(inputs) do
-                if input.index_primary ~= true then
-                    local idx = input.index_lane
+                if input:point_is_primary() ~= true then
+                    local idx = input:point_index_lane()
                     if idx == nil or not idx.ty:stencil_is_index_data_type() then ok = false; break end
-                    inputs[i] = asdl.with(input, { layout = indexed_layout(input.layout, idx, self.step_num) })
+                    inputs[i] = asdl.with(input, { layout = indexed_layout(input:point_layout(), idx, self.step_num) })
                     append_input_once(inputs, idx)
                 end
             end
@@ -652,20 +699,15 @@ local function bind_context(T)
         if self.store_index_lane ~= nil
             and (point_facts.result_ty == nil or point_facts.result_ty:stencil_same_type(self.dst_elem_ty)) and point_facts:all_inputs_primary()
             and self.store_index_lane.elem_ty:stencil_is_index_data_type() and (point_facts.result_ty or self.dst_elem_ty):stencil_supported_type() and self.dst_elem_ty:stencil_supported_type() then
-            local idx = SM.StencilMachinePointInput(
+            local idx = SM.StencilMachinePointInputIndex(
                 "dst_idx",
-                nil,
-                nil,
-                nil,
                 self.store_index_lane.base,
                 self.store_index_lane.base_expr,
                 self.store_index_lane.elem_ty,
                 self.store_index_lane.elem_ty,
                 self.store_index_lane.layout,
-                Stencil.StencilAccessIndex,
                 true,
-                nil,
-                {}
+                nil
             )
             local inputs = copy_inputs(point_facts.inputs)
             append_input_once(inputs, idx)
@@ -683,66 +725,66 @@ local function bind_context(T)
 
     function SM.StencilMachineScanSelectionFacts:select_scan_stencil()
         local input = self.point_facts:single_point_input()
-        if input ~= nil and self.store_index_primary == true and input.index_primary == true
+        if input ~= nil and self.store_index_primary == true and input:point_is_primary() == true
             and self.result_ty:stencil_same_type(self.dst_elem_ty)
-            and self.result_ty:stencil_reduction_supported(self.reduction_op, input.ty) then
+            and self.result_ty:stencil_reduction_supported(self.reduction_op, input:point_ty()) then
             return SM.StencilMachineSelectScan(self.reduction, SM.StencilMachineScanArrayDescriptor(
                 self.step_num,
                 self.producer,
-                input.ty,
+                input:point_ty(),
                 self.result_ty,
                 self.init,
                 self.mode,
                 self.axis,
                 self.dst,
-                input.base,
+                input:point_base(),
                 self.dst_layout,
-                input.layout,
+                input:point_layout(),
                 self.start_expr,
                 self.stop_expr,
                 nil,
                 nil
-            ), { self.dst_expr, input.base_expr, self.start_expr, self.stop_expr, self.init_expr })
+            ), { self.dst_expr, input:point_base_expr(), self.start_expr, self.stop_expr, self.init_expr })
         end
         return nil, "unsupported scan stencil shape"
     end
 
     function SM.StencilMachineFindSelectionFacts:select_find_stencil()
         local input = self.point_facts:single_point_input()
-        if input ~= nil and input.index_primary == true and self.not_found_minus_one == true and input.ty:stencil_supported_type() then
+        if input ~= nil and input:point_is_primary() == true and self.not_found_minus_one == true and input:point_ty():stencil_supported_type() then
             return SM.StencilMachineSelectFind(self.pred, SM.StencilMachineFindArrayDescriptor(
                 self.step_num,
                 self.producer,
-                input.ty,
-                input.base,
-                input.layout,
+                input:point_ty(),
+                input:point_base(),
+                input:point_layout(),
                 self.start_expr,
                 self.stop_expr,
                 nil,
                 nil
-            ), { input.base_expr, self.start_expr, self.stop_expr })
+            ), { input:point_base_expr(), self.start_expr, self.stop_expr })
         end
         return nil, "unsupported find stencil shape"
     end
 
     function SM.StencilMachinePartitionSelectionFacts:select_partition_stencil()
         local input = self.point_facts:single_point_input()
-        if input ~= nil and self.store_index_primary == true and input.index_primary == true
-            and input.ty:stencil_same_type(self.dst_elem_ty) and input.ty:stencil_supported_type() and self.dst_elem_ty:stencil_supported_type() then
+        if input ~= nil and self.store_index_primary == true and input:point_is_primary() == true
+            and input:point_ty():stencil_same_type(self.dst_elem_ty) and input:point_ty():stencil_supported_type() and self.dst_elem_ty:stencil_supported_type() then
             return SM.StencilMachineSelectPartition(self.pred, SM.StencilMachinePartitionArrayDescriptor(
                 self.step_num,
                 self.producer,
-                input.ty,
+                input:point_ty(),
                 self.dst,
-                input.base,
+                input:point_base(),
                 self.dst_layout,
-                input.layout,
+                input:point_layout(),
                 self.start_expr,
                 self.stop_expr,
                 self.semantics,
                 nil,
                 nil
-            ), { self.dst_expr, input.base_expr, self.start_expr, self.stop_expr })
+            ), { self.dst_expr, input:point_base_expr(), self.start_expr, self.stop_expr })
         end
         return nil, "unsupported partition stencil shape"
     end
@@ -773,7 +815,7 @@ local function bind_context(T)
             return SM.StencilMachineSelectCount(pred, SM.StencilMachineCountArrayDescriptor(
                 self.step_num,
                 self.producer,
-                pred_input.ty,
+                pred_input:point_ty(),
                 self.result_ty,
                 self.init,
                 pred_input.base,

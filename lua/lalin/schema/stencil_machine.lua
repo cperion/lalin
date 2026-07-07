@@ -2,11 +2,19 @@ local S = require("lalin.schema.dsl")
 S.use()
 
 return schema. LalinStencilMachine {
+  sum. StencilMachineProviderCapability {
+    StencilMachineCapReduce,
+    StencilMachineCapStore,
+    StencilMachineCapSkeleton,
+    StencilMachineCapNone { variant_unique, reason [str], },
+  },
   product. StencilMachineKernelInput {
     interned,
     loop_plan [bool],
     owns_loop [bool],
     planned [bool],
+    -- Transitional: prefer capabilities sum; booleans retained for migration.
+    capabilities [optional [LalinStencilMachine.StencilMachineProviderCapability]],
     has_reduce_provider [bool],
     has_store_provider [bool],
     has_skeleton_provider [bool],
@@ -219,28 +227,33 @@ return schema. LalinStencilMachine {
     StencilMachineSkeletonScatterReduceCandidate { variant_unique, planned [LalinStencilMachine.StencilMachineSkeletonPlan], },
   },
 
-  product. StencilMachineSkeletonInput {
-    interned,
-    candidates [many [LalinStencilMachine.StencilMachineSkeletonCandidate]],
-    reject_reason [str],
+  sum. StencilMachinePointInput {
+    StencilMachinePointInputScalar {
+      variant_unique,
+      field. name [str],
+      scalar_value [LalinValue.ValueExpr],
+      layout [LalinStencil.StencilAccessLayout],
+    },
+    StencilMachinePointInputLane {
+      variant_unique,
+      field. name [str],
+      lane [LalinKernel.KernelLane],
+      field. index [LalinValue.ValueExpr],
+      field. ty [LalinCode.CodeType],
+    },
+    StencilMachinePointInputIndex {
+      variant_unique,
+      field. name [str],
+      base [LalinCode.CodeValueId],
+      base_expr [LalinLuaJIT.LJExpr],
+      field. ty [LalinCode.CodeType],
+      elem_ty [LalinCode.CodeType],
+      layout [LalinStencil.StencilAccessLayout],
+      index_primary [bool],
+      index_lane [optional [LalinStencilMachine.StencilMachinePointInput]],
+    },
   },
 
-  product. StencilMachinePointInput {
-    interned,
-    field. name [str],
-    lane [optional [LalinKernel.KernelLane]],
-    index [optional [LalinValue.ValueExpr]],
-    scalar_value [optional [LalinValue.ValueExpr]],
-    base [optional [LalinCode.CodeValueId]],
-    base_expr [optional [LalinLuaJIT.LJExpr]],
-    field. ty [optional [LalinCode.CodeType]],
-    elem_ty [optional [LalinCode.CodeType]],
-    layout [optional [LalinStencil.StencilAccessLayout]],
-    role [optional [LalinStencil.StencilAccessRole]],
-    index_primary [bool],
-    index_lane [optional [LalinStencilMachine.StencilMachinePointInput]],
-    window_offsets [many [LalinStencil.StencilWindowOffset]],
-  },
 
   product. StencilMachinePointExprFacts {
     interned,

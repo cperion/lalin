@@ -51,11 +51,11 @@ local function bind_context(T)
 
     function SM.StencilMachineKernelInput:select_stencil_machine_kernel()
         local ready = self.loop_plan and self.owns_loop and self.planned and self.counted_positive
-        if ready and self.has_skeleton_provider and self.stencil_skeleton_ready then
+        if ready and self:has_provider(SM.StencilMachineCapSkeleton) and self.stencil_skeleton_ready then
             return SM.StencilMachineKernelSkeleton
         end
         if ready
-            and self.has_store_provider
+            and self:has_provider(SM.StencilMachineCapStore)
             and self.returns_void
             and self.single_store
             and self.store_dst_base
@@ -65,7 +65,7 @@ local function bind_context(T)
             return SM.StencilMachineKernelStore
         end
         if ready
-            and self.has_reduce_provider
+            and self:has_provider(SM.StencilMachineCapReduce)
             and self.result_reduction
             and self.returns_reduction
             and not self.stencil_skeleton_ready
@@ -74,6 +74,17 @@ local function bind_context(T)
             return SM.StencilMachineKernelReduce
         end
         return SM.StencilMachineKernelNoPlan(self.reject_reason)
+    end
+
+    function SM.StencilMachineKernelInput:has_provider(cap_class)
+        if self.capabilities ~= nil then
+            return asdl.classof(self.capabilities) == cap_class
+        end
+        -- Fallback to legacy booleans during migration
+        if cap_class == SM.StencilMachineCapSkeleton then return self.has_skeleton_provider end
+        if cap_class == SM.StencilMachineCapStore then return self.has_store_provider end
+        if cap_class == SM.StencilMachineCapReduce then return self.has_reduce_provider end
+        return false
     end
 
     function SM.StencilMachineSkeletonInput:select_stencil_machine_skeleton()
@@ -1108,26 +1119,26 @@ local function bind_context(T)
         local window_by_input = {}
         local inputs = {}
         for i, input in ipairs(point_facts.inputs or {}) do
-            if input.scalar_value ~= nil then
+            if input:point_scalar_value() ~= nil then
                 inputs[i] = asdl.with(input, { index_primary = true })
             else
-                local fact = lane_selection_fact(ctx, input.lane)
+                local fact = lane_selection_fact(ctx, input:point_lane())
                 if fact == nil then return nil, input.name .. " lane has no value base" end
                 local enriched = asdl.with(input, {
                     base = fact.base,
                     base_expr = fact.base_expr,
                     ty = fact.elem_ty,
                     layout = fact.layout,
-                    index_primary = expr_is_primary(ctx, input.index, graph_loop, loop_fact, bindings),
+                    index_primary = expr_is_primary(ctx, input:point_index(), graph_loop, loop_fact, bindings),
                 })
                 if not enriched.index_primary then
-                    local affine_layout = affine_nd_layout_for_index(ctx, input.index, graph_loop, loop_fact, bindings, enriched.layout)
+                    local affine_layout = affine_nd_layout_for_index(ctx, input:point_index(), graph_loop, loop_fact, bindings, enriched.layout)
                     if affine_layout ~= nil then
                         enriched = asdl.with(enriched, { layout = affine_layout, index_primary = true })
                     end
                 end
                 if not enriched.index_primary then
-                    local offset = window_offset_for_index(input.index)
+                    local offset = window_offset_for_index(input:point_index())
                     if offset ~= nil then
                         local offsets = { Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), offset) }
                         enriched = asdl.with(enriched, { index_primary = true, window_offsets = offsets })
@@ -1135,25 +1146,20 @@ local function bind_context(T)
                     end
                 end
                 if not enriched.index_primary then
-                    local idx = index_lane_for(input.index, bindings)
+                    local idx = index_lane_for(input:point_index(), bindings)
                     if idx ~= nil then
                         local idx_fact = lane_selection_fact(ctx, idx.lane)
                         if idx_fact ~= nil then
                             enriched = asdl.with(enriched, {
-                                index_lane = SM.StencilMachinePointInput(
+                                index_lane = SM.StencilMachinePointInputIndex(
                                     input.name .. "_idx",
-                                    nil,
-                                    nil,
-                                    nil,
                                     idx_fact.base,
                                     idx_fact.base_expr,
                                     idx_fact.elem_ty,
                                     idx_fact.elem_ty,
                                     idx_fact.layout,
-                                    Stencil.StencilAccessIndex,
                                     expr_is_primary(ctx, idx.index, graph_loop, loop_fact, bindings),
-                                    nil,
-                                    {}
+                                    nil
                                 ),
                             })
                         end
@@ -1337,7 +1343,7 @@ local function bind_context(T)
         if name == "then_xs" then return operation_descriptor.then_xs or operation_descriptor.then_base end
         if name == "else_xs" then return operation_descriptor.else_xs or operation_descriptor.else_base end
         for _, input in ipairs(operation_descriptor.inputs or {}) do
-            if input.name == name then return input.base end
+            if input.name == name then return input:point_base() end
         end
         return operation_descriptor[name]
     end
@@ -1715,7 +1721,7 @@ local function bind_context(T)
         local point_facts, point_facts_reason = enriched_point_facts_for_expr(ctx, effect.value, graph_loop, loop_fact, bindings, dst_base, effect.dst.elem_ty)
         if point_facts == nil then return nil, point_facts_reason end
         for _, input in ipairs(point_facts.inputs or {}) do
-            if input.index_primary ~= true then return nil, "scatter-reduce contribution inputs must be primary-indexed" end
+            if input:point_is_primary() ~= true then return nil, "scatter-reduce contribution inputs must be primary-indexed" end
         end
         local contribution = {
             ty = point_facts.result_ty,
