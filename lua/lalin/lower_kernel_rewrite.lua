@@ -29,6 +29,17 @@ local function bind_context(T)
 
     local api = {}
 
+    -- Leaf methods for display names (eliminate stringly-typed dispatch)
+    function Value.ReductionAdd:display_name() return "add" end
+    function Value.ReductionMul:display_name() return "mul" end
+    function Value.ReductionAnd:display_name() return "and" end
+    function Value.ReductionOr:display_name() return "or" end
+    function Value.ReductionXor:display_name() return "xor" end
+    function Value.ReductionMin:display_name() return "min" end
+    function Value.ReductionMax:display_name() return "max" end
+
+    function Stencil.StencilScanInclusive:display_name() return "inclusive" end
+    function Stencil.StencilScanExclusive:display_name() return "exclusive" end
     ------------------------------------------------------------------------
     -- apply: main entry point
     --
@@ -153,7 +164,7 @@ local function bind_context(T)
         c_emission.stmts = c_emission.stmts or {}
         c_emission.stmts[#c_emission.stmts + 1] = C.CBackendComment(
             "semantic reduction rewrite available (op=" ..
-            tostring(asdl.classof(reduction.op)) ..
+            reduction.op:display_name() ..
             "), emitting via CMat inline path"
         )
 
@@ -182,7 +193,7 @@ local function bind_context(T)
         c_emission.stmts = c_emission.stmts or {}
         c_emission.stmts[#c_emission.stmts + 1] = C.CBackendComment(
             "semantic scan rewrite (mode=" ..
-            tostring(asdl.classof(kind.mode or Stencil.StencilScanInclusive)) ..
+            (kind.mode or Stencil.StencilScanInclusive):display_name() ..
             "), emitting via CMat inline path"
         )
         return nil -- Fall through to CMat inline until scan helper generation exists

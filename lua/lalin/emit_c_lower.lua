@@ -632,9 +632,8 @@ local function bind_context(T)
     function C.CBackendBodyBlocks:c_emit_blocks() return self.blocks end
     function C.CBackendBodyMixed:c_emit_blocks() return self.blocks end
     function C.CBackendBodyExec:c_emit_blocks() return {} end
-    function C.CBackendFuncBody:c_emit_body_kind() return "blocks" end
-    function C.CBackendBodyExec:c_emit_body_kind() return "exec" end
-    function C.CBackendBodyMixed:c_emit_body_kind() return (#(self.fragments or {}) > 0) and "mixed" or "blocks" end
+
+
 
     local function code_symbol_from_id(id) local text = tostring(id and id.text or "exec"):gsub("^fn:", ""):gsub("^func:", ""):gsub("^function:", ""):gsub("[^%w_]", "_"); if text:match("^%d") then text = "_" .. text end; if text == "" then text = "exec" end; return text end
     function Exec.ExecFragmentBody:c_emit_exec_symbol() error("missing c_emit_exec_symbol leaf method", 2) end
@@ -945,12 +944,12 @@ local function bind_context(T)
         out[#out + 1] = sig.result:c_emit_type() .. " " .. self.name.text .. "(" .. func_params(self.params) .. ") {"
         local local_types = {}; for i = 1, #self.params do local_types[self.params[i].id.text] = self.params[i].ty end
         for i = 1, #self.locals do local_types[self.locals[i].id.text] = self.locals[i].ty; emit_local_decl(out, self.locals[i].id.text, self.locals[i].ty) end
-        local body_kind = self.body:c_emit_body_kind()
-        if body_kind == "exec" then
+        local body_cls = asdl.classof(self.body)
+        if body_cls == C.CBackendBodyExec then
             local result = self.body.fragment:c_emit_exec_site(out)
             if sig.result:c_emit_is_void() then out[#out + 1] = "    return;" elseif result then out[#out + 1] = "    return " .. result.text .. ";" else error("c_emit: non-void exec function has no exec result", 2) end
             out[#out + 1] = "}"; return
-        elseif body_kind == "mixed" then for i = 1, #self.body.fragments do self.body.fragments[i]:c_emit_exec_site(out) end end
+        elseif body_cls == C.CBackendBodyMixed then for i = 1, #self.body.fragments do self.body.fragments[i]:c_emit_exec_site(out) end end
         local f_blocks = self.body:c_emit_blocks()
         local hoist_locals
         f_blocks, hoist_locals = plan_field_hoists(self, f_blocks)
