@@ -166,14 +166,26 @@ an encoded exit union and dispatch back to named exits.
 
 ## Documentation
 
-The docs are intentionally small:
-
+Core reference:
+- `docs/ASDL_GUIDE.md` - binding ASDL modeling doctrine and method discipline
 - `docs/LLBL_GUIDE.md` - central LLBL workbench and region guide
 - `docs/LANGUAGE_REFERENCE.md` - public Lalin language reference
 - `docs/ARCHITECTURE.md` - language, compiler, backend, and lowering architecture
-- `docs/UI_GUIDE.md` - UI package guide
-- `docs/CONVENTIONS.md` - naming, style, and repository conventions
+- `docs/TARGET_ASDL_ARCHITECTURE.md` - target ASDL schema and method file organization
 - `docs/DESIGN_BIBLE.md` - long-form design philosophy
+
+Backend and dialect design:
+- `docs/C_BACKEND_REDESIGN.md` - target C backend lowering design
+- `docs/C_LLBL_REDESIGN.md` - C LLBL dialect target design
+- `docs/LLBL_BRACKET_EVAL_ARCHITECTURE.md` - kernel-owned HostEval and role algebra
+
+Process and roadmap:
+- `docs/CONVENTIONS.md` - naming, style, and repository conventions
+- `docs/UI_GUIDE.md` - UI package guide
+- `docs/LUA_VM_ROADMAP.md` - staged Lua VM milestones
+
+Experimental:
+- `docs/RESIDUAL_NATIVE_ARCHITECTURE.md` - experimental native C-stencil copy-patch architecture (not the main backend)
 
 ## Design Rules
 
