@@ -71,6 +71,21 @@ function Compiler.CompilerSession:compile()
   end
   if contracts == nil then contracts = {} end
 
+  -- Code validation gate
+  local validate_mod = require("lalin.impl.code_validate")
+  local validate_ok, validate_result = pcall(function()
+    return validate_mod.validate(code_module)
+  end)
+  if not validate_ok then
+    return Compiler.CompilerArtifactError("code_validate crashed: " .. tostring(validate_result))
+  end
+  -- validate_result is CodeValidateOk or CodeValidateFailed
+  local asdl = require("lalin.asdl")
+  if asdl.classof(validate_result) ~= CodeValidation.CodeValidateOk then
+    return Compiler.CompilerArtifactError("code_validate failed: " .. tostring(validate_result))
+  end
+
+
   -- Phase 5: Build CFG
   local graph_ok, graph = pcall(function() return code_module:build_graph() end)
   if not graph_ok then
