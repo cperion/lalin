@@ -83,6 +83,24 @@ return schema. LalinLower {
     LowerEmitMissingSchedule { variant_unique, reason [str], },
     LowerEmitUnsupported { variant_unique, reason [str], },
   },
+  sum. LowerBlockMapping {
+    LowerBlockEliminated {
+      variant_unique,
+      block [LalinCode.CodeBlockId],
+    },
+    LowerBlockRewritten {
+      variant_unique,
+      block [LalinCode.CodeBlockId],
+      replacement [LalinCode.CodeBlock],
+    },
+  },
+  product. LowerRewriteApplication {
+    interned,
+    fragment [LalinLower.LowerFragment],
+    rewrite_plan [LalinKernel.KernelRewritePlan],
+    replacement_blocks [many [LalinCode.CodeBlock]],
+    block_mappings [many [LalinLower.LowerBlockMapping]],
+  },
   sum. LowerCarrierStrategy {
     LowerCarrierCarry,
     LowerCarrierReject { variant_unique, reason [str], },

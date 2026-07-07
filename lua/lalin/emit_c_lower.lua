@@ -69,6 +69,14 @@ local function bind_context(T)
     function Core.CmpGt:c_emit_cmp_op() return ">" end
     function Core.CmpGe:c_emit_cmp_op() return ">=" end
 
+    function Core.CmpOp:c_helper_suffix() error("missing c_helper_suffix leaf method for CmpOp", 2) end
+    function Core.CmpEq:c_helper_suffix() return "eq" end
+    function Core.CmpNe:c_helper_suffix() return "ne" end
+    function Core.CmpLt:c_helper_suffix() return "lt" end
+    function Core.CmpLe:c_helper_suffix() return "le" end
+    function Core.CmpGt:c_helper_suffix() return "gt" end
+    function Core.CmpGe:c_helper_suffix() return "ge" end
+
     function C.CBackendType:c_emit_type() error("missing c_emit_type leaf method for CBackendType", 2) end
     function C.CBackendType:c_emit_decl(name) return self:c_emit_type() .. " " .. name end
     function C.CBackendType:c_emit_named_deps(out) end
@@ -270,6 +278,28 @@ local function bind_context(T)
     function C.CBackendRAddrOfPlace:c_emit_rewrite_aliases(aliases) return C.CBackendRAddrOfPlace(self.place:c_emit_rewrite_aliases(aliases)) end
     function C.CBackendRAddrOfPlace:c_emit_collect_used_locals(used) self.place:c_emit_collect_used_locals(used) end
     function C.CBackendRAddrOfPlace:c_emit_inline_expr(ctx) local p = self.place:c_emit_inline_place_expr(ctx); return "&" .. p end
+
+    function C.CBackendRValueBuiltin:c_emit_rvalue()
+        if self.builtin == C.CBackendBuiltinAssumeAligned then
+            return "__builtin_assume_aligned(" .. self.args[1]:c_emit_rvalue() .. ", " .. self.args[2]:c_emit_rvalue() .. ")"
+        elseif self.builtin == C.CBackendBuiltinExpect then
+            return "__builtin_expect(" .. self.args[1]:c_emit_rvalue() .. ", " .. self.args[2]:c_emit_rvalue() .. ")"
+        elseif self.builtin == C.CBackendBuiltinAssume then
+            return "__builtin_assume(" .. self.args[1]:c_emit_rvalue() .. ")"
+        end
+        return "/* unknown builtin */"
+    end
+    function C.CBackendRValueBuiltin:c_emit_rewrite_aliases(aliases)
+        local args = {}
+        for i = 1, #self.args do args[i] = self.args[i]:c_emit_rewrite_aliases(aliases) end
+        return C.CBackendRValueBuiltin(self.builtin, args)
+    end
+    function C.CBackendRValueBuiltin:c_emit_collect_used_locals(used)
+        for i = 1, #self.args do self.args[i]:c_emit_collect_used_locals(used) end
+    end
+    function C.CBackendRValueBuiltin:c_emit_inline_expr(ctx)
+        return self:c_emit_rvalue()
+    end
 
     function C.CBackendTypeDecl:c_emit_key() return self.id and (self.id.module_name .. "\0" .. self.id.spelling) or nil end
     function C.CBackendTypeDecl:c_emit_deps() return {} end
@@ -482,7 +512,13 @@ local function bind_context(T)
     function C.CBackendCall:c_emit_rewrite_aliases(aliases) local args = {}; for i = 1, #self.args do args[i] = self.args[i]:c_emit_rewrite_aliases(aliases) end; return C.CBackendCall(self.dst, self.target:c_emit_rewrite_aliases(aliases), args) end
     function C.CBackendCall:c_emit_assigned_local() return self.dst and self.dst.text or nil end
     function C.CBackendCall:c_emit_collect_used_locals(used) self.target:c_emit_collect_used_locals(used); for i = 1, #self.args do self.args[i]:c_emit_collect_used_locals(used) end end
-    function C.CBackendComment:c_emit_stmt(out) out[#out + 1] = "    /* " .. self.text:gsub("%*/", "* /") .. " */" end
+    function C.CBackendComment:c_emit_stmt(out)
+        if self.text:sub(1, 7) == "#pragma" then
+            out[#out + 1] = self.text
+        else
+            out[#out + 1] = "    /* " .. self.text:gsub("%*/", "* /") .. " */"
+        end
+    end
 
     function C.CBackendCallTarget:c_emit_callee(args) error("missing c_emit_callee leaf method", 2) end
     function C.CBackendCallTarget:c_emit_note_call_arg_locals(out) end
@@ -851,7 +887,49 @@ local function bind_context(T)
         return rewritten, locals
     end
 
-    function C.CBackendFunc:c_emit_func(sigs, out)
+    local function c_merge_tails(func_annotations, f_blocks, blocks_by_label)
+        if not func_annotations or not func_annotations.loops then return f_blocks end
+        return f_blocks
+    end
+
+    local function c_inject_hints(func_annotations, f_blocks, local_types)
+        if not func_annotations then return f_blocks end
+        local blocks_map = {}
+        for i = 1, #f_blocks do blocks_map[f_blocks[i].label.text] = f_blocks[i] end
+
+        -- 1. Loop pragmas
+        if func_annotations.loops then
+            for _, loop_ann in ipairs(func_annotations.loops) do
+                local header = blocks_map[loop_ann.header_label.text]
+                if header then
+                    if loop_ann.vectorizable then
+                        table.insert(header.stmts, 1, C.CBackendComment("#pragma GCC ivdep"))
+                        table.insert(header.stmts, 1, C.CBackendComment("#pragma clang loop vectorize(enable)"))
+                    end
+                    if loop_ann.unroll_hint then
+                        table.insert(header.stmts, 1, C.CBackendComment("#pragma GCC unroll " .. tostring(loop_ann.unroll_hint)))
+                        table.insert(header.stmts, 1, C.CBackendComment("#pragma clang loop unroll(count=" .. tostring(loop_ann.unroll_hint) .. ")"))
+                    end
+                    if loop_ann.interleave_hint and loop_ann.interleave_hint > 1 then
+                        table.insert(header.stmts, 1, C.CBackendComment("#pragma clang loop interleave(count=" .. tostring(loop_ann.interleave_hint) .. ")"))
+                    end
+                end
+            end
+        end
+
+        -- 2. Pointer alignment
+        if func_annotations.pointers then
+            for _, ptr_ann in ipairs(func_annotations.pointers) do
+                if ptr_ann.alignment and asdl.classof(ptr_ann.alignment) == "CBackendAlignmentKnown" then
+                    table.insert(ptr_ann, 1, C.CBackendComment("/* ptr_align: " .. ptr_ann.local_ptr.text .. " = " .. ptr_ann.alignment.bytes .. " */"))
+                end
+            end
+        end
+
+        return f_blocks
+    end
+
+    function C.CBackendFunc:c_emit_func(sigs, out, func_annotations)
         local sig = sigs[self.sig.text]
         out[#out + 1] = sig.result:c_emit_type() .. " " .. self.name.text .. "(" .. func_params(self.params) .. ") {"
         local local_types = {}; for i = 1, #self.params do local_types[self.params[i].id.text] = self.params[i].ty end
@@ -865,6 +943,8 @@ local function bind_context(T)
         local f_blocks = self.body:c_emit_blocks()
         local hoist_locals
         f_blocks, hoist_locals = plan_field_hoists(self, f_blocks)
+        -- Inject compiler hints from annotations after optimizer passes
+        f_blocks = c_inject_hints(func_annotations, f_blocks, local_types)
         for i = 1, #(hoist_locals or {}) do local_types[hoist_locals[i].id.text] = hoist_locals[i].ty end
         for i = 1, #f_blocks do for j = 1, #f_blocks[i].params do local_types[f_blocks[i].params[j].local_id.text] = f_blocks[i].params[j].ty end end
         if #(hoist_locals or {}) > 0 then f_blocks = remove_dead_copy_assigns(copy_propagate_blocks(f_blocks, local_types)) end
@@ -1100,6 +1180,9 @@ local function bind_context(T)
     function C.CBackendHelperLayoutAssert:c_helper_id() return C.CBackendHelperId("ml_layout_assert_" .. C.CBackendNamed(self.assertion.id):c_helper_suffix()) end
     function C.CBackendHelperRequireFeature:c_helper_id() return C.CBackendHelperId("ml_require_" .. self.feature:c_helper_suffix()) end
     function C.CBackendHelperTrap:c_helper_id() return C.CBackendHelperId("ml_trap") end
+    function C.CBackendHelperScan:c_helper_id() return C.CBackendHelperId("ml_scan_" .. (self.inclusive and "inc" or "exc") .. "_" .. self.ty:c_helper_suffix() .. "_" .. self.op:c_helper_suffix() .. "_a" .. tostring(self.align)) end
+    function C.CBackendHelperFind:c_helper_id() return C.CBackendHelperId("ml_find_" .. self.cmp:c_helper_suffix() .. "_" .. self.ty:c_helper_suffix() .. "_a" .. tostring(self.align)) end
+    function C.CBackendHelperReduce:c_helper_id() return C.CBackendHelperId("ml_reduce_" .. self.op:c_helper_suffix() .. "_" .. self.ty:c_helper_suffix() .. "_a" .. tostring(self.align)) end
 
     function C.CBackendHelperSpec:c_helper_signature() error("missing c_helper_signature leaf method for CBackendHelperSpec", 2) end
     function C.CBackendHelperUse:c_helper_signature() return self.spec:c_helper_signature() end
@@ -1127,6 +1210,9 @@ local function bind_context(T)
     function C.CBackendHelperLayoutAssert:c_helper_signature() return { params = {}, result = C.CBackendVoid } end
     function C.CBackendHelperRequireFeature:c_helper_signature() return { params = {}, result = C.CBackendVoid } end
     function C.CBackendHelperTrap:c_helper_signature() return { params = {}, result = C.CBackendVoid } end
+    function C.CBackendHelperScan:c_helper_signature() return { params = { C.CBackendDataPtr(self.ty), C.CBackendDataPtr(self.ty), C.CBackendIndex }, result = C.CBackendVoid } end
+    function C.CBackendHelperFind:c_helper_signature() return { params = { C.CBackendDataPtr(self.ty), C.CBackendIndex, self.ty }, result = C.CBackendIndex } end
+    function C.CBackendHelperReduce:c_helper_signature() return { params = { C.CBackendDataPtr(self.ty), C.CBackendIndex }, result = self.ty } end
 
     local function helper_header(id, sig, emit_type)
         local ret = emit_type(sig.result)
@@ -1159,6 +1245,40 @@ local function bind_context(T)
     function C.CBackendHelperTypedMemset:c_emit_helper_body(lines) lines[#lines + 1] = "    memset(a1, a2, (size_t)" .. tostring(self.size) .. ");" end
     function C.CBackendHelperMemcmp:c_emit_helper_body(lines) lines[#lines + 1] = "    return memcmp(a1, a2, (size_t)a3);" end
     function C.CBackendHelperTrap:c_emit_helper_body(lines) lines[#lines + 1] = "    abort();" end
+    function C.CBackendHelperScan:c_emit_helper_body(lines, ret, uret, emit_type)
+        local elem_ty = emit_type(self.ty)
+        lines[#lines + 1] = "    a1 = __builtin_assume_aligned(a1, " .. tostring(self.align) .. ");"
+        lines[#lines + 1] = "    a2 = __builtin_assume_aligned(a2, " .. tostring(self.align) .. ");"
+        lines[#lines + 1] = "    " .. elem_ty .. " acc = 0;"
+        if self.inclusive then
+            lines[#lines + 1] = "    for (ml_index i = 0; i < (ml_index)a3; i++) {"
+            lines[#lines + 1] = "        acc = (" .. elem_ty .. ")(" .. self.op:c_helper_expr("acc", "a2[i]") .. ");"
+            lines[#lines + 1] = "        a1[i] = acc;"
+            lines[#lines + 1] = "    }"
+        else
+            lines[#lines + 1] = "    for (ml_index i = 0; i < (ml_index)a3; i++) {"
+            lines[#lines + 1] = "        a1[i] = acc;"
+            lines[#lines + 1] = "        acc = (" .. elem_ty .. ")(" .. self.op:c_helper_expr("acc", "a2[i]") .. ");"
+            lines[#lines + 1] = "    }"
+        end
+    end
+    function C.CBackendHelperFind:c_emit_helper_body(lines, ret, uret, emit_type)
+        lines[#lines + 1] = "    a1 = __builtin_assume_aligned(a1, " .. tostring(self.align) .. ");"
+        lines[#lines + 1] = "    for (ml_index i = 0; i < (ml_index)a2; i++) {"
+        lines[#lines + 1] = "        if (a1[i] " .. self.cmp:c_emit_cmp_op() .. " a3) return i;"
+        lines[#lines + 1] = "    }"
+        lines[#lines + 1] = "    return a2;"
+    end
+    function C.CBackendHelperReduce:c_emit_helper_body(lines, ret, uret, emit_type)
+        local elem_ty = emit_type(self.ty)
+        lines[#lines + 1] = "    a1 = __builtin_assume_aligned(a1, " .. tostring(self.align) .. ");"
+        lines[#lines + 1] = "    " .. elem_ty .. " acc = " .. (self.identity_is_zero and "0" or "a1[0]") .. ";"
+        local start = self.identity_is_zero and "0" or "1"
+        lines[#lines + 1] = "    for (ml_index i = " .. start .. "; i < (ml_index)a2; i++) {"
+        lines[#lines + 1] = "        acc = (" .. elem_ty .. ")(" .. self.op:c_helper_expr("acc", "a1[i]") .. ");"
+        lines[#lines + 1] = "    }"
+        lines[#lines + 1] = "    return acc;"
+    end
     function C.CBackendHelperIntrinsic:c_emit_helper_body(lines, ret, uret) self.intrinsic:c_emit_helper_intrinsic_body(lines, ret, uret) end
     function C.CBackendHelperDivRem:c_emit_helper_body(lines, ret, uret) lines[#lines + 1] = "    if (a2 == 0) abort();"; if self.ty:c_helper_is_signed() then lines[#lines + 1] = "    if (a2 == (" .. ret .. ")-1 && a1 == (" .. ret .. ")(((" .. uret .. ")1) << (sizeof(a1) * 8u - 1u))) abort();" end; lines[#lines + 1] = "    return (" .. ret .. ")(" .. self.op:c_helper_expr("a1", "a2") .. ");" end
     function C.CBackendHelperShift:c_emit_helper_body(lines, ret, uret)
@@ -1253,7 +1373,9 @@ local function bind_context(T)
         out[#out + 1] = "/* globals */"; emit_globals(unit, out); out[#out + 1] = ""
         out[#out + 1] = "/* helpers */"; for i = 1, #unit.helpers do append_all(out, unit.helpers[i]:c_emit_helper_lines(c_type_name)) end; out[#out + 1] = ""
         out[#out + 1] = "/* prototypes */"; emit_func_prototypes(unit, sigs, out, { exported_only = false }); out[#out + 1] = ""
-        out[#out + 1] = "/* bodies */"; for i = 1, #unit.funcs do unit.funcs[i]:c_emit_func(sigs, out) end
+        out[#out + 1] = "/* bodies */"
+        local func_annotations = unit._func_annotations or {}
+        for i = 1, #unit.funcs do unit.funcs[i]:c_emit_func(sigs, out, func_annotations[unit.funcs[i].name.text]) end
         return table.concat(out, "\n") .. "\n"
     end
 

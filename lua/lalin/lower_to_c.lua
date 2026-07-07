@@ -35,6 +35,7 @@ local function bind_context(T)
     local CodeLowerPlan = require("lalin.code_lower_plan")(T)
     local ExecPlan = require("lalin.exec_plan")(T)
     local CMaterialize = require("lalin.emit_c_materialize")(T)
+    local LowerKernelRewrite = require("lalin.lower_kernel_rewrite")(T)
 
     local api = {}
 
@@ -352,6 +353,75 @@ local function bind_context(T)
     function Mem.MemIndexInduction:lower_c_elem_size() return self.elem_size or 1 end
     function Mem.MemIndexInduction:lower_c_const_offset() return self.const_offset or 0 end
 
+    function Mem.MemAlignment:lower_c_alignment_fact() return C.CBackendAlignmentUnknown end
+    function Mem.MemAlignKnown:lower_c_alignment_fact() return C.CBackendAlignmentKnown(self.bytes) end
+    function Mem.MemAlignAtLeast:lower_c_alignment_fact() return C.CBackendAlignmentKnown(self.bytes) end
+    function Mem.MemAlignAssumed:lower_c_alignment_fact() return C.CBackendAlignmentAssumed(self.bytes, "mem proof") end
+
+    function Mem.MemAlignment:lower_cmat_alignment_fact() return Stencil.StencilAlignmentUnknown end
+    function Mem.MemAlignKnown:lower_cmat_alignment_fact() return Stencil.StencilAlignmentKnown(self.bytes) end
+    function Mem.MemAlignAtLeast:lower_cmat_alignment_fact() return Stencil.StencilAlignmentKnown(self.bytes) end
+    function Mem.MemAlignAssumed:lower_cmat_alignment_fact() return Stencil.StencilAlignmentKnown(self.bytes) end
+
+    function Kernel.KernelResult:lower_rewrite_plan(_kernel_id, _kplan)
+        return Kernel.KernelRewritePlan(
+            Kernel.KernelRewriteNone(),
+            nil, {}, {}, {}
+        )
+    end
+
+    function Kernel.KernelResultClosedForm:lower_rewrite_plan(_kernel_id, kplan)
+        local eq = kplan.body.equivalence
+        return Kernel.KernelRewritePlan(
+            Kernel.KernelRewriteClosedForm(self.closed_form.expr, nil),
+            nil, {}, {},
+            eq and eq.proofs or {}
+        )
+    end
+
+    function Kernel.KernelResultFind:lower_rewrite_plan(_kernel_id, kplan)
+        local eq = kplan.body.equivalence
+        -- self.src is KernelExpr; KernelRewriteFind.src expects KernelLane
+        -- resolved by the rewrite pass from the kernel body lanes
+        return Kernel.KernelRewritePlan(
+            Kernel.KernelRewriteFind(nil, self.pred, self.not_found, nil),
+            nil, {}, {},
+            eq and eq.proofs or {}
+        )
+    end
+
+    function Kernel.KernelResultReduction:lower_rewrite_plan(_kernel_id, kplan)
+        local eq = kplan.body.equivalence
+        return Kernel.KernelRewritePlan(
+            Kernel.KernelRewriteReduce(self.reduction, nil, nil, nil),
+            nil, {}, {},
+            eq and eq.proofs or {}
+        )
+    end
+
+    function Kernel.KernelResultOriginalControl:lower_rewrite_plan(_kernel_id, _kplan)
+        return Kernel.KernelRewritePlan(
+            Kernel.KernelRewriteNone(),
+            nil, {}, {}, {}
+        )
+    end
+
+    function Kernel.KernelResultValue:lower_rewrite_plan(_kernel_id, _kplan)
+        return Kernel.KernelRewritePlan(Kernel.KernelRewriteNone(), nil, {}, {}, {})
+    end
+
+    function Kernel.KernelResultAll:lower_rewrite_plan(_kernel_id, _kplan)
+        return Kernel.KernelRewritePlan(Kernel.KernelRewriteNone(), nil, {}, {}, {})
+    end
+
+    function Kernel.KernelResultAllCompare:lower_rewrite_plan(_kernel_id, _kplan)
+        return Kernel.KernelRewritePlan(Kernel.KernelRewriteNone(), nil, {}, {}, {})
+    end
+
+    function Kernel.KernelResultAny:lower_rewrite_plan(_kernel_id, _kplan)
+        return Kernel.KernelRewritePlan(Kernel.KernelRewriteNone(), nil, {}, {}, {})
+    end
+
     function Lower.LowerAddressLaneUse:lower_c_serves_lane(lane)
         return self.lane == lane.id
     end
@@ -656,6 +726,16 @@ local function bind_context(T)
     function Mem.MemBaseValue:lower_c_cmat_local_id() return CMat.CMatLocalId(sanitize(self.value.text)) end
     function Mem.MemBaseArgument:lower_c_cmat_local_id() return CMat.CMatLocalId(sanitize(self.value.text)) end
 
+    local function lane_backend_alignment(lane)
+        for _, info in ipairs(lane.backend_info or {}) do
+            local align = info.alignment
+            if align ~= nil and asdl.classof(align) ~= "MemAlignUnknown" then
+                return align:lower_cmat_alignment_fact()
+            end
+        end
+        return Stencil.StencilAlignmentUnknown
+    end
+
     local function cmat_access_binding_for_lane(lane, name, role)
         local layout = Stencil.StencilLayoutContiguous(1)
         local source = Stencil.StencilAccess(name, role, lane.elem_ty, layout)
@@ -668,7 +748,7 @@ local function bind_context(T)
             role:cmat_mutability(),
             role:cmat_restrict_eligible(layout),
             role:cmat_const_eligible(),
-            Stencil.StencilAlignmentUnknown
+            lane_backend_alignment(lane)
         )
     end
 
@@ -1157,6 +1237,24 @@ local function bind_context(T)
         return Stencil.StencilScheduleScalar(Stencil.StencilCompilerPolicy(Stencil.StencilCompilerGcc, Stencil.StencilOptO3, Stencil.StencilMachineNative, {}))
     end
 
+    local function resolve_schedule(kernel_id, schedules_by_id)
+        local kplan_sched = schedules_by_id and schedules_by_id[kernel_id.text]
+        if not kplan_sched then return nil end
+        if asdl.classof(kplan_sched) == Schedule.SchedulePlanned then
+            return kplan_sched.form
+        end
+        return nil
+    end
+
+    local function schedule_index(schedules)
+        local out = {}
+        if schedules == nil then return out end
+        for _, ks in ipairs(schedules.kernel_schedules or {}) do
+            out[ks.kernel.text] = ks
+        end
+        return out
+    end
+
     local function producer_from_loop(loop_fact)
         local counted = loop_fact and loop_fact.counted
         if counted == nil then return Stencil.StencilProducer(nil, Stencil.StencilProduceRange1D(Code.CodeTyIndex, nil, nil, 1, Stencil.StencilProducerForward)) end
@@ -1172,7 +1270,7 @@ local function bind_context(T)
         )
     end
 
-    local function computation_for_body(kplan, loop_fact, reads, dst, body_stream, sink)
+    local function computation_for_body(kplan, loop_fact, reads, dst, body_stream, sink, sched)
         local accesses, streams, sinks = {}, {}, {}
         if dst ~= nil then accesses[#accesses + 1] = dst.source end
         for _, access in ipairs(reads or {}) do accesses[#accesses + 1] = access.source end
@@ -1185,7 +1283,7 @@ local function bind_context(T)
             streams,
             sinks,
             Stencil.StencilFusionLegality({}, {}, {}),
-            default_stencil_schedule(),
+            sched or default_stencil_schedule(),
             kplan.body.equivalence and kplan.body.equivalence.proofs or {}
         )
     end
@@ -1206,7 +1304,7 @@ local function bind_context(T)
         local dst = cmat_access_binding_for_lane(dst_lane, "dst", Stencil.StencilAccessWrite)
         local stream = Stencil.StencilStreamDef(Stencil.StencilStreamId("value"), dst_lane.elem_ty, Stencil.StencilStreamMap(expr, {}))
         local sink = Stencil.StencilSinkDef(Stencil.StencilSinkId("store"), Stencil.StencilSinkOpStore(dst.access, Stencil.StencilStreamRef(stream.id), store_mode))
-        local computation = computation_for_body(kplan, loop_fact, reads, dst, stream, sink)
+        local computation = computation_for_body(kplan, loop_fact, reads, dst, stream, sink, c_emission.cmat_schedule)
         note_cmat_param_qualifiers(c_emission, computation, cmat_bindings(dst, reads))
         local access_by_name = { dst = dst }
         for _, access in ipairs(reads or {}) do access_by_name[access.access.name] = access end
@@ -1231,7 +1329,7 @@ local function bind_context(T)
         local stream = Stencil.StencilStreamDef(Stencil.StencilStreamId("value"), reduction.ty, Stencil.StencilStreamMap(expr, {}))
         local reducer = Stencil.StencilReducer(reduction.op, reduction.ty, reduction.init, reduction.int_semantics, reduction.float_mode)
         local sink = Stencil.StencilSinkDef(Stencil.StencilSinkId("fold"), Stencil.StencilSinkOpFold(Stencil.StencilStreamRef(stream.id), reducer, reduction.ty, Stencil.StencilReduceInitExternal, nil))
-        local computation = computation_for_body(kplan, loop_fact, state.reads, nil, stream, sink)
+        local computation = computation_for_body(kplan, loop_fact, state.reads, nil, stream, sink, c_emission.cmat_schedule)
         note_cmat_param_qualifiers(c_emission, computation, state.reads)
         local access_by_name = {}
         for _, access in ipairs(state.reads) do access_by_name[access.access.name] = access end
@@ -1246,7 +1344,7 @@ local function bind_context(T)
         local stream = Stencil.StencilStreamDef(Stencil.StencilStreamId("value"), reduction.ty, Stencil.StencilStreamMap(expr, {}))
         local reducer = Stencil.StencilReducer(reduction.op, reduction.ty, reduction.init, reduction.int_semantics, reduction.float_mode)
         local sink = Stencil.StencilSinkDef(Stencil.StencilSinkId("scan"), Stencil.StencilSinkOpScan(dst.access, Stencil.StencilStreamRef(stream.id), reducer, scan.mode, scan.axis or Stencil.StencilAxisRef(1)))
-        local computation = computation_for_body(kplan, loop_fact, state.reads, dst, stream, sink)
+        local computation = computation_for_body(kplan, loop_fact, state.reads, dst, stream, sink, c_emission.cmat_schedule)
         note_cmat_param_qualifiers(c_emission, computation, cmat_bindings(dst, state.reads))
         local access_by_name = { dst = dst }
         for _, access in ipairs(state.reads) do access_by_name[access.access.name] = access end
@@ -1273,7 +1371,7 @@ local function bind_context(T)
             streams,
             { sink },
             Stencil.StencilFusionLegality({}, {}, {}),
-            default_stencil_schedule(),
+            c_emission.cmat_schedule or default_stencil_schedule(),
             kplan.body.equivalence and kplan.body.equivalence.proofs or {}
         )
         note_cmat_param_qualifiers(c_emission, computation, cmat_bindings(dst, state.reads))
@@ -1297,7 +1395,7 @@ local function bind_context(T)
             streams,
             { sink },
             Stencil.StencilFusionLegality({}, {}, {}),
-            default_stencil_schedule(),
+            c_emission.cmat_schedule or default_stencil_schedule(),
             kplan.body.equivalence and kplan.body.equivalence.proofs or {}
         )
         note_cmat_param_qualifiers(c_emission, computation, state.reads)
@@ -1323,7 +1421,7 @@ local function bind_context(T)
             streams,
             { sink },
             Stencil.StencilFusionLegality({}, {}, {}),
-            default_stencil_schedule(),
+            c_emission.cmat_schedule or default_stencil_schedule(),
             kplan.body.equivalence and kplan.body.equivalence.proofs or {}
         )
         note_cmat_param_qualifiers(c_emission, computation, state.reads)
@@ -1449,7 +1547,8 @@ local function bind_context(T)
         cmat.computation:lower_c_inline_computation(c_emission, cmat, index_atom)
     end
 
-    local function emit_scalar_kernel_fragment(c_emission, graph, flow, kernels, fragment)
+    local function emit_scalar_kernel_fragment(c_emission, graph, flow, kernels, fragment, sched)
+        c_emission.cmat_schedule = sched  -- nil means default_stencil_schedule
         local kplan = kernel_by_id(kernels)[fragment.strategy.kernel.text]
         if kplan == nil then error("lower_to_c: kernel strategy references missing kernel " .. fragment.strategy.kernel.text, 2) end
         local loop, body_set, edge_facts, exit_edge, latch_edge, body_successor, cond, loop_fact = loop_partition(c_emission, graph, flow, kplan)
@@ -1746,15 +1845,20 @@ local function bind_context(T)
     end
 
     function Lower.LowerEmitScalarKernel:emit_to_c(c_emission, fragment_emit)
-        emit_scalar_kernel_fragment(c_emission, fragment_emit.graph, fragment_emit.flow, fragment_emit.kernels, fragment_emit.fragment)
+        local scheds = schedule_index(fragment_emit.schedules)
+        local sched = resolve_schedule(fragment_emit.fragment.strategy.kernel, scheds)
+        emit_scalar_kernel_fragment(c_emission, fragment_emit.graph, fragment_emit.flow, fragment_emit.kernels, fragment_emit.fragment, sched)
     end
 
     function Lower.LowerEmitVectorKernel:emit_to_c(c_emission, fragment_emit)
+        local scheds = schedule_index(fragment_emit.schedules)
+        local sched = resolve_schedule(fragment_emit.fragment.strategy.kernel, scheds)
+        -- If no vector schedule resolved, fall back to scalar (nil → default_stencil_schedule)
         -- Vector scheduling is now a CMat policy, not a separate direct
         -- KernelEffect emitter. Until CMat vector bodies are richer, emit the
         -- same inline CMat SOAC body and let the C compiler see the canonical
         -- stencil computation instead of falling back to the old lane unroller.
-        emit_scalar_kernel_fragment(c_emission, fragment_emit.graph, fragment_emit.flow, fragment_emit.kernels, fragment_emit.fragment)
+        emit_scalar_kernel_fragment(c_emission, fragment_emit.graph, fragment_emit.flow, fragment_emit.kernels, fragment_emit.fragment, sched)
     end
 
     function Lower.LowerEmitMissingSchedule:emit_to_c(c_emission, fragment_emit)
@@ -2062,10 +2166,139 @@ local function bind_context(T)
         for i, l in ipairs(c_func.locals or {}) do mutable_func.locals[i] = l end
         prepare_func_emission(c_emission, code_func, mutable_func)
         local schedules_by_id = schedule_by_id(schedules)
+
+        -- Apply kernel rewrite transformations for provable fragments
+        -- These emit replacement CBackend blocks before the normal fragment loop
+        local rewrite_applications = {}
+        local rewritten_fragment_ids = {}
         for _, fragment in ipairs(ordered_fragments_for_func(code_func, func_plan, graph_loops)) do
-            local selection = lower_emit_candidate(fragment, schedules_by_id):select_lower_emit()
-            selection:emit_to_c(c_emission, Lower.LowerCEmitInput(graph, flow, kernels, schedules, code_func, fragment, baseline_blocks))
+            local strategy = fragment.strategy
+            if strategy ~= nil and asdl.classof(strategy) == "LowerStrategyClosedForm" then
+                local kplan = kernel_by_id(kernels)[strategy.kernel.text]
+                if kplan ~= nil then
+                    local application = LowerKernelRewrite.apply(kplan, fragment, graph, flow, c_emission)
+                    if application ~= nil then
+                        rewrite_applications[#rewrite_applications + 1] = application
+                        rewritten_fragment_ids[ fragment.id.text ] = true
+                    end
+                end
+            end
         end
+        c_emission.rewrite_applications = rewrite_applications
+
+        -- Emit remaining fragments via the normal LowerEmitSelection dispatch
+        for _, fragment in ipairs(ordered_fragments_for_func(code_func, func_plan, graph_loops)) do
+            if not rewritten_fragment_ids[fragment.id.text] then
+                local selection = lower_emit_candidate(fragment, schedules_by_id):select_lower_emit()
+                selection:emit_to_c(c_emission, Lower.LowerCEmitInput(graph, flow, kernels, schedules, code_func, fragment, baseline_blocks))
+            end
+        end
+
+        -- Build CBackendFuncAnnotations from kernel/flow facts
+        local func_spine = C.CBackendAnnotationSpine(c_func.name)
+        local func_loops, func_pointers, func_branches = {}, {}, {}
+        for _, fragment in ipairs(ordered_fragments_for_func(code_func, func_plan, graph_loops)) do
+            local strategy_class = asdl.classof(fragment.strategy)
+            if strategy_class == "LowerStrategyKernel" then
+            local kplan = kernel_by_id(kernels)[fragment.strategy.kernel.text]
+            if kplan ~= nil then
+                local loop_by_id = {}
+                for _, gl in ipairs(graph_loops or {}) do loop_by_id[gl.id.text] = gl end
+                local sched = resolve_schedule(fragment.strategy.kernel, schedules_by_id)
+                local graph_loop = loop_by_id[fragment.cover.loop and fragment.cover.loop.text or ""]
+                if graph_loop ~= nil then
+                    local header_label = clabel(graph_loop.header.block)
+                    local body_labels = {}
+                    for _, bid in ipairs(graph_loop.body or {}) do body_labels[#body_labels + 1] = clabel(bid) end
+                    local back_edge_label = nil
+                    for _, latch in ipairs(graph_loop.latches or {}) do
+                        back_edge_label = back_edge_label or clabel(latch.to.block)
+                    end
+                    local exit_labels = {}
+                    for _, ex in ipairs(graph_loop.exits or {}) do exit_labels[#exit_labels + 1] = clabel(ex.to.block) end
+                    local vectorizable = sched ~= nil and asdl.classof(sched) == Schedule.ScheduleVector
+                    local tail_plan = C.CBackendTailNone
+                    local unroll_hint, interleave_hint = nil, nil
+                    if vectorizable and sched ~= nil then
+                        if sched.unroll ~= nil then unroll_hint = sched.unroll end
+                        if sched.interleave ~= nil then interleave_hint = sched.interleave end
+                        if asdl.classof(sched.tail or C.CBackendTailNone) == "TailPeel" then
+                            tail_plan = C.CBackendTailPeel(sched.tail.elems)
+                        end
+                    end
+                    local trip_rvalue = nil
+                    local domain = kplan.body.domain
+                    if domain ~= nil and asdl.classof(domain) == Kernel.KernelDomainFlow then
+                        local tc = domain.trip_count
+                        if tc ~= nil and tc.trip_expr ~= nil then
+                            trip_rvalue = lower_value_expr(c_emission, tc.trip_expr)
+                        end
+                    end
+                    local induction_local, induction_ty = nil, nil
+                    if domain ~= nil and domain.counter ~= nil then
+                        induction_local = cid(domain.counter)
+                        induction_ty = c_ty(c_emission, Code.CodeTyIndex)
+                    end
+                    local direction = C.CBackendLoopUnknown()
+                    if graph_loop ~= nil then
+                        -- infer direction from flow facts if available
+                    end
+                    func_loops[#func_loops + 1] = C.CBackendLoopAnnotation(
+                        func_spine, header_label, body_labels,
+                        back_edge_label or header_label, exit_labels,
+                        induction_local, induction_ty, trip_rvalue,
+                        direction, vectorizable,
+                        unroll_hint, interleave_hint, tail_plan
+                    )
+                end
+
+                -- Pointer annotations from KernelLane.backend_info
+                for _, lane in ipairs(kplan.body.lanes or {}) do
+                    for _, info in ipairs(lane.backend_info or {}) do
+                        local align = info.alignment
+                        if align ~= nil then
+                            local align_fact = align:lower_c_alignment_fact()
+                            local ptr_local = cid(info.access)
+                            local restrict_ann = false
+                            local non_trapping = asdl.classof(info.trap) == "MemNonTrapping"
+                            func_pointers[#func_pointers + 1] = C.CBackendPointerAnnotation(
+                                func_spine, ptr_local, align_fact, restrict_ann, non_trapping, nil
+                            )
+                        end
+                    end
+                end
+
+                -- Branch annotations from flow loop facts
+                local flow_loop_facts = flow and flow.loops or {}
+                for _, flf in ipairs(flow_loop_facts) do
+                    if flf.loop ~= nil and graph_loop ~= nil and flf.loop.text == graph_loop.id.text then
+                        for _, induction in ipairs(flf.inductions or {}) do
+                            if graph_loop.exits and #graph_loop.exits > 0 then
+                                func_branches[#func_branches + 1] = C.CBackendBranchAnnotation(
+                                    func_spine,
+                                    clabel(graph_loop.exits[1].from.block),
+                                    nil,
+                                    C.CBackendBranchUnlikely(),
+                                    "loop exit edge with upper bound"
+                                )
+                            end
+                            if graph_loop.latches and #graph_loop.latches > 0 then
+                                func_branches[#func_branches + 1] = C.CBackendBranchAnnotation(
+                                    func_spine,
+                                    clabel(graph_loop.latches[1].from.block),
+                                    nil,
+                                    C.CBackendBranchLikely,
+                                    "loop back-edge"
+                                )
+                            end
+                        end
+                    end
+                end
+            end
+            end
+        end
+        c_emission.func_annotations = C.CBackendFuncAnnotations(func_spine, func_loops, func_pointers, func_branches)
+
         local lowered_blocks = apply_lower_c_carriers(c_emission, code_func, graph_loops, c_emission.blocks)
         return C.CBackendFunc(
             mutable_func.name,
@@ -2154,19 +2387,25 @@ local function bind_context(T)
         }
         for _, h in ipairs(unit.helpers or {}) do c_emission.helper_by_key[h.id.text] = h end
 
+        local cfuncs_by_name = {}
         for _, code_func in ipairs(code_module.funcs or {}) do
             local fp = plans[code_func.id.text]
             local base = base_func_by_name[code_func.name]
             if fp ~= nil then
                 local semantic = false
                 for _, frag in ipairs(fp.fragments or {}) do if semantic_strategy(frag) then semantic = true end end
-                if semantic then cfuncs[#cfuncs + 1] = lower_semantic_func(c_emission, graph, flow, kernels, schedules, code_func, base, fp, graph_loops, c_block_body(base))
+                if semantic then
+                    local new_func = lower_semantic_func(c_emission, graph, flow, kernels, schedules, code_func, base, fp, graph_loops, c_block_body(base))
+                    cfuncs[#cfuncs + 1] = new_func
+                    cfuncs_by_name[new_func.name.text] = c_emission.func_annotations
                 else cfuncs[#cfuncs + 1] = base end
             else
                 cfuncs[#cfuncs + 1] = base
             end
         end
-        return C.CBackendUnit(unit.module_name, unit.target, unit.sigs, unit.types, unit.globals, unit.externs, unit.helpers, cfuncs)
+        local result = C.CBackendUnit(unit.module_name, unit.target, unit.sigs, unit.types, unit.globals, unit.externs, unit.helpers, cfuncs)
+        rawset(result, "_func_annotations", cfuncs_by_name)
+        return result
     end
 
     local function exec_plan(code_module, lower_module, opts)

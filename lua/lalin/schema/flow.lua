@@ -89,14 +89,16 @@ return schema. LalinFlow {
     FlowTripCountExact {
       variant_unique,
       count [LalinCode.CodeValueId],
+      trip_expr [optional [LalinValue.ValueExpr]],
       proof [optional [LalinMem.MemProof]],
     },
     FlowTripCountNonNegative {
       variant_unique,
       count [LalinCode.CodeValueId],
+      trip_expr [optional [LalinValue.ValueExpr]],
       proof [optional [LalinMem.MemProof]],
     },
-    FlowTripCountUnknown { variant_unique, reason [str], },
+    FlowTripCountUnknown { variant_unique, reason [str], trip_expr [optional [LalinValue.ValueExpr]], },
   },
   product. FlowEdgeArg {
     interned,

@@ -467,6 +467,29 @@ local function bind_context(T)
         return Flow.FlowLoopDirectionUnknown
     end
 
+    local function compute_trip_expr(counted, defs, consts)
+        if counted == nil or counted.start == nil or counted.stop == nil then return nil end
+        local idx_ty = Code.CodeTyIndex
+        local diff_expr = Value.ValueExprBinary(Core.BinSub,
+            Value.ValueExprValue(counted.stop),
+            Value.ValueExprValue(counted.start),
+            idx_ty)
+        local step_is_one = counted.step and consts[counted.step.text] == 1
+        if counted.stop_exclusive then
+            if step_is_one then return diff_expr end
+            return Value.ValueExprBinary(Core.BinDiv, diff_expr, Value.ValueExprValue(counted.step), idx_ty)
+        else
+            local adj_step = Value.ValueExprValue(counted.step)
+            local adj_expr = Value.ValueExprBinary(Core.BinAdd, diff_expr, adj_step, idx_ty)
+            if step_is_one then return adj_expr end
+            return Value.ValueExprBinary(Core.BinDiv, adj_expr, adj_step, idx_ty)
+        end
+    end
+
+    local function find_matching_value(defs, consts, _trip_expr)
+        return nil  -- future: structural match against existing defs
+    end
+
     local function semantic_facts(module, graph_or_flow, maybe_flow)
         local flow_facts
         if maybe_flow ~= nil then
@@ -500,7 +523,17 @@ local function bind_context(T)
                 local func_id = graph_loop_func[loop.loop.text]
                 local consts = func_id and consts_by_func[func_id.text] or {}
                 local direction = direction_for(primary, defs_by_func[func_id and func_id.text or ""] or {}, consts)
-                out[#out + 1] = Flow.FlowLoopNormalizedCounted(loop.loop, loop.counted, direction, Flow.FlowTripCountUnknown("no explicit trip-count CodeValueId is available"))
+                local trip_expr = compute_trip_expr(loop.counted, defs_by_func[func_id and func_id.text or ""] or {}, consts)
+                local trip_value_id = trip_expr and find_matching_value(defs_by_func[func_id and func_id.text or ""] or {}, consts, trip_expr)
+                local trip_count
+                if trip_value_id ~= nil and trip_expr ~= nil then
+                    trip_count = Flow.FlowTripCountExact(trip_value_id, trip_expr, nil)
+                elseif trip_expr ~= nil then
+                    trip_count = Flow.FlowTripCountUnknown("trip count expression not materialized", trip_expr)
+                else
+                    trip_count = Flow.FlowTripCountUnknown("no explicit trip-count CodeValueId is available", nil)
+                end
+                out[#out + 1] = Flow.FlowLoopNormalizedCounted(loop.loop, loop.counted, direction, trip_count)
                 if primary ~= nil and direction == Flow.FlowLoopIncreasing and loop.counted.stop_exclusive then
                     local _, min, max = range_for_induction(primary.value, loop.counted.start, loop.counted.stop, true, consts)
                     out[#out + 1] = Flow.FlowLoopInductionRange(Flow.FlowInductionRangeFact(loop.loop, primary.value, min, max, true, "primary induction of increasing exclusive counted loop stays within [start, stop) on executed iterations"))

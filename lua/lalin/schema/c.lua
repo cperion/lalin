@@ -245,6 +245,7 @@ return schema. LalinC {
       index [LalinC.CBackendAtom],
       field. ty [LalinC.CBackendType],
       elem_size [number],
+      align [optional [number]],
     },
     CBackendPlaceBytes {
       variant_unique,
@@ -352,6 +353,16 @@ return schema. LalinC {
       const_offset [number],
     },
     CBackendRAddrOfPlace { variant_unique, place [LalinC.CBackendPlace], },
+    CBackendRValueBuiltin {
+      variant_unique,
+      builtin [LalinC.CBackendBuiltinKind],
+      args [many [LalinC.CBackendRValue]],
+    },
+  },
+  sum. CBackendBuiltinKind {
+    CBackendBuiltinAssumeAligned,
+    CBackendBuiltinExpect,
+    CBackendBuiltinAssume,
   },
   sum. CBackendTrapPolicy { CBackendMayTrap, CBackendMustNotTrap, CBackendCheckedTrap, },
   product. CBackendMemoryAccess {
@@ -467,6 +478,26 @@ return schema. LalinC {
       variant_unique,
       feature [LalinC.CBackendTargetFeature],
       reason [str],
+    },
+    CBackendHelperScan {
+      variant_unique,
+      field. ty [LalinC.CBackendType],
+      inclusive [bool],
+      op [LalinCore.BinaryOp],
+      align [number],
+    },
+    CBackendHelperFind {
+      variant_unique,
+      field. ty [LalinC.CBackendType],
+      cmp [LalinCore.CmpOp],
+      align [number],
+    },
+    CBackendHelperReduce {
+      variant_unique,
+      field. ty [LalinC.CBackendType],
+      op [LalinCore.BinaryOp],
+      identity_is_zero [bool],
+      align [number],
     },
     CBackendHelperTrap,
   },
@@ -662,6 +693,92 @@ return schema. LalinC {
     locals [many [LalinC.CBackendLocal]],
     body [LalinC.CBackendFuncBody],
   },
+
+  product. CBackendAnnotationSpine {
+    interned,
+    func_name [LalinC.CBackendName],
+  },
+
+  sum. CBackendLoopDirection {
+    CBackendLoopForward,
+    CBackendLoopBackward,
+    CBackendLoopUnknown,
+  },
+
+  sum. CBackendLoopTailPlan {
+    CBackendTailNone,
+    CBackendTailScalar,
+    CBackendTailMasked,
+    CBackendTailPeel { variant_unique, count [number], },
+  },
+
+  sum. CBackendAlignmentFact {
+    CBackendAlignmentUnknown,
+    CBackendAlignmentKnown { variant_unique, bytes [number], },
+    CBackendAlignmentAssumed { variant_unique, bytes [number], level [str], },
+  },
+
+  product. CBackendBoundsFact {
+    interned,
+    start_offset [number],
+    length_bytes [number],
+  },
+
+  sum. CBackendBranchPolarity {
+    CBackendBranchLikely,
+    CBackendBranchUnlikely,
+  },
+
+  product. CBackendLoopAnnotation {
+    interned,
+    spine [LalinC.CBackendAnnotationSpine],
+    header_label [LalinC.CBackendLabel],
+    body_labels [many [LalinC.CBackendLabel]],
+    back_edge_label [LalinC.CBackendLabel],
+    exit_labels [many [LalinC.CBackendLabel]],
+    induction_local [optional [LalinC.CBackendLocalId]],
+    induction_ty [optional [LalinC.CBackendType]],
+    trip_count [optional [LalinC.CBackendRValue]],
+    direction [LalinC.CBackendLoopDirection],
+    vectorizable [bool],
+    unroll_hint [optional [number]],
+    interleave_hint [optional [number]],
+    tail_plan [LalinC.CBackendLoopTailPlan],
+  },
+
+  product. CBackendPointerAnnotation {
+    interned,
+    spine [LalinC.CBackendAnnotationSpine],
+    local_ptr [LalinC.CBackendLocalId],
+    alignment [LalinC.CBackendAlignmentFact],
+    restrict [bool],
+    non_trapping [bool],
+    bounds_range [optional [LalinC.CBackendBoundsFact]],
+  },
+
+  product. CBackendBranchAnnotation {
+    interned,
+    spine [LalinC.CBackendAnnotationSpine],
+    block_label [LalinC.CBackendLabel],
+    condition_local [optional [LalinC.CBackendLocalId]],
+    polarity [LalinC.CBackendBranchPolarity],
+    reason [str],
+  },
+
+  product. CBackendFuncAnnotations {
+    interned,
+    spine [LalinC.CBackendAnnotationSpine],
+    loops [many [LalinC.CBackendLoopAnnotation]],
+    pointers [many [LalinC.CBackendPointerAnnotation]],
+    branches [many [LalinC.CBackendBranchAnnotation]],
+  },
+
+  product. CBackendUnitAnnotations {
+    interned,
+    module_name [str],
+    funcs [many [LalinC.CBackendFuncAnnotations]],
+  },
+
   product. CBackendUnit {
     interned,
     module_name [str],
