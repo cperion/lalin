@@ -109,133 +109,116 @@ local function bind_context(T)
 
     local function type_name(ty) return ty:stencil_artifact_type_name() end
 
-    local function c_type(ty)
-        local cls = asdl.classof(ty)
-        if cls == Code.CodeTyArray or cls == Code.CodeTyClosure or cls == Code.CodeTyVector or cls == Code.CodeTyImportedCFuncPtr then
-            return ty:stencil_artifact_type_name()
-        end
-        return CEmit.emit_type(select(1, CodeType.code_type_to_c(CEm.CEmitMachine.dummy(), ty)))
-    end
+    -- Leaf methods for stencil artifact naming (eliminate string dispatch)
 
-    local function reduction_name(kind)
-        if kind == Value.ReductionAdd then return "add" end
-        if kind == Value.ReductionMul then return "mul" end
-        if kind == Value.ReductionAnd then return "and" end
-        if kind == Value.ReductionOr then return "or" end
-        if kind == Value.ReductionXor then return "xor" end
-        if kind == Value.ReductionMin then return "min" end
-        if kind == Value.ReductionMax then return "max" end
-        return "reduction"
-    end
+    -- ReductionOp
+    function Value.ReductionAdd:stencil_artifact_name() return "add" end
+    function Value.ReductionMul:stencil_artifact_name() return "mul" end
+    function Value.ReductionAnd:stencil_artifact_name() return "and" end
+    function Value.ReductionOr:stencil_artifact_name() return "or" end
+    function Value.ReductionXor:stencil_artifact_name() return "xor" end
+    function Value.ReductionMin:stencil_artifact_name() return "min" end
+    function Value.ReductionMax:stencil_artifact_name() return "max" end
 
-    local function unary_name(op)
-        if op == Stencil.StencilUnaryIdentity then return "identity" end
-        if op == Stencil.StencilUnaryNeg then return "neg" end
-        if op == Stencil.StencilUnaryBitNot then return "bitnot" end
-        if op == Stencil.StencilUnaryBoolNot then return "boolnot" end
-        return "unary"
-    end
+    -- StencilUnaryOp
+    function Stencil.StencilUnaryIdentity:stencil_artifact_name() return "identity" end
+    function Stencil.StencilUnaryNeg:stencil_artifact_name() return "neg" end
+    function Stencil.StencilUnaryBitNot:stencil_artifact_name() return "bitnot" end
+    function Stencil.StencilUnaryBoolNot:stencil_artifact_name() return "boolnot" end
 
-    local function binary_name(op)
-        if op == Stencil.StencilBinaryAdd then return "add" end
-        if op == Stencil.StencilBinarySub then return "sub" end
-        if op == Stencil.StencilBinaryMul then return "mul" end
-        if op == Stencil.StencilBinaryDiv then return "div" end
-        if op == Stencil.StencilBinaryMod then return "mod" end
-        if op == Stencil.StencilBinaryAnd then return "and" end
-        if op == Stencil.StencilBinaryOr then return "or" end
-        if op == Stencil.StencilBinaryXor then return "xor" end
-        if op == Stencil.StencilBinaryShl then return "shl" end
-        if op == Stencil.StencilBinaryLShr then return "lshr" end
-        if op == Stencil.StencilBinaryAShr then return "ashr" end
-        if op == Stencil.StencilBinaryMin then return "min" end
-        if op == Stencil.StencilBinaryMax then return "max" end
-        return "binary"
-    end
+    -- StencilBinaryOp
+    function Stencil.StencilBinaryAdd:stencil_artifact_name() return "add" end
+    function Stencil.StencilBinarySub:stencil_artifact_name() return "sub" end
+    function Stencil.StencilBinaryMul:stencil_artifact_name() return "mul" end
+    function Stencil.StencilBinaryDiv:stencil_artifact_name() return "div" end
+    function Stencil.StencilBinaryMod:stencil_artifact_name() return "mod" end
+    function Stencil.StencilBinaryAnd:stencil_artifact_name() return "and" end
+    function Stencil.StencilBinaryOr:stencil_artifact_name() return "or" end
+    function Stencil.StencilBinaryXor:stencil_artifact_name() return "xor" end
+    function Stencil.StencilBinaryShl:stencil_artifact_name() return "shl" end
+    function Stencil.StencilBinaryLShr:stencil_artifact_name() return "lshr" end
+    function Stencil.StencilBinaryAShr:stencil_artifact_name() return "ashr" end
+    function Stencil.StencilBinaryMin:stencil_artifact_name() return "min" end
+    function Stencil.StencilBinaryMax:stencil_artifact_name() return "max" end
 
-    local function cmp_name(op)
-        if op == Core.CmpEq then return "eq" end
-        if op == Core.CmpNe then return "ne" end
-        if op == Core.CmpLt then return "lt" end
-        if op == Core.CmpLe then return "le" end
-        if op == Core.CmpGt then return "gt" end
-        if op == Core.CmpGe then return "ge" end
-        return "cmp"
-    end
+    -- CmpOp
+    function Core.CmpEq:stencil_artifact_name() return "eq" end
+    function Core.CmpNe:stencil_artifact_name() return "ne" end
+    function Core.CmpLt:stencil_artifact_name() return "lt" end
+    function Core.CmpLe:stencil_artifact_name() return "le" end
+    function Core.CmpGt:stencil_artifact_name() return "gt" end
+    function Core.CmpGe:stencil_artifact_name() return "ge" end
 
-    local function pred_name(pred)
-        local cls = asdl.classof(pred)
-        if pred == Stencil.StencilPredNonZero or cls == Stencil.StencilPredNonZero then return "nonzero" end
-        if cls == Stencil.StencilPredCompareConst then return cmp_name(pred.cmp) end
-        if cls == Stencil.StencilPredRange then return "range_" .. cmp_name(pred.lower_cmp) .. "_" .. cmp_name(pred.upper_cmp) end
-        if cls == Stencil.StencilPredAnd then return "and" .. tostring(#(pred.terms or {})) end
-        if cls == Stencil.StencilPredOr then return "or" .. tostring(#(pred.terms or {})) end
-        if cls == Stencil.StencilPredNot then return "not_" .. pred_name(pred.term) end
-        if cls == Stencil.StencilPredIsNaN then return "isnan" end
-        if cls == Stencil.StencilPredIsInf then return "isinf" end
-        if cls == Stencil.StencilPredIsFinite then return "isfinite" end
-        return "pred"
-    end
+    -- StencilPredicate
+    function Stencil.StencilPredNonZero:stencil_artifact_name() return "nonzero" end
+    function Stencil.StencilPredCompareConst:stencil_artifact_name() return self.cmp:stencil_artifact_name() end
+    function Stencil.StencilPredRange:stencil_artifact_name() return "range_" .. self.lower_cmp:stencil_artifact_name() .. "_" .. self.upper_cmp:stencil_artifact_name() end
+    function Stencil.StencilPredAnd:stencil_artifact_name() return "and" .. tostring(#(self.terms or {})) end
+    function Stencil.StencilPredOr:stencil_artifact_name() return "or" .. tostring(#(self.terms or {})) end
+    function Stencil.StencilPredNot:stencil_artifact_name() return "not_" .. self.term:stencil_artifact_name() end
+    function Stencil.StencilPredIsNaN:stencil_artifact_name() return "isnan" end
+    function Stencil.StencilPredIsInf:stencil_artifact_name() return "isinf" end
+    function Stencil.StencilPredIsFinite:stencil_artifact_name() return "isfinite" end
 
-    local function select_name(pred)
-        return pred_name(pred)
-    end
+    -- MachineCastOp
+    function Core.MachineCastIdentity:stencil_artifact_name() return "identity" end
+    function Core.MachineCastBitcast:stencil_artifact_name() return "bitcast" end
+    function Core.MachineCastIreduce:stencil_artifact_name() return "ireduce" end
+    function Core.MachineCastSextend:stencil_artifact_name() return "sext" end
+    function Core.MachineCastUextend:stencil_artifact_name() return "uext" end
+    function Core.MachineCastFpromote:stencil_artifact_name() return "fpromote" end
+    function Core.MachineCastFdemote:stencil_artifact_name() return "fdemote" end
+    function Core.MachineCastSToF:stencil_artifact_name() return "stof" end
+    function Core.MachineCastUToF:stencil_artifact_name() return "utof" end
+    function Core.MachineCastFToS:stencil_artifact_name() return "ftos" end
+    function Core.MachineCastFToU:stencil_artifact_name() return "ftou" end
 
-    local function cast_name(op)
-        if op == Core.MachineCastIdentity then return "identity" end
-        if op == Core.MachineCastBitcast then return "bitcast" end
-        if op == Core.MachineCastIreduce then return "ireduce" end
-        if op == Core.MachineCastSextend then return "sext" end
-        if op == Core.MachineCastUextend then return "uext" end
-        if op == Core.MachineCastFpromote then return "fpromote" end
-        if op == Core.MachineCastFdemote then return "fdemote" end
-        if op == Core.MachineCastSToF then return "stof" end
-        if op == Core.MachineCastUToF then return "utof" end
-        if op == Core.MachineCastFToS then return "ftos" end
-        if op == Core.MachineCastFToU then return "ftou" end
-        return "cast"
-    end
+    -- StencilScanMode
+    function Stencil.StencilScanInclusive:stencil_artifact_name() return "inclusive" end
+    function Stencil.StencilScanExclusive:stencil_artifact_name() return "exclusive" end
 
-    local function scan_mode_name(mode)
-        if mode == Stencil.StencilScanInclusive then return "inclusive" end
-        if mode == Stencil.StencilScanExclusive then return "exclusive" end
-        return "scan"
-    end
+    -- StencilCopySemantics
+    function Stencil.StencilCopyNoOverlap:stencil_artifact_name() return "nooverlap" end
+    function Stencil.StencilCopyMayOverlapForward:stencil_artifact_name() return "forward" end
+    function Stencil.StencilCopyMayOverlapBackward:stencil_artifact_name() return "backward" end
+    function Stencil.StencilCopyMemMove:stencil_artifact_name() return "memmove" end
 
-    local function copy_semantics_name(semantics)
-        if semantics == Stencil.StencilCopyNoOverlap then return "nooverlap" end
-        if semantics == Stencil.StencilCopyMayOverlapForward then return "forward" end
-        if semantics == Stencil.StencilCopyMayOverlapBackward then return "backward" end
-        if semantics == Stencil.StencilCopyMemMove then return "memmove" end
-        return "copy"
-    end
+    -- StencilPartitionSemantics
+    function Stencil.StencilPartitionStable:stencil_artifact_name() return "stable" end
+    function Stencil.StencilPartitionUnstable:stencil_artifact_name() return "unstable" end
 
-    local function partition_semantics_name(semantics)
-        if semantics == Stencil.StencilPartitionStable then return "stable" end
-        if semantics == Stencil.StencilPartitionUnstable then return "unstable" end
-        return "partition"
-    end
+    -- StencilScatterConflictSemantics
+    function Stencil.StencilScatterUniqueIndices:stencil_artifact_name() return "unique" end
+    function Stencil.StencilScatterLastWriteWins:stencil_artifact_name() return "last" end
+    function Stencil.StencilScatterConflictUndefined:stencil_artifact_name() return "undefined" end
 
-    local function scatter_conflict_name(conflicts)
-        if conflicts == Stencil.StencilScatterUniqueIndices then return "unique" end
-        if conflicts == Stencil.StencilScatterLastWriteWins then return "last" end
-        if conflicts == Stencil.StencilScatterConflictUndefined then return "undefined" end
-        return "scatter"
-    end
+    -- StencilScatterReduceConflictSemantics
+    function Stencil.StencilScatterReduceSequential:stencil_artifact_name() return "seq" end
+    function Stencil.StencilScatterReduceUniqueIndices:stencil_artifact_name() return "unique" end
+    function Stencil.StencilScatterReduceAtomic:stencil_artifact_name() return "atomic" end
+    function Stencil.StencilScatterReducePrivatized:stencil_artifact_name() return "privatized" end
 
-    local function scatter_reduce_conflict_name(conflicts)
-        if conflicts == Stencil.StencilScatterReduceSequential then return "seq" end
-        if conflicts == Stencil.StencilScatterReduceUniqueIndices then return "unique" end
-        if asdl.classof(conflicts) == Stencil.StencilScatterReduceAtomic then return "atomic" end
-        if conflicts == Stencil.StencilScatterReducePrivatized then return "privatized" end
-        return "scatter_reduce"
-    end
+    -- Replacement one-liner delegates (keep old names for call sites)
+    local function reduction_name(kind) return kind:stencil_artifact_name() end
+    local function unary_name(op) return op:stencil_artifact_name() end
+    local function binary_name(op) return op:stencil_artifact_name() end
+    local function cmp_name(op) return op:stencil_artifact_name() end
+    local function pred_name(pred) return pred:stencil_artifact_name() end
+    local function select_name(pred) return pred:stencil_artifact_name() end
+    local function cast_name(op) return op:stencil_artifact_name() end
+    local function scan_mode_name(mode) return mode:stencil_artifact_name() end
+    local function copy_semantics_name(s) return s:stencil_artifact_name() end
+    local function partition_semantics_name(s) return s:stencil_artifact_name() end
+    local function scatter_conflict_name(c) return c:stencil_artifact_name() end
+    local function scatter_reduce_conflict_name(c) return c:stencil_artifact_name() end
 
     local function proof_list(plan)
-        local eq = plan and plan.body and plan.body.equivalence or nil
-        if asdl.classof(eq) == Kernel.KernelEquivalenceProof then return eq.proofs or {} end
-        return {}
+        local eq = plan and plan.body and plan.body.equivalence
+        return eq and eq:stencil_artifact_proofs() or {}
     end
+
+    function Kernel.KernelEquivalenceProof:stencil_artifact_proofs() return self.proofs or {} end
+    function Kernel.KernelEquivalenceRejected:stencil_artifact_proofs() return {} end
 
     local function reduce_instance_id(elem_ty, result_ty, reduction, stride)
         return Stencil.StencilInstanceId("stencil:reduce_array:" .. type_name(elem_ty) .. ":" .. reduction_name(reduction) .. ":to:" .. type_name(result_ty) .. ":stride" .. tostring(stride))
@@ -276,17 +259,26 @@ local function bind_context(T)
         return "int32_t " .. symbol.text .. "(" .. table.concat(args, ", ") .. ");"
     end
 
-    local function is_int(ty)
-        return asdl.classof(ty) == Code.CodeTyInt
-    end
+    local function is_int(ty) return ty:stencil_artifact_is_int() end
+    local function is_integer_like(ty) return ty:stencil_artifact_is_integer_like() end
+    local function is_float(ty) return ty:stencil_artifact_is_float() end
 
-    local function is_integer_like(ty)
-        return asdl.classof(ty) == Code.CodeTyInt or ty == Code.CodeTyIndex
-    end
-
-    local function is_float(ty)
-        return asdl.classof(ty) == Code.CodeTyFloat
-    end
+    -- Boolean type predicate leaf methods
+    function Code.CodeTyInt:stencil_artifact_is_int() return true end
+    function Code.CodeTyInt:stencil_artifact_is_integer_like() return true end
+    function Code.CodeTyInt:stencil_artifact_is_float() return false end
+    function Code.CodeTyIndex:stencil_artifact_is_int() return false end
+    function Code.CodeTyIndex:stencil_artifact_is_integer_like() return true end
+    function Code.CodeTyIndex:stencil_artifact_is_float() return false end
+    function Code.CodeTyFloat:stencil_artifact_is_int() return false end
+    function Code.CodeTyFloat:stencil_artifact_is_integer_like() return false end
+    function Code.CodeTyFloat:stencil_artifact_is_float() return true end
+    function Code.CodeTyBool8:stencil_artifact_is_int() return false end
+    function Code.CodeTyBool8:stencil_artifact_is_integer_like() return true end
+    function Code.CodeTyBool8:stencil_artifact_is_float() return false end
+    function Code.CodeType:stencil_artifact_is_int() return false end
+    function Code.CodeType:stencil_artifact_is_integer_like() return false end
+    function Code.CodeType:stencil_artifact_is_float() return false end
 
     local function same_source_type(a, b)
         if a == b then return true end
