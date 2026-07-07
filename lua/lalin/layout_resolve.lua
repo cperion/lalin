@@ -46,7 +46,6 @@ local function bind_context(T)
 
     local function index_ty() return Ty.TScalar(C.ScalarIndex) end
 
-    local resolve_place
     local resolve_expr
     local resolve_stmt
 
@@ -208,7 +207,7 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.IndexBasePlace) then
             return (function(self, env, target)
- return single(schema.with(self, { base = one(resolve_place, self.base, env, target) }))
+ return single(schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)) }))
             end)(node, ...)
         elseif schema.isa(node, Tr.IndexBaseView) then
             return (function(self, env, target)
@@ -219,48 +218,40 @@ local function bind_context(T)
         end
     end
 
-    function resolve_place(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.PlaceRef) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.PlaceDeref) then
-            return (function(self, env, target)
- return single(schema.with(self, { base = one(resolve_expr, self.base, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.PlaceDot) then
-            return (function(self, env, target)
-
-            local base = one(resolve_place, self.base, env, target)
-            local base_ty = type_of_place(base)
-            local lookup_ty = base_ty:sem_layout_base_type()
-            if lookup_ty ~= nil and schema.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
-            if lookup_ty ~= nil then
-                local field = only(Sem.FieldByName(self.name, lookup_ty):sem_resolve_field_ref(lookup_ty, env))
-                if schema.classof(field) == Sem.FieldByOffset then return single(Tr.PlaceField(Tr.PlaceTyped(field.ty), base, field)) end
-            end
-            return single(schema.with(self, { base = base }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.PlaceField) then
-            return (function(self, env, target)
-
-            local base = one(resolve_place, self.base, env, target)
-            local base_ty = type_of_place(base)
-            base_ty = base_ty:sem_layout_base_type()
-            if base_ty ~= nil and schema.classof(base_ty) == Ty.TPtr then base_ty = base_ty.elem end
-            local field = self.field
-            if base_ty ~= nil then field = only(self.field:sem_resolve_field_ref(base_ty, env)) end
-            return single(schema.with(self, { base = base, field = field }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.PlaceIndex) then
-            return (function(self, env, target)
- return single(schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)), index = one(resolve_expr, self.index, env, target) }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_place: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.Place:sem_layout_resolve(env, target)
+        return { self }
     end
+
+    function Tr.PlaceDeref:sem_layout_resolve(env, target)
+        return { schema.with(self, { base = one(resolve_expr, self.base, env, target) }) }
+    end
+
+    function Tr.PlaceDot:sem_layout_resolve(env, target)
+        local base = only(self.base:sem_layout_resolve(env, target))
+        local base_ty = type_of_place(base)
+        local lookup_ty = base_ty:sem_layout_base_type()
+        if lookup_ty ~= nil and schema.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
+        if lookup_ty ~= nil then
+            local field = only(Sem.FieldByName(self.name, lookup_ty):sem_resolve_field_ref(lookup_ty, env))
+            if schema.classof(field) == Sem.FieldByOffset then return { Tr.PlaceField(Tr.PlaceTyped(field.ty), base, field) } end
+        end
+        return { schema.with(self, { base = base }) }
+    end
+
+    function Tr.PlaceField:sem_layout_resolve(env, target)
+        local base = only(self.base:sem_layout_resolve(env, target))
+        local base_ty = type_of_place(base)
+        base_ty = base_ty:sem_layout_base_type()
+        if base_ty ~= nil and schema.classof(base_ty) == Ty.TPtr then base_ty = base_ty.elem end
+        local field = self.field
+        if base_ty ~= nil then field = only(self.field:sem_resolve_field_ref(base_ty, env)) end
+        return { schema.with(self, { base = base, field = field }) }
+    end
+
+    function Tr.PlaceIndex:sem_layout_resolve(env, target)
+        return { schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)), index = one(resolve_expr, self.index, env, target) }) }
+    end
+
 
     function Tr.ViewFromExpr:sem_layout_resolve(env, target)
         return { schema.with(self, { base = one(resolve_expr, self.base, env, target) }) }
@@ -378,7 +369,7 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.ExprAddrOf) then
             return (function(self, env, target)
- return single(schema.with(self, { place = one(resolve_place, self.place, env, target) }))
+ return single(schema.with(self, { place = only(self.place:sem_layout_resolve(env, target)) }))
             end)(node, ...)
         elseif schema.isa(node, Tr.ExprDeref) then
             return (function(self, env, target)
@@ -537,7 +528,7 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.StmtSet) then
             return (function(self, env, target)
- return single(schema.with(self, { place = one(resolve_place, self.place, env, target), value = one(resolve_expr, self.value, env, target) }))
+ return single(schema.with(self, { place = only(self.place:sem_layout_resolve(env, target)), value = one(resolve_expr, self.value, env, target) }))
             end)(node, ...)
         elseif schema.isa(node, Tr.StmtAtomicStore) then
             return (function(self, env, target)
@@ -742,7 +733,7 @@ local function bind_context(T)
         resolve_module = resolve_module,
         field = function(field, base_ty, env) return only(field:sem_resolve_field_ref(base_ty, env or empty_env())) end,
         expr = function(expr, env, target) return one(resolve_expr, expr, env or empty_env(), target) end,
-        place = function(place, env, target) return one(resolve_place, place, env or empty_env(), target) end,
+        place = function(place, env, target) return only(place:sem_layout_resolve(env or empty_env(), target)) end,
         module = function(module, env, target) return only(module:sem_layout_resolve(env, target)) end,
     }
 end
