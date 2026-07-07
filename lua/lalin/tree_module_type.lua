@@ -84,44 +84,70 @@ local function bind_context(T)
         return nil
     end
 
-    local function canonical_local_type(mod_name, ty)
-        local cls = schema.classof(ty)
-        if cls == Ty.TNamed and schema.classof(ty.ref) == Ty.TypeRefPath then
-            local name = path_type_name(ty.ref.path)
+    function Ty.Type:tree_module_canonicalize(mod_name)
+        return self
+    end
+
+    function Ty.TNamed:tree_module_canonicalize(mod_name)
+        if schema.classof(self.ref) == Ty.TypeRefPath then
+            local name = path_type_name(self.ref.path)
             if name ~= nil then return Ty.TNamed(Ty.TypeRefGlobal(mod_name, name)) end
-        elseif cls == Ty.THandle and schema.classof(ty.ref) == Ty.TypeRefPath then
-            local name = path_type_name(ty.ref.path)
-            if name ~= nil then return Ty.THandle(Ty.TypeRefGlobal(mod_name, name), ty.repr) end
-        elseif cls == Ty.TPtr then
-            return Ty.TPtr(canonical_local_type(mod_name, ty.elem))
-        elseif cls == Ty.TArray then
-            return Ty.TArray(ty.count, canonical_local_type(mod_name, ty.elem))
-        elseif cls == Ty.TSlice then
-            return Ty.TSlice(canonical_local_type(mod_name, ty.elem))
-        elseif cls == Ty.TView then
-            return Ty.TView(canonical_local_type(mod_name, ty.elem))
-        elseif cls == Ty.TLease then
-            return Ty.TLease(canonical_local_type(mod_name, ty.base), ty.origin)
-        elseif cls == Ty.TOwned then
-            return Ty.TOwned(canonical_local_type(mod_name, ty.base))
-        elseif cls == Ty.TAccess then
-            return Ty.TAccess(ty.access, canonical_local_type(mod_name, ty.base))
-        elseif cls == Ty.TFunc then
-            local params = {}
-            for i = 1, #(ty.params or {}) do params[i] = canonical_local_type(mod_name, ty.params[i]) end
-            return Ty.TFunc(params, canonical_local_type(mod_name, ty.result))
-        elseif cls == Ty.TClosure then
-            local params = {}
-            for i = 1, #(ty.params or {}) do params[i] = canonical_local_type(mod_name, ty.params[i]) end
-            return Ty.TClosure(params, canonical_local_type(mod_name, ty.result))
         end
-        return ty
+        return self
+    end
+
+    function Ty.THandle:tree_module_canonicalize(mod_name)
+        if schema.classof(self.ref) == Ty.TypeRefPath then
+            local name = path_type_name(self.ref.path)
+            if name ~= nil then return Ty.THandle(Ty.TypeRefGlobal(mod_name, name), self.repr) end
+        end
+        return self
+    end
+
+    function Ty.TPtr:tree_module_canonicalize(mod_name)
+        return Ty.TPtr(self.elem:tree_module_canonicalize(mod_name))
+    end
+
+    function Ty.TArray:tree_module_canonicalize(mod_name)
+        return Ty.TArray(self.count, self.elem:tree_module_canonicalize(mod_name))
+    end
+
+    function Ty.TSlice:tree_module_canonicalize(mod_name)
+        return Ty.TSlice(self.elem:tree_module_canonicalize(mod_name))
+    end
+
+    function Ty.TView:tree_module_canonicalize(mod_name)
+        return Ty.TView(self.elem:tree_module_canonicalize(mod_name))
+    end
+
+    function Ty.TLease:tree_module_canonicalize(mod_name)
+        return Ty.TLease(self.base:tree_module_canonicalize(mod_name), self.origin)
+    end
+
+    function Ty.TOwned:tree_module_canonicalize(mod_name)
+        return Ty.TOwned(self.base:tree_module_canonicalize(mod_name))
+    end
+
+    function Ty.TAccess:tree_module_canonicalize(mod_name)
+        return Ty.TAccess(self.access, self.base:tree_module_canonicalize(mod_name))
+    end
+
+    function Ty.TFunc:tree_module_canonicalize(mod_name)
+        local params = {}
+        for i = 1, #(self.params or {}) do params[i] = self.params[i]:tree_module_canonicalize(mod_name) end
+        return Ty.TFunc(params, self.result:tree_module_canonicalize(mod_name))
+    end
+
+    function Ty.TClosure:tree_module_canonicalize(mod_name)
+        local params = {}
+        for i = 1, #(self.params or {}) do params[i] = self.params[i]:tree_module_canonicalize(mod_name) end
+        return Ty.TClosure(params, self.result:tree_module_canonicalize(mod_name))
     end
 
     local function params_type(params, result, mod_name)
         local tys = {}
-        for i = 1, #params do tys[#tys + 1] = canonical_local_type(mod_name or "", params[i].ty) end
-        return Ty.TFunc(tys, canonical_local_type(mod_name or "", result))
+        for i = 1, #params do tys[#tys + 1] = params[i].ty:tree_module_canonicalize(mod_name or "") end
+        return Ty.TFunc(tys, result:tree_module_canonicalize(mod_name or ""))
     end
 
     function func_entry(node, ...)
