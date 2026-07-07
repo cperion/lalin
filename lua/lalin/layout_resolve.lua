@@ -46,10 +46,6 @@ local function bind_context(T)
 
     local function index_ty() return Ty.TScalar(C.ScalarIndex) end
 
-    local type_layout
-    local type_ref_layout
-    local field_in_layout
-    local resolve_field_ref
     local resolve_place
     local resolve_expr
     local resolve_view
@@ -191,25 +187,22 @@ local function bind_context(T)
     end
 
 
-    function resolve_field_ref(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Sem.FieldByOffset) then
-            return (function(field)
- return single(field)
-            end)(node, ...)
-        elseif schema.isa(node, Sem.FieldByName) then
-            return (function(field, base_ty, env)
-
-            local layout = maybe_one(base_ty:sem_layout(env))
-            if layout == nil then return single(field) end
-            local resolved = maybe_one(layout:sem_layout_field(field.field_name))
-            if resolved == nil then return single(field) end
-            return single(Sem.FieldByOffset(resolved.field_name, resolved.offset, resolved.ty, resolved.ty:sem_layout_storage()))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_resolve_field_ref: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Sem.FieldRef:sem_resolve_field_ref(base_ty, env)
+        error("phase lalin_sem_resolve_field_ref: no handler for " .. tostring(schema.classof(self) or type(self)), 2)
     end
+
+    function Sem.FieldByOffset:sem_resolve_field_ref(base_ty, env)
+        return { self }
+    end
+
+    function Sem.FieldByName:sem_resolve_field_ref(base_ty, env)
+        local layout = maybe_one(base_ty:sem_layout(env))
+        if layout == nil then return { self } end
+        local resolved = maybe_one(layout:sem_layout_field(self.field_name))
+        if resolved == nil then return { self } end
+        return { Sem.FieldByOffset(resolved.field_name, resolved.offset, resolved.ty, resolved.ty:sem_layout_storage()) }
+    end
+
 
     local function type_of_place(place)
         local h = place.h
@@ -255,7 +248,7 @@ local function bind_context(T)
             local lookup_ty = base_ty:sem_layout_base_type()
             if lookup_ty ~= nil and schema.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
             if lookup_ty ~= nil then
-                local field = only(resolve_field_ref(Sem.FieldByName(self.name, lookup_ty), lookup_ty, env))
+                local field = only(Sem.FieldByName(self.name, lookup_ty):sem_resolve_field_ref(lookup_ty, env))
                 if schema.classof(field) == Sem.FieldByOffset then return single(Tr.PlaceField(Tr.PlaceTyped(field.ty), base, field)) end
             end
             return single(schema.with(self, { base = base }))
@@ -268,7 +261,7 @@ local function bind_context(T)
             base_ty = base_ty:sem_layout_base_type()
             if base_ty ~= nil and schema.classof(base_ty) == Ty.TPtr then base_ty = base_ty.elem end
             local field = self.field
-            if base_ty ~= nil then field = only(resolve_field_ref(self.field, base_ty, env)) end
+            if base_ty ~= nil then field = only(self.field:sem_resolve_field_ref(base_ty, env)) end
             return single(schema.with(self, { base = base, field = field }))
             end)(node, ...)
         elseif schema.isa(node, Tr.PlaceIndex) then
@@ -371,7 +364,7 @@ local function bind_context(T)
             local lookup_ty = base_ty:sem_layout_base_type()
             if lookup_ty ~= nil and schema.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
             if lookup_ty ~= nil then
-                local field = only(resolve_field_ref(Sem.FieldByName(self.name, lookup_ty), lookup_ty, env))
+                local field = only(Sem.FieldByName(self.name, lookup_ty):sem_resolve_field_ref(lookup_ty, env))
                 if schema.classof(field) == Sem.FieldByOffset then return single(Tr.ExprField(Tr.ExprTyped(field.ty), base, field)) end
             end
             return single(schema.with(self, { base = base }))
@@ -431,7 +424,7 @@ local function bind_context(T)
             base_ty = base_ty:sem_layout_base_type()
             if base_ty ~= nil and schema.classof(base_ty) == Ty.TPtr then base_ty = base_ty.elem end
             local field = self.field
-            if base_ty ~= nil then field = only(resolve_field_ref(self.field, base_ty, env)) end
+            if base_ty ~= nil then field = only(self.field:sem_resolve_field_ref(base_ty, env)) end
             return single(schema.with(self, { base = base, field = field }))
             end)(node, ...)
         elseif schema.isa(node, Tr.ExprIndex) then
@@ -788,13 +781,10 @@ local function bind_context(T)
 
     return {
         empty_env = empty_env,
-        type_layout = type_layout,
-        field_in_layout = field_in_layout,
-        resolve_field_ref = resolve_field_ref,
         resolve_expr = resolve_expr,
         resolve_place = resolve_place,
         resolve_module = resolve_module,
-        field = function(field, base_ty, env) return only(resolve_field_ref(field, base_ty, env or empty_env())) end,
+        field = function(field, base_ty, env) return only(field:sem_resolve_field_ref(base_ty, env or empty_env())) end,
         expr = function(expr, env, target) return one(resolve_expr, expr, env or empty_env(), target) end,
         place = function(place, env, target) return one(resolve_place, place, env or empty_env(), target) end,
         module = function(module, env, target) return one(resolve_module, module, env, target) end,
