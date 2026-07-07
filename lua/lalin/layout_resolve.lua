@@ -47,7 +47,6 @@ local function bind_context(T)
     local function index_ty() return Ty.TScalar(C.ScalarIndex) end
 
     local resolve_expr
-    local resolve_stmt
 
     local function one(phase, node, env, target)
         return only(phase(node, env, target))
@@ -67,7 +66,7 @@ local function bind_context(T)
 
     local function map_stmts(xs, env, target)
         local out = {}
-        for i = 1, #xs do out[#out + 1] = one(resolve_stmt, xs[i], env, target) end
+        for i = 1, #xs do out[#out + 1] = only(xs[i]:sem_layout_resolve(env, target)) end
         return out
     end
 
@@ -516,80 +515,66 @@ local function bind_context(T)
     end
 
 
-    function resolve_stmt(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.StmtLet) then
-            return (function(self, env, target)
- return single(schema.with(self, { init = one(resolve_expr, self.init, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtVar) then
-            return (function(self, env, target)
- return single(schema.with(self, { init = one(resolve_expr, self.init, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtSet) then
-            return (function(self, env, target)
- return single(schema.with(self, { place = only(self.place:sem_layout_resolve(env, target)), value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtAtomicStore) then
-            return (function(self, env, target)
- return single(schema.with(self, { addr = one(resolve_expr, self.addr, env, target), value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtAtomicFence) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtExpr) then
-            return (function(self, env, target)
- return single(schema.with(self, { expr = one(resolve_expr, self.expr, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtAssert) then
-            return (function(self, env, target)
- return single(schema.with(self, { cond = one(resolve_expr, self.cond, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtIf) then
-            return (function(self, env, target)
- return single(schema.with(self, { cond = one(resolve_expr, self.cond, env, target), then_body = map_stmts(self.then_body, env, target), else_body = map_stmts(self.else_body, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtSwitch) then
-            return (function(self, env, target)
- local arms = {}; for i = 1, #self.arms do arms[#arms + 1] = schema.with(self.arms[i], { body = map_stmts(self.arms[i].body, env, target) }) end; local var_arms = {}; for i = 1, #(self.variant_arms or {}) do var_arms[#var_arms + 1] = schema.with(self.variant_arms[i], { body = map_stmts(self.variant_arms[i].body, env, target) }) end; return single(schema.with(self, { value = one(resolve_expr, self.value, env, target), arms = arms, variant_arms = var_arms, default_body = map_stmts(self.default_body, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtJump) then
-            return (function(self, env, target)
- return single(schema.with(self, { args = map_jump_args(self.args, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtJumpCont) then
-            return (function(self, env, target)
- return single(schema.with(self, { args = map_jump_args(self.args, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtYieldVoid) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtYieldValue) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtReturnVoid) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtReturnValue) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtControl) then
-            return (function(self, env, target)
- return single(schema.with(self, { region = only(self.region:sem_layout_resolve(env, target)) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.StmtTrap) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_stmt: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.Stmt:sem_layout_resolve(env, target)
+        return { self }
     end
+
+    function Tr.StmtLet:sem_layout_resolve(env, target)
+        return { schema.with(self, { init = one(resolve_expr, self.init, env, target) }) }
+    end
+
+    function Tr.StmtVar:sem_layout_resolve(env, target)
+        return { schema.with(self, { init = one(resolve_expr, self.init, env, target) }) }
+    end
+
+    function Tr.StmtSet:sem_layout_resolve(env, target)
+        return { schema.with(self, { place = only(self.place:sem_layout_resolve(env, target)), value = one(resolve_expr, self.value, env, target) }) }
+    end
+
+    function Tr.StmtAtomicStore:sem_layout_resolve(env, target)
+        return { schema.with(self, { addr = one(resolve_expr, self.addr, env, target), value = one(resolve_expr, self.value, env, target) }) }
+    end
+
+    function Tr.StmtExpr:sem_layout_resolve(env, target)
+        return { schema.with(self, { expr = one(resolve_expr, self.expr, env, target) }) }
+    end
+
+    function Tr.StmtAssert:sem_layout_resolve(env, target)
+        return { schema.with(self, { cond = one(resolve_expr, self.cond, env, target) }) }
+    end
+
+    function Tr.StmtIf:sem_layout_resolve(env, target)
+        return { schema.with(self, { cond = one(resolve_expr, self.cond, env, target), then_body = map_stmts(self.then_body, env, target), else_body = map_stmts(self.else_body, env, target) }) }
+    end
+
+    function Tr.StmtSwitch:sem_layout_resolve(env, target)
+        local arms = {}
+        for i = 1, #self.arms do arms[#arms + 1] = schema.with(self.arms[i], { body = map_stmts(self.arms[i].body, env, target) }) end
+        local var_arms = {}
+        for i = 1, #(self.variant_arms or {}) do var_arms[#var_arms + 1] = schema.with(self.variant_arms[i], { body = map_stmts(self.variant_arms[i].body, env, target) }) end
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target), arms = arms, variant_arms = var_arms, default_body = map_stmts(self.default_body, env, target) }) }
+    end
+
+    function Tr.StmtJump:sem_layout_resolve(env, target)
+        return { schema.with(self, { args = map_jump_args(self.args, env, target) }) }
+    end
+
+    function Tr.StmtJumpCont:sem_layout_resolve(env, target)
+        return { schema.with(self, { args = map_jump_args(self.args, env, target) }) }
+    end
+
+    function Tr.StmtYieldValue:sem_layout_resolve(env, target)
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target) }) }
+    end
+
+    function Tr.StmtReturnValue:sem_layout_resolve(env, target)
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target) }) }
+    end
+
+    function Tr.StmtControl:sem_layout_resolve(env, target)
+        return { schema.with(self, { region = only(self.region:sem_layout_resolve(env, target)) }) }
+    end
+
 
     function Tr.Contract:sem_layout_resolve(env, target)
         return self
