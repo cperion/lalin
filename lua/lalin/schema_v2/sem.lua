@@ -1,0 +1,138 @@
+local S = require("lalin.schema.dsl")
+S.use()
+
+return schema. LalinSem {
+  sum. FieldRef {
+    FieldByName { variant_unique, field_name [str], field. ty [LalinType.Type], },
+    FieldByOffset {
+      variant_unique,
+      field_name [str],
+      offset [number],
+      field. ty [LalinType.Type],
+      storage [LalinHost.HostFieldRep],
+    },
+  },
+  product. FieldLayout {
+    interned,
+    field_name [str],
+    offset [number],
+    field. ty [LalinType.Type],
+  },
+  product. MemLayout { interned, size [number], align [number], },
+  sum. TypeLayout {
+    LayoutNamed {
+      variant_unique,
+      module_name [str],
+      type_name [str],
+      fields [many [LalinSem.FieldLayout]],
+      size [number],
+      align [number],
+    },
+    LayoutLocal {
+      variant_unique,
+      sym [LalinCore.TypeSym],
+      fields [many [LalinSem.FieldLayout]],
+      size [number],
+      align [number],
+    },
+  },
+  product. LayoutEnv { interned, layouts [many [LalinSem.TypeLayout]], },
+  product. ConstFieldValue {
+    interned,
+    field. name [str],
+    field. value [LalinSem.ConstValue],
+  },
+  sum. ConstValue {
+    ConstInt { variant_unique, field. ty [LalinType.Type], raw [str], },
+    ConstFloat { variant_unique, field. ty [LalinType.Type], raw [str], },
+    ConstBool { variant_unique, field. value [bool], },
+    ConstNil { variant_unique, field. ty [LalinType.Type], },
+    ConstAgg {
+      variant_unique,
+      field. ty [LalinType.Type],
+      fields [many [LalinSem.ConstFieldValue]],
+    },
+    ConstArray {
+      variant_unique,
+      elem_ty [LalinType.Type],
+      elems [many [LalinSem.ConstValue]],
+    },
+  },
+  product. ConstLocalEntry {
+    interned,
+    binding [LalinBind.Binding],
+    field. value [LalinSem.ConstValue],
+  },
+  product. ConstLocalEnv { interned, entries [many [LalinSem.ConstLocalEntry]], },
+  product. ConstEvalInput {
+    interned,
+    const_env [LalinBind.ConstEnv],
+    local_env [LalinSem.ConstLocalEnv],
+  },
+  sum. ConstExprResult {
+    ConstKnown { variant_unique, field. value [LalinSem.ConstValue], },
+    ConstNotFoldable { variant_unique, reason [str], },
+    ConstRejected { variant_unique, reason [str], },
+  },
+  sum. ConstStmtFlow {
+    ConstFallsThrough {
+      variant_unique,
+      env [LalinSem.ConstLocalEnv],
+    },
+    ConstReturnVoid {
+      variant_unique,
+      env [LalinSem.ConstLocalEnv],
+    },
+    ConstReturnValue {
+      variant_unique,
+      env [LalinSem.ConstLocalEnv],
+      field. value [LalinSem.ConstValue],
+    },
+    ConstYieldVoid {
+      variant_unique,
+      env [LalinSem.ConstLocalEnv],
+    },
+    ConstYieldValue {
+      variant_unique,
+      env [LalinSem.ConstLocalEnv],
+      field. value [LalinSem.ConstValue],
+    },
+    ConstJump {
+      variant_unique,
+      env [LalinSem.ConstLocalEnv],
+      target [str],
+    },
+  },
+  sum. FlowOutcome {
+    FlowUnknown,
+    FlowFallsThrough,
+    FlowJumps,
+    FlowYields,
+    FlowReturns,
+    FlowTerminates,
+  },
+  product. CaptureEntry { interned, field. name [str], ty [LalinType.Type], offset [number], size [number], },
+  product. ClosureScopeEntry { interned, field. name [str], ty [LalinType.Type], },
+  -- ClosureHelperVariant: typed wrapper for the helper items passed through closure rewrite.
+  -- Replaces bare `helpers [many [LalinTree.Item]]` in ClosureRewriteInput.
+  sum. ClosureHelperVariant {
+    ClosureHelperFunc { name [str], params [many [LalinType.Param]], result [LalinType.Type], body [many [LalinTree.Stmt]], },
+    ClosureHelperExtern { name [str], symbol [str], params [many [LalinType.Param]], result [LalinType.Type], },
+  },
+  product. ClosureHelperItem { interned, func_or_extern [LalinSem.ClosureHelperVariant], },
+  product. ClosureRewriteInput {
+    interned,
+    module_name [str],
+    owner [str],
+    counter [number],
+    -- Fixed: helpers [many [LalinTree.Item]] → helpers [many [LalinSem.ClosureHelperItem]]
+    helpers [many [LalinSem.ClosureHelperItem]],
+  },
+  product. TreeModuleEntryInput { interned, mod_name [str], },
+  product. TreeModuleLayoutInput {
+    interned,
+    mod_name [str],
+    env [LalinSem.LayoutEnv],
+    target [LalinHost.HostTargetModel],
+  },
+}
