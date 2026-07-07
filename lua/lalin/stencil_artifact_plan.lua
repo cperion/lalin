@@ -175,6 +175,194 @@ local function bind_context(T)
     function Stencil.StencilProducerShape:stencil_artifact_range_step() return nil end
     function Stencil.StencilProducerShape:stencil_artifact_producer_tag() return "" end
 
+    -- canonically normalize a producer shape into a fresh Producer
+    function Stencil.StencilProducerShape:stencil_artifact_canonical_producer()
+        return Stencil.StencilProducer(nil, self)
+    end
+    function Stencil.StencilProduceRange1D:stencil_artifact_canonical_producer()
+        return Stencil.StencilProducer(
+            nil,
+            Stencil.StencilProduceRange1D(self.index_ty, nil, nil, self.step, self.order)
+        )
+    end
+    function Stencil.StencilProduceRangeND:stencil_artifact_canonical_producer()
+        local axes = {}
+        for i, axis in ipairs(self.axes or {}) do axes[i] = canonical_axis(axis) end
+        return Stencil.StencilProducer(nil, Stencil.StencilProduceRangeND(axes))
+    end
+    function Stencil.StencilProduceWindowND:stencil_artifact_canonical_producer()
+        local axes = {}
+        for i, axis in ipairs(self.axes or {}) do axes[i] = canonical_axis(axis) end
+        return Stencil.StencilProducer(nil, Stencil.StencilProduceWindowND(axes, self.windows or {}))
+    end
+    function Stencil.StencilProduceTiledND:stencil_artifact_canonical_producer()
+        local axes = {}
+        for i, axis in ipairs(self.axes or {}) do axes[i] = canonical_axis(axis) end
+        return Stencil.StencilProducer(nil, Stencil.StencilProduceTiledND(axes, self.tile_sizes or {}))
+    end
+
+    -- number of producer axes (rank)
+    function Stencil.StencilProducerShape:stencil_artifact_producer_axis_count() return 0 end
+    function Stencil.StencilProduceRange1D:stencil_artifact_producer_axis_count() return 1 end
+    function Stencil.StencilProduceRangeND:stencil_artifact_producer_axis_count() return #(self.axes or {}) end
+    function Stencil.StencilProduceWindowND:stencil_artifact_producer_axis_count() return #(self.axes or {}) end
+    function Stencil.StencilProduceTiledND:stencil_artifact_producer_axis_count() return #(self.axes or {}) end
+
+    -- validate producer shape; returns nil on success, error string on failure
+    function Stencil.StencilProducerShape:stencil_artifact_producer_reject_reason()
+        return "unknown stencil producer kind"
+    end
+    function Stencil.StencilProduceRange1D:stencil_artifact_producer_reject_reason()
+        if (tonumber(self.step) or 0) <= 0 then return "1D stencil producer step must be a positive compile-time constant" end
+        return nil
+    end
+    function Stencil.StencilProduceRangeND:stencil_artifact_producer_reject_reason()
+        if #(self.axes or {}) == 0 then return "ND stencil producer requires at least one axis" end
+        for i, axis in ipairs(self.axes or {}) do
+            local reason = producer_axis_invalid_reason(axis, i)
+            if reason ~= nil then return reason end
+        end
+        return nil
+    end
+    function Stencil.StencilProduceWindowND:stencil_artifact_producer_reject_reason()
+        if #(self.axes or {}) == 0 then return "ND stencil producer requires at least one axis" end
+        for i, axis in ipairs(self.axes or {}) do
+            local reason = producer_axis_invalid_reason(axis, i)
+            if reason ~= nil then return reason end
+        end
+        if #(self.windows or {}) ~= #(self.axes or {}) then
+            return "windowed stencil producer requires one window per axis"
+        end
+        for i, window in ipairs(self.windows or {}) do
+            local reason = producer_window_invalid_reason(window, i)
+            if reason ~= nil then return reason end
+        end
+        return nil
+    end
+    function Stencil.StencilProduceTiledND:stencil_artifact_producer_reject_reason()
+        if #(self.axes or {}) == 0 then return "ND stencil producer requires at least one axis" end
+        for i, axis in ipairs(self.axes or {}) do
+            local reason = producer_axis_invalid_reason(axis, i)
+            if reason ~= nil then return reason end
+        end
+        if #(self.tile_sizes or {}) ~= #(self.axes or {}) then
+            return "tiled stencil producer requires one tile size per axis"
+        end
+        for i, tile in ipairs(self.tile_sizes or {}) do
+            if (tonumber(tile) or 0) <= 0 then
+                return "tiled stencil producer tile size " .. tostring(i) .. " must be positive"
+            end
+        end
+        return nil
+    end
+
+    -- whether the producer shape can be materialized (forward iteration only)
+    function Stencil.StencilProducerShape:stencil_artifact_is_materialized() return false end
+    function Stencil.StencilProduceRange1D:stencil_artifact_is_materialized() return true end
+    function Stencil.StencilProduceRangeND:stencil_artifact_is_materialized()
+        return producer_axes_forward(self.axes)
+    end
+    function Stencil.StencilProduceWindowND:stencil_artifact_is_materialized()
+        return producer_axes_forward(self.axes)
+    end
+    function Stencil.StencilProduceTiledND:stencil_artifact_is_materialized()
+        return producer_axes_forward(self.axes)
+    end
+
+    -- materializer reject reason (nil = ok)
+    function Stencil.StencilProducerShape:stencil_artifact_materializer_reject_reason()
+        return "unknown stencil producer kind"
+    end
+    function Stencil.StencilProduceRange1D:stencil_artifact_materializer_reject_reason() return nil end
+    function Stencil.StencilProduceRangeND:stencil_artifact_materializer_reject_reason()
+        if not producer_axes_forward(self.axes) then
+            return "backward ND range axes are represented but not materialized yet"
+        end
+        return nil
+    end
+    function Stencil.StencilProduceWindowND:stencil_artifact_materializer_reject_reason()
+        if not producer_axes_forward(self.axes) then
+            return "backward windowed ND axes are represented but not materialized yet"
+        end
+        return nil
+    end
+    function Stencil.StencilProduceTiledND:stencil_artifact_materializer_reject_reason()
+        if not producer_axes_forward(self.axes) then
+            return "backward tiled ND axes are represented but not materialized yet"
+        end
+        return nil
+    end
+
+    -- producer tag (human-readable key suffix)
+    function Stencil.StencilProduceRangeND:stencil_artifact_producer_tag()
+        local axes = self.axes or {}
+        local steps, non_unit = {}, false
+        for i, axis in ipairs(axes) do
+            local step = tonumber(axis.step) or 1
+            steps[i] = tostring(step)
+            if step ~= 1 then non_unit = true end
+        end
+        local suffix = non_unit and ("_s" .. table.concat(steps, "x")) or ""
+        return "range_nd" .. tostring(#axes) .. suffix
+    end
+    function Stencil.StencilProduceWindowND:stencil_artifact_producer_tag()
+        local axes = self.axes or {}
+        local steps, non_unit = {}, false
+        for i, axis in ipairs(axes) do
+            local step = tonumber(axis.step) or 1
+            steps[i] = tostring(step)
+            if step ~= 1 then non_unit = true end
+        end
+        local suffix = non_unit and ("_s" .. table.concat(steps, "x")) or ""
+        return "window_nd" .. tostring(#axes) .. suffix
+    end
+    function Stencil.StencilProduceTiledND:stencil_artifact_producer_tag()
+        local axes = self.axes or {}
+        local steps, non_unit = {}, false
+        for i, axis in ipairs(axes) do
+            local step = tonumber(axis.step) or 1
+            steps[i] = tostring(step)
+            if step ~= 1 then non_unit = true end
+        end
+        local suffix = non_unit and ("_s" .. table.concat(steps, "x")) or ""
+        return "tiled_nd" .. tostring(#axes) .. suffix
+    end
+
+    -- append ABI types and C arg decls for a producer's shape
+    function Stencil.StencilProducerShape:stencil_artifact_append_producer_params(abi, args)
+        error("stencil_artifact_plan: unsupported producer ABI: unknown shape", 3)
+    end
+    function Stencil.StencilProduceRange1D:stencil_artifact_append_producer_params(abi, args)
+        abi[#abi + 1] = i32_ty()
+        abi[#abi + 1] = i32_ty()
+        args[#args + 1] = "int32_t start"
+        args[#args + 1] = "int32_t stop"
+    end
+    function Stencil.StencilProduceRangeND:stencil_artifact_append_producer_params(abi, args)
+        for axis_index = 1, #(self.axes or {}) do
+            abi[#abi + 1] = i32_ty()
+            abi[#abi + 1] = i32_ty()
+            args[#args + 1] = "int32_t " .. producer_param_name(axis_index, "start")
+            args[#args + 1] = "int32_t " .. producer_param_name(axis_index, "stop")
+        end
+    end
+    function Stencil.StencilProduceWindowND:stencil_artifact_append_producer_params(abi, args)
+        for axis_index = 1, #(self.axes or {}) do
+            abi[#abi + 1] = i32_ty()
+            abi[#abi + 1] = i32_ty()
+            args[#args + 1] = "int32_t " .. producer_param_name(axis_index, "start")
+            args[#args + 1] = "int32_t " .. producer_param_name(axis_index, "stop")
+        end
+    end
+    function Stencil.StencilProduceTiledND:stencil_artifact_append_producer_params(abi, args)
+        for axis_index = 1, #(self.axes or {}) do
+            abi[#abi + 1] = i32_ty()
+            abi[#abi + 1] = i32_ty()
+            args[#args + 1] = "int32_t " .. producer_param_name(axis_index, "start")
+            args[#args + 1] = "int32_t " .. producer_param_name(axis_index, "stop")
+        end
+    end
+
     -- StencilSchedule leaf methods
     function Stencil.StencilScheduleVector:stencil_artifact_is_vector() return true end
     function Stencil.StencilScheduleVector:stencil_artifact_is_scalar() return false end
@@ -601,29 +789,8 @@ local function bind_context(T)
 
     local function canonical_producer(producer)
         local shape = producer and producer.shape or nil
-        local cls = asdl.classof(shape)
-        if cls == Stencil.StencilProduceRange1D then
-            return Stencil.StencilProducer(
-                nil,
-                Stencil.StencilProduceRange1D(shape.index_ty, nil, nil, shape.step, shape.order)
-            )
-        end
-        if cls == Stencil.StencilProduceRangeND then
-            local axes = {}
-            for i, axis in ipairs(shape.axes or {}) do axes[i] = canonical_axis(axis) end
-            return Stencil.StencilProducer(nil, Stencil.StencilProduceRangeND(axes))
-        end
-        if cls == Stencil.StencilProduceWindowND then
-            local axes = {}
-            for i, axis in ipairs(shape.axes or {}) do axes[i] = canonical_axis(axis) end
-            return Stencil.StencilProducer(nil, Stencil.StencilProduceWindowND(axes, shape.windows or {}))
-        end
-        if cls == Stencil.StencilProduceTiledND then
-            local axes = {}
-            for i, axis in ipairs(shape.axes or {}) do axes[i] = canonical_axis(axis) end
-            return Stencil.StencilProducer(nil, Stencil.StencilProduceTiledND(axes, shape.tile_sizes or {}))
-        end
-        return producer
+        if shape == nil then return producer end
+        return shape:stencil_artifact_canonical_producer()
     end
 
     local function producer_from_attrs(stride, attrs)
@@ -817,10 +984,8 @@ local function bind_context(T)
 
     local function producer_axis_count(producer)
         local shape = producer_shape(producer)
-        local cls = asdl.classof(shape)
-        if cls == Stencil.StencilProduceRange1D then return 1 end
-        if cls == Stencil.StencilProduceRangeND or cls == Stencil.StencilProduceWindowND or cls == Stencil.StencilProduceTiledND then return #(shape.axes or {}) end
-        return 0
+        if shape == nil then return 0 end
+        return shape:stencil_artifact_producer_axis_count()
     end
 
     local function axis_ref_invalid_reason(axis, producer, site)
@@ -859,35 +1024,8 @@ local function bind_context(T)
 
     local function producer_shape_reject_reason(producer)
         local shape = producer_shape(producer)
-        local cls = asdl.classof(shape)
-        if cls == Stencil.StencilProduceRange1D then
-            if (tonumber(shape.step) or 0) <= 0 then return "1D stencil producer step must be a positive compile-time constant" end
-            return nil
-        end
-        if cls == Stencil.StencilProduceRangeND or cls == Stencil.StencilProduceWindowND or cls == Stencil.StencilProduceTiledND then
-            if #(shape.axes or {}) == 0 then return "ND stencil producer requires at least one axis" end
-            for i, axis in ipairs(shape.axes or {}) do
-                local reason = producer_axis_invalid_reason(axis, i)
-                if reason ~= nil then return reason end
-            end
-            if cls == Stencil.StencilProduceWindowND and #(shape.windows or {}) ~= #(shape.axes or {}) then
-                return "windowed stencil producer requires one window per axis"
-            end
-            if cls == Stencil.StencilProduceWindowND then
-                for i, window in ipairs(shape.windows or {}) do
-                    local reason = producer_window_invalid_reason(window, i)
-                    if reason ~= nil then return reason end
-                end
-            end
-            if cls == Stencil.StencilProduceTiledND then
-                if #(shape.tile_sizes or {}) ~= #(shape.axes or {}) then return "tiled stencil producer requires one tile size per axis" end
-                for i, tile in ipairs(shape.tile_sizes or {}) do
-                    if (tonumber(tile) or 0) <= 0 then return "tiled stencil producer tile size " .. tostring(i) .. " must be positive" end
-                end
-            end
-            return nil
-        end
-        return "unknown stencil producer kind"
+        if shape == nil then return nil end
+        return shape:stencil_artifact_producer_reject_reason()
     end
 
     local function producer_shape_supported(producer)
@@ -904,35 +1042,14 @@ local function bind_context(T)
     local function producer_materialized(producer)
         local shape = producer_shape(producer)
         if not producer_shape_supported(producer) then return false end
-        local cls = asdl.classof(shape)
-        if cls == Stencil.StencilProduceRange1D then return true end
-        if cls == Stencil.StencilProduceRangeND or cls == Stencil.StencilProduceWindowND or cls == Stencil.StencilProduceTiledND then
-            return producer_axes_forward(shape.axes)
-        end
-        return false
+        return shape:stencil_artifact_is_materialized()
     end
 
     local function producer_materializer_reject_reason(producer)
         local shape = producer_shape(producer)
         local shape_reason = producer_shape_reject_reason(producer)
         if shape_reason ~= nil then return shape_reason end
-        local cls = asdl.classof(shape)
-        if cls == Stencil.StencilProduceRange1D then
-            return nil
-        end
-        if cls == Stencil.StencilProduceRangeND then
-            if not producer_axes_forward(shape.axes) then return "backward ND range axes are represented but not materialized yet" end
-            return nil
-        end
-        if cls == Stencil.StencilProduceWindowND then
-            if not producer_axes_forward(shape.axes) then return "backward windowed ND axes are represented but not materialized yet" end
-            return nil
-        end
-        if cls == Stencil.StencilProduceTiledND then
-            if not producer_axes_forward(shape.axes) then return "backward tiled ND axes are represented but not materialized yet" end
-            return nil
-        end
-        return "unknown stencil producer kind"
+        return shape:stencil_artifact_materializer_reject_reason()
     end
 
     local function unsupported_producer_reject(producer)
@@ -1973,46 +2090,13 @@ local function bind_context(T)
 
     function producer_tag(producer)
         local shape = producer_shape(producer)
-        local cls = asdl.classof(shape)
-        if cls == Stencil.StencilProduceRange1D then
-            return (shape.order == Stencil.StencilProducerBackward and "b" or "f") .. "s" .. tostring(shape.step)
-        end
-        local function nd_step_suffix(axes)
-            local steps, non_unit = {}, false
-            for i, axis in ipairs(axes or {}) do
-                local step = tonumber(axis.step) or 1
-                steps[i] = tostring(step)
-                if step ~= 1 then non_unit = true end
-            end
-            return non_unit and ("_s" .. table.concat(steps, "x")) or ""
-        end
-        if cls == Stencil.StencilProduceRangeND then return "range_nd" .. tostring(#(shape.axes or {})) .. nd_step_suffix(shape.axes) end
-        if cls == Stencil.StencilProduceWindowND then return "window_nd" .. tostring(#(shape.axes or {})) .. nd_step_suffix(shape.axes) end
-        if cls == Stencil.StencilProduceTiledND then return "tiled_nd" .. tostring(#(shape.axes or {})) .. nd_step_suffix(shape.axes) end
-        return "producer"
+        if shape == nil then return "producer" end
+        return shape:stencil_artifact_producer_tag()
     end
 
     function append_producer_params(producer, abi, args)
         local shape = producer_shape(producer)
-        local cls = asdl.classof(shape)
-        if cls == Stencil.StencilProduceRange1D then
-            abi[#abi + 1] = i32_ty()
-            abi[#abi + 1] = i32_ty()
-            args[#args + 1] = "int32_t start"
-            args[#args + 1] = "int32_t stop"
-            return
-        end
-        if cls == Stencil.StencilProduceRangeND or cls == Stencil.StencilProduceWindowND or cls == Stencil.StencilProduceTiledND then
-            for axis_index = 1, #(shape.axes or {}) do
-                abi[#abi + 1] = i32_ty()
-                abi[#abi + 1] = i32_ty()
-                args[#args + 1] = "int32_t " .. producer_param_name(axis_index, "start")
-                args[#args + 1] = "int32_t " .. producer_param_name(axis_index, "stop")
-            end
-            return
-        end
-        local reason = producer_materializer_reject_reason(producer)
-        error("stencil_artifact_plan: unsupported producer ABI: " .. tostring(reason), 3)
+        shape:stencil_artifact_append_producer_params(abi, args)
     end
 
     function descriptor_abi_args(desc, trailing)
