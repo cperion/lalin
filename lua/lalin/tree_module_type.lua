@@ -148,61 +148,42 @@ local function bind_context(T)
         return Ty.TFunc(tys, result:tree_module_canonicalize(mod_name or ""))
     end
 
-    function func_entry(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.FuncLocal) then
-            return (function(self, mod_name)
- return single(B.ValueEntry(self.name, B.Binding(C.Id("func:" .. mod_name .. ":" .. self.name), self.name, params_type(self.params, self.result, mod_name), B.BindingRoleGlobalFunc(mod_name, self.name))))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.FuncExport) then
-            return (function(self, mod_name)
- return single(B.ValueEntry(self.name, B.Binding(C.Id("func:" .. mod_name .. ":" .. self.name), self.name, params_type(self.params, self.result, mod_name), B.BindingRoleGlobalFunc(mod_name, self.name))))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.FuncLocalContract) then
-            return (function(self, mod_name)
- return single(B.ValueEntry(self.name, B.Binding(C.Id("func:" .. mod_name .. ":" .. self.name), self.name, params_type(self.params, self.result, mod_name), B.BindingRoleGlobalFunc(mod_name, self.name))))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.FuncExportContract) then
-            return (function(self, mod_name)
- return single(B.ValueEntry(self.name, B.Binding(C.Id("func:" .. mod_name .. ":" .. self.name), self.name, params_type(self.params, self.result, mod_name), B.BindingRoleGlobalFunc(mod_name, self.name))))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_func_value_entry: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.Func:tree_module_func_entry(input)
+        error("phase lalin_tree_func_value_entry: no handler for " .. tostring(schema.classof(self) or type(self)), 2)
     end
 
-    function extern_entry(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ExternFunc) then
-            return (function(self)
- return single(B.ValueEntry(self.name, B.Binding(C.Id("extern:" .. self.name), self.name, params_type(self.params, self.result, ""), B.BindingRoleExtern(self.symbol))))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_extern_value_entry: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.FuncLocal:tree_module_func_entry(input)
+        local ty = params_type(self.params, self.result, input.mod_name)
+        return { B.ValueEntry(self.name, B.Binding(C.Id("func:" .. input.mod_name .. ":" .. self.name), self.name, ty, B.BindingRoleGlobalFunc(input.mod_name, self.name))) }
     end
 
-    function const_entry(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ConstItem) then
-            return (function(self, mod_name)
- return single(B.ValueEntry(self.name, B.Binding(C.Id("const:" .. mod_name .. ":" .. self.name), self.name, self.ty, B.BindingRoleGlobalConst(mod_name, self.name))))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_const_value_entry: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.FuncExport:tree_module_func_entry(input)
+        local ty = params_type(self.params, self.result, input.mod_name)
+        return { B.ValueEntry(self.name, B.Binding(C.Id("func:" .. input.mod_name .. ":" .. self.name), self.name, ty, B.BindingRoleGlobalFunc(input.mod_name, self.name))) }
     end
 
-    function static_entry(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.StaticItem) then
-            return (function(self, mod_name)
- return single(B.ValueEntry(self.name, B.Binding(C.Id("static:" .. mod_name .. ":" .. self.name), self.name, self.ty, B.BindingRoleGlobalStatic(mod_name, self.name))))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_static_value_entry: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.FuncLocalContract:tree_module_func_entry(input)
+        local ty = params_type(self.params, self.result, input.mod_name)
+        return { B.ValueEntry(self.name, B.Binding(C.Id("func:" .. input.mod_name .. ":" .. self.name), self.name, ty, B.BindingRoleGlobalFunc(input.mod_name, self.name))) }
     end
+
+    function Tr.FuncExportContract:tree_module_func_entry(input)
+        local ty = params_type(self.params, self.result, input.mod_name)
+        return { B.ValueEntry(self.name, B.Binding(C.Id("func:" .. input.mod_name .. ":" .. self.name), self.name, ty, B.BindingRoleGlobalFunc(input.mod_name, self.name))) }
+    end
+
+    function Tr.ExternFunc:tree_module_extern_entry()
+        return { B.ValueEntry(self.name, B.Binding(C.Id("extern:" .. self.name), self.name, params_type(self.params, self.result, ""), B.BindingRoleExtern(self.symbol))) }
+    end
+
+    function Tr.ConstItem:tree_module_const_entry(input)
+        return { B.ValueEntry(self.name, B.Binding(C.Id("const:" .. input.mod_name .. ":" .. self.name), self.name, self.ty, B.BindingRoleGlobalConst(input.mod_name, self.name))) }
+    end
+
+    function Tr.StaticItem:tree_module_static_entry(input)
+        return { B.ValueEntry(self.name, B.Binding(C.Id("static:" .. input.mod_name .. ":" .. self.name), self.name, self.ty, B.BindingRoleGlobalStatic(input.mod_name, self.name))) }
+    end
+
 
     function type_entry(node, ...)
         local cls = schema.classof(node)
