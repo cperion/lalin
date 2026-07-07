@@ -196,11 +196,15 @@ Error messages should say:
 Tests are standalone LuaJIT scripts. Name them by boundary:
 
 ```text
-tests/frontend/test_*.lua
+tests/asdl/test_*.lua
+tests/c_backend/test_*.lua
 tests/code_ir/test_*.lua
+tests/compiler_process/test_*.lua
+tests/core/test_*.lua
+tests/frontend/test_*.lua
 tests/runtime/test_*.lua
-tests/llpvm/test_*.lua
 tests/schema/test_*.lua
+tests/ui/test_*.lua
 ```
 
 Prefer focused tests that pin one semantic boundary. Broaden tests when a change
