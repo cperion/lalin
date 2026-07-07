@@ -53,11 +53,6 @@ local function bind_context(T)
     local resolve_index_base
     local resolve_stmt
     local resolve_func
-    local resolve_const
-    local resolve_static
-    local resolve_type_decl
-    local resolve_item
-    local resolve_module
 
     local function one(phase, node, env, target)
         return only(phase(node, env, target))
@@ -659,27 +654,15 @@ local function bind_context(T)
         end
     end
 
-    function resolve_const(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ConstItem) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_const: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.ConstItem:sem_layout_resolve(env, target)
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target) }) }
     end
 
-    function resolve_static(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.StaticItem) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_static: no handler for " .. tostring(cls or type(node)), 2)
-        end
+
+    function Tr.StaticItem:sem_layout_resolve(env, target)
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target) }) }
     end
+
 
     function resolve_type_decl(node, ...)
         local cls = schema.classof(node)
@@ -720,11 +703,11 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.ItemConst) then
             return (function(self, env, target)
- return single(schema.with(self, { c = one(resolve_const, self.c, env, target) }))
+ return single(schema.with(self, { c = only(self.c:sem_layout_resolve(env, target)) }))
             end)(node, ...)
         elseif schema.isa(node, Tr.ItemStatic) then
             return (function(self, env, target)
- return single(schema.with(self, { s = one(resolve_static, self.s, env, target) }))
+ return single(schema.with(self, { s = only(self.s:sem_layout_resolve(env, target)) }))
             end)(node, ...)
         elseif schema.isa(node, Tr.ItemImport) then
             return (function(self)
@@ -743,21 +726,14 @@ local function bind_context(T)
         end
     end
 
-    function resolve_module(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.Module) then
-            return (function(module, env, target)
-
-            local resolved_env = env
-            if resolved_env == nil or #resolved_env.layouts == 0 then
-                resolved_env = Sem.LayoutEnv(module_type_api.env(module, target).layouts)
-            end
-            return single(schema.with(module, { items = map_items(module.items, resolved_env, target) }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_module: no handler for " .. tostring(cls or type(node)), 2)
+    function Tr.Module:sem_layout_resolve(env, target)
+        local resolved_env = env
+        if resolved_env == nil or #resolved_env.layouts == 0 then
+            resolved_env = Sem.LayoutEnv(module_type_api.env(self, target).layouts)
         end
+        return { schema.with(self, { items = map_items(self.items, resolved_env, target) }) }
     end
+
 
     local function empty_env()
         return Sem.LayoutEnv({})
@@ -771,7 +747,7 @@ local function bind_context(T)
         field = function(field, base_ty, env) return only(field:sem_resolve_field_ref(base_ty, env or empty_env())) end,
         expr = function(expr, env, target) return one(resolve_expr, expr, env or empty_env(), target) end,
         place = function(place, env, target) return one(resolve_place, place, env or empty_env(), target) end,
-        module = function(module, env, target) return one(resolve_module, module, env, target) end,
+        module = function(module, env, target) return only(module:sem_layout_resolve(env, target)) end,
     }
 end
 
