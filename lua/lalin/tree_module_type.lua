@@ -185,32 +185,30 @@ local function bind_context(T)
     end
 
 
-    function type_entry(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.TypeDeclStruct) then
-            return (function(self, mod_name)
- return single(B.TypeEntry(self.name, Ty.TNamed(Ty.TypeRefGlobal(mod_name, self.name))))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.TypeDeclUnion) then
-            return (function(self, mod_name)
- return single(B.TypeEntry(self.name, Ty.TNamed(Ty.TypeRefGlobal(mod_name, self.name))))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.TypeDeclEnumSugar) then
-            return (function(self, mod_name)
- return single(B.TypeEntry(self.name, Ty.TNamed(Ty.TypeRefGlobal(mod_name, self.name))))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.TypeDeclTaggedUnionSugar) then
-            return (function(self, mod_name)
- return single(B.TypeEntry(self.name, Ty.TNamed(Ty.TypeRefGlobal(mod_name, self.name))))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.TypeDeclHandle) then
-            return (function(self, mod_name)
- return single(B.TypeEntry(self.name, Ty.THandle(Ty.TypeRefGlobal(mod_name, self.name), self.repr)))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_type_entry: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.TypeDecl:tree_module_type_entry(input)
+        error("phase lalin_tree_type_entry: no handler for " .. tostring(schema.classof(self) or type(self)), 2)
     end
+
+    function Tr.TypeDeclStruct:tree_module_type_entry(input)
+        return { B.TypeEntry(self.name, Ty.TNamed(Ty.TypeRefGlobal(input.mod_name, self.name))) }
+    end
+
+    function Tr.TypeDeclUnion:tree_module_type_entry(input)
+        return { B.TypeEntry(self.name, Ty.TNamed(Ty.TypeRefGlobal(input.mod_name, self.name))) }
+    end
+
+    function Tr.TypeDeclEnumSugar:tree_module_type_entry(input)
+        return { B.TypeEntry(self.name, Ty.TNamed(Ty.TypeRefGlobal(input.mod_name, self.name))) }
+    end
+
+    function Tr.TypeDeclTaggedUnionSugar:tree_module_type_entry(input)
+        return { B.TypeEntry(self.name, Ty.TNamed(Ty.TypeRefGlobal(input.mod_name, self.name))) }
+    end
+
+    function Tr.TypeDeclHandle:tree_module_type_entry(input)
+        return { B.TypeEntry(self.name, Ty.THandle(Ty.TypeRefGlobal(input.mod_name, self.name), self.repr)) }
+    end
+
 
     local function align_up(x, a)
         if a <= 1 then return x end
