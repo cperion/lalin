@@ -44,15 +44,9 @@ local function bind_context(T)
 
     local layout_api = require("lalin.type_size_align")(T)
 
-    local module_name
-    local func_entry
-    local extern_entry
-    local const_entry
-    local static_entry
-    local type_entry
-    local item_env_entries
+    local layout_api = require("lalin.type_size_align")(T)
+
     local module_env
-    local item_layout
 
     local function pack(g, p, c) return { g, p, c } end
 
@@ -338,44 +332,34 @@ local function bind_context(T)
     end
 
 
-    function module_env(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.Module) then
-            return (function(module, target)
-
-            local mod_name = module.h:tree_module_name()
-            local values = {}
-            local types = {}
-            local layouts = {}
-            for i = 1, #module.items do
-                local entries = module.items[i]:tree_module_item_env_entries(Sem.TreeModuleEntryInput(mod_name))
-                for j = 1, #entries do
-                    if schema.classof(entries[j]) == B.ValueEntry then values[#values + 1] = entries[j] end
-                    if schema.classof(entries[j]) == B.TypeEntry then types[#types + 1] = entries[j] end
-                end
+    function Tr.Module:tree_module_env(target)
+        local mod_name = self.h:tree_module_name()
+        local values = {}
+        local types = {}
+        local layouts = {}
+        for i = 1, #self.items do
+            local entries = self.items[i]:tree_module_item_env_entries(Sem.TreeModuleEntryInput(mod_name))
+            for j = 1, #entries do
+                if schema.classof(entries[j]) == B.ValueEntry then values[#values + 1] = entries[j] end
+                if schema.classof(entries[j]) == B.TypeEntry then types[#types + 1] = entries[j] end
             end
-            for _ = 1, math.max(1, #module.items) do
-                local pass_layouts = {}
-                local layout_env = Sem.LayoutEnv(layouts)
-                for i = 1, #module.items do
-                    local ls = module.items[i]:tree_module_item_layout(Sem.TreeModuleLayoutInput(mod_name, layout_env, target))
-                    for j = 1, #ls do pass_layouts[#pass_layouts + 1] = ls[j] end
-                end
-                layouts = pass_layouts
-            end
-            return single(B.Env(mod_name, values, types, layouts))
-            end)(node, ...)
-        else
-            error("phase lalin_tree_module_env: no handler for " .. tostring(cls or type(node)), 2)
         end
+        for _ = 1, math.max(1, #self.items) do
+            local pass_layouts = {}
+            local layout_env = Sem.LayoutEnv(layouts)
+            for i = 1, #self.items do
+                local ls = self.items[i]:tree_module_item_layout(Sem.TreeModuleLayoutInput(mod_name, layout_env, target))
+                for j = 1, #ls do pass_layouts[#pass_layouts + 1] = ls[j] end
+            end
+            layouts = pass_layouts
+        end
+        return { B.Env(mod_name, values, types, layouts) }
     end
 
     return {
-        module_name = module_name,
-        item_env_entries = item_env_entries,
-        module_env = module_env,
-        env = function(module, target) return only(module_env(module, target)) end,
+        env = function(module, target) return only(module:tree_module_env(target)) end,
     }
+
 end
 
 return bind_context
