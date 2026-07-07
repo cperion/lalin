@@ -107,13 +107,35 @@ end
 
 function Tr.ExprCall:typecheck_tree_expr(input)
   local cr = self.callee:typecheck_tree_expr(input); if cr.ty == nil then return cr end
-  local result_ty = cr.ty  -- simplified
+  local result_ty, param_tys = cr.ty:tree_check_callable_result()
+  local issues = {}
+  if result_ty == nil then
+    issues[#issues + 1] = LCheck.TypeIssueNotCallable(cr.ty)
+    result_ty = Ty.TScalar(C.ScalarVoid)
+    param_tys = {}
+  end
+  if #(self.args or {}) ~= #(param_tys or {}) then
+    issues[#issues + 1] = LCheck.TypeIssueArgCount("call", #(param_tys or {}), #(self.args or {}))
+  end
   local args = {}
   for i = 1, #(self.args or {}) do
-    local ar = self.args[i]:typecheck_tree_expr(input)
-    if ar.ty == nil then return ar end; args[i] = ar.expr
+    local expected = param_tys and param_tys[i] or nil
+    local ar
+    if expected ~= nil then
+      ar = self.args[i]:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, expected))
+    else
+      ar = self.args[i]:typecheck_tree_expr(input)
+    end
+    if ar.ty == nil then return ar end
+    if expected ~= nil and not (expected:tree_check_is_void_type() or ar.ty:tree_check_is_void_type()) then
+      -- compare types (structural equality via tostring for now)
+      if tostring(expected) ~= tostring(ar.ty) then
+        issues[#issues + 1] = LCheck.TypeIssueExpected("call arg", expected, ar.ty)
+      end
+    end
+    args[#args + 1] = ar.expr
   end
-  return LCheck.TypeExprResult(Tr.ExprCall(Tr.ExprTyped(result_ty), cr.expr, args), result_ty, {})
+  return LCheck.TypeExprResult(Tr.ExprCall(Tr.ExprTyped(result_ty), cr.expr, args), result_ty, issues)
 end
 
 function Tr.ExprField:typecheck_tree_expr(input)
@@ -178,12 +200,94 @@ function Tr.ExprNull:typecheck_tree_expr(input) return LCheck.TypeExprResult(sel
 function Tr.ExprSizeOf:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, Ty.TScalar(C.ScalarIndex), {}) end
 function Tr.ExprAlignOf:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, Ty.TScalar(C.ScalarIndex), {}) end
 function Tr.ExprIsNull:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, Ty.TScalar(C.ScalarBool), {}) end
-function Tr.ExprCtor:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, Ty.TScalar(C.ScalarU32), {}) end
+function Tr.ExprCtor:typecheck_tree_expr(input)
+  local issues = {}
+  -- Look up variant in scope facts
+  local variant_def, variant_case = nil, nil
+  if input.scope and input.scope.facts then
+    local facts = input.scope.facts
+    for i = 1, #(facts.variants or {}) do
+      if facts.variants[i].type_name == self.type_name then
+        variant_def = facts.variants[i]
+        for j = 1, #(variant_def.variants or {}) do
+          if variant_def.variants[j].name == self.variant_name then
+            variant_case = variant_def.variants[j]
+            break
+          end
+        end
+        break
+      end
+    end
+  end
+  local result_ty = variant_def and variant_def.ty or Ty.TScalar(C.ScalarVoid)
+  if variant_def == nil or variant_case == nil then
+    issues[#issues + 1] = LCheck.TypeIssueUnknownVariant(self.type_name, self.variant_name)
+  end
+  -- Determine expected argument count from payload type
+  local payload_ty = nil
+  if variant_case then
+    if #(variant_case.fields or {}) == 1 then
+      payload_ty = variant_case.fields[1].ty
+    elseif #(variant_case.fields or {}) > 1 then
+      payload_ty = nil  -- multiple fields, no single payload
+    elseif variant_case.payload and not variant_case.payload:tree_check_is_void_type() then
+      payload_ty = variant_case.payload
+    end
+  end
+  local expected_args = payload_ty and 1 or 0
+  local args = {}
+  if #(self.args or {}) ~= expected_args then
+    issues[#issues + 1] = LCheck.TypeIssueArgCount("variant constructor", expected_args, #(self.args or {}))
+  end
+  if payload_ty and #(self.args or {}) >= 1 then
+    local ar = self.args[1]:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, payload_ty))
+    if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues + 1] = iss end end
+    if ar.ty and not ar.ty:tree_check_is_void_type() and
+       not payload_ty:tree_check_is_void_type() and
+       tostring(payload_ty) ~= tostring(ar.ty) then
+      issues[#issues + 1] = LCheck.TypeIssueExpected("variant payload", payload_ty, ar.ty)
+    end
+    args[1] = ar.expr
+  end
+  return LCheck.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(result_ty), self.type_name, self.variant_name, args), result_ty, issues)
+end
 function Tr.ExprLoad:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, self.ty, {}) end
-function Tr.ExprBlock:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, self.result and self.result.h and self.result.h:tree_code_expr_type() or Ty.TScalar(C.ScalarVoid), {}) end
+-- typecheck_tree_expr_expected: default fallback to typecheck_tree_expr
+function Tr.Expr:typecheck_tree_expr_expected(input)
+  return self:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+end
+
+function Tr.ExprBlock:typecheck_tree_expr(input)
+  local stmt_input = LCheck.TypeStmtInput(input.scope, Ty.TScalar(C.ScalarVoid), LCheck.TypeYieldNone)
+  local body = stmt_input:typecheck_tree_stmt_body(self.stmts or {})
+  local result = self.result and self.result:typecheck_tree_expr(input)
+  if result == nil or result.ty == nil then
+    return LCheck.TypeExprResult(nil, nil, body.issues or {})
+  end
+  local result_ty = result.ty
+  return LCheck.TypeExprResult(Tr.ExprBlock(Tr.ExprTyped(result_ty), body.stmts, result.expr), result_ty, result.issues)
+end
+
 function Tr.ExprIf:typecheck_tree_expr(input)
+  local cr = self.cond:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, Ty.TScalar(C.ScalarBool)))
+  if cr.ty == nil or cr.expr == nil then return cr end
   local tr = self.then_expr:typecheck_tree_expr(input)
-  return LCheck.TypeExprResult(self, tr.ty, {})
+  if tr.ty == nil or tr.expr == nil then return tr end
+  local er = self.else_expr:typecheck_tree_expr(input)
+  if er.ty == nil or er.expr == nil then return er end
+  local issues = {}
+  if cr.issues then for _, iss in ipairs(cr.issues) do issues[#issues + 1] = iss end end
+  if tr.issues then for _, iss in ipairs(tr.issues) do issues[#issues + 1] = iss end end
+  if er.issues then for _, iss in ipairs(er.issues) do issues[#issues + 1] = iss end end
+  -- Branch type unification: if types differ, use void
+  local result_ty = tr.ty
+  if tr.ty and er.ty then
+    if tostring(tr.ty) ~= tostring(er.ty) then
+      issues[#issues + 1] = LCheck.TypeIssueExpected("if-else branches", tr.ty, er.ty)
+      result_ty = tr.ty
+    end
+  end
+  return LCheck.TypeExprResult(Tr.ExprIf(Tr.ExprTyped(result_ty), cr.expr, tr.expr, er.expr), result_ty, issues)
 end
 function Tr.ExprSelect:typecheck_tree_expr(input)
   local tr = self.then_expr:typecheck_tree_expr(input)

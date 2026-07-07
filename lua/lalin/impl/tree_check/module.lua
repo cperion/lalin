@@ -37,6 +37,8 @@ function Tr.ModuleTyped:tree_module_name() return self.module_name end
 function Tr.ModuleSem:tree_module_name() return self.module_name end
 function Tr.ModuleCode:tree_module_name() return self.module_name end
 
+function Tr.Module:tree_code_module_name() return self.h:tree_module_name() end
+
 -- Type canonicalization
 function Ty.Type:tree_module_canonicalize(mod_name) return self end
 function Ty.TNamed:tree_module_canonicalize(mod_name)
