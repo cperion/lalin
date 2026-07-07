@@ -232,12 +232,24 @@ local function bind_context(T)
         end
     end
 
-    local function storage_for_type(ty)
-        if schema.classof(ty) == Ty.TScalar then return H.HostRepScalar(ty.scalar) end
-        if schema.classof(ty) == Ty.TPtr then return H.HostRepPtr(ty.elem) end
-        if schema.classof(ty) == Ty.TView then return H.HostRepView(ty.elem) end
-        if schema.classof(ty) == Ty.TAccess then return storage_for_type(ty.base) end
+    function Ty.Type:sem_layout_storage()
         return H.HostRepOpaque("sem_layout")
+    end
+
+    function Ty.TScalar:sem_layout_storage()
+        return H.HostRepScalar(self.scalar)
+    end
+
+    function Ty.TPtr:sem_layout_storage()
+        return H.HostRepPtr(self.elem)
+    end
+
+    function Ty.TView:sem_layout_storage()
+        return H.HostRepView(self.elem)
+    end
+
+    function Ty.TAccess:sem_layout_storage()
+        return self.base:sem_layout_storage()
     end
 
     local function access_base_type(ty)
@@ -259,7 +271,7 @@ local function bind_context(T)
             if layout == nil then return single(field) end
             local resolved = maybe_one(field_in_layout(layout, field.field_name))
             if resolved == nil then return single(field) end
-            return single(Sem.FieldByOffset(resolved.field_name, resolved.offset, resolved.ty, storage_for_type(resolved.ty)))
+            return single(Sem.FieldByOffset(resolved.field_name, resolved.offset, resolved.ty, resolved.ty:sem_layout_storage()))
             end)(node, ...)
         else
             error("phase lalin_sem_resolve_field_ref: no handler for " .. tostring(cls or type(node)), 2)
