@@ -2,6 +2,8 @@
 -- Methods on Cemit.*, Core.*, and C.* types for final C text emission.
 -- Ported from emit_c_lower.lua.
 
+require("lalin.schema_v2")
+
 local Cemit = require("lalin.schema_v2.cemit")
 local C     = require("lalin.schema_v2.c")
 local Core  = require("lalin.schema_v2.core")

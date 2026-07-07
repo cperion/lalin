@@ -11,6 +11,8 @@
 --   Stencil.StencilDescriptor:metastencil_access_named(name)
 --   Stencil.StencilReduceScope*:metastencil_dst_name()
 
+require("lalin.schema_v2")
+
 local Stencil = require("lalin.schema_v2.stencil")
 
 ----------------------------------------------------------------------

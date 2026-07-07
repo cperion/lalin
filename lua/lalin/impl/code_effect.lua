@@ -2,6 +2,7 @@
 -- LalinMem, LalinEffect types. Produces LalinEffect.EffectFactSet.
 -- Entry: Graph.CodeGraph:compute_effects(module, mem, contracts)
 
+require("lalin.schema_v2")
 local Code   = require("lalin.schema_v2.code")
 local Graph  = require("lalin.schema_v2.graph")
 local Flow   = require("lalin.schema_v2.flow")

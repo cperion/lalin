@@ -8,6 +8,8 @@
 -- are tightly coupled to stencil-machine logic (classification, expression
 -- lowering, selection, planning).
 
+require("lalin.schema_v2")
+
 local SM      = require("lalin.schema_v2.stencil_machine")
 local Stencil = require("lalin.schema_v2.stencil")
 local Code    = require("lalin.schema_v2.code")

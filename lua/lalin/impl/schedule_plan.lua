@@ -2,6 +2,7 @@
 -- LalinBackend types. Produces LalinSchedule.ScheduleModulePlan.
 -- Entry: Kernel.KernelModulePlan:plan_schedules(code_module, flow, values, mem, effects, target)
 
+require("lalin.schema_v2")
 local Backend  = require("lalin.schema_v2.backend")
 local Code     = require("lalin.schema_v2.code")
 local Flow     = require("lalin.schema_v2.flow")

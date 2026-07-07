@@ -2,6 +2,7 @@
 -- Produces LalinFlow.FlowFactSet and LalinFlow.FlowSemanticFactSet from a CodeGraph.
 -- Leaf methods on CodeTermOp, CodeInstOp, and entry points on Graph.CodeGraph.
 
+require("lalin.schema_v2")
 local Core  = require("lalin.schema_v2.core")
 local Code  = require("lalin.schema_v2.code")
 local Graph = require("lalin.schema_v2.graph")

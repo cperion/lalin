@@ -2,6 +2,8 @@
 -- C value/place materialization helpers for stencil computations.
 -- Ported from emit_c_materialize.lua.
 
+require("lalin.schema_v2")
+
 local Stencil = require("lalin.schema_v2.stencil")
 
 ----------------------------------------------------------------------

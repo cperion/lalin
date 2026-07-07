@@ -2,6 +2,8 @@
 -- Methods on Code.*, Core.*, and C.* types for C emission.
 -- Ported from code_to_c.lua.
 
+require("lalin.schema_v2")
+
 local Code    = require("lalin.schema_v2.code")
 local Core    = require("lalin.schema_v2.core")
 local C       = require("lalin.schema_v2.c")

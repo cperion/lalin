@@ -3,6 +3,7 @@
 -- Produces LalinLower.LowerModule.
 -- Entry: Code.CodeModule:plan_lowering(graph, kernels, schedules, target)
 
+require("lalin.schema_v2")
 local Code     = require("lalin.schema_v2.code")
 local Graph    = require("lalin.schema_v2.graph")
 local Flow     = require("lalin.schema_v2.flow")

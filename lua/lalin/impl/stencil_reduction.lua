@@ -3,6 +3,8 @@
 -- Ported from lower_kernel_rewrite.lua (display_name) and
 -- stencil_artifact_plan.lua (stencil_artifact_name).
 
+require("lalin.schema_v2")
+
 local Value = require("lalin.schema_v2.value")
 
 -- display_name: human-readable reduction name (lower_kernel_rewrite.lua)

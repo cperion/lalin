@@ -2,6 +2,8 @@
 -- Leaf methods on LalinStencil types.
 -- Ported from stencil_artifact_plan.lua (Stencil.* methods only).
 
+require("lalin.schema_v2")
+
 local Stencil = require("lalin.schema_v2.stencil")
 local Code    = require("lalin.schema_v2.code")
 

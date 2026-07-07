@@ -3,6 +3,7 @@
 -- from a CodeGraph. Heavy classof refactored to leaf methods.
 -- Entry: Graph.CodeGraph:compute_mem(module, flow, values, contracts)
 
+require("lalin.schema_v2")
 local Core   = require("lalin.schema_v2.core")
 local Code   = require("lalin.schema_v2.code")
 local Graph  = require("lalin.schema_v2.graph")

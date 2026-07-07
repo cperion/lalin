@@ -2,6 +2,8 @@
 -- Methods on Schedule.* and Lower.* types for C emission kernel selection.
 -- Ported from lower_to_c.lua.
 
+require("lalin.schema_v2")
+
 local Lower    = require("lalin.schema_v2.lower")
 local Schedule = require("lalin.schema_v2.schedule")
 

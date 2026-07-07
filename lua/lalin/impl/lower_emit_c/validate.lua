@@ -2,6 +2,8 @@
 -- C emission validation methods.
 -- Ported from emit_c_validate.lua.
 
+require("lalin.schema_v2")
+
 local C    = require("lalin.schema_v2.c")
 local Code = require("lalin.schema_v2.code")
 

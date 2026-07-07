@@ -5,6 +5,7 @@
 -- Heavy classof refactored from code_kernel_plan.lua, kernel_validate.lua,
 -- kernel_emit_support.lua.
 
+require("lalin.schema_v2")
 local Core    = require("lalin.schema_v2.core")
 local Code    = require("lalin.schema_v2.code")
 local Graph   = require("lalin.schema_v2.graph")
@@ -68,7 +69,7 @@ end
 ----------------------------------------------------------------------
 
 function Flow.FlowTripCount:kernel_plan_closed_form_trip_unknown_proof() return false end
-function Flow.FlowTripCountUnknown:kernel_plan_closed_form_trip_unknown_proof() return true end
+function Flow.FlowTripCountRejected:kernel_plan_closed_form_trip_unknown_proof() return true end
 
 ----------------------------------------------------------------------
 -- KernelLoopCandidate leaf methods
@@ -201,11 +202,11 @@ function Mem.MemSemanticFactSet:plan_kernels(flow, values, mem, effects)
   for _, lf in ipairs(flow and flow.loops or {}) do
     if lf.counted ~= nil then
       local loop_text = lf.loop.text
-      local candidates = {}
+function Flow.FlowTripCountRejected:kernel_plan_closed_form_trip_unknown_proof() return true end
       -- closed-form candidate
       if closed_forms[loop_text] ~= nil then
         local cf = closed_forms[loop_text]
-        candidates[#candidates + 1] = Kernel.KernelLoopClosedFormCandidate(cf, Flow.FlowTripCountUnknown("using flow trip count", nil))
+        candidates[#candidates + 1] = Kernel.KernelLoopClosedFormCandidate(cf, Flow.FlowTripCountRejected(Flow.FlowTripCountNotLoop("using flow trip count"), nil))
       end
       -- reduction candidates
       for _, r in ipairs(reductions[loop_text] or {}) do

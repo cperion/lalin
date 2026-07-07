@@ -3,6 +3,7 @@
 -- Leaf methods on CodePlace, CodeCallTarget, CodeInstOp, CodeTermOp,
 -- CodeInst, CodeTerm, CodeFunc, and CodeModule.
 
+require("lalin.schema_v2")
 local Code  = require("lalin.schema_v2.code")
 local Graph = require("lalin.schema_v2.graph")
 

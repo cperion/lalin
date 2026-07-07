@@ -2,6 +2,8 @@
 -- C-specific stencil codegen methods on LalinStencil types.
 -- Ported from stencil_c.lua.
 
+require("lalin.schema_v2")
+
 local Stencil = require("lalin.schema_v2.stencil")
 
 ----------------------------------------------------------------------
