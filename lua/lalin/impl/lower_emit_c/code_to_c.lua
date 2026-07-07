@@ -388,6 +388,25 @@ function Code.CodeTyDataPtr:code_to_c_backend_type()
   return C.CBackendDataPtr(pointee)
 end
 
+function Code.CodeTyNamed:code_to_c_backend_type()
+  return C.CBackendNamed(C.CTypeId(self.module_name, self.type_name))
+end
+
+function Code.CodeTyArray:code_to_c_backend_type()
+  return C.CBackendArray(self.elem:code_to_c_backend_type(), self.count)
+end
+
+function Code.CodeTyCodePtr:code_to_c_backend_type()
+  return C.CBackendCodePtr(C.CBackendFuncSigId(self.sig.text))
+end
+
+function Code.CodeTySlice:code_to_c_backend_type()
+  return C.CBackendSliceDescriptor(self.elem:code_to_c_backend_type())
+end
+
+function Code.CodeTyView:code_to_c_backend_type()
+  return C.CBackendViewDescriptor(self.elem:code_to_c_backend_type())
+end
 ----------------------------------------------------------------------
 -- CodeValueId / CodeParam → CBackendLocalId / CBackendLocal mapping
 ----------------------------------------------------------------------
@@ -493,4 +512,70 @@ end
 
 function Code.CodeTermUnreachable:lower_code_term_to_c(term, lowered)
   return C.CBackendTrap
+end
+
+function Code.CodeTermJump:lower_code_term_to_c(term, lowered)
+  local dest_label = C.CBackendLabel(self.dest.text)
+  local args = {}
+  for i, arg in ipairs(self.args or {}) do
+    args[i] = C.CBackendAtomLocal(arg:code_to_c_local_id())
+  end
+  return C.CBackendGoto(dest_label, args)
+end
+
+function Code.CodeTermBranch:lower_code_term_to_c(term, lowered)
+  local cond = C.CBackendAtomLocal(self.cond:code_to_c_local_id())
+  local then_label = C.CBackendLabel(self.then_dest.text)
+  local else_label = C.CBackendLabel(self.else_dest.text)
+  local then_args = {}
+  for i, arg in ipairs(self.then_args or {}) do
+    then_args[i] = C.CBackendAtomLocal(arg:code_to_c_local_id())
+  end
+  local else_args = {}
+  for i, arg in ipairs(self.else_args or {}) do
+    else_args[i] = C.CBackendAtomLocal(arg:code_to_c_local_id())
+  end
+  return C.CBackendIfGoto(cond, then_label, then_args, else_label, else_args)
+end
+
+function Code.CodeTermSwitch:lower_code_term_to_c(term, lowered)
+  local cases = {}
+  for i, case in ipairs(self.cases or {}) do
+    local cargs = {}
+    for j, arg in ipairs(case.args or {}) do
+      cargs[j] = C.CBackendAtomLocal(arg:code_to_c_local_id())
+    end
+    cases[i] = C.CBackendSwitchCase(case.literal, C.CBackendLabel(case.dest.text), cargs)
+  end
+  local def_args = {}
+  for i, arg in ipairs(self.default_args or {}) do
+    def_args[i] = C.CBackendAtomLocal(arg:code_to_c_local_id())
+  end
+  return C.CBackendSwitchGoto(
+    C.CBackendAtomLocal(self.value:code_to_c_local_id()),
+    cases,
+    C.CBackendLabel(self.default_dest.text),
+    def_args
+  )
+end
+
+function Code.CodeTermVariantSwitch:lower_code_term_to_c(term, lowered)
+  local cases = {}
+  for i, case in ipairs(self.cases or {}) do
+    local cargs = {}
+    for j, arg in ipairs(case.args or {}) do
+      cargs[j] = C.CBackendAtomLocal(arg:code_to_c_local_id())
+    end
+    cases[i] = C.CBackendSwitchCase(Core.LitInt(tostring(case.variant.tag_value)), C.CBackendLabel(case.dest.text), cargs)
+  end
+  local def_args = {}
+  for i, arg in ipairs(self.default_args or {}) do
+    def_args[i] = C.CBackendAtomLocal(arg:code_to_c_local_id())
+  end
+  return C.CBackendSwitchGoto(
+    C.CBackendAtomLocal(self.tag:code_to_c_local_id()),
+    cases,
+    C.CBackendLabel(self.default_dest.text),
+    def_args
+  )
 end
