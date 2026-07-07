@@ -138,68 +138,14 @@ local function bind_context(T)
 
 
 
-    function type_layout(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Ty.TNamed) then
-            return (function(self, env, target)
- return self.ref:sem_layout_resolve(env)
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TScalar) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TPtr) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TArray) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TSlice) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TView) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TLease) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TOwned) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TAccess) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.THandle) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TFunc) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TClosure) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TCType) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Ty.TCFuncPtr) then
-            return (function()
- return {}
-            end)(node, ...)
-        else
-            error("phase lalin_sem_type_layout: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Ty.Type:sem_layout(env)
+        return {}
     end
+
+    function Ty.TNamed:sem_layout(env)
+        return self.ref:sem_layout_resolve(env)
+    end
+
 
     function field_in_layout(node, ...)
         local cls = schema.classof(node)
@@ -265,7 +211,7 @@ local function bind_context(T)
         elseif schema.isa(node, Sem.FieldByName) then
             return (function(field, base_ty, env)
 
-            local layout = maybe_one(type_layout(base_ty, env))
+            local layout = maybe_one(base_ty:sem_layout(env))
             if layout == nil then return single(field) end
             local resolved = maybe_one(field_in_layout(layout, field.field_name))
             if resolved == nil then return single(field) end
