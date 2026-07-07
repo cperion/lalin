@@ -107,15 +107,25 @@ local function bind_context(T)
         return sanitize(CodeType.code_type_key(self))
     end
 
+    function Code.CodeType:stencil_artifact_c_type()
+        return CEmit.emit_type(select(1, CodeType.code_type_to_c(CEm.CEmitMachine.dummy(), self)))
+    end
+    function Code.CodeTyArray:stencil_artifact_c_type() return self:stencil_artifact_type_name() end
+    function Code.CodeTyClosure:stencil_artifact_c_type() return self:stencil_artifact_type_name() end
+    function Code.CodeTyVector:stencil_artifact_c_type() return self:stencil_artifact_type_name() end
+    function Code.CodeTyImportedCFuncPtr:stencil_artifact_c_type() return self:stencil_artifact_type_name() end
+
+    function Code.CodeType:stencil_artifact_is_code_scalar() return false end
+    function Code.CodeTyInt:stencil_artifact_is_code_scalar() return true end
+    function Code.CodeTyFloat:stencil_artifact_is_code_scalar() return true end
+
+
     local function type_name(ty) return ty:stencil_artifact_type_name() end
 
     local function c_type(ty)
-        local cls = asdl.classof(ty)
-        if cls == Code.CodeTyArray or cls == Code.CodeTyClosure or cls == Code.CodeTyVector or cls == Code.CodeTyImportedCFuncPtr then
-            return ty:stencil_artifact_type_name()
-        end
-        return CEmit.emit_type(select(1, CodeType.code_type_to_c(CEm.CEmitMachine.dummy(), ty)))
+        return ty:stencil_artifact_c_type()
     end
+
 
     ----------------------------------------------------------------------
     -- StencilAccessLayout leaf methods
@@ -636,8 +646,7 @@ local function bind_context(T)
     end
 
     local function is_scalar(ty)
-        local cls = asdl.classof(ty)
-        return cls == Code.CodeTyInt or cls == Code.CodeTyFloat or ty:stencil_artifact_is_integer_like() and not ty:stencil_artifact_is_int() or ty:stencil_artifact_is_integer_like() and not ty:stencil_artifact_is_int() and not ty:stencil_artifact_is_float()
+        return ty:stencil_artifact_is_code_scalar()
     end
 
     local function default_int_semantics()
