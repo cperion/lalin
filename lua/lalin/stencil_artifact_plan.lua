@@ -29,6 +29,8 @@ local function stable_repr(v, seen)
     if tv == "boolean" or tv == "number" then return tostring(v) end
     if tv == "string" then return string.format("%q", v) end
     if tv ~= "table" then return tv .. ":" .. tostring(v) end
+    -- GATING: stable_repr is a cross-cutting serialization utility for hashing/fingerprinting,
+    -- not semantic dispatch. Uses classof to produce type-annotated stable strings for any ASDL value.
     local cls = asdl.classof(v)
     if tostring(cls) == "Class(LalinCode.CodeValueId)" then return tostring(cls) .. "{_}" end
     if tostring(cls):match("^Class%(LalinFlow%.FlowDomain") then return tostring(cls) .. "{_}" end
@@ -853,6 +855,8 @@ local function bind_context(T)
 
     local function same_type(a, b)
         if a == b then return true end
+    -- GATING: same_type must check class equality first — comparing Int.bits against Float.bits is nonsense.
+    -- The classof gate is a structural necessity, not behavioral dispatch.
         local ac, bc = asdl.classof(a), asdl.classof(b)
         if ac ~= bc then return false end
         if ac == Code.CodeTyInt then return a.bits == b.bits and a.signedness == b.signedness end
@@ -883,6 +887,8 @@ local function bind_context(T)
     end
 
     local function element_int_semantics(ty, info)
+    -- GATING: element_int_semantics gates on type class — only integer-like types (Int, Index, Bool8)
+    -- carry integer semantics. This is a type classification gate, not behavioral dispatch.
         local cls = asdl.classof(ty)
         if cls ~= Code.CodeTyInt and ty ~= Code.CodeTyIndex and ty ~= Code.CodeTyBool8 then return nil end
         return info and (info.int_semantics or info.semantics) or default_int_semantics()
@@ -1207,6 +1213,8 @@ local function bind_context(T)
                 return string.format("%q", v)
             end
             if tv ~= "table" then return tv .. ":" .. tostring(v) end
+    -- GATING: access_repr is a cross-cutting serialization utility for stable descriptor identity,
+    -- not semantic dispatch. Uses classof to distinguish StencilAccessRef from other ASDL values.
             local cls = asdl.classof(v)
             if cls == Stencil.StencilAccessRef then
                 return tostring(cls) .. "{name=" .. string.format("%q", access_map[v.name] or v.name) .. "}"
@@ -1403,6 +1411,8 @@ local function bind_context(T)
             local text = rawget(value, "text")
             if text ~= nil then return text end
         end
+    -- GATING: variant_name is a cross-cutting utility that extracts human-readable names from
+    -- tostring(ASDL class). Not semantic dispatch — it operates on the string representation.
         local cls = asdl.classof(value)
         local s = tostring(cls or value)
         return s:match("([%w_]+)%)$") or s:match("%.([%w_]+)$") or s
@@ -1699,6 +1709,8 @@ local function bind_context(T)
             end
         end
 
+    -- GATING: checks whether trip_count is already a StencilTripCountFact domain value.
+    -- Classof distinguishes domain facts from raw info tables — a data classification gate.
         local trip_count_cls = asdl.classof(trip_count)
         if trip_count_cls == Stencil.StencilTripCountMultipleOf or trip_count_cls == Stencil.StencilTripCountExact then
             add_proof_obligation(
@@ -1731,6 +1743,8 @@ local function bind_context(T)
     local function trip_count_fact(info)
         if info == nil then return Stencil.StencilTripCountDynamic end
         local fact = info.trip_count or info.trip_count_fact
+    -- GATING: checks whether fact is already a valid StencilTripCountFact. If so, return it directly.
+    -- If not (raw info), convert from info fields. Classof distinguishes domain values from raw info.
         local cls = asdl.classof(fact)
         if cls == Stencil.StencilTripCountUnknown
             or cls == Stencil.StencilTripCountDynamic
