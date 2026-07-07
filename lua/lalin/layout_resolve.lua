@@ -198,24 +198,10 @@ local function bind_context(T)
         return nil
     end
 
-    function resolve_index_base(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.IndexBaseExpr) then
-            return (function(self, env, target)
- return single(schema.with(self, { base = one(resolve_expr, self.base, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.IndexBasePlace) then
-            return (function(self, env, target)
- return single(schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.IndexBaseView) then
-            return (function(self, env, target)
- return single(schema.with(self, { view = only(self.view:sem_layout_resolve(env, target)) }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_index_base: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.TypeDecl:sem_layout_resolve()
+        return { self }
     end
+
 
     function Tr.Place:sem_layout_resolve(env, target)
         return { self }
@@ -642,32 +628,6 @@ local function bind_context(T)
     end
 
 
-    function resolve_type_decl(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.TypeDeclStruct) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.TypeDeclUnion) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.TypeDeclEnumSugar) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.TypeDeclTaggedUnionSugar) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.TypeDeclHandle) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_type_decl: no handler for " .. tostring(cls or type(node)), 2)
-        end
-    end
 
     function Tr.Item:sem_layout_resolve(env, target)
         return { self }
