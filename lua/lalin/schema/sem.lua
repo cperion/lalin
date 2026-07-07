@@ -120,4 +120,11 @@ return schema. LalinSem {
     counter [number],
     helpers [many [LalinTree.Item]],
   },
+  product. TreeModuleEntryInput { interned, mod_name [str], },
+  product. TreeModuleLayoutInput {
+    interned,
+    mod_name [str],
+    env [LalinSem.LayoutEnv],
+    target [LalinHost.HostTargetModel],
+  },
 }

@@ -56,28 +56,26 @@ local function bind_context(T)
 
     local function pack(g, p, c) return { g, p, c } end
 
-    function module_name(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ModuleTyped) then
-            return (function(self)
- return single(self.module_name)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ModuleSem) then
-            return (function(self)
- return single(self.module_name)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ModuleCode) then
-            return (function(self)
- return single(self.module_name)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ModuleSurface) then
-            return (function()
- return single("")
-            end)(node, ...)
-        else
-            error("phase lalin_tree_module_name: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.ModuleHeader:tree_module_name()
+        error("phase lalin_tree_module_name: no handler for " .. tostring(schema.classof(self) or type(self)), 2)
     end
+
+    function Tr.ModuleTyped:tree_module_name()
+        return self.module_name
+    end
+
+    function Tr.ModuleSem:tree_module_name()
+        return self.module_name
+    end
+
+    function Tr.ModuleCode:tree_module_name()
+        return self.module_name
+    end
+
+    function Tr.ModuleSurface:tree_module_name()
+        return ""
+    end
+
 
     local function path_type_name(path)
         if path and #(path.parts or {}) == 1 then return path.parts[1].text end
@@ -380,7 +378,7 @@ local function bind_context(T)
         if schema.isa(node, Tr.Module) then
             return (function(module, target)
 
-            local mod_name = only(module_name(module.h))
+            local mod_name = module.h:tree_module_name()
             local values = {}
             local types = {}
             local layouts = {}
