@@ -50,7 +50,6 @@ local function bind_context(T)
     local resolve_expr
     local resolve_view
     local resolve_domain
-    local resolve_index_base
     local resolve_stmt
     local resolve_func
 
@@ -259,7 +258,7 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.PlaceIndex) then
             return (function(self, env, target)
- return single(schema.with(self, { base = one(resolve_index_base, self.base, env, target), index = one(resolve_expr, self.index, env, target) }))
+ return single(schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)), index = one(resolve_expr, self.index, env, target) }))
             end)(node, ...)
         else
             error("phase lalin_sem_layout_place: no handler for " .. tostring(cls or type(node)), 2)
@@ -422,7 +421,7 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.ExprIndex) then
             return (function(self, env, target)
- return single(schema.with(self, { base = one(resolve_index_base, self.base, env, target), index = one(resolve_expr, self.index, env, target) }))
+ return single(schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)), index = one(resolve_expr, self.index, env, target) }))
             end)(node, ...)
         elseif schema.isa(node, Tr.ExprAgg) then
             return (function(self, env, target)
