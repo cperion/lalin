@@ -90,17 +90,15 @@ function Lower.LowerStrategy:lower_emit_schedule(schedules_by_id)
 end
 
 function Lower.LowerStrategyKernel:lower_emit_schedule(schedules_by_id)
-  -- The kernel plan carries a schedule id; look it up.
-  -- In old code: return schedules_by_id[self.id.text]
-  -- Ported: access the schedule field directly.
-  return schedules_by_id[self.id.text]
+  -- The kernel plan carries a kernel id; look up the schedule by kernel id text.
+  return schedules_by_id[self.kernel.text]
 end
 
 function Lower.LowerStrategy:lower_emit_missing_schedule_reason()
   return ""
 end
 function Lower.LowerStrategyKernel:lower_emit_missing_schedule_reason()
-  return "missing schedule for kernel " .. tostring(self.id)
+  return "missing schedule for kernel " .. tostring(self.kernel.text)
 end
 
 ----------------------------------------------------------------------
