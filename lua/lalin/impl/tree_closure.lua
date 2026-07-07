@@ -34,7 +34,7 @@ function Tr.ExprClosure:closure_convert(input)
   return self
 end
 
-function Tr.Module:closure_convert_module()
+function Tr.Module:closure_convert()
   local input = Sem.ClosureRewriteInput(self:tree_code_module_name(), "anon", 0, {})
   for _, item in ipairs(self.items or {}) do item:closure_convert_item(input) end
   return self

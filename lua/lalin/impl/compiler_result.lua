@@ -14,7 +14,7 @@ local asdl = require("lalin.asdl")
 local CodeValidate = require("lalin.impl.code_validate")
 
 local function class_name(v)
-  local cls = WARNING_CLASSOF(v)
+  local cls = asdl.classof(v)
   return cls and (tostring(cls):match("Class%((.-)%)") or tostring(cls)) or type(v)
 end
 
@@ -23,7 +23,7 @@ local function add(issues, issue)
 end
 
 local function check_field(issues, value, field_name, expected_type, expected_name)
-  if WARNING_CLASSOF(value) ~= expected_type then
+  if asdl.classof(value) ~= expected_type then
     add(issues, Compiler.CodeResultIssueInvalidField(field_name, expected_name, class_name(value)))
     return false
   end
@@ -47,7 +47,7 @@ local function validate_code_result(code_result, opts)
   opts = opts or {}
   local issues = {}
 
-  if WARNING_CLASSOF(code_result) ~= Compiler.CodeResult then
+  if asdl.classof(code_result) ~= Compiler.CodeResult then
     add(issues, Compiler.CodeResultIssueUnexpectedValue("LalinCompiler.CodeResult", class_name(code_result)))
     return Compiler.CodeResultReport(issues)
   end
@@ -55,9 +55,9 @@ local function validate_code_result(code_result, opts)
   local module_ok = check_field(issues, code_result.module, "module", Code.CodeModule, "LalinCode.CodeModule")
   check_field(issues, code_result.layout_env, "layout_env", Sem.LayoutEnv, "LalinSem.LayoutEnv")
 
-  if type(code_result.contracts) == "table" and not WARNING_CLASSOF(code_result.contracts) then
+  if type(code_result.contracts) == "table" and not asdl.classof(code_result.contracts) then
     for i = 1, #code_result.contracts do
-      if WARNING_CLASSOF(code_result.contracts[i]) ~= Code.CodeFuncContractFact then
+      if asdl.classof(code_result.contracts[i]) ~= Code.CodeFuncContractFact then
         add(issues, Compiler.CodeResultIssueInvalidField("contracts["..tostring(i).."]", "LalinCode.CodeFuncContractFact", class_name(code_result.contracts[i])))
       end
     end
