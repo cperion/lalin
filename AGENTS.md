@@ -382,3 +382,14 @@ docs/DESIGN_BIBLE.md         long-form design philosophy
 
 Use `rg` for searches. Do not revert user changes. Ignore `museum/gps.lua`
 unless the user explicitly asks to work on it.
+
+## ASDL Philosophy Prompt
+
+The project includes a prompt template at `.pi/prompts/asdl.md` that turns any pi
+agent into an ASDL/Lalin design guru. Type `/asdl` in the editor to inject the full
+doctrine from `docs/ASDL_GUIDE.md` and `docs/DESIGN_BIBLE.md` into your prompt.
+
+Use this when reasoning about schema design, dispatch architecture, semantic
+separation, or any question where the ASDL doctrine is the authority. Team members
+working on compiler semantics should invoke `/asdl` before making architectural
+decisions.
