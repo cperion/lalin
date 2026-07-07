@@ -50,16 +50,7 @@ local function bind_context(T)
     local resolve_expr
     local resolve_view
     local resolve_domain
-    local resolve_index_base
-    local resolve_control_stmt_region
-    local resolve_control_expr_region
     local resolve_stmt
-    local resolve_func
-    local resolve_const
-    local resolve_static
-    local resolve_type_decl
-    local resolve_item
-    local resolve_module
 
     local function one(phase, node, env, target)
         return only(phase(node, env, target))
@@ -91,7 +82,7 @@ local function bind_context(T)
 
     local function map_items(xs, env, target)
         local out = {}
-        for i = 1, #xs do out[#out + 1] = one(resolve_item, xs[i], env, target) end
+        for i = 1, #xs do out[#out + 1] = only(xs[i]:sem_layout_resolve(env, target)) end
         return out
     end
 
@@ -266,7 +257,7 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.PlaceIndex) then
             return (function(self, env, target)
- return single(schema.with(self, { base = one(resolve_index_base, self.base, env, target), index = one(resolve_expr, self.index, env, target) }))
+ return single(schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)), index = one(resolve_expr, self.index, env, target) }))
             end)(node, ...)
         else
             error("phase lalin_sem_layout_place: no handler for " .. tostring(cls or type(node)), 2)
@@ -429,7 +420,7 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.ExprIndex) then
             return (function(self, env, target)
- return single(schema.with(self, { base = one(resolve_index_base, self.base, env, target), index = one(resolve_expr, self.index, env, target) }))
+ return single(schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)), index = one(resolve_expr, self.index, env, target) }))
             end)(node, ...)
         elseif schema.isa(node, Tr.ExprAgg) then
             return (function(self, env, target)
@@ -453,7 +444,7 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.ExprControl) then
             return (function(self, env, target)
- return single(schema.with(self, { region = one(resolve_control_expr_region, self.region, env, target) }))
+ return single(schema.with(self, { region = only(self.region:sem_layout_resolve(env, target)) }))
             end)(node, ...)
         elseif schema.isa(node, Tr.ExprBlock) then
             return (function(self, env, target)
@@ -532,33 +523,19 @@ local function bind_context(T)
         return schema.with(block, { body = map_stmts(block.body, env, target) })
     end
 
-    function resolve_control_stmt_region(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ControlStmtRegion) then
-            return (function(self, env, target)
-
-            local blocks = {}
-            for i = 1, #self.blocks do blocks[#blocks + 1] = resolve_control_block(self.blocks[i], env, target) end
-            return single(schema.with(self, { entry = resolve_entry_block(self.entry, env, target), blocks = blocks }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_control_stmt_region: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.ControlStmtRegion:sem_layout_resolve(env, target)
+        local blocks = {}
+        for i = 1, #self.blocks do blocks[#blocks + 1] = resolve_control_block(self.blocks[i], env, target) end
+        return { schema.with(self, { entry = resolve_entry_block(self.entry, env, target), blocks = blocks }) }
     end
 
-    function resolve_control_expr_region(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ControlExprRegion) then
-            return (function(self, env, target)
 
-            local blocks = {}
-            for i = 1, #self.blocks do blocks[#blocks + 1] = resolve_control_block(self.blocks[i], env, target) end
-            return single(schema.with(self, { entry = resolve_entry_block(self.entry, env, target), blocks = blocks }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_control_expr_region: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.ControlExprRegion:sem_layout_resolve(env, target)
+        local blocks = {}
+        for i = 1, #self.blocks do blocks[#blocks + 1] = resolve_control_block(self.blocks[i], env, target) end
+        return { schema.with(self, { entry = resolve_entry_block(self.entry, env, target), blocks = blocks }) }
     end
+
 
     function resolve_stmt(node, ...)
         local cls = schema.classof(node)
@@ -624,7 +601,7 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.StmtControl) then
             return (function(self, env, target)
- return single(schema.with(self, { region = one(resolve_control_stmt_region, self.region, env, target) }))
+ return single(schema.with(self, { region = only(self.region:sem_layout_resolve(env, target)) }))
             end)(node, ...)
         elseif schema.isa(node, Tr.StmtTrap) then
             return (function(self)
@@ -635,67 +612,79 @@ local function bind_context(T)
         end
     end
 
-    local function resolve_contract(contract, env, target)
-        local cls = schema.classof(contract)
-        if cls == Tr.ContractBounds then return schema.with(contract, { base = one(resolve_expr, contract.base, env, target), len = one(resolve_expr, contract.len, env, target) }) end
-        if cls == Tr.ContractWindowBounds then return schema.with(contract, { base = one(resolve_expr, contract.base, env, target), base_len = one(resolve_expr, contract.base_len, env, target), start = one(resolve_expr, contract.start, env, target), len = one(resolve_expr, contract.len, env, target) }) end
-        if cls == Tr.ContractDisjoint then return schema.with(contract, { a = one(resolve_expr, contract.a, env, target), b = one(resolve_expr, contract.b, env, target) }) end
-        if cls == Tr.ContractSameLen then return schema.with(contract, { a = one(resolve_expr, contract.a, env, target), b = one(resolve_expr, contract.b, env, target) }) end
-        if cls == Tr.ContractSoAComponent then return schema.with(contract, { base = one(resolve_expr, contract.base, env, target) }) end
-        if cls == Tr.ContractNoAlias or cls == Tr.ContractReadonly or cls == Tr.ContractWriteonly or cls == Tr.ContractInvalidate or cls == Tr.ContractPreserve then return schema.with(contract, { base = one(resolve_expr, contract.base, env, target) }) end
-        return contract
+    function Tr.Contract:sem_layout_resolve(env, target)
+        return self
     end
+
+    function Tr.ContractBounds:sem_layout_resolve(env, target)
+        return schema.with(self, { base = one(resolve_expr, self.base, env, target), len = one(resolve_expr, self.len, env, target) })
+    end
+
+    function Tr.ContractWindowBounds:sem_layout_resolve(env, target)
+        return schema.with(self, { base = one(resolve_expr, self.base, env, target), base_len = one(resolve_expr, self.base_len, env, target), start = one(resolve_expr, self.start, env, target), len = one(resolve_expr, self.len, env, target) })
+    end
+
+    function Tr.ContractDisjoint:sem_layout_resolve(env, target)
+        return schema.with(self, { a = one(resolve_expr, self.a, env, target), b = one(resolve_expr, self.b, env, target) })
+    end
+
+    function Tr.ContractSameLen:sem_layout_resolve(env, target)
+        return schema.with(self, { a = one(resolve_expr, self.a, env, target), b = one(resolve_expr, self.b, env, target) })
+    end
+
+    function Tr.ContractSoAComponent:sem_layout_resolve(env, target)
+        return schema.with(self, { base = one(resolve_expr, self.base, env, target) })
+    end
+
+    function Tr.ContractNoAlias:sem_layout_resolve(env, target)
+        return schema.with(self, { base = one(resolve_expr, self.base, env, target) })
+    end
+
+    function Tr.ContractReadonly:sem_layout_resolve(env, target)
+        return schema.with(self, { base = one(resolve_expr, self.base, env, target) })
+    end
+
+    function Tr.ContractWriteonly:sem_layout_resolve(env, target)
+        return schema.with(self, { base = one(resolve_expr, self.base, env, target) })
+    end
+
+    function Tr.ContractInvalidate:sem_layout_resolve(env, target)
+        return schema.with(self, { base = one(resolve_expr, self.base, env, target) })
+    end
+
+    function Tr.ContractPreserve:sem_layout_resolve(env, target)
+        return schema.with(self, { base = one(resolve_expr, self.base, env, target) })
+    end
+
 
     local function resolve_contracts(contracts, env, target)
         local out = {}
-        for i = 1, #(contracts or {}) do out[i] = resolve_contract(contracts[i], env, target) end
+        for i = 1, #(contracts or {}) do out[i] = contracts[i]:sem_layout_resolve(env, target) end
         return out
     end
 
-    function resolve_func(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.FuncLocal) then
-            return (function(self, env, target)
- return single(schema.with(self, { body = map_stmts(self.body, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.FuncExport) then
-            return (function(self, env, target)
- return single(schema.with(self, { body = map_stmts(self.body, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.FuncLocalContract) then
-            return (function(self, env, target)
- return single(schema.with(self, { contracts = resolve_contracts(self.contracts, env, target), body = map_stmts(self.body, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.FuncExportContract) then
-            return (function(self, env, target)
- return single(schema.with(self, { contracts = resolve_contracts(self.contracts, env, target), body = map_stmts(self.body, env, target) }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_func: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.Func:sem_layout_resolve(env, target)
+        return { schema.with(self, { body = map_stmts(self.body, env, target) }) }
     end
 
-    function resolve_const(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ConstItem) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_const: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.FuncLocalContract:sem_layout_resolve(env, target)
+        return { schema.with(self, { contracts = resolve_contracts(self.contracts, env, target), body = map_stmts(self.body, env, target) }) }
     end
 
-    function resolve_static(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.StaticItem) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_static: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.FuncExportContract:sem_layout_resolve(env, target)
+        return { schema.with(self, { contracts = resolve_contracts(self.contracts, env, target), body = map_stmts(self.body, env, target) }) }
     end
+
+
+    function Tr.ConstItem:sem_layout_resolve(env, target)
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target) }) }
+    end
+
+
+    function Tr.StaticItem:sem_layout_resolve(env, target)
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target) }) }
+    end
+
 
     function resolve_type_decl(node, ...)
         local cls = schema.classof(node)
@@ -724,56 +713,35 @@ local function bind_context(T)
         end
     end
 
-    function resolve_item(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ItemFunc) then
-            return (function(self, env, target)
- return single(schema.with(self, { func = one(resolve_func, self.func, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemExtern) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemConst) then
-            return (function(self, env, target)
- return single(schema.with(self, { c = one(resolve_const, self.c, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemStatic) then
-            return (function(self, env, target)
- return single(schema.with(self, { s = one(resolve_static, self.s, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemImport) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemType) then
-            return (function(self, env, target)
- return single(schema.with(self, { t = one(resolve_type_decl, self.t, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemRegion) then
-            return (function(self)
- return single(self)
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_item: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.Item:sem_layout_resolve(env, target)
+        return { self }
     end
 
-    function resolve_module(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.Module) then
-            return (function(module, env, target)
-
-            local resolved_env = env
-            if resolved_env == nil or #resolved_env.layouts == 0 then
-                resolved_env = Sem.LayoutEnv(module_type_api.env(module, target).layouts)
-            end
-            return single(schema.with(module, { items = map_items(module.items, resolved_env, target) }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_module: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.ItemFunc:sem_layout_resolve(env, target)
+        return { schema.with(self, { func = only(self.func:sem_layout_resolve(env, target)) }) }
     end
+
+    function Tr.ItemConst:sem_layout_resolve(env, target)
+        return { schema.with(self, { c = only(self.c:sem_layout_resolve(env, target)) }) }
+    end
+
+    function Tr.ItemStatic:sem_layout_resolve(env, target)
+        return { schema.with(self, { s = only(self.s:sem_layout_resolve(env, target)) }) }
+    end
+
+    function Tr.ItemType:sem_layout_resolve(env, target)
+        return { schema.with(self, { t = only(self.t:sem_layout_resolve()) }) }
+    end
+
+
+    function Tr.Module:sem_layout_resolve(env, target)
+        local resolved_env = env
+        if resolved_env == nil or #resolved_env.layouts == 0 then
+            resolved_env = Sem.LayoutEnv(module_type_api.env(self, target).layouts)
+        end
+        return { schema.with(self, { items = map_items(self.items, resolved_env, target) }) }
+    end
+
 
     local function empty_env()
         return Sem.LayoutEnv({})
@@ -787,7 +755,7 @@ local function bind_context(T)
         field = function(field, base_ty, env) return only(field:sem_resolve_field_ref(base_ty, env or empty_env())) end,
         expr = function(expr, env, target) return one(resolve_expr, expr, env or empty_env(), target) end,
         place = function(place, env, target) return one(resolve_place, place, env or empty_env(), target) end,
-        module = function(module, env, target) return one(resolve_module, module, env, target) end,
+        module = function(module, env, target) return only(module:sem_layout_resolve(env, target)) end,
     }
 end
 
