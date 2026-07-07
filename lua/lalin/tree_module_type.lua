@@ -317,40 +317,42 @@ local function bind_context(T)
         end
     end
 
-    function item_env_entries(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ItemFunc) then
-            return (function(self, mod_name)
- return func_entry(self.func, mod_name)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemExtern) then
-            return (function(self)
- return extern_entry(self.func)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemConst) then
-            return (function(self, mod_name)
- return const_entry(self.c, mod_name)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemStatic) then
-            return (function(self, mod_name)
- return static_entry(self.s, mod_name)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemType) then
-            return (function(self, mod_name)
- return type_entry(self.t, mod_name)
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemImport) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemRegion) then
-            return (function()
- return {}
-            end)(node, ...)
-        else
-            error("phase lalin_tree_item_env_entries: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.Item:tree_module_item_env_entries(input)
+        error("phase lalin_tree_item_env_entries: no handler for " .. tostring(schema.classof(self) or type(self)), 2)
     end
+
+    function Tr.ItemFunc:tree_module_item_env_entries(input)
+        return self.func:tree_module_func_entry(input)
+    end
+
+    function Tr.ItemExtern:tree_module_item_env_entries(input)
+        return self.func:tree_module_extern_entry()
+    end
+
+    function Tr.ItemConst:tree_module_item_env_entries(input)
+        return self.c:tree_module_const_entry(input)
+    end
+
+    function Tr.ItemStatic:tree_module_item_env_entries(input)
+        return self.s:tree_module_static_entry(input)
+    end
+
+    function Tr.ItemType:tree_module_item_env_entries(input)
+        return self.t:tree_module_type_entry(input)
+    end
+
+    function Tr.ItemImport:tree_module_item_env_entries(input)
+        return {}
+    end
+
+    function Tr.ItemRegion:tree_module_item_env_entries(input)
+        return {}
+    end
+
+    function Tr.ItemData:tree_module_item_env_entries(input)
+        return {}
+    end
+
 
     function module_env(node, ...)
         local cls = schema.classof(node)
