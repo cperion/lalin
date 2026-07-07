@@ -446,6 +446,88 @@ local function bind_context(T)
     function Stencil.StencilPointInput:stencil_artifact_is_input() return true end
     function Stencil.StencilPointExpr:stencil_artifact_is_input() return false end
 
+    -- predicate extraction: Predicate and Select carry a pred; others error
+    function Stencil.StencilPointExpr:stencil_artifact_point_predicate()
+        error("stencil_artifact_plan: descriptor mode requires a predicate point expression", 3)
+    end
+    function Stencil.StencilPointPredicate:stencil_artifact_point_predicate() return self.pred end
+    function Stencil.StencilPointSelect:stencil_artifact_point_predicate() return self.pred end
+
+    -- window input validation: returns nil on success, error string on failure
+    function Stencil.StencilPointExpr:stencil_artifact_window_input_reason(producer) return nil end
+    function Stencil.StencilPointWindowInput:stencil_artifact_window_input_reason(producer)
+        local shape = producer_shape(producer)
+        if not shape:stencil_artifact_is_window_nd() then return "window-relative point input requires a WindowND producer" end
+        local seen = {}
+        for i, offset in ipairs(self.offsets or {}) do
+            local reason = axis_ref_invalid_reason(offset.axis, producer, "window input offset " .. tostring(i))
+            if reason ~= nil then return reason end
+            if seen[offset.axis.index] then return "window input repeats axis " .. tostring(offset.axis.index) end
+            seen[offset.axis.index] = true
+        end
+        return nil
+    end
+    function Stencil.StencilPointUnary:stencil_artifact_window_input_reason(producer)
+        return self.arg:stencil_artifact_window_input_reason(producer)
+    end
+    function Stencil.StencilPointCast:stencil_artifact_window_input_reason(producer)
+        return self.arg:stencil_artifact_window_input_reason(producer)
+    end
+    function Stencil.StencilPointPredicate:stencil_artifact_window_input_reason(producer)
+        return self.arg:stencil_artifact_window_input_reason(producer)
+    end
+    function Stencil.StencilPointBinary:stencil_artifact_window_input_reason(producer)
+        return self.left:stencil_artifact_window_input_reason(producer) or self.right:stencil_artifact_window_input_reason(producer)
+    end
+    function Stencil.StencilPointCompare:stencil_artifact_window_input_reason(producer)
+        return self.left:stencil_artifact_window_input_reason(producer) or self.right:stencil_artifact_window_input_reason(producer)
+    end
+    function Stencil.StencilPointSelect:stencil_artifact_window_input_reason(producer)
+        return self.cond:stencil_artifact_window_input_reason(producer)
+            or self.then_expr:stencil_artifact_window_input_reason(producer)
+            or self.else_expr:stencil_artifact_window_input_reason(producer)
+    end
+
+    -- collect referenced access names
+    function Stencil.StencilPointExpr:stencil_artifact_collect_inputs(seen, out) end
+    function Stencil.StencilPointInput:stencil_artifact_collect_inputs(seen, out)
+        local name = self.access.name
+        if not seen[name] then
+            seen[name] = true
+            out[#out + 1] = name
+        end
+    end
+    function Stencil.StencilPointWindowInput:stencil_artifact_collect_inputs(seen, out)
+        local name = self.access.name
+        if not seen[name] then
+            seen[name] = true
+            out[#out + 1] = name
+        end
+    end
+    function Stencil.StencilPointUnary:stencil_artifact_collect_inputs(seen, out)
+        self.arg:stencil_artifact_collect_inputs(seen, out)
+    end
+    function Stencil.StencilPointCast:stencil_artifact_collect_inputs(seen, out)
+        self.arg:stencil_artifact_collect_inputs(seen, out)
+    end
+    function Stencil.StencilPointPredicate:stencil_artifact_collect_inputs(seen, out)
+        self.arg:stencil_artifact_collect_inputs(seen, out)
+    end
+    function Stencil.StencilPointBinary:stencil_artifact_collect_inputs(seen, out)
+        self.left:stencil_artifact_collect_inputs(seen, out)
+        self.right:stencil_artifact_collect_inputs(seen, out)
+    end
+    function Stencil.StencilPointCompare:stencil_artifact_collect_inputs(seen, out)
+        self.left:stencil_artifact_collect_inputs(seen, out)
+        self.right:stencil_artifact_collect_inputs(seen, out)
+    end
+    function Stencil.StencilPointSelect:stencil_artifact_collect_inputs(seen, out)
+        self.cond:stencil_artifact_collect_inputs(seen, out)
+        self.then_expr:stencil_artifact_collect_inputs(seen, out)
+        self.else_expr:stencil_artifact_collect_inputs(seen, out)
+    end
+    function Stencil.StencilPointConst:stencil_artifact_collect_inputs(seen, out) end
+
     -- CodeType leaf methods
     function Code.CodeTyDataPtr:stencil_artifact_is_data_ptr() return true end
     function Code.CodeType:stencil_artifact_is_data_ptr() return false end
@@ -886,9 +968,7 @@ local function bind_context(T)
     end
 
     local function predicate_expr_pred(expr)
-        local cls = asdl.classof(expr)
-        if cls == Stencil.StencilPointPredicate or cls == Stencil.StencilPointSelect then return expr.pred end
-        error("stencil_artifact_plan: descriptor mode requires a predicate point expression", 3)
+        return expr:stencil_artifact_point_predicate()
     end
 
     local function descriptor(sink, stride, accesses, expr, attrs, result_ty)
@@ -1104,29 +1184,7 @@ local function bind_context(T)
     end
 
     local function expr_window_input_reason(expr, producer)
-        local cls = asdl.classof(expr)
-        if cls == Stencil.StencilPointWindowInput then
-            local shape = producer_shape(producer)
-            if not shape:stencil_artifact_is_window_nd() then return "window-relative point input requires a WindowND producer" end
-            local seen = {}
-            for i, offset in ipairs(expr.offsets or {}) do
-                local reason = axis_ref_invalid_reason(offset.axis, producer, "window input offset " .. tostring(i))
-                if reason ~= nil then return reason end
-                if seen[offset.axis.index] then return "window input repeats axis " .. tostring(offset.axis.index) end
-                seen[offset.axis.index] = true
-            end
-            return nil
-        end
-        if cls == Stencil.StencilPointUnary or cls == Stencil.StencilPointCast or cls == Stencil.StencilPointPredicate then
-            return expr_window_input_reason(expr.arg, producer)
-        end
-        if cls == Stencil.StencilPointBinary or cls == Stencil.StencilPointCompare then
-            return expr_window_input_reason(expr.left, producer) or expr_window_input_reason(expr.right, producer)
-        end
-        if cls == Stencil.StencilPointSelect then
-            return expr_window_input_reason(expr.cond, producer) or expr_window_input_reason(expr.then_expr, producer) or expr_window_input_reason(expr.else_expr, producer)
-        end
-        return nil
+        return expr:stencil_artifact_window_input_reason(producer)
     end
 
     local function reduce_scope_materializer_reject_reason(scope, producer)
@@ -2399,27 +2457,7 @@ local function bind_context(T)
     local function collect_expr_inputs(expr, seen, out)
         seen = seen or {}
         out = out or {}
-        local cls = asdl.classof(expr)
-        if cls == Stencil.StencilPointInput or cls == Stencil.StencilPointWindowInput then
-            local name = expr.access.name
-            if not seen[name] then
-                seen[name] = true
-                out[#out + 1] = name
-            end
-        elseif cls == Stencil.StencilPointUnary or cls == Stencil.StencilPointCast or cls == Stencil.StencilPointPredicate then
-            collect_expr_inputs(expr.arg, seen, out)
-        elseif cls == Stencil.StencilPointBinary or cls == Stencil.StencilPointCompare then
-            collect_expr_inputs(expr.left, seen, out)
-            collect_expr_inputs(expr.right, seen, out)
-        elseif cls == Stencil.StencilPointSelect then
-            collect_expr_inputs(expr.cond, seen, out)
-            collect_expr_inputs(expr.then_expr, seen, out)
-            collect_expr_inputs(expr.else_expr, seen, out)
-        elseif cls == Stencil.StencilPointConst then
-            return out
-        else
-            error("stencil_artifact_plan: unsupported apply expression", 3)
-        end
+        expr:stencil_artifact_collect_inputs(seen, out)
         return out
     end
 
