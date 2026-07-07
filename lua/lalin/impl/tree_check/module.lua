@@ -245,11 +245,125 @@ function Tr.Module:tree_module_env(target)
 end
 
 -- Pipeline entry point: typecheck the module.
--- Pass-through: the module already carries parsed types from syntax_v2.document.
--- Type envs (bindings, types, layouts) are computed on demand by
--- tree_module_env() which is called by the lower-to-code phase in tree_code.lua.
--- This hook exists so that active type analysis (additional checks, inference)
--- can be plugged in here later without changing the pipeline.
+-- Traverses items, builds scopes, resolves ValueRefName -> ValueRefBinding,
+-- and returns a new Module with ModuleTyped header containing typechecked items.
 function Tr.Module:typecheck(input)
-  return self
+  local LCheck = require("lalin.schema_v2.check")
+  local mod_name = self.h:tree_module_name()
+
+  -- Build module-level scope from items (funcs, externs, consts, types)
+  local values, types = {}, {}
+  for i = 1, #self.items do
+    local item = self.items[i]
+    local item_class = asdl.classof(item)
+    if item_class == Tr.ItemFunc then
+      local func = item.func
+      local ty = params_type(func.params, func.result, mod_name)
+      local binding = B.Binding(C.Id("func:"..mod_name..":"..func.name), func.name, ty,
+        B.BindingRoleGlobalFunc(mod_name, func.name))
+      values[#values+1] = B.ValueEntry(func.name, binding)
+    elseif item_class == Tr.ItemExtern then
+      local f = item.func
+      values[#values+1] = B.ValueEntry(f.name,
+        B.Binding(C.Id("extern:"..f.name), f.name, params_type(f.params, f.result, ""),
+          B.BindingRoleExtern(f.symbol)))
+    elseif item_class == Tr.ItemConst then
+      local c = item.c
+      values[#values+1] = B.ValueEntry(c.name,
+        B.Binding(C.Id("const:"..mod_name..":"..c.name), c.name, c.ty,
+          B.BindingRoleGlobalConst(mod_name, c.name)))
+    elseif item_class == Tr.ItemStatic then
+      local s = item.s
+      values[#values+1] = B.ValueEntry(s.name,
+        B.Binding(C.Id("static:"..mod_name..":"..s.name), s.name, s.ty,
+          B.BindingRoleGlobalStatic(mod_name, s.name)))
+    elseif item_class == Tr.ItemType then
+      local t = item.t
+      if t.name then
+        types[#types+1] = B.TypeEntry(t.name, Ty.TNamed(Ty.TypeRefGlobal(mod_name, t.name)))
+      end
+    end
+  end
+
+  local module_scope = LCheck.TypeValueScope(mod_name, values, types, {},
+    LCheck.TypeModuleFacts({}, {}, {}, {}, {}, {}, {}))
+
+  -- Typecheck each item (inline, no helper functions)
+  local checked_items = {}
+  for i = 1, #self.items do
+    local item = self.items[i]
+    local item_class = asdl.classof(item)
+    if item_class == Tr.ItemFunc then
+      -- Typecheck a function item
+      local func = item.func
+      local func_class = asdl.classof(func)
+
+      if func_class == Tr.FuncDecl then
+        -- Declarations have no body, pass through
+        checked_items[i] = item
+      else
+        -- Build local scope with params
+        local scope = module_scope
+        for j = 1, #(func.params or {}) do
+          local p = func.params[j]
+          local binding = B.Binding(C.Id("arg:" .. func.name .. ":" .. p.name), p.name, p.ty, B.BindingRoleArg(j - 1))
+          scope = scope:typecheck_tree_add_value(p.name, p.ty, binding)
+        end
+
+        -- Typecheck body (inline loop)
+        local stmt_input = LCheck.TypeStmtInput(scope, func.result, LCheck.TypeYieldNone)
+        local cur_input = stmt_input
+        local new_stmts = {}
+        for bi = 1, #(func.body or {}) do
+          local stmt = func.body[bi]
+          local tc_result = stmt:typecheck_tree_stmt(cur_input)
+          if tc_result.state ~= nil then
+            cur_input = tc_result.state
+          end
+          if tc_result.stmts then
+            for _, s in ipairs(tc_result.stmts) do
+              new_stmts[#new_stmts+1] = s
+            end
+          end
+        end
+
+        -- Build new function
+        local new_func
+        if func_class == Tr.FuncExport then
+          new_func = Tr.FuncExport(func.name, func.params, func.result, new_stmts)
+        elseif func_class == Tr.FuncLocalContract then
+          new_func = Tr.FuncLocalContract(func.name, func.params, func.result, func.contracts or {}, new_stmts)
+        elseif func_class == Tr.FuncExportContract then
+          new_func = Tr.FuncExportContract(func.name, func.params, func.result, func.contracts or {}, new_stmts)
+        else
+          new_func = Tr.FuncLocal(func.name, func.params, func.result, new_stmts)
+        end
+        checked_items[i] = Tr.ItemFunc(new_func)
+      end
+    elseif item_class == Tr.ItemConst then
+      -- Typecheck const initializer
+      local c = item.c
+      local expr_input = LCheck.TypeExprInput(module_scope)
+      local er = c.value:typecheck_tree_expr(expr_input)
+      if er.ty ~= nil and er.expr then
+        checked_items[i] = Tr.ItemConst(Tr.ConstItem(c.name, c.ty, er.expr))
+      else
+        checked_items[i] = item
+      end
+    elseif item_class == Tr.ItemStatic then
+      -- Typecheck static initializer
+      local s = item.s
+      local expr_input = LCheck.TypeExprInput(module_scope)
+      local er = s.value:typecheck_tree_expr(expr_input)
+      if er.ty ~= nil and er.expr then
+        checked_items[i] = Tr.ItemStatic(Tr.StaticItem(s.name, s.ty, er.expr))
+      else
+        checked_items[i] = item
+      end
+    else
+      checked_items[i] = item
+    end
+  end
+
+  return Tr.Module(Tr.ModuleTyped(mod_name), checked_items)
 end
