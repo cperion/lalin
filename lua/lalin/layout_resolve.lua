@@ -49,7 +49,6 @@ local function bind_context(T)
     local resolve_place
     local resolve_expr
     local resolve_view
-    local resolve_domain
     local resolve_stmt
 
     local function one(phase, node, env, target)
@@ -303,36 +302,32 @@ local function bind_context(T)
         end
     end
 
-    function resolve_domain(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.DomainRange) then
-            return (function(self, env, target)
- return single(schema.with(self, { stop = one(resolve_expr, self.stop, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.DomainRange2) then
-            return (function(self, env, target)
- return single(schema.with(self, { start = one(resolve_expr, self.start, env, target), stop = one(resolve_expr, self.stop, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.DomainZipEqValues) then
-            return (function(self, env, target)
- return single(schema.with(self, { values = map_exprs(self.values, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.DomainValue) then
-            return (function(self, env, target)
- return single(schema.with(self, { value = one(resolve_expr, self.value, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.DomainView) then
-            return (function(self, env, target)
- return single(schema.with(self, { view = one(resolve_view, self.view, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.DomainZipEqViews) then
-            return (function(self, env, target)
- local views = {}; for i = 1, #self.views do views[#views + 1] = one(resolve_view, self.views[i], env, target) end; return single(schema.with(self, { views = views }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_domain: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.DomainRange:sem_layout_resolve(env, target)
+        return { schema.with(self, { stop = one(resolve_expr, self.stop, env, target) }) }
     end
+
+    function Tr.DomainRange2:sem_layout_resolve(env, target)
+        return { schema.with(self, { start = one(resolve_expr, self.start, env, target), stop = one(resolve_expr, self.stop, env, target) }) }
+    end
+
+    function Tr.DomainZipEqValues:sem_layout_resolve(env, target)
+        return { schema.with(self, { values = map_exprs(self.values, env, target) }) }
+    end
+
+    function Tr.DomainValue:sem_layout_resolve(env, target)
+        return { schema.with(self, { value = one(resolve_expr, self.value, env, target) }) }
+    end
+
+    function Tr.DomainView:sem_layout_resolve(env, target)
+        return { schema.with(self, { view = one(resolve_view, self.view, env, target) }) }
+    end
+
+    function Tr.DomainZipEqViews:sem_layout_resolve(env, target)
+        local views = {}
+        for i = 1, #self.views do views[#views + 1] = one(resolve_view, self.views[i], env, target) end
+        return { schema.with(self, { views = views }) }
+    end
+
 
     function resolve_expr(node, ...)
         local cls = schema.classof(node)
