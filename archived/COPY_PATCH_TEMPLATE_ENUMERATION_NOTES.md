@@ -1,5 +1,14 @@
 # Copy-Patch Template Enumeration Notes
 
+> **ARCHIVED — Historical Research.** This document has been moved from `docs/` to
+> `archived/` as of 2026-07-07. It records the historical research pass for
+> redesigning the experimental Lalin native bank from first principles. It is not
+> the main implementation contract.
+>
+> For the current experimental native copy-patch architecture, see
+> `docs/RESIDUAL_NATIVE_ARCHITECTURE.md`. For the main JIT/AOT path, see the
+> `emit_c` pipeline documented in `docs/ARCHITECTURE.md`.
+
 This note records the historical research pass for redesigning the experimental
 Lalin native bank from first principles. It is not the main implementation
 contract. The main JIT/AOT path is `emit_c`: GCC cooks emitted C into a shared
