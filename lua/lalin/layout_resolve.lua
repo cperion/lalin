@@ -178,11 +178,18 @@ local function bind_context(T)
         return self.base:sem_layout_storage()
     end
 
-    local function access_base_type(ty)
-        local cls = schema.classof(ty)
-        if cls == Ty.TAccess or cls == Ty.TLease then return access_base_type(ty.base) end
-        return ty
+    function Ty.Type:sem_layout_base_type()
+        return self
     end
+
+    function Ty.TAccess:sem_layout_base_type()
+        return self.base:sem_layout_base_type()
+    end
+
+    function Ty.TLease:sem_layout_base_type()
+        return self.base:sem_layout_base_type()
+    end
+
 
     function resolve_field_ref(node, ...)
         local cls = schema.classof(node)
@@ -245,7 +252,7 @@ local function bind_context(T)
 
             local base = one(resolve_place, self.base, env, target)
             local base_ty = type_of_place(base)
-            local lookup_ty = access_base_type(base_ty)
+            local lookup_ty = base_ty:sem_layout_base_type()
             if lookup_ty ~= nil and schema.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
             if lookup_ty ~= nil then
                 local field = only(resolve_field_ref(Sem.FieldByName(self.name, lookup_ty), lookup_ty, env))
@@ -258,7 +265,7 @@ local function bind_context(T)
 
             local base = one(resolve_place, self.base, env, target)
             local base_ty = type_of_place(base)
-            base_ty = access_base_type(base_ty)
+            base_ty = base_ty:sem_layout_base_type()
             if base_ty ~= nil and schema.classof(base_ty) == Ty.TPtr then base_ty = base_ty.elem end
             local field = self.field
             if base_ty ~= nil then field = only(resolve_field_ref(self.field, base_ty, env)) end
@@ -361,7 +368,7 @@ local function bind_context(T)
             local base_ty = nil
             local h_cls = schema.classof(h)
             if h_cls == Tr.ExprTyped then base_ty = h.ty end
-            local lookup_ty = access_base_type(base_ty)
+            local lookup_ty = base_ty:sem_layout_base_type()
             if lookup_ty ~= nil and schema.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
             if lookup_ty ~= nil then
                 local field = only(resolve_field_ref(Sem.FieldByName(self.name, lookup_ty), lookup_ty, env))
@@ -421,7 +428,7 @@ local function bind_context(T)
             local base_ty = nil
             local h_cls = schema.classof(h)
             if h_cls == Tr.ExprTyped then base_ty = h.ty end
-            base_ty = access_base_type(base_ty)
+            base_ty = base_ty:sem_layout_base_type()
             if base_ty ~= nil and schema.classof(base_ty) == Ty.TPtr then base_ty = base_ty.elem end
             local field = self.field
             if base_ty ~= nil then field = only(resolve_field_ref(self.field, base_ty, env)) end
