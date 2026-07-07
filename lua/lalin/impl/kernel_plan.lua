@@ -202,7 +202,6 @@ function Mem.MemSemanticFactSet:plan_kernels(flow, values, mem, effects)
   for _, lf in ipairs(flow and flow.loops or {}) do
     if lf.counted ~= nil then
       local loop_text = lf.loop.text
-function Flow.FlowTripCountRejected:kernel_plan_closed_form_trip_unknown_proof() return true end
       -- closed-form candidate
       if closed_forms[loop_text] ~= nil then
         local cf = closed_forms[loop_text]
