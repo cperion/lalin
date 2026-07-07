@@ -142,6 +142,55 @@ local function bind_context(T)
     function Stencil.StencilSinkStore:stencil_artifact_is_store() return true end
     function Stencil.StencilSink:stencil_artifact_is_store() return false end
 
+    -- StencilSink materializer and auto_vector leaf methods
+    function Stencil.StencilSink:stencil_artifact_sink_materializer_reject_reason(producer)
+        return "unknown stencil sink"
+    end
+    function Stencil.StencilSinkStore:stencil_artifact_sink_materializer_reject_reason(producer) return nil end
+    function Stencil.StencilSinkReduce:stencil_artifact_sink_materializer_reject_reason(producer)
+        return self.scope:stencil_artifact_materializer_reject_reason(producer)
+    end
+    function Stencil.StencilSinkScan:stencil_artifact_sink_materializer_reject_reason(producer)
+        return axis_ref_invalid_reason(self.axis, producer, "scan axis")
+    end
+    function Stencil.StencilSinkScatterReduce:stencil_artifact_sink_materializer_reject_reason(producer)
+        if self.conflicts == Stencil.StencilScatterReduceSequential or self.conflicts == Stencil.StencilScatterReduceUniqueIndices then return nil end
+        if self.conflicts:stencil_artifact_is_atomic() then return "atomic scatter-reduce is represented but not materialized yet" end
+        if self.conflicts == Stencil.StencilScatterReducePrivatized then return "privatized scatter-reduce is represented but not materialized yet" end
+        return "unknown scatter-reduce conflict semantics"
+    end
+
+    function Stencil.StencilSink:stencil_artifact_is_auto_vector() return false end
+    function Stencil.StencilSinkScan:stencil_artifact_is_auto_vector() return true end
+    function Stencil.StencilSinkScatterReduce:stencil_artifact_is_auto_vector() return false end
+    function Stencil.StencilSinkStore:stencil_artifact_is_auto_vector()
+        return not self.semantics:stencil_artifact_is_partition()
+    end
+    function Stencil.StencilSinkReduce:stencil_artifact_is_auto_vector()
+        return not self.semantics:stencil_artifact_is_find()
+    end
+
+    -- StencilReduceScope materializer and domain leaf methods
+    function Stencil.StencilReduceScope:stencil_artifact_materializer_reject_reason(producer)
+        return "unknown reduce sink scope"
+    end
+    function Stencil.StencilReduceScopeDomain:stencil_artifact_materializer_reject_reason(producer) return nil end
+    function Stencil.StencilReduceScopeAxes:stencil_artifact_materializer_reject_reason(producer)
+        local reason = axis_set_invalid_reason(self.axes, producer, "reduce axis scope")
+        if reason ~= nil then return reason end
+        return nil
+    end
+    function Stencil.StencilReduceScopeWindow:stencil_artifact_materializer_reject_reason(producer)
+        local shape = producer_shape(producer)
+        if not shape:stencil_artifact_is_window_nd() then return "window-local reduction requires a WindowND producer" end
+        local reason = axis_set_invalid_reason(self.axes, producer, "window reduction scope")
+        if reason ~= nil then return reason end
+        return nil
+    end
+
+    function Stencil.StencilReduceScope:stencil_artifact_is_domain() return false end
+    function Stencil.StencilReduceScopeDomain:stencil_artifact_is_domain() return true end
+
     -- StencilScatterReduceConflictSemantics leaf methods
     function Stencil.StencilScatterReduceAtomic:stencil_artifact_is_atomic() return true end
     function Stencil.StencilScatterReduceConflictSemantics:stencil_artifact_is_atomic() return false end
@@ -1286,21 +1335,7 @@ local function bind_context(T)
     end
 
     local function reduce_scope_materializer_reject_reason(scope, producer)
-        local cls = asdl.classof(scope)
-        if scope == Stencil.StencilReduceScopeDomain or cls == Stencil.StencilReduceScopeDomain then return nil end
-        if cls == Stencil.StencilReduceScopeAxes then
-            local reason = axis_set_invalid_reason(scope.axes, producer, "reduce axis scope")
-            if reason ~= nil then return reason end
-            return nil
-        end
-        if cls == Stencil.StencilReduceScopeWindow then
-            local shape = producer_shape(producer)
-            if not shape:stencil_artifact_is_window_nd() then return "window-local reduction requires a WindowND producer" end
-            local reason = axis_set_invalid_reason(scope.axes, producer, "window reduction scope")
-            if reason ~= nil then return reason end
-            return nil
-        end
-        return "unknown reduce sink scope"
+        return scope:stencil_artifact_materializer_reject_reason(producer)
     end
 
     local function sink_materializer_reject_reason(desc)
@@ -1308,24 +1343,7 @@ local function bind_context(T)
         local producer = descriptor_producer(desc)
         local body_reason = expr_window_input_reason(descriptor_expr(desc), producer)
         if body_reason ~= nil then return body_reason end
-        local sink = desc.sink
-        local sink_cls = asdl.classof(sink)
-        if sink_cls == Stencil.StencilSinkReduce then
-            return reduce_scope_materializer_reject_reason(sink.scope, producer)
-        end
-        if sink_cls == Stencil.StencilSinkScan then
-            local reason = axis_ref_invalid_reason(sink.axis, producer, "scan axis")
-            if reason ~= nil then return reason end
-            return nil
-        end
-        if sink_cls == Stencil.StencilSinkStore then return nil end
-        if sink_cls == Stencil.StencilSinkScatterReduce then
-            if sink.conflicts == Stencil.StencilScatterReduceSequential or sink.conflicts == Stencil.StencilScatterReduceUniqueIndices then return nil end
-            if sink.conflicts:stencil_artifact_is_atomic() then return "atomic scatter-reduce is represented but not materialized yet" end
-            if sink.conflicts == Stencil.StencilScatterReducePrivatized then return "privatized scatter-reduce is represented but not materialized yet" end
-            return "unknown scatter-reduce conflict semantics"
-        end
-        return "unknown stencil sink"
+        return desc.sink:stencil_artifact_sink_materializer_reject_reason(producer)
     end
 
     local function unsupported_sink_reject(desc)
@@ -1748,16 +1766,8 @@ local function bind_context(T)
     end
 
     local function auto_vector_descriptor(desc)
-        local sink_cls = desc and desc.sink and asdl.classof(desc.sink) or nil
-        if sink_cls == Stencil.StencilSinkScan then return true end
-        if sink_cls == Stencil.StencilSinkScatterReduce then return false end
-        if sink_cls == Stencil.StencilSinkStore then
-            return not desc.sink.semantics:stencil_artifact_is_partition()
-        end
-        if sink_cls == Stencil.StencilSinkReduce then
-            return not desc.sink.semantics:stencil_artifact_is_find()
-        end
-        return false
+        if desc == nil or desc.sink == nil then return false end
+        return desc.sink:stencil_artifact_is_auto_vector()
     end
 
     local function unroll_factor(info)
@@ -2305,8 +2315,7 @@ local function bind_context(T)
         if not ok then error("stencil_artifact_plan: unsupported reduce_n reduction: " .. tostring(reason), 2) end
         local inputs = assert(info.inputs, "stencil_artifact_plan.reduce_n_artifact requires inputs")
         local scope = info.scope or info.reduce_scope or domain_reduce_scope()
-        local scope_cls = asdl.classof(scope)
-        local scoped_output = not (scope == Stencil.StencilReduceScopeDomain or scope_cls == Stencil.StencilReduceScopeDomain)
+        local scoped_output = not scope:stencil_artifact_is_domain()
         local accesses = {}
         local abi = {}
         local args = {}
