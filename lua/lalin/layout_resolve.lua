@@ -147,34 +147,16 @@ local function bind_context(T)
     end
 
 
-    function field_in_layout(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Sem.LayoutNamed) then
-            return (function(layout, field_name)
-
-            for i = 1, #layout.fields do
-                local field = layout.fields[i]
-                if field.field_name == field_name then
-                    return single(field)
-                end
+    function Sem.FieldLayout:sem_layout_field(field_name)
+        for i = 1, #self.fields do
+            local field = self.fields[i]
+            if field.field_name == field_name then
+                return { field }
             end
-            return {}
-            end)(node, ...)
-        elseif schema.isa(node, Sem.LayoutLocal) then
-            return (function(layout, field_name)
-
-            for i = 1, #layout.fields do
-                local field = layout.fields[i]
-                if field.field_name == field_name then
-                    return single(field)
-                end
-            end
-            return {}
-            end)(node, ...)
-        else
-            error("phase lalin_sem_field_in_layout: no handler for " .. tostring(cls or type(node)), 2)
         end
+        return {}
     end
+
 
     function Ty.Type:sem_layout_storage()
         return H.HostRepOpaque("sem_layout")
@@ -213,7 +195,7 @@ local function bind_context(T)
 
             local layout = maybe_one(base_ty:sem_layout(env))
             if layout == nil then return single(field) end
-            local resolved = maybe_one(field_in_layout(layout, field.field_name))
+            local resolved = maybe_one(layout:sem_layout_field(field.field_name))
             if resolved == nil then return single(field) end
             return single(Sem.FieldByOffset(resolved.field_name, resolved.offset, resolved.ty, resolved.ty:sem_layout_storage()))
             end)(node, ...)
