@@ -377,6 +377,42 @@ local function bind_context(T)
     function Stencil.StencilSchedule:stencil_artifact_is_vector() return false end
     function Stencil.StencilSchedule:stencil_artifact_is_scalar() return false end
     function Stencil.StencilSchedule:stencil_artifact_lane_count() return nil end
+    -- schedule key/suffix/name/cost leaf methods defined after helpers below
+
+    -- StencilRealizedSchedule leaf methods
+    function Stencil.StencilRealizedSchedule:stencil_artifact_is_realized_scalar() return false end
+    function Stencil.StencilRealizedScalar:stencil_artifact_is_realized_scalar() return true end
+    function Stencil.StencilRealizedSchedule:stencil_artifact_is_realized_vector() return false end
+    function Stencil.StencilRealizedVector:stencil_artifact_is_realized_vector() return true end
+    function Stencil.StencilRealizedUnrolled:stencil_artifact_is_realized_vector() return false end
+    function Stencil.StencilRealizedSchedule:stencil_artifact_is_realized_unrolled_with_factor(factor) return false end
+    function Stencil.StencilRealizedUnrolled:stencil_artifact_is_realized_unrolled_with_factor(factor)
+        return tonumber(self.factor) == tonumber(factor)
+    end
+
+    -- StencilRealizedScheduleEvidence leaf methods
+    function Stencil.StencilRealizedScheduleEvidence:stencil_artifact_append_diagnostic(out) end
+    function Stencil.StencilRealizedByConstruction:stencil_artifact_append_diagnostic(out)
+        out[#out + 1] = Stencil.StencilArtifactDiagnostic(
+            Stencil.StencilArtifactDiagnosticNote,
+            "realized-schedule",
+            self.reason
+        )
+    end
+    function Stencil.StencilRealizedCompilerRemark:stencil_artifact_append_diagnostic(out)
+        out[#out + 1] = Stencil.StencilArtifactDiagnostic(
+            Stencil.StencilArtifactDiagnosticRemark,
+            "compiler",
+            self.remark
+        )
+    end
+    function Stencil.StencilRealizedDisassembly:stencil_artifact_append_diagnostic(out)
+        out[#out + 1] = Stencil.StencilArtifactDiagnostic(
+            Stencil.StencilArtifactDiagnosticRemark,
+            "disassembly",
+            self.classification
+        )
+    end
 
     -- StencilLayout leaf methods
     function Stencil.StencilLayoutIndexed:stencil_artifact_is_indexed() return true end
@@ -1141,21 +1177,7 @@ local function bind_context(T)
     end
 
     local function realized_matches_request(schedule, realized)
-        local scls = asdl.classof(schedule)
-        local rcls = asdl.classof(realized)
-        if scls == Stencil.StencilScheduleScalar then return rcls == Stencil.StencilRealizedScalar end
-        if scls == Stencil.StencilScheduleAutoVector then return rcls == Stencil.StencilRealizedVector end
-        if scls == Stencil.StencilScheduleUnrolled then
-            return rcls == Stencil.StencilRealizedUnrolled and tonumber(realized.factor) == tonumber(schedule.factor)
-        end
-        if scls == Stencil.StencilScheduleVector then
-            local lanes = schedule_lane_count(schedule)
-            return rcls == Stencil.StencilRealizedVector
-                and (lanes == nil or tonumber(realized.lanes) == lanes)
-                and tonumber(realized.unroll) == tonumber(schedule.vector_unroll)
-                and tonumber(realized.interleave) == tonumber(schedule.interleave)
-        end
-        return false
+        return schedule:stencil_artifact_matches_realized(realized)
     end
 
     local function schedule_rejects_for_realized(schedule, realized)
@@ -1219,27 +1241,75 @@ local function bind_context(T)
         }, "/")
     end
 
+    -- StencilSchedule key / suffix / name / cost leaf methods
+    -- (must be after variant_name, compiler_policy_key, schedule_lane_count)
+
+    function Stencil.StencilSchedule:stencil_artifact_schedule_key()
+        return "schedule:" .. variant_name(self)
+    end
+    function Stencil.StencilScheduleScalar:stencil_artifact_schedule_key()
+        return "scalar:" .. compiler_policy_key(self.compiler)
+    end
+    function Stencil.StencilScheduleAutoVector:stencil_artifact_schedule_key()
+        return "autovector:" .. compiler_policy_key(self.compiler)
+    end
+    function Stencil.StencilScheduleUnrolled:stencil_artifact_schedule_key()
+        return "unrolled:" .. tostring(self.factor) .. ":" .. compiler_policy_key(self.compiler)
+    end
+    function Stencil.StencilScheduleVector:stencil_artifact_schedule_key()
+        return table.concat({
+            "vector",
+            variant_name(self.feature),
+            variant_name(self.lane_policy),
+            tostring(schedule_lane_count(self) or "target"),
+            variant_name(self.required_alignment),
+            variant_name(self.tail),
+            variant_name(self.reduction),
+            variant_name(self.vector_compiler),
+            tostring(self.vector_unroll),
+            tostring(self.interleave),
+            compiler_policy_key(self.compiler),
+        }, ":")
+    end
+
+    function Stencil.StencilSchedule:stencil_artifact_schedule_suffix() return "", "" end
+    function Stencil.StencilScheduleVector:stencil_artifact_schedule_suffix()
+        local lanes = schedule_lane_count(self)
+        local lane_suffix = lanes and tostring(lanes) or "target"
+        local unroll = tonumber(self.vector_unroll) or 1
+        local interleave = tonumber(self.interleave) or 1
+        return ":v" .. lane_suffix .. (unroll > 1 and (":vu" .. tostring(unroll)) or "") .. (interleave > 1 and (":i" .. tostring(interleave)) or ""),
+            "_v" .. lane_suffix .. (unroll > 1 and ("_vu" .. tostring(unroll)) or "") .. (interleave > 1 and ("_i" .. tostring(interleave)) or "")
+    end
+    function Stencil.StencilScheduleUnrolled:stencil_artifact_schedule_suffix()
+        return ":u" .. tostring(self.factor), "_u" .. tostring(self.factor)
+    end
+
+    function Stencil.StencilSchedule:stencil_artifact_schedule_candidate_name() return "schedule" end
+    function Stencil.StencilScheduleScalar:stencil_artifact_schedule_candidate_name() return "scalar" end
+    function Stencil.StencilScheduleAutoVector:stencil_artifact_schedule_candidate_name() return "autovector" end
+    function Stencil.StencilScheduleUnrolled:stencil_artifact_schedule_candidate_name()
+        return "unrolled:" .. tostring(self.factor)
+    end
+    function Stencil.StencilScheduleVector:stencil_artifact_schedule_candidate_name()
+        return "vector:" .. tostring(schedule_lane_count(self) or "target") .. ":u" .. tostring(self.vector_unroll or 1) .. ":i" .. tostring(self.interleave or 1)
+    end
+
+    function Stencil.StencilSchedule:stencil_artifact_schedule_candidate_cost() return 1000000 end
+    function Stencil.StencilScheduleScalar:stencil_artifact_schedule_candidate_cost() return 100000 end
+    function Stencil.StencilScheduleAutoVector:stencil_artifact_schedule_candidate_cost() return 25000 end
+    function Stencil.StencilScheduleUnrolled:stencil_artifact_schedule_candidate_cost()
+        return math.floor(60000 / math.max(1, tonumber(self.factor) or 1))
+    end
+    function Stencil.StencilScheduleVector:stencil_artifact_schedule_candidate_cost()
+        local lanes = schedule_lane_count(self) or 4
+        local unroll = tonumber(self.vector_unroll) or 1
+        local interleave = tonumber(self.interleave) or 1
+        return math.floor(100000 / math.max(1, lanes * unroll * interleave))
+    end
+
     local function schedule_key(schedule)
-        local cls = asdl.classof(schedule)
-        if cls == Stencil.StencilScheduleScalar then return "scalar:" .. compiler_policy_key(schedule.compiler) end
-        if cls == Stencil.StencilScheduleAutoVector then return "autovector:" .. compiler_policy_key(schedule.compiler) end
-        if cls == Stencil.StencilScheduleUnrolled then return "unrolled:" .. tostring(schedule.factor) .. ":" .. compiler_policy_key(schedule.compiler) end
-        if cls == Stencil.StencilScheduleVector then
-            return table.concat({
-                "vector",
-                variant_name(schedule.feature),
-                variant_name(schedule.lane_policy),
-                tostring(schedule_lane_count(schedule) or "target"),
-                variant_name(schedule.required_alignment),
-                variant_name(schedule.tail),
-                variant_name(schedule.reduction),
-                variant_name(schedule.vector_compiler),
-                tostring(schedule.vector_unroll),
-                tostring(schedule.interleave),
-                compiler_policy_key(schedule.compiler),
-            }, ":")
-        end
-        return "schedule:" .. variant_name(schedule)
+        return schedule:stencil_artifact_schedule_key()
     end
 
     local function artifact_fingerprint(instance0, provider, symbol, signature)
@@ -1258,26 +1328,7 @@ local function bind_context(T)
     local function append_realized_diagnostics(out, realized)
         if realized == nil then return end
         for _, evidence in ipairs(realized.evidence or {}) do
-            local cls = asdl.classof(evidence)
-            if cls == Stencil.StencilRealizedByConstruction then
-                out[#out + 1] = Stencil.StencilArtifactDiagnostic(
-                    Stencil.StencilArtifactDiagnosticNote,
-                    "realized-schedule",
-                    evidence.reason
-                )
-            elseif cls == Stencil.StencilRealizedCompilerRemark then
-                out[#out + 1] = Stencil.StencilArtifactDiagnostic(
-                    Stencil.StencilArtifactDiagnosticRemark,
-                    "compiler",
-                    evidence.remark
-                )
-            elseif cls == Stencil.StencilRealizedDisassembly then
-                out[#out + 1] = Stencil.StencilArtifactDiagnostic(
-                    Stencil.StencilArtifactDiagnosticRemark,
-                    "disassembly",
-                    evidence.classification
-                )
-            end
+            evidence:stencil_artifact_append_diagnostic(out)
         end
     end
 
@@ -1587,44 +1638,15 @@ local function bind_context(T)
     end
 
     local function schedule_suffix(schedule)
-        local cls = asdl.classof(schedule)
-        if cls == Stencil.StencilScheduleVector then
-            local lanes = schedule_lane_count(schedule)
-            local lane_suffix = lanes and tostring(lanes) or "target"
-            local unroll = tonumber(schedule.vector_unroll) or 1
-            local interleave = tonumber(schedule.interleave) or 1
-            return ":v" .. lane_suffix .. (unroll > 1 and (":vu" .. tostring(unroll)) or "") .. (interleave > 1 and (":i" .. tostring(interleave)) or ""),
-                "_v" .. lane_suffix .. (unroll > 1 and ("_vu" .. tostring(unroll)) or "") .. (interleave > 1 and ("_i" .. tostring(interleave)) or "")
-        end
-        if cls == Stencil.StencilScheduleUnrolled then
-            return ":u" .. tostring(schedule.factor), "_u" .. tostring(schedule.factor)
-        end
-        return "", ""
+        return schedule:stencil_artifact_schedule_suffix()
     end
 
     local function schedule_candidate_name(schedule)
-        local cls = asdl.classof(schedule)
-        if cls == Stencil.StencilScheduleScalar then return "scalar" end
-        if cls == Stencil.StencilScheduleAutoVector then return "autovector" end
-        if cls == Stencil.StencilScheduleUnrolled then return "unrolled:" .. tostring(schedule.factor) end
-        if cls == Stencil.StencilScheduleVector then
-            return "vector:" .. tostring(schedule_lane_count(schedule) or "target") .. ":u" .. tostring(schedule.vector_unroll or 1) .. ":i" .. tostring(schedule.interleave or 1)
-        end
-        return "schedule"
+        return schedule:stencil_artifact_schedule_candidate_name()
     end
 
     local function schedule_candidate_cost(schedule)
-        local cls = asdl.classof(schedule)
-        if cls == Stencil.StencilScheduleVector then
-            local lanes = schedule_lane_count(schedule) or 4
-            local unroll = tonumber(schedule.vector_unroll) or 1
-            local interleave = tonumber(schedule.interleave) or 1
-            return math.floor(100000 / math.max(1, lanes * unroll * interleave))
-        end
-        if cls == Stencil.StencilScheduleAutoVector then return 25000 end
-        if cls == Stencil.StencilScheduleUnrolled then return math.floor(60000 / math.max(1, tonumber(schedule.factor) or 1)) end
-        if cls == Stencil.StencilScheduleScalar then return 100000 end
-        return 1000000
+        return schedule:stencil_artifact_schedule_candidate_cost()
     end
 
     local function schedule_candidate(schedule, status, reason, rejects)
