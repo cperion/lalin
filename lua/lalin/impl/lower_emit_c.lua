@@ -8,6 +8,7 @@ local Code   = require("lalin.schema_v2.code")
 local C      = require("lalin.schema_v2.c")
 local Core   = require("lalin.schema_v2.core")
 
+local asdl   = require("lalin.asdl")
 -- Load sub-modules for schedule forms and code-to-c conversion
 require("lalin.impl.lower_emit_c.schedule_form")
 require("lalin.impl.lower_emit_c.code_to_c")
@@ -182,6 +183,61 @@ function Lower.LowerModule:emit_c(code_module)
     cfuncs[#cfuncs + 1] = lowered.cfunc
   end
 
+
+  -- Lower externs: CodeExtern → CBackendExtern
+  local cexterns = {}
+  for _, ext in ipairs(code_module.externs or {}) do
+    cexterns[#cexterns + 1] = C.CBackendExtern(
+      C.CBackendName(ext.name),
+      ext.symbol,
+      C.CBackendFuncSigId(ext.sig.text),
+      nil  -- header
+    )
+  end
+
+  -- Lower globals: CodeGlobal → CBackendGlobal
+  local cglobals = {}
+  for _, g in ipairs(code_module.globals or {}) do
+    local cinits = {}
+    for _, init in ipairs(g.inits or {}) do
+      cinits[#cinits + 1] = init:lower_code_data_init_to_c()
+    end
+    local visibility = (g.linkage == Code.CodeLinkageExport) and Core.VisibilityExport or Core.VisibilityLocal
+    cglobals[#cglobals + 1] = C.CBackendGlobal(
+      C.CBackendGlobalId(g.id.text),
+      C.CBackendName(g.name),
+      visibility,
+      g.ty:code_to_c_backend_type(),
+      g.size or 0,
+      g.align or 8,
+      cinits
+    )
+  end
+
+  -- Lower types: CodeTypeDecl → CBackendTypeDecl
+  local ctypedecls = {}
+  for _, td in ipairs(code_module.types or {}) do
+    ctypedecls[#ctypedecls + 1] = td:lower_code_type_decl_to_c()
+  end
+
+  -- Lower data segments: CodeData → CBackendGlobal (stored alongside globals)
+  for _, d in ipairs(code_module.data or {}) do
+    local dinits = {}
+    for _, init in ipairs(d.inits or {}) do
+      dinits[#dinits + 1] = init:lower_code_data_init_to_c()
+    end
+    local visibility = (d.linkage == Code.CodeLinkageExport) and Core.VisibilityExport or Core.VisibilityLocal
+    cglobals[#cglobals + 1] = C.CBackendGlobal(
+      C.CBackendGlobalId(d.id.text),
+      C.CBackendName(d.name),
+      visibility,
+      C.CBackendDataPtr(nil),  -- raw data segments typed as void*
+      d.size,
+      d.align,
+      dinits
+    )
+  end
+
   return C.CBackendUnit(
     code_module.id.text,
     C.CBackendTarget(
@@ -193,10 +249,47 @@ function Lower.LowerModule:emit_c(code_module)
       true
     ),
     sigs,
-    {},
-    {},
-    {},
+    ctypedecls,
+    cglobals,
+    cexterns,
     helpers,
     cfuncs
   )
+end
+
+-----------------------------------------------------------------------
+-- CodeDataInit → CBackendDataInit conversion
+-----------------------------------------------------------------------
+
+function Code.CodeDataInit:lower_code_data_init_to_c()
+  error("code_to_c: unsupported CodeDataInit " .. tostring(asdl.classof(self)), 3)
+end
+
+function Code.CodeDataZero:lower_code_data_init_to_c()
+  return C.CBackendDataZero(self.offset, self.size)
+end
+
+function Code.CodeDataBytes:lower_code_data_init_to_c()
+  return C.CBackendDataBytes(self.offset, self.bytes)
+end
+
+function Code.CodeDataScalar:lower_code_data_init_to_c()
+  return C.CBackendDataScalar(
+    self.offset,
+    self.ty:code_to_c_backend_type(),
+    self.literal
+  )
+end
+
+function Code.CodeDataReloc:lower_code_data_init_to_c()
+  error("code_to_c: CodeDataReloc lowering not yet implemented", 3)
+end
+
+-----------------------------------------------------------------------
+-- CodeTypeDecl → CBackendTypeDecl conversion
+-----------------------------------------------------------------------
+
+function Code.CodeTypeDecl:lower_code_type_decl_to_c()
+  -- Default: emit as opaque declaration for now
+  return C.CBackendOpaqueDecl(C.CTypeId(self.name, self.name))
 end
