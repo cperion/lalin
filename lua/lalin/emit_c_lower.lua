@@ -930,7 +930,7 @@ local function bind_context(T)
         -- 2. Pointer alignment
         if func_annotations.pointers then
             for _, ptr_ann in ipairs(func_annotations.pointers) do
-                if ptr_ann.alignment and asdl.classof(ptr_ann.alignment) == "CBackendAlignmentKnown" then
+                if ptr_ann.alignment and asdl.classof(ptr_ann.alignment) == C.CBackendAlignmentKnown then
                     table.insert(ptr_ann, 1, C.CBackendComment("/* ptr_align: " .. ptr_ann.local_ptr.text .. " = " .. ptr_ann.alignment.bytes .. " */"))
                 end
             end
