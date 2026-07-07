@@ -244,8 +244,12 @@ function Tr.Module:tree_module_env(target)
   return {B.Env(mod_name, values, types, layouts)}
 end
 
--- Pipeline entry point: typecheck the module
+-- Pipeline entry point: typecheck the module.
+-- Pass-through: the module already carries parsed types from syntax_v2.document.
+-- Type envs (bindings, types, layouts) are computed on demand by
+-- tree_module_env() which is called by the lower-to-code phase in tree_code.lua.
+-- This hook exists so that active type analysis (additional checks, inference)
+-- can be plugged in here later without changing the pipeline.
 function Tr.Module:typecheck(input)
-  -- Pass-through: types resolved by parser, layout computed lazily by downstream phases
   return self
 end
