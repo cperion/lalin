@@ -117,7 +117,7 @@ LalinTree.Module
 │ 3. Tree → Code IR                       │
 │    Pipeline.checked_to_code_result()    │
 │      ├─ LayoutResolve                   │
-│      ├─ tree_to_code (LalinTree→LalinCode)│
+│      ├─ tree_lower (LalinTree→LalinCode)│
 │      └─ CodeValidate                    │
 │    → CodeResult(code_module, contracts) │
 └─────────────────────────────────────────┘
@@ -194,7 +194,7 @@ becomes a GCC-cooked `emit_c` function pointer:
    → TypeModuleResult{ checked = { module = { funcs={...} } } }
 
 4. Pipeline.checked_to_code_result(checked)
-   → LayoutResolve → tree_to_code → CodeValidate
+   → LayoutResolve → tree_lower → CodeValidate
    → CodeResult{ code_module = CodeModule{ funcs={...} } }
 
 5. Pipeline.code_result_to_c(code_result)
@@ -252,7 +252,7 @@ ASDL first; nullary variants also receive methods directly with normal
 | `lua/lalin/tree_module_type.lua` | Module-level type resolution, type environments, imports. |
 | `lua/lalin/tree_contract_facts.lua` | Contract facts from function declarations (bounds, disjointness, SoA). |
 | `lua/lalin/tree_control_facts.lua` | Control-flow facts from control regions (entry/block/continuation). |
-| `lua/lalin/tree_to_code.lua` | Typed AST to `LalinCode` lowering; ASDL classes own tree→code methods. |
+| `lua/lalin/tree_lower.lua` | Typed AST to `LalinCode` lowering (`lower_tree_module_with_contracts_to_code`); ASDL classes own tree→code methods. |
 
 ### Code IR & Fact Analysis
 
@@ -311,12 +311,12 @@ ASDL first; nullary variants also receive methods directly with normal
 
 | File | Role |
 |------|------|
-| `lua/lalin/c_emit.lua` | Emits C source from `LalinC.BackendUnit` — .c, .h, combined artifact output. |
+| `lua/lalin/emit_c_lower.lua` | Core C backend lowering — emits C source from `LalinC.BackendUnit` as .c, .h, combined artifact output; houses C helper functions. |
 | `lua/lalin/lower_to_c.lua` | Lowers `LalinCode` + lower plan to C IR. |
-| `lua/lalin/c_validate.lua` | Validates C IR invariants. |
-| `lua/lalin/c_helpers.lua` | C helper function library for stencil operations. |
-| `lua/lalin/c_tcc.lua` | Legacy in-process C tooling boundary; not part of runtime native copy-patch compilation. |
-| `lua/lalin/c_coverage.lua` | Explicit C-backend support diagnostics; not native compiler coverage accounting. |
+| `lua/lalin/emit_c_validate.lua` | Validates C IR invariants. |
+| `lua/lalin/emit_c_helpers.lua` | Thin wrapper exposing the C helper function library for stencil operations. |
+| `lua/lalin/emit_c_tcc.lua` | Optional libtcc LuaJIT FFI runner for in-process C compilation; not part of runtime native copy-patch compilation. |
+| `lua/lalin/emit_c_coverage.lua` | Canonical C-backend coverage classification matrix; not native compiler coverage accounting. |
 
 ### Compiler Process
 
@@ -337,10 +337,7 @@ ASDL first; nullary variants also receive methods directly with normal
 
 | File | Role |
 |------|------|
-| `lua/lalin/back_program.lua` | Back IR program construction utilities. |
-| `lua/lalin/back_inspect.lua` | Inspection/debug tools for back IR. |
-| `lua/lalin/back_target_model.lua` | Target model — CPU features, ABI, capabilities. |
-| `lua/lalin/back_validate.lua` | Back IR validation. |
+| `lua/lalin/backend_target_model.lua` | Target model — CPU features, ABI, capabilities. |
 
 ### Error / Diagnostics
 
@@ -387,10 +384,9 @@ ASDL first; nullary variants also receive methods directly with normal
 | `lua/lalin/value_proxy.lua` | Value proxy for DSL values. |
 | `lua/lalin/closure_convert.lua` | Closure conversion pass. |
 | `lua/lalin/surface_resolve.lua` | Surface name resolution. |
-| `lua/lalin/sem_call_decide.lua` | Call semantic decision. |
-| `lua/lalin/sem_const_eval.lua` | Constant evaluation. |
-| `lua/lalin/sem_layout_resolve.lua` | Layout resolution. |
-| `lua/lalin/sem_switch_decide.lua` | Switch dispatch decision. |
+| `lua/lalin/const_eval.lua` | Constant evaluation. |
+| `lua/lalin/layout_resolve.lua` | Layout resolution. |
+| `lua/lalin/switch_decide.lua` | Switch dispatch decision. |
 | `lua/lalin/project_asdl.lua` | Project ASDL utilities. |
 | `lua/lalin/project_ready_facts.lua` | Project readiness facts. |
 | `lua/lalin/project_report.lua` | Project report generation. |
