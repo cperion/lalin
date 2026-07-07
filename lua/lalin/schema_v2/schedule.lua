@@ -37,7 +37,7 @@ return schema. LalinSchedule {
     ScheduleEmitterScalar,
     ScheduleEmitterVector { feature [LalinStencil.StencilVectorFeatureRequirement] },
     ScheduleEmitterClosedForm,
-    ScheduleEmitterFallback { reason [EmitterFallbackReason] },
+    ScheduleEmitterFallback { reason [LalinSchedule.EmitterFallbackReason] },
   },
   sum. EmitterFallbackReason {
     EmitterFallbackUnsupportedType { ty [LalinCode.CodeType] },

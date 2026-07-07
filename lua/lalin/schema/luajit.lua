@@ -638,8 +638,8 @@ return schema. LalinLuaJIT {
     chunk_name [str],
     source [str],
     bytecode [str],
-    plan [optional [LalinLuaTrace.LTFunction]],
-    artifact [optional [LalinStencil.StencilArtifact]],
+    plan [optional [LalinLuaJIT.LJTypeId]],
+    artifact [optional [LalinLuaJIT.LJTypeId]],
   },
 
   product. LJBCStencilBank {

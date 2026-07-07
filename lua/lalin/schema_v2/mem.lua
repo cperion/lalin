@@ -53,8 +53,7 @@ return schema. LalinMem {
     MemObjectFieldProjection {
       variant_unique,
       owner [LalinMem.MemObjectId],
-      field [LalinSem.FieldRef],
-      byte_offset [number],
+      field. field [LalinSem.FieldRef],
     },
     MemObjectPtrOffset {
       variant_unique,
@@ -81,7 +80,7 @@ return schema. LalinMem {
   },
 
   sum. MemObjectUnknownReason {
-    MemObjectUnresolvedPointer { value [LalinCode.CodeValueId], },
+    MemObjectUnresolvedPointer { field. value [LalinCode.CodeValueId], },
     MemObjectIndirectCallReturn { call_site [str], },
     MemObjectExternalBuffer { buffer_name [str], },
     MemObjectOpaqueType { ty [LalinCode.CodeType], },
@@ -485,7 +484,7 @@ return schema. LalinMem {
   sum. MemFlowGuarantee {
     MemFlowCounted { trip_count [LalinFlow.FlowTripCount], },
     MemFlowMonotonicAddress { induction [LalinFlow.FlowInduction], },
-    MemFlowLoopInvariant { value [LalinCode.CodeValueId], },
+    MemFlowLoopInvariant { field. value [LalinCode.CodeValueId], },
   },
   sum. MemObjectGuarantee {
     MemObjectSizeKnown { size [number], },

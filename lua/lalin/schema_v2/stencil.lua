@@ -591,7 +591,7 @@ return schema. LalinStencil {
       variant_unique,
       requested [LalinStencil.StencilSchedule],
       realized [optional [LalinStencil.StencilRealizedSchedule]],
-      mismatch [StencilScheduleMismatch],
+      mismatch [LalinStencil.StencilScheduleMismatch],
     },
   },
   sum. StencilScheduleMismatch {

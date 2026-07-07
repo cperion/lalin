@@ -172,7 +172,7 @@ return schema. LalinKernel {
     KernelOriginalNoCountedLoop,
     KernelOriginalNonReducibleCFG { reason [str] },
     KernelOriginalUnsupportedMemoryPattern { access [LalinMem.MemAccessId] },
-    KernelOriginalNoAlgebraicForm { value [LalinCode.CodeValueId] },
+    KernelOriginalNoAlgebraicForm { field. value [LalinCode.CodeValueId], },
   },
   sum. KernelSkeletonKind {
     KernelSkeletonKindScan,
@@ -201,7 +201,7 @@ return schema. LalinKernel {
   sum. KernelEquivalenceFailure {
     KernelEquivLoopNotCounted { loop [LalinGraph.GraphLoopId] },
     KernelEquivMemoryEffectMismatch { expected [LalinEffect.OpEffect], actual [LalinEffect.OpEffect] },
-    KernelEquivValueNotEquivalent { value [LalinCode.CodeValueId], reason_description [str] },
+    KernelEquivValueNotEquivalent { field. value [LalinCode.CodeValueId], reason_description [str], },
     KernelEquivAliasUnknown { a [LalinMem.MemAccessId], b [LalinMem.MemAccessId] },
   },
   sum. KernelEquivalence {

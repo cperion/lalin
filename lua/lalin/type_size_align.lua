@@ -283,4 +283,22 @@ local function bind_context(T)
     return api
 end
 
-return bind_context
+return setmetatable({}, {
+  __index = function(_, k)
+    if package.loaded["lalin.type_size_align._api"] then
+      return package.loaded["lalin.type_size_align._api"][k]
+    end
+    local T = require("lalin.schema_v2")
+    local api = bind_context(T)
+    package.loaded["lalin.type_size_align._api"] = api
+    return api[k]
+  end,
+  __call = function(_, T)
+    if T ~= nil then
+      local api = bind_context(T)
+      package.loaded["lalin.type_size_align._api"] = api
+      return api
+    end
+    error("type_size_align requires a T context or self-init")
+  end,
+})

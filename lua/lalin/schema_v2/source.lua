@@ -112,7 +112,7 @@ return schema. LalinSource {
       actual [LalinSource.DocVersion],
     },
     -- Fixed: reason [str] → failure [SourceRangeFailure]
-    SourceIssueInvalidRange { variant_unique, field [LalinSource.SourceRange], failure [LalinSource.SourceRangeFailure], },
+    SourceIssueInvalidRange { variant_unique, field. field [LalinSource.SourceRange], failure [LalinSource.SourceRangeFailure], },
     SourceIssueOverlappingRanges {
       variant_unique,
       previous [LalinSource.SourceRange],

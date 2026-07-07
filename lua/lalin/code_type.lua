@@ -530,4 +530,23 @@ local function bind_context(T)
     return api
 end
 
-return bind_context
+local function self_init()
+  if package.loaded["lalin.code_type._api"] then return package.loaded["lalin.code_type._api"] end
+  local T = require("lalin.schema_v2")
+  local api = bind_context(T)
+  package.loaded["lalin.code_type._api"] = api
+  return api
+end
+
+-- Return a callable that auto-initializes when called with no args
+return setmetatable({}, {
+  __index = function(_, k) return self_init()[k] end,
+  __call = function(_, T)
+    if T ~= nil then
+      local api = bind_context(T)
+      package.loaded["lalin.code_type._api"] = api
+      return api
+    end
+    return self_init()
+  end,
+})

@@ -116,8 +116,8 @@ return schema. LalinSem {
   -- ClosureHelperVariant: typed wrapper for the helper items passed through closure rewrite.
   -- Replaces bare `helpers [many [LalinTree.Item]]` in ClosureRewriteInput.
   sum. ClosureHelperVariant {
-    ClosureHelperFunc { name [str], params [many [LalinType.Param]], result [LalinType.Type], body [many [LalinTree.Stmt]], },
-    ClosureHelperExtern { name [str], symbol [str], params [many [LalinType.Param]], result [LalinType.Type], },
+    ClosureHelperFunc { field. name [str], params [many [LalinType.Param]], result [LalinType.Type], body [many [LalinTree.Stmt]], },
+    ClosureHelperExtern { field. name [str], field. symbol [str], params [many [LalinType.Param]], result [LalinType.Type], },
   },
   product. ClosureHelperItem { interned, func_or_extern [LalinSem.ClosureHelperVariant], },
   product. ClosureRewriteInput {

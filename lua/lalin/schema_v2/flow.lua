@@ -164,7 +164,7 @@ return schema. LalinFlow {
   sum. FlowBoundDerivationKey {
     FlowBoundFromTripCount { domain [LalinFlow.FlowDomain], },
     FlowBoundFromParam { param_name [str], },
-    FlowBoundFromConst { value [LalinCore.Literal], },
+    FlowBoundFromConst { field. value [LalinCore.Literal], },
     FlowBoundFromBinary {
       op [LalinCore.BinaryOp],
       left [LalinCode.CodeValueId],
