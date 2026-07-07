@@ -239,83 +239,67 @@ local function bind_context(T)
         return out, align_up(size, max_align), max_align
     end
 
-    function item_layout(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ItemType) then
-            return (function(self, mod_name, env, target)
-
-            local t = self.t
-            local cls = schema.classof(t)
-            if cls == Tr.TypeDeclStruct or cls == Tr.TypeDeclUnion then
-                local fields, size, align = field_layout(t.fields, env, cls == Tr.TypeDeclUnion, target)
-                return single(Sem.LayoutNamed(mod_name, t.name, fields, size, align))
-            end
-            if cls == Tr.TypeDeclEnumSugar then
-                local tag_layout = layout_api.result(tag_ty(), env, target).layout
-                return single(Sem.LayoutNamed(mod_name, t.name, { Sem.FieldLayout("__tag", 0, tag_ty()) }, tag_layout.size, tag_layout.align))
-            end
-            if cls == Tr.TypeDeclHandle then
-                local repr_ty = Ty.THandle(Ty.TypeRefGlobal(mod_name, t.name), t.repr)
-                local layout = layout_api.result(repr_ty, env, target).layout
-                return single(Sem.LayoutNamed(mod_name, t.name, { Sem.FieldLayout("__handle", 0, repr_ty) }, layout.size, layout.align))
-            end
-            if cls == Tr.TypeDeclTaggedUnionSugar then
-                local tag_layout = layout_api.result(tag_ty(), env, target).layout
-                local payload_size, payload_align = 0, 1
-                for i = 1, #t.variants do
-                    local v = t.variants[i]
-                    local sz, al
-                    if #(v.fields or {}) > 0 then
-                        local _, fsz, fal = field_layout(v.fields, env, false, target)
-                        sz, al = fsz, fal
-                    else
-                        local r = layout_api.result(v.payload, env, target)
-                        local l = schema.classof(r) == Ty.TypeMemLayoutKnown and r.layout or Sem.MemLayout(0, 1)
-                        sz, al = l.size, l.align
-                    end
-                    if sz > payload_size then payload_size = sz end
-                    if al > payload_align then payload_align = al end
-                end
-                local fields = { Sem.FieldLayout("__tag", 0, tag_ty()) }
-                local size, align = tag_layout.size, tag_layout.align
-                if payload_size > 0 then
-                    local payload_offset = align_up(tag_layout.size, payload_align)
-                    fields[#fields + 1] = Sem.FieldLayout("__payload", payload_offset, payload_byte_array(payload_size))
-                    size = payload_offset + payload_size
-                    if payload_align > align then align = payload_align end
-                end
-                return single(Sem.LayoutNamed(mod_name, t.name, fields, align_up(size, align), align))
-            end
-            return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemFunc) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemExtern) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemConst) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemStatic) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemImport) then
-            return (function()
- return {}
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ItemRegion) then
-            return (function()
- return {}
-            end)(node, ...)
-        else
-            error("phase lalin_tree_item_layout: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.Item:tree_module_item_layout(input)
+        return {}
     end
+
+    function Tr.ItemType:tree_module_item_layout(input)
+        return self.t:tree_module_type_layout(input)
+    end
+
+    function Tr.TypeDecl:tree_module_type_layout(input)
+        return {}
+    end
+
+    function Tr.TypeDeclStruct:tree_module_type_layout(input)
+        local fields, size, align = field_layout(self.fields, input.env, false, input.target)
+        return { Sem.LayoutNamed(input.mod_name, self.name, fields, size, align) }
+    end
+
+    function Tr.TypeDeclUnion:tree_module_type_layout(input)
+        local fields, size, align = field_layout(self.fields, input.env, true, input.target)
+        return { Sem.LayoutNamed(input.mod_name, self.name, fields, size, align) }
+    end
+
+    function Tr.TypeDeclEnumSugar:tree_module_type_layout(input)
+        local tag_layout = layout_api.result(tag_ty(), input.env, input.target).layout
+        return { Sem.LayoutNamed(input.mod_name, self.name, { Sem.FieldLayout("__tag", 0, tag_ty()) }, tag_layout.size, tag_layout.align) }
+    end
+
+    function Tr.TypeDeclHandle:tree_module_type_layout(input)
+        local repr_ty = Ty.THandle(Ty.TypeRefGlobal(input.mod_name, self.name), self.repr)
+        local layout = layout_api.result(repr_ty, input.env, input.target).layout
+        return { Sem.LayoutNamed(input.mod_name, self.name, { Sem.FieldLayout("__handle", 0, repr_ty) }, layout.size, layout.align) }
+    end
+
+    function Tr.TypeDeclTaggedUnionSugar:tree_module_type_layout(input)
+        local tag_layout = layout_api.result(tag_ty(), input.env, input.target).layout
+        local payload_size, payload_align = 0, 1
+        for i = 1, #self.variants do
+            local v = self.variants[i]
+            local sz, al
+            if #(v.fields or {}) > 0 then
+                local _, fsz, fal = field_layout(v.fields, input.env, false, input.target)
+                sz, al = fsz, fal
+            else
+                local r = layout_api.result(v.payload, input.env, input.target)
+                local l = schema.classof(r) == Ty.TypeMemLayoutKnown and r.layout or Sem.MemLayout(0, 1)
+                sz, al = l.size, l.align
+            end
+            if sz > payload_size then payload_size = sz end
+            if al > payload_align then payload_align = al end
+        end
+        local fields = { Sem.FieldLayout("__tag", 0, tag_ty()) }
+        local size, align = tag_layout.size, tag_layout.align
+        if payload_size > 0 then
+            local payload_offset = align_up(tag_layout.size, payload_align)
+            fields[#fields + 1] = Sem.FieldLayout("__payload", payload_offset, payload_byte_array(payload_size))
+            size = payload_offset + payload_size
+            if payload_align > align then align = payload_align end
+        end
+        return { Sem.LayoutNamed(input.mod_name, self.name, fields, align_up(size, align), align) }
+    end
+
 
     function Tr.Item:tree_module_item_env_entries(input)
         error("phase lalin_tree_item_env_entries: no handler for " .. tostring(schema.classof(self) or type(self)), 2)
@@ -364,7 +348,7 @@ local function bind_context(T)
             local types = {}
             local layouts = {}
             for i = 1, #module.items do
-                local entries = item_env_entries(module.items[i], mod_name)
+                local entries = module.items[i]:tree_module_item_env_entries(Sem.TreeModuleEntryInput(mod_name))
                 for j = 1, #entries do
                     if schema.classof(entries[j]) == B.ValueEntry then values[#values + 1] = entries[j] end
                     if schema.classof(entries[j]) == B.TypeEntry then types[#types + 1] = entries[j] end
@@ -374,7 +358,7 @@ local function bind_context(T)
                 local pass_layouts = {}
                 local layout_env = Sem.LayoutEnv(layouts)
                 for i = 1, #module.items do
-                    local ls = item_layout(module.items[i], mod_name, layout_env, target)
+                    local ls = module.items[i]:tree_module_item_layout(Sem.TreeModuleLayoutInput(mod_name, layout_env, target))
                     for j = 1, #ls do pass_layouts[#pass_layouts + 1] = ls[j] end
                 end
                 layouts = pass_layouts
