@@ -776,10 +776,7 @@ local function bind_context(T)
     -- Module-level public API
     ------------------------------------------------------------------------
     local function module_name(module)
-        local h = module.h
-        local cls = asdl.classof(h)
-        if cls == Tr.ModuleTyped or cls == Tr.ModuleSem or cls == Tr.ModuleCode then return h.module_name end
-        return ""
+        return module.h:tree_module_name()
     end
 
     local function rewrite_module(module)

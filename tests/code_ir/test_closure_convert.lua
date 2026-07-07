@@ -2,10 +2,11 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local asdl = require("lalin.asdl")
 local A2 = require("lalin.schema_projection")
+local TreeModuleType = require("lalin.tree_module_type")
 local ClosureConvert = require("lalin.closure_convert")
-
 local T = asdl.context()
 A2(T)
+TreeModuleType(T)
 local C, Ty, B, Tr = T.LalinCore, T.LalinType, T.LalinBind, T.LalinTree
 local i32 = Ty.TScalar(C.ScalarI32)
 
