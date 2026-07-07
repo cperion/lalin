@@ -48,7 +48,6 @@ local function bind_context(T)
 
     local resolve_place
     local resolve_expr
-    local resolve_view
     local resolve_stmt
 
     local function one(phase, node, env, target)
@@ -213,7 +212,7 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.IndexBaseView) then
             return (function(self, env, target)
- return single(schema.with(self, { view = one(resolve_view, self.view, env, target) }))
+ return single(schema.with(self, { view = only(self.view:sem_layout_resolve(env, target)) }))
             end)(node, ...)
         else
             error("phase lalin_sem_layout_index_base: no handler for " .. tostring(cls or type(node)), 2)
@@ -263,44 +262,38 @@ local function bind_context(T)
         end
     end
 
-    function resolve_view(node, ...)
-        local cls = schema.classof(node)
-        if schema.isa(node, Tr.ViewFromExpr) then
-            return (function(self, env, target)
- return single(schema.with(self, { base = one(resolve_expr, self.base, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ViewContiguous) then
-            return (function(self, env, target)
- return single(schema.with(self, { data = one(resolve_expr, self.data, env, target), len = one(resolve_expr, self.len, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ViewStrided) then
-            return (function(self, env, target)
- return single(schema.with(self, { data = one(resolve_expr, self.data, env, target), len = one(resolve_expr, self.len, env, target), stride = one(resolve_expr, self.stride, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ViewRestrided) then
-            return (function(self, env, target)
- return single(schema.with(self, { base = one(resolve_view, self.base, env, target), stride = one(resolve_expr, self.stride, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ViewWindow) then
-            return (function(self, env, target)
- return single(schema.with(self, { base = one(resolve_view, self.base, env, target), start = one(resolve_expr, self.start, env, target), len = one(resolve_expr, self.len, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ViewRowBase) then
-            return (function(self, env, target)
- return single(schema.with(self, { base = one(resolve_view, self.base, env, target), row_offset = one(resolve_expr, self.row_offset, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ViewInterleaved) then
-            return (function(self, env, target)
- return single(schema.with(self, { data = one(resolve_expr, self.data, env, target), len = one(resolve_expr, self.len, env, target), stride = one(resolve_expr, self.stride, env, target), lane = one(resolve_expr, self.lane, env, target) }))
-            end)(node, ...)
-        elseif schema.isa(node, Tr.ViewInterleavedView) then
-            return (function(self, env, target)
- return single(schema.with(self, { base = one(resolve_view, self.base, env, target), stride = one(resolve_expr, self.stride, env, target), lane = one(resolve_expr, self.lane, env, target) }))
-            end)(node, ...)
-        else
-            error("phase lalin_sem_layout_view: no handler for " .. tostring(cls or type(node)), 2)
-        end
+    function Tr.ViewFromExpr:sem_layout_resolve(env, target)
+        return { schema.with(self, { base = one(resolve_expr, self.base, env, target) }) }
     end
+
+    function Tr.ViewContiguous:sem_layout_resolve(env, target)
+        return { schema.with(self, { data = one(resolve_expr, self.data, env, target), len = one(resolve_expr, self.len, env, target) }) }
+    end
+
+    function Tr.ViewStrided:sem_layout_resolve(env, target)
+        return { schema.with(self, { data = one(resolve_expr, self.data, env, target), len = one(resolve_expr, self.len, env, target), stride = one(resolve_expr, self.stride, env, target) }) }
+    end
+
+    function Tr.ViewRestrided:sem_layout_resolve(env, target)
+        return { schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)), stride = one(resolve_expr, self.stride, env, target) }) }
+    end
+
+    function Tr.ViewWindow:sem_layout_resolve(env, target)
+        return { schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)), start = one(resolve_expr, self.start, env, target), len = one(resolve_expr, self.len, env, target) }) }
+    end
+
+    function Tr.ViewRowBase:sem_layout_resolve(env, target)
+        return { schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)), row_offset = one(resolve_expr, self.row_offset, env, target) }) }
+    end
+
+    function Tr.ViewInterleaved:sem_layout_resolve(env, target)
+        return { schema.with(self, { data = one(resolve_expr, self.data, env, target), len = one(resolve_expr, self.len, env, target), stride = one(resolve_expr, self.stride, env, target), lane = one(resolve_expr, self.lane, env, target) }) }
+    end
+
+    function Tr.ViewInterleavedView:sem_layout_resolve(env, target)
+        return { schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)), stride = one(resolve_expr, self.stride, env, target), lane = one(resolve_expr, self.lane, env, target) }) }
+    end
+
 
     function Tr.DomainRange:sem_layout_resolve(env, target)
         return { schema.with(self, { stop = one(resolve_expr, self.stop, env, target) }) }
@@ -319,12 +312,12 @@ local function bind_context(T)
     end
 
     function Tr.DomainView:sem_layout_resolve(env, target)
-        return { schema.with(self, { view = one(resolve_view, self.view, env, target) }) }
+        return { schema.with(self, { view = only(self.view:sem_layout_resolve(env, target)) }) }
     end
 
     function Tr.DomainZipEqViews:sem_layout_resolve(env, target)
         local views = {}
-        for i = 1, #self.views do views[#views + 1] = one(resolve_view, self.views[i], env, target) end
+        for i = 1, #self.views do views[#views + 1] = only(self.views[i]:sem_layout_resolve(env, target)) end
         return { schema.with(self, { views = views }) }
     end
 
@@ -451,7 +444,7 @@ local function bind_context(T)
             end)(node, ...)
         elseif schema.isa(node, Tr.ExprView) then
             return (function(self, env, target)
- return single(schema.with(self, { view = one(resolve_view, self.view, env, target) }))
+ return single(schema.with(self, { view = only(self.view:sem_layout_resolve(env, target)) }))
             end)(node, ...)
         elseif schema.isa(node, Tr.ExprLoad) then
             return (function(self, env, target)
