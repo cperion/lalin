@@ -17,8 +17,8 @@ return schema. LalinCodeValidation {
   product. CodeValidationMachine {
     interned,
     field. module [LalinCode.CodeModule],
-    graph [LalinGraph.CodeGraph],
-    spine [LalinCodeValidation.CodeBackendSpine],
+    graph [optional [LalinGraph.CodeGraph]],
+    spine [optional [LalinCodeValidation.CodeBackendSpine]],
     issues [many [LalinCode.CodeIssue]],
     relocs [many [LalinCodeValidation.CodeRelocCheckEntry]],
   },

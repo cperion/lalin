@@ -6,8 +6,8 @@ require("lalin.schema_v2")
 
 require("lalin.impl.tree_code")
 local T = package.loaded["lalin.schema_v2._context"]
-local Code = Code
-local CV   = CodeValidation
+local Code = require("lalin.schema_v2.code")
+local CV   = require("lalin.schema_v2.code_validation")
 local asdl = require("lalin.asdl")
 
 local function class_name(x)
@@ -25,9 +25,11 @@ local function is_power_of_two(n)
 end
 
 -- Machine constructor
-local function new_machine(sigs, data, globals, funcs, externs)
+local function new_machine(module, graph, spine)
   return CV.CodeValidationMachine(
-    nil, -- spine is optional
+    module,
+    graph,
+    spine,
     {},
     {}
   )
@@ -38,7 +40,7 @@ local function add_issue(m, issue)
   local issues = {}
   for i = 1, #(m.issues or {}) do issues[i] = m.issues[i] end
   issues[#issues+1] = issue
-  return CV.CodeValidationMachine(m.spine, issues, m.relocs)
+  return CV.CodeValidationMachine(m.module, m.graph, m.spine, issues, m.relocs)
 end
 
 -- Validate CodeModule
@@ -208,12 +210,12 @@ end
 
 -- Public API
 local function validate(module)
-  local m = new_machine({}, {}, {}, {}, {})
+  local m = new_machine(module, nil, nil)
   m = validate_module(m, module)
   if #(m.issues or {}) == 0 then
-    return CV.CodeValidateOk(Code.CodeValidationReport(m.issues))
+    return CV.CodeValidateOk(module)
   end
-  return CV.CodeValidateFailed(Code.CodeValidationReport(m.issues))
+  return CV.CodeValidateFailed(m.issues)
 end
 
 return { validate = validate }

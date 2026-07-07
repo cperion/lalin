@@ -80,9 +80,13 @@ function Compiler.CompilerSession:compile()
     return Compiler.CompilerArtifactError("code_validate crashed: " .. tostring(validate_result))
   end
   -- validate_result is CodeValidateOk or CodeValidateFailed
+  local CodeValidation_mod = require("lalin.schema_v2.code_validation")
   local asdl = require("lalin.asdl")
-  if asdl.classof(validate_result) ~= CodeValidation.CodeValidateOk then
-    return Compiler.CompilerArtifactError("code_validate failed: " .. tostring(validate_result))
+  if asdl.classof(validate_result) ~= CodeValidation_mod.CodeValidateOk then
+    local issues = validate_result.issues or {}
+    local msgs = {}
+    for i = 1, #issues do msgs[#msgs+1] = tostring(issues[i]) end
+    return Compiler.CompilerArtifactError("code_validate: " .. #msgs .. " issue(s): " .. table.concat(msgs, "; "))
   end
 
 
