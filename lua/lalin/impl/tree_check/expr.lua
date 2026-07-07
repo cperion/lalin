@@ -23,11 +23,15 @@ function C.LitBool:typecheck_tree_literal_ty() return Ty.TScalar(C.ScalarBool) e
 function C.LitString:typecheck_tree_literal_ty() return Ty.TSlice(Ty.TScalar(C.ScalarU8)) end
 
 function Tr.ExprRef:typecheck_tree_expr(input)
-  local entry = input.scope and input.scope:typecheck_tree_lookup_value(self.ref:typecheck_tree_ref_name())
-  if entry then
-    return LCheck.TypeExprResult(Tr.ExprRef(Tr.ExprTyped(entry.ty), self.ref), entry.ty, {})
+  local ref_name = self.ref:typecheck_tree_ref_name()
+  if not ref_name then
+    return LCheck.TypeExprResult(self, Ty.TScalar(C.ScalarVoid), {LCheck.TypeIssueUnresolvedValue("?")})
   end
-  return LCheck.TypeExprResult(nil, nil, {LCheck.TypeIssueUnresolvedValue(self.ref:typecheck_tree_ref_name() or "?")})
+  local entry = input.scope and input.scope:typecheck_tree_lookup_value(ref_name)
+  if entry and entry.binding then
+    return LCheck.TypeExprResult(Tr.ExprRef(Tr.ExprTyped(entry.binding.ty), B.ValueRefBinding(entry.binding)), entry.binding.ty, {})
+  end
+  return LCheck.TypeExprResult(self, Ty.TScalar(C.ScalarVoid), {LCheck.TypeIssueUnresolvedValue(ref_name)})
 end
 
 function B.ValueRef:typecheck_tree_ref_name() return nil end
@@ -147,9 +151,16 @@ function Tr.Place:typecheck_tree_place(input)
 end
 
 function Tr.PlaceRef:typecheck_tree_place(input)
-  local entry = input.scope and input.scope:typecheck_tree_lookup_value(self.ref:typecheck_tree_ref_name())
-  if entry then return LCheck.TypePlaceResult(self, entry.ty, {}) end
-  return LCheck.TypePlaceResult(self, nil, {})
+  local ref_name = self.ref:typecheck_tree_ref_name()
+  if not ref_name then
+    return LCheck.TypePlaceResult(self, nil, {LCheck.TypeIssueUnresolvedValue("?")})
+  end
+  local entry = input.scope and input.scope:typecheck_tree_lookup_value(ref_name)
+  if entry and entry.binding then
+    local place = Tr.PlaceRef(Tr.PlaceTyped(entry.binding.ty), B.ValueRefBinding(entry.binding))
+    return LCheck.TypePlaceResult(place, entry.binding.ty, {})
+  end
+  return LCheck.TypePlaceResult(self, nil, {LCheck.TypeIssueUnresolvedValue(ref_name)})
 end
 
 function Tr.PlaceDeref:typecheck_tree_place(input)
