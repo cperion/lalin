@@ -278,3 +278,11 @@ function Ty.TPtr:tree_check_surface_cast_reject_reason(op, target)
   if target:tree_check_is_integer_type() then return nil end
   return "cannot cast pointer to non-pointer/integer type"
 end
+
+----------------------------------------------------------------------
+-- Callable result extraction (for ExprCall)
+----------------------------------------------------------------------
+
+function Ty.Type:tree_check_callable_result() return nil, nil end
+function Ty.TFunc:tree_check_callable_result() return self.result, self.params end
+function Ty.TClosure:tree_check_callable_result() return self.result, self.params end
