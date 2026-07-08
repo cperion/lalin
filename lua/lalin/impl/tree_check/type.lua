@@ -110,6 +110,8 @@ function Ty.TSlice:tree_check_is_aggregate_type() return true end
 function Ty.TView:tree_check_is_aggregate_type() return true end
 function Ty.TClosure:tree_check_is_aggregate_type() return true end
 
+function Ty.Type:tree_check_is_array_type() return false end
+function Ty.TArray:tree_check_is_array_type() return true end
 ----------------------------------------------------------------------
 -- Type size / align via layout_api
 ----------------------------------------------------------------------

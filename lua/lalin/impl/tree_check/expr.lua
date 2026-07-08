@@ -156,19 +156,11 @@ function Tr.IndexBaseExpr:typecheck_tree_index_base_ty(input)
   return self.base:typecheck_tree_expr(input).ty
 end
 
-function Tr.ExprIntrinsic:typecheck_tree_expr(input)
-  local arg_tys, args = {}, {}
-  for i = 1, #(self.args or {}) do
-    local ar = self.args[i]:typecheck_tree_expr(input)
-    if ar.ty == nil then return ar end; arg_tys[i] = ar.ty; args[i] = ar.expr
-  end
-  local result_ty = Ty.TScalar(C.ScalarVoid)  -- intrinsic-specific
-  return LCheck.TypeExprResult(Tr.ExprIntrinsic(Tr.ExprTyped(result_ty), self.op, args), result_ty, {})
-end
+-- ExprIntrinsic moved below; see full implementation
 
 -- Place typechecking
 function Tr.Place:typecheck_tree_place(input)
-  local ty = self.h and self.h:tree_code_place_type()
+  local ty = self.h and self.h:tree_code_place_type() or Ty.TScalar(C.ScalarVoid)
   return LCheck.TypePlaceResult(self, ty, {})
 end
 
@@ -193,13 +185,119 @@ function Tr.PlaceDeref:typecheck_tree_place(input)
   return LCheck.TypePlaceResult(self, nil, er.issues or {})
 end
 
--- Remaining expr leaves (simplified — full impl in old files)
-function Tr.ExprAgg:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, self.ty, {}) end
-function Tr.ExprArray:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, Ty.TArray(Ty.ArrayLenConst(#self.elems or 0), self.elem_ty), {}) end
-function Tr.ExprNull:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, self.elem, {}) end
-function Tr.ExprSizeOf:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, Ty.TScalar(C.ScalarIndex), {}) end
-function Tr.ExprAlignOf:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, Ty.TScalar(C.ScalarIndex), {}) end
-function Tr.ExprIsNull:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, Ty.TScalar(C.ScalarBool), {}) end
+-- ============================================================
+-- Remaining expr leaves (real implementations)
+-- ============================================================
+
+function Tr.ExprAgg:typecheck_tree_expr(input)
+  -- Struct aggregate init: canoncalize type, typecheck each field value
+  local ty = self.ty  -- canonicalized by caller if needed
+  local fields = {}
+  local issues = {}
+  for i = 1, #(self.fields or {}) do
+    local fi = self.fields[i]
+    local vr = fi.value:typecheck_tree_expr(input)
+    if vr.issues then for _, iss in ipairs(vr.issues) do issues[#issues+1]=iss end end
+    if vr.ty and vr.expr then
+      fields[#fields+1] = Tr.FieldInit(fi.name, vr.expr, fi.offset)
+    else
+      fields[#fields+1] = Tr.FieldInit(fi.name, fi.value, fi.offset)
+    end
+  end
+  return LCheck.TypeExprResult(Tr.ExprAgg(Tr.ExprTyped(ty), ty, fields), ty, issues)
+end
+
+-- ExprAgg:typecheck_tree_expr_expected: delegate to type if aggregate
+function Tr.ExprAgg:typecheck_tree_expr_expected(input)
+  if input.expected and input.expected:tree_check_is_aggregate_type() then
+    return Tr.ExprAgg(Tr.ExprSurface, input.expected, self.fields):typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+  end
+  return self:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+end
+
+function Tr.ExprArray:typecheck_tree_expr(input)
+  -- Array init: typecheck elements, validate count if expected
+  local issues = {}
+  local elems = {}
+  for i = 1, #(self.elems or {}) do
+    local er = self.elems[i]:typecheck_tree_expr(input)
+    if er.issues then for _, iss in ipairs(er.issues) do issues[#issues+1]=iss end end
+    if er.ty and er.expr then
+      elems[#elems+1] = er.expr
+      -- Validate element type against elem_ty
+      if not self.elem_ty:tree_check_is_void_type() and not er.ty:tree_check_is_void_type() then
+        if tostring(self.elem_ty) ~= tostring(er.ty) then
+          issues[#issues+1] = LCheck.TypeIssueExpected("array elem", self.elem_ty, er.ty)
+        end
+      end
+    else
+      elems[#elems+1] = self.elems[i]
+    end
+  end
+  local result_ty = Ty.TArray(Ty.ArrayLenConst(#elems), self.elem_ty)
+  return LCheck.TypeExprResult(Tr.ExprArray(Tr.ExprTyped(result_ty), self.elem_ty, elems), result_ty, issues)
+end
+
+-- ExprArray:typecheck_tree_expr_expected: match element types against expected array
+function Tr.ExprArray:typecheck_tree_expr_expected(input)
+  if input.expected and input.expected:tree_check_is_array_type() then
+    local counts_match = true
+    if input.expected.count and input.expected.count:tree_check_is_const() then
+      local expected_n = input.expected.count.value
+      if expected_n ~= #(self.elems or {}) then
+        local issues = {LCheck.TypeIssueExpected("array length", input.expected, Ty.TArray(Ty.ArrayLenConst(#(self.elems or 0)), input.expected.elem))}
+        return LCheck.TypeExprResult(self, input.expected, issues)
+      end
+    end
+    local issues = {}
+    local elems = {}
+    for i = 1, #(self.elems or {}) do
+      local er = self.elems[i]:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, input.expected.elem))
+      if er.issues then for _, iss in ipairs(er.issues) do issues[#issues+1]=iss end end
+      if er.ty and er.expr then
+        elems[#elems+1] = er.expr
+        if tostring(input.expected.elem) ~= tostring(er.ty) then
+          issues[#issues+1] = LCheck.TypeIssueExpected("array elem", input.expected.elem, er.ty)
+        end
+      else
+        elems[#elems+1] = self.elems[i]
+      end
+    end
+    local result_ty = Ty.TArray(Ty.ArrayLenConst(#elems), input.expected.elem)
+    return LCheck.TypeExprResult(Tr.ExprArray(Tr.ExprTyped(result_ty), input.expected.elem, elems), result_ty, issues)
+  end
+  return self:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+end
+
+function Tr.ExprNull:typecheck_tree_expr(input)
+  -- Null of pointer type: type = TPtr(elem)
+  local ptr_ty = self.elem:tree_check_is_ptr_type() and self.elem or Ty.TPtr(self.elem)
+  return LCheck.TypeExprResult(Tr.ExprNull(Tr.ExprTyped(ptr_ty), self.elem), ptr_ty, {})
+end
+
+function Tr.ExprSizeOf:typecheck_tree_expr(input)
+  -- SizeOf returns index type; layout computed later in lowering
+  return LCheck.TypeExprResult(Tr.ExprSizeOf(Tr.ExprTyped(Ty.TScalar(C.ScalarIndex)), self.ty), Ty.TScalar(C.ScalarIndex), {})
+end
+
+function Tr.ExprAlignOf:typecheck_tree_expr(input)
+  -- AlignOf returns index type
+  return LCheck.TypeExprResult(Tr.ExprAlignOf(Tr.ExprTyped(Ty.TScalar(C.ScalarIndex)), self.ty), Ty.TScalar(C.ScalarIndex), {})
+end
+
+function Tr.ExprIsNull:typecheck_tree_expr(input)
+  -- IsNull: value must be pointer or nullable type, returns bool
+  local vr = self.value:typecheck_tree_expr(input)
+  if vr.ty == nil then return LCheck.TypeExprResult(nil, nil, vr.issues or {}) end
+  local issues = {}
+  if vr.issues then for _, iss in ipairs(vr.issues) do issues[#issues+1]=iss end end
+  if not vr.ty:tree_check_is_ptr_type() then
+    issues[#issues+1] = LCheck.TypeIssueNotPointer(vr.ty)
+  end
+  return LCheck.TypeExprResult(Tr.ExprIsNull(Tr.ExprTyped(Ty.TScalar(C.ScalarBool)), vr.expr), Ty.TScalar(C.ScalarBool), issues)
+end
+
+-- ExprCtor: variant constructor typecheck
 function Tr.ExprCtor:typecheck_tree_expr(input)
   local issues = {}
   -- Look up variant in scope facts
@@ -229,7 +327,7 @@ function Tr.ExprCtor:typecheck_tree_expr(input)
     if #(variant_case.fields or {}) == 1 then
       payload_ty = variant_case.fields[1].ty
     elseif #(variant_case.fields or {}) > 1 then
-      payload_ty = nil  -- multiple fields, no single payload
+      payload_ty = nil
     elseif variant_case.payload and not variant_case.payload:tree_check_is_void_type() then
       payload_ty = variant_case.payload
     end
@@ -241,65 +339,271 @@ function Tr.ExprCtor:typecheck_tree_expr(input)
   end
   if payload_ty and #(self.args or {}) >= 1 then
     local ar = self.args[1]:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, payload_ty))
-    if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues + 1] = iss end end
+    if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
     if ar.ty and not ar.ty:tree_check_is_void_type() and
        not payload_ty:tree_check_is_void_type() and
        tostring(payload_ty) ~= tostring(ar.ty) then
-      issues[#issues + 1] = LCheck.TypeIssueExpected("variant payload", payload_ty, ar.ty)
+      issues[#issues+1] = LCheck.TypeIssueExpected("variant payload", payload_ty, ar.ty)
     end
     args[1] = ar.expr
   end
   return LCheck.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(result_ty), self.type_name, self.variant_name, args), result_ty, issues)
 end
-function Tr.ExprLoad:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, self.ty, {}) end
--- typecheck_tree_expr_expected: default fallback to typecheck_tree_expr
-function Tr.Expr:typecheck_tree_expr_expected(input)
-  return self:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
-end
 
-function Tr.ExprBlock:typecheck_tree_expr(input)
-  local stmt_input = LCheck.TypeStmtInput(input.scope, Ty.TScalar(C.ScalarVoid), LCheck.TypeYieldNone)
-  local body = stmt_input:typecheck_tree_stmt_body(self.stmts or {})
-  local result = self.result and self.result:typecheck_tree_expr(input)
-  if result == nil or result.ty == nil then
-    return LCheck.TypeExprResult(nil, nil, body.issues or {})
+-- ExprLoad: validate that addr is a pointer to self.ty
+function Tr.ExprLoad:typecheck_tree_expr(input)
+  local expected_ptr = Ty.TPtr(self.ty)
+  local ar = self.addr:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, expected_ptr))
+  local issues = {}
+  if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
+  if ar.ty and not ar.ty:tree_check_is_void_type() then
+    if not ar.ty:tree_check_is_ptr_type() then
+      issues[#issues+1] = LCheck.TypeIssueNotPointer(ar.ty)
+    end
   end
-  local result_ty = result.ty
-  return LCheck.TypeExprResult(Tr.ExprBlock(Tr.ExprTyped(result_ty), body.stmts, result.expr), result_ty, result.issues)
+  return LCheck.TypeExprResult(Tr.ExprLoad(Tr.ExprTyped(self.ty), self.ty, ar.expr or self.addr), self.ty, issues)
 end
 
-function Tr.ExprIf:typecheck_tree_expr(input)
-  local cr = self.cond:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, Ty.TScalar(C.ScalarBool)))
+-- ExprAtomicLoad: validate address is pointer to self.ty
+function Tr.ExprAtomicLoad:typecheck_tree_expr(input)
+  local expected_ptr = Ty.TPtr(self.ty)
+  local ar = self.addr:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, expected_ptr))
+  local issues = {}
+  if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
+  if ar.ty and not ar.ty:tree_check_is_void_type() and not ar.ty:tree_check_is_ptr_type() then
+    issues[#issues+1] = LCheck.TypeIssueNotPointer(ar.ty)
+  end
+  return LCheck.TypeExprResult(Tr.ExprAtomicLoad(Tr.ExprTyped(self.ty), self.ty, ar.expr or self.addr, self.ordering), self.ty, issues)
+end
+
+-- ExprAtomicRmw: validate address is ptr, value matches
+function Tr.ExprAtomicRmw:typecheck_tree_expr(input)
+  local expected_ptr = Ty.TPtr(self.ty)
+  local ar = self.addr:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, expected_ptr))
+  local vr = self.value:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, self.ty))
+  local issues = {}
+  if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
+  if vr.issues then for _, iss in ipairs(vr.issues) do issues[#issues+1]=iss end end
+  if ar.ty and not ar.ty:tree_check_is_void_type() and not ar.ty:tree_check_is_ptr_type() then
+    issues[#issues+1] = LCheck.TypeIssueNotPointer(ar.ty)
+  end
+  if vr.ty and not vr.ty:tree_check_is_void_type() and self.ty and not self.ty:tree_check_is_void_type() then
+    if tostring(self.ty) ~= tostring(vr.ty) then
+      issues[#issues+1] = LCheck.TypeIssueExpected("atomic rmw value", self.ty, vr.ty)
+    end
+  end
+  return LCheck.TypeExprResult(Tr.ExprAtomicRmw(Tr.ExprTyped(self.ty), self.op, self.ty, ar.expr or self.addr, vr.expr or self.value, self.ordering), self.ty, issues)
+end
+
+-- ExprAtomicCas: validate addr is ptr, expected/replacement match
+function Tr.ExprAtomicCas:typecheck_tree_expr(input)
+  local expected_ptr = Ty.TPtr(self.ty)
+  local ar = self.addr:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, expected_ptr))
+  local er = self.expected:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, self.ty))
+  local rr = self.replacement:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, self.ty))
+  local issues = {}
+  if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
+  if er.issues then for _, iss in ipairs(er.issues) do issues[#issues+1]=iss end end
+  if rr.issues then for _, iss in ipairs(rr.issues) do issues[#issues+1]=iss end end
+  if ar.ty and not ar.ty:tree_check_is_void_type() and not ar.ty:tree_check_is_ptr_type() then
+    issues[#issues+1] = LCheck.TypeIssueNotPointer(ar.ty)
+  end
+  if er.ty and not er.ty:tree_check_is_void_type() and self.ty and not self.ty:tree_check_is_void_type() then
+    if tostring(self.ty) ~= tostring(er.ty) then
+      issues[#issues+1] = LCheck.TypeIssueExpected("atomic cas expected", self.ty, er.ty)
+    end
+  end
+  if rr.ty and not rr.ty:tree_check_is_void_type() and self.ty and not self.ty:tree_check_is_void_type() then
+    if tostring(self.ty) ~= tostring(rr.ty) then
+      issues[#issues+1] = LCheck.TypeIssueExpected("atomic cas replacement", self.ty, rr.ty)
+    end
+  end
+  return LCheck.TypeExprResult(Tr.ExprAtomicCas(Tr.ExprTyped(self.ty), self.ty, ar.expr or self.addr, er.expr or self.expected, rr.expr or self.replacement, self.ordering), self.ty, issues)
+end
+
+-- ExprSelect: variant discrimination (select condition on variant type)
+function Tr.ExprSelect:typecheck_tree_expr(input)
+  local cr = self.cond:typecheck_tree_expr(input)
   if cr.ty == nil or cr.expr == nil then return cr end
   local tr = self.then_expr:typecheck_tree_expr(input)
   if tr.ty == nil or tr.expr == nil then return tr end
   local er = self.else_expr:typecheck_tree_expr(input)
   if er.ty == nil or er.expr == nil then return er end
   local issues = {}
-  if cr.issues then for _, iss in ipairs(cr.issues) do issues[#issues + 1] = iss end end
-  if tr.issues then for _, iss in ipairs(tr.issues) do issues[#issues + 1] = iss end end
-  if er.issues then for _, iss in ipairs(er.issues) do issues[#issues + 1] = iss end end
-  -- Branch type unification: if types differ, use void
+  if cr.issues then for _, iss in ipairs(cr.issues) do issues[#issues+1]=iss end end
+  if tr.issues then for _, iss in ipairs(tr.issues) do issues[#issues+1]=iss end end
+  if er.issues then for _, iss in ipairs(er.issues) do issues[#issues+1]=iss end end
+  -- Branch type unification
   local result_ty = tr.ty
   if tr.ty and er.ty then
     if tostring(tr.ty) ~= tostring(er.ty) then
-      issues[#issues + 1] = LCheck.TypeIssueExpected("if-else branches", tr.ty, er.ty)
-      result_ty = tr.ty
+      issues[#issues+1] = LCheck.TypeIssueExpected("select branches", tr.ty, er.ty)
     end
   end
-  return LCheck.TypeExprResult(Tr.ExprIf(Tr.ExprTyped(result_ty), cr.expr, tr.expr, er.expr), result_ty, issues)
+  return LCheck.TypeExprResult(Tr.ExprSelect(Tr.ExprTyped(result_ty), cr.expr, tr.expr, er.expr), result_ty, issues)
 end
-function Tr.ExprSelect:typecheck_tree_expr(input)
-  local tr = self.then_expr:typecheck_tree_expr(input)
-  return LCheck.TypeExprResult(self, tr.ty, {})
+
+-- ExprSwitch: switch expression with scalar + variant arms, default
+function Tr.ExprSwitch:typecheck_tree_expr(input)
+  local vr = self.value:typecheck_tree_expr(input)
+  if vr.ty == nil or vr.expr == nil then return LCheck.TypeExprResult(nil, nil, vr.issues or {}) end
+  local issues = {}
+  if vr.issues then for _, iss in ipairs(vr.issues) do issues[#issues+1]=iss end end
+  local result_ty = nil
+  -- Typecheck each scalar arm (result expression)
+  local arms = {}
+  for i = 1, #(self.arms or {}) do
+    local arm = self.arms[i]
+    local stmt_input = LCheck.TypeStmtInput(input.scope, Ty.TScalar(C.ScalarVoid), LCheck.TypeYieldNone)
+    local body = stmt_input:typecheck_tree_stmt_body(arm.body or {})
+    local ar = arm.result:typecheck_tree_expr(input)
+    if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
+    if ar.ty and not ar.ty:tree_check_is_void_type() then
+      if result_ty == nil then result_ty = ar.ty
+      elseif tostring(result_ty) ~= tostring(ar.ty) then
+        issues[#issues+1] = LCheck.TypeIssueExpected("switch arm", result_ty, ar.ty)
+      end
+    end
+    arms[#arms+1] = Tr.SwitchExprArm(arm.key, body.stmts, ar.expr or arm.result)
+  end
+  -- Typecheck variant arms
+  local variant_arms = {}
+  for i = 1, #(self.variant_arms or {}) do
+    local va = self.variant_arms[i]
+    local scope = input.scope
+    for j = 1, #(va.binds or {}) do
+      scope = scope:typecheck_tree_add_value(va.binds[j].name, va.binds[j].ty)
+    end
+    local stmt_input = LCheck.TypeStmtInput(scope, Ty.TScalar(C.ScalarVoid), LCheck.TypeYieldNone)
+    local body = stmt_input:typecheck_tree_stmt_body(va.body or {})
+    local ar = va.result:typecheck_tree_expr(LCheck.TypeExprInput(scope))
+    if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
+    if ar.ty and not ar.ty:tree_check_is_void_type() then
+      if result_ty == nil then result_ty = ar.ty
+      elseif tostring(result_ty) ~= tostring(ar.ty) then
+        issues[#issues+1] = LCheck.TypeIssueExpected("switch variant arm", result_ty, ar.ty)
+      end
+    end
+    variant_arms[#variant_arms+1] = Tr.SwitchVariantExprArm(va.variant_name, va.binds, body.stmts, ar.expr or va.result)
+  end
+  -- Typecheck default
+  local stmt_input = LCheck.TypeStmtInput(input.scope, Ty.TScalar(C.ScalarVoid), LCheck.TypeYieldNone)
+  local default_body = stmt_input:typecheck_tree_stmt_body(self.default_body or {})
+  local default_expr = self.default_expr and self.default_expr:typecheck_tree_expr(input)
+  if default_expr and default_expr.ty and not default_expr.ty:tree_check_is_void_type() then
+    if result_ty == nil then result_ty = default_expr.ty
+    elseif tostring(result_ty) ~= tostring(default_expr.ty) then
+      issues[#issues+1] = LCheck.TypeIssueExpected("switch default", result_ty, default_expr.ty)
+    end
+  end
+  if result_ty == nil then result_ty = Ty.TScalar(C.ScalarVoid) end
+  return LCheck.TypeExprResult(Tr.ExprSwitch(Tr.ExprTyped(result_ty), vr.expr, arms, variant_arms, default_body.stmts, default_expr and default_expr.expr or self.default_expr), result_ty, issues)
 end
-function Tr.ExprSwitch:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, Ty.TScalar(C.ScalarVoid), {}) end
-function Tr.ExprControl:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, self.region.result_ty or Ty.TScalar(C.ScalarVoid), {}) end
-function Tr.ExprView:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, Ty.TView(self.view.elem), {}) end
-function Tr.ExprLen:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, Ty.TScalar(C.ScalarIndex), {}) end
-function Tr.ExprAtomicLoad:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, self.ty, {}) end
-function Tr.ExprAtomicRmw:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, self.ty, {}) end
-function Tr.ExprAtomicCas:typecheck_tree_expr(input) return LCheck.TypeExprResult(self, self.ty, {}) end
+
+-- ExprControl: region-based control flow expression
+function Tr.ExprControl:typecheck_tree_expr(input)
+  if not self.region then
+    return LCheck.TypeExprResult(nil, nil, {})
+  end
+  local result_ty = self.region.result_ty or Ty.TScalar(C.ScalarVoid)
+  -- Typecheck entry block body
+  local entry = self.region.entry
+  if entry then
+    local scope = input.scope
+    for j = 1, #(entry.params or {}) do
+      local p = entry.params[j]
+      scope = scope:typecheck_tree_add_value(p.name, p.ty)
+    end
+    local stmt_input = LCheck.TypeStmtInput(scope, result_ty, LCheck.TypeYieldValue(result_ty))
+    local body = stmt_input:typecheck_tree_stmt_body(entry.body or {})
+  end
+  -- Typecheck extra blocks
+  for i = 1, #(self.region.blocks or {}) do
+    local blk = self.region.blocks[i]
+    local scope = input.scope
+    for j = 1, #(blk.params or {}) do
+      local p = blk.params[j]
+      scope = scope:typecheck_tree_add_value(p.name, p.ty)
+    end
+    local stmt_input = LCheck.TypeStmtInput(scope, result_ty, LCheck.TypeYieldValue(result_ty))
+    local body = stmt_input:typecheck_tree_stmt_body(blk.body or {})
+  end
+  return LCheck.TypeExprResult(Tr.ExprControl(Tr.ExprTyped(result_ty), self.region), result_ty, {})
+end
+
+-- ExprView: view/slice construction
+function Tr.ExprView:typecheck_tree_expr(input)
+  if not self.view then
+    return LCheck.TypeExprResult(nil, nil, {})
+  end
+  local view_ty = Ty.TView(self.view.elem)
+  return LCheck.TypeExprResult(Tr.ExprView(Tr.ExprTyped(view_ty), self.view), view_ty, {})
+end
+
+-- ExprLen: compute length of array/slice/view
+function Tr.ExprLen:typecheck_tree_expr(input)
+  local vr = self.value:typecheck_tree_expr(input)
+  if vr.ty == nil then return LCheck.TypeExprResult(nil, nil, vr.issues or {}) end
+  local issues = {}
+  if vr.issues then for _, iss in ipairs(vr.issues) do issues[#issues+1]=iss end end
+  -- Validate the value has a len operation (arrays, slices, views)
+  local ok = vr.ty:tree_check_is_aggregate_type()
+  if ok == false then
+    issues[#issues+1] = LCheck.TypeIssueNotIndexable(vr.ty)
+  end
+  return LCheck.TypeExprResult(Tr.ExprLen(Tr.ExprTyped(Ty.TScalar(C.ScalarIndex)), vr.expr), Ty.TScalar(C.ScalarIndex), issues)
+end
+
+-- ExprIntrinsic: per-intrinsic return type resolution
+function Tr.ExprIntrinsic:typecheck_tree_expr(input)
+  local args, issues = {}, {}
+  for i = 1, #(self.args or {}) do
+    local ar = self.args[i]:typecheck_tree_expr(input)
+    if ar.ty == nil then return ar end
+    if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
+    args[i] = ar.expr
+  end
+  -- Determine return type based on intrinsic
+  local result_ty = self.op:typecheck_tree_intrinsic_result(self.args or {})
+  if result_ty == nil then result_ty = Ty.TScalar(C.ScalarVoid) end
+  return LCheck.TypeExprResult(Tr.ExprIntrinsic(Tr.ExprTyped(result_ty), self.op, args), result_ty, issues)
+end
+
+-- Intrinsic result type resolution (leaf methods on Intrinsic)
+function C.Intrinsic:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarVoid) end
+function C.IntrinsicPopcount:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarI32) end
+function C.IntrinsicClz:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarI32) end
+function C.IntrinsicCtz:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarI32) end
+function C.IntrinsicRotl:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarI32) end
+function C.IntrinsicRotr:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarI32) end
+function C.IntrinsicBswap:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarI32) end
+function C.IntrinsicFma:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarF64) end
+function C.IntrinsicSqrt:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarF64) end
+function C.IntrinsicAbs:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarI32) end
+function C.IntrinsicFloor:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarF64) end
+function C.IntrinsicCeil:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarF64) end
+function C.IntrinsicTruncFloat:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarF64) end
+function C.IntrinsicRound:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarF64) end
+function C.IntrinsicTrap:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarVoid) end
+function C.IntrinsicAssume:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarVoid) end
+
+-- ExprClosure: build closure type from params and result
 function Tr.ExprClosure:typecheck_tree_expr(input)
-  return LCheck.TypeExprResult(self, Ty.TClosure(self.params, self.result), {})
+  -- Typecheck the body with local scope
+  local scope = input.scope
+  for j = 1, #(self.params or {}) do
+    local p = self.params[j]
+    scope = scope:typecheck_tree_add_value(p.name, p.ty)
+  end
+  local stmt_input = LCheck.TypeStmtInput(scope, self.result, LCheck.TypeYieldNone)
+  local body = stmt_input:typecheck_tree_stmt_body(self.body or {})
+  local closure_ty = Ty.TClosure(self.params, self.result)
+  return LCheck.TypeExprResult(Tr.ExprClosure(Tr.ExprTyped(closure_ty), self.params, self.result, body.stmts), closure_ty, {})
+end
+
+-- ============================================================
+-- typecheck_tree_expr_expected: default fallback
+-- ============================================================
+function Tr.Expr:typecheck_tree_expr_expected(input)
+  return self:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
 end
