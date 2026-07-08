@@ -32,7 +32,8 @@ end
 
 local function add_dest_edge(edges, func, block_by_id, from, dest, kind)
   if dest ~= nil and block_by_id[dest.text] ~= nil then
-    edges[#edges + 1] = Graph.GraphEdge(from, Graph.GraphBlockId(func.id, dest), kind)
+    local ek = type(kind) == "string" and Graph.EdgeKindJump or kind
+    edges[#edges + 1] = Graph.GraphEdge(from, Graph.GraphBlockId(func.id, dest), ek)
   end
 end
 
