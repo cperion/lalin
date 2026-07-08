@@ -59,6 +59,15 @@ function Cemit.CEmitMachine:emit_source(c_unit)
   lines[#lines + 1] = '#include <stdlib.h>'
   lines[#lines + 1] = ''
 
+  -- Type declarations
+  if c_unit.types and #c_unit.types > 0 then
+    lines[#lines + 1] = ''
+    lines[#lines + 1] = '/* type declarations */'
+    for _, td in ipairs(c_unit.types) do
+      td:c_emit_type_decl(lines)
+    end
+  end
+
   -- Helpers
   if c_unit.helpers and #c_unit.helpers > 0 then
     for _, h in ipairs(c_unit.helpers) do
@@ -94,7 +103,17 @@ function Cemit.CEmitMachine:emit_header(c_unit)
   lines[#lines + 1] = '#include <stdbool.h>'
   lines[#lines + 1] = ''
 
+  -- Type declarations
+  if c_unit.types and #c_unit.types > 0 then
+    lines[#lines + 1] = '/* type declarations */'
+    for _, td in ipairs(c_unit.types) do
+      td:c_emit_type_decl(lines)
+    end
+    lines[#lines + 1] = ''
+  end
+
   -- Function prototypes
+
   local sigs = sig_by_id(c_unit)
   if c_unit.funcs then
     for _, func in ipairs(c_unit.funcs) do
@@ -228,7 +247,9 @@ end
 function C.CBackendImportedCodePtr:c_emit_type()
   return self.sig and self.sig.text or "void(*)(void)"
 end
-function C.CBackendNamed:c_emit_type() return self.id.spelling end
+function C.CBackendNamed:c_emit_type()
+  return sanitize(self.id.module_name .. "_" .. self.id.spelling)
+end
 function C.CBackendArray:c_emit_type()
   return self.elem:c_emit_type() .. "[" .. tostring(self.count) .. "]"
 end
@@ -244,6 +265,22 @@ function C.CBackendVector:c_emit_type()
   return self.elem:c_emit_type() .. " __attribute__((vector_size(" .. tostring(self.lanes * 4) .. ")))"
 end
 
+----------------------------------------------------------------------
+-- named_type_name: produce the C identifier for a CTypeId
+----------------------------------------------------------------------
+
+local function named_type_name(id)
+  return sanitize(id.module_name .. "_" .. id.spelling)
+end
+
+----------------------------------------------------------------------
+-- C.CBackendField → c_emit_field_decl
+----------------------------------------------------------------------
+
+function C.CBackendField:c_emit_field_decl()
+  local attr = (self.align and self.align > 1) and (" __attribute__((aligned(" .. tostring(self.align) .. ")))") or ""
+  return "    " .. self.ty:c_emit_decl(self.name.text) .. attr .. ";"
+end
 function C.CBackendType:c_emit_decl(name)
   return self:c_emit_type() .. " " .. (name or "")
 end
@@ -257,7 +294,7 @@ function C.CBackendDataPtr:c_helper_suffix() return "ptr" end
 function C.CBackendQualifiedDataPtr:c_helper_suffix() return "ptr" end
 function C.CBackendCodePtr:c_helper_suffix() return "codeptr" end
 function C.CBackendImportedCodePtr:c_helper_suffix() return "codeptr" end
-function C.CBackendNamed:c_helper_suffix() return sanitize(self.id.spelling) end
+function C.CBackendNamed:c_helper_suffix() return sanitize(self.id.module_name .. "_" .. self.id.spelling) end
 function C.CBackendArray:c_helper_suffix() return "arr" .. tostring(self.count) .. "_" .. self.elem:c_helper_suffix() end
 
 ----------------------------------------------------------------------
@@ -272,6 +309,54 @@ function C.CBackendFuncSig:c_emit_signature(name)
   end
   if #params == 0 then params[1] = "void" end
   return ret .. " " .. (name or "fn") .. "(" .. table.concat(params, ", ") .. ")"
+end
+
+----------------------------------------------------------------------
+-- C.CBackendTypeDecl → c_emit_type_decl
+----------------------------------------------------------------------
+
+function C.CBackendTypeDecl:c_emit_type_decl(out)
+  error("missing c_emit_type_decl leaf method for " .. tostring(asdl.classof(self)), 2)
+end
+
+function C.CBackendTypedef:c_emit_type_decl(out)
+  local name = named_type_name(self.id)
+  out[#out + 1] = "typedef " .. self.ty:c_emit_decl(name) .. ";"
+end
+
+function C.CBackendStructDecl:c_emit_type_decl(out)
+  local name = named_type_name(self.id)
+  out[#out + 1] = "typedef struct " .. name .. " {"
+  for i = 1, #self.fields do
+    out[#out + 1] = self.fields[i]:c_emit_field_decl()
+  end
+  out[#out + 1] = "} " .. name .. ";"
+  if self.size ~= nil then
+    out[#out + 1] = "typedef char ml_assert_size_" .. name .. "[(sizeof(" .. name .. ") == " .. tostring(self.size) .. ") ? 1 : -1];"
+  end
+  if self.align ~= nil then
+    out[#out + 1] = "typedef char ml_assert_align_" .. name .. "[(offsetof(struct { char c; " .. name .. " x; }, x) == " .. tostring(self.align) .. ") ? 1 : -1];"
+  end
+end
+
+function C.CBackendUnionDecl:c_emit_type_decl(out)
+  local name = named_type_name(self.id)
+  out[#out + 1] = "typedef union " .. name .. " {"
+  for i = 1, #self.fields do
+    out[#out + 1] = self.fields[i]:c_emit_field_decl()
+  end
+  out[#out + 1] = "} " .. name .. ";"
+  if self.size ~= nil then
+    out[#out + 1] = "typedef char ml_assert_size_" .. name .. "[(sizeof(" .. name .. ") == " .. tostring(self.size) .. ") ? 1 : -1];"
+  end
+  if self.align ~= nil then
+    out[#out + 1] = "typedef char ml_assert_align_" .. name .. "[(offsetof(struct { char c; " .. name .. " x; }, x) == " .. tostring(self.align) .. ") ? 1 : -1];"
+  end
+end
+
+function C.CBackendOpaqueDecl:c_emit_type_decl(out)
+  local name = named_type_name(self.id)
+  out[#out + 1] = "typedef struct " .. name .. " " .. name .. ";"
 end
 
 ----------------------------------------------------------------------
