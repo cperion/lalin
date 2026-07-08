@@ -144,6 +144,71 @@ end
 function Tr.StmtAtomicFence:typecheck_tree_stmt(input)
   return LCheck.TypeStmtResult(input, {self}, {})
 end
-function Tr.StmtRegionEmit:typecheck_tree_stmt(input) return LCheck.TypeStmtResult(input, {self}, {}) end
-function Tr.StmtRegionCall:typecheck_tree_stmt(input) return LCheck.TypeStmtResult(input, {self}, {}) end
-function Tr.StmtJumpCont:typecheck_tree_stmt(input) return LCheck.TypeStmtResult(input, {self}, {}) end
+function Tr.StmtRegionEmit:typecheck_tree_stmt(input)
+  -- Region emit: typecheck args, validate wiring
+  local issues = {}
+  local args = {}
+  for i = 1, #(self.args or {}) do
+    local ar = self.args[i]:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+    if ar.ty == nil then return LCheck.TypeStmtResult(input, {self}, ar.issues or {}) end
+    if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
+    args[i] = ar.expr
+  end
+  -- Validate wiring targets (wires point to block labels within the region)
+  local wiring = self.wiring or {}
+  for i = 1, #(self.wiring or {}) do
+    local w = self.wiring[i]
+    if w.target then
+      -- Wire target validation: check args if present
+      if w.target.args then
+        for j = 1, #(w.target.args or {}) do
+          local ja = w.target.args[j]
+          local jar = ja.value:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+          if jar.issues then for _, iss in ipairs(jar.issues) do issues[#issues+1]=iss end end
+        end
+      end
+    end
+  end
+  return LCheck.TypeStmtResult(input, {Tr.StmtRegionEmit(Tr.StmtFlow(Sem.FlowFallsThrough), self.invoke_id, self.target, args, wiring)}, issues)
+end
+
+function Tr.StmtRegionCall:typecheck_tree_stmt(input)
+  -- Region call: typecheck args, validate wiring
+  local issues = {}
+  local args = {}
+  for i = 1, #(self.args or {}) do
+    local ar = self.args[i]:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+    if ar.ty == nil then return LCheck.TypeStmtResult(input, {self}, ar.issues or {}) end
+    if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
+    args[i] = ar.expr
+  end
+  -- Validate wiring targets
+  local wiring = self.wiring or {}
+  for i = 1, #(self.wiring or {}) do
+    local w = self.wiring[i]
+    if w.target then
+      if w.target.args then
+        for j = 1, #(w.target.args or {}) do
+          local ja = w.target.args[j]
+          local jar = ja.value:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+          if jar.issues then for _, iss in ipairs(jar.issues) do issues[#issues+1]=iss end end
+        end
+      end
+    end
+  end
+  return LCheck.TypeStmtResult(input, {Tr.StmtRegionCall(Tr.StmtFlow(Sem.FlowFallsThrough), self.invoke_id, self.target, args, wiring)}, issues)
+end
+
+function Tr.StmtJumpCont:typecheck_tree_stmt(input)
+  -- JumpCont: continuation jump — validate jump args
+  local issues = {}
+  local args = {}
+  for i = 1, #(self.args or {}) do
+    local ja = self.args[i]
+    local jar = ja.value:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+    if jar.ty == nil then return LCheck.TypeStmtResult(input, {self}, jar.issues or {}) end
+    if jar.issues then for _, iss in ipairs(jar.issues) do issues[#issues+1]=iss end end
+    args[i] = Tr.JumpArg(ja.name, jar.expr)
+  end
+  return LCheck.TypeStmtResult(input, {Tr.StmtJumpCont(Tr.StmtFlow(Sem.FlowJumps), self.cont, args)}, issues)
+end
