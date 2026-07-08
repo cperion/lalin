@@ -609,7 +609,7 @@ local function bind_context(T)
     function Code.CodeInstClosure:lower_code_inst_to_c_stmts(c_emission)
         return { C.CBackendAggregateInit(C.CBackendPlaceLocal(c_local_id(self.dst), c_ty(c_emission, self.ty)), c_ty(c_emission, self.ty), {
             C.CBackendAggregateFieldInit(C.CBackendName("fn"), atom(self.fn), 0),
-            C.CBackendAggregateFieldInit(C.CBackendName("c_emission"), atom(self.c_emission), nil),
+            C.CBackendAggregateFieldInit(C.CBackendName("ctx"), atom(self.ctx), nil),
         }) }
     end
     function Code.CodeInstVariantCtor:lower_code_inst_to_c_stmts(c_emission)
@@ -625,7 +625,8 @@ local function bind_context(T)
         return out
     end
     function Code.CodeInstVariantTag:lower_code_inst_to_c_stmts(c_emission)
-        return { C.CBackendPlaceLoad(c_local_id(self.dst), C.CBackendPlaceField(C.CBackendPlaceLocal(c_local_id(self.value), c_ty(c_emission, self.variant and self.variant.owner_ty or Code.CodeTyVoid)), C.CBackendName("__tag"), c_ty(c_emission, self.tag_ty), 0, nil, nil)) }
+        local owner_ty = c_emission.value_types and c_emission.value_types[self.value.text] or Code.CodeTyVoid
+        return { C.CBackendPlaceLoad(c_local_id(self.dst), C.CBackendPlaceField(C.CBackendPlaceLocal(c_local_id(self.value), c_ty(c_emission, owner_ty)), C.CBackendName("__tag"), c_ty(c_emission, self.tag_ty), 0, nil, nil)) }
     end
     function Code.CodeInstVariantPayload:lower_code_inst_to_c_stmts(c_emission)
         return { C.CBackendPlaceLoad(c_local_id(self.dst), variant_payload_member_place(c_emission, C.CBackendPlaceLocal(c_local_id(self.value), c_ty(c_emission, self.variant.owner_ty)), self.variant)) }

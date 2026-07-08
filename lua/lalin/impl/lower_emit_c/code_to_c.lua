@@ -148,7 +148,7 @@ end
 ----------------------------------------------------------------------
 
 function Sem.FieldRef:code_to_c_field_name() return "field_" .. tostring(self) end
-function Sem.FieldByName:code_to_c_field_name() return self.name end
+function Sem.FieldByName:code_to_c_field_name() return self.field_name end
 function Sem.FieldByOffset:code_to_c_field_name() return "__offset_" .. tostring(self.offset) end
 
 ----------------------------------------------------------------------
@@ -414,6 +414,14 @@ end
 function Code.CodeTyView:code_to_c_backend_type()
   return C.CBackendViewDescriptor(self.elem:code_to_c_backend_type())
 end
+
+function Code.CodeTyByteSpan:code_to_c_backend_type()
+  return C.CBackendByteSpanDescriptor
+end
+
+function Code.CodeTyClosure:code_to_c_backend_type()
+  return C.CBackendClosureDescriptor(C.CBackendFuncSigId(self.sig.text))
+end
 ----------------------------------------------------------------------
 -- CodeValueId / CodeParam → CBackendLocalId / CBackendLocal mapping
 ----------------------------------------------------------------------
@@ -651,6 +659,473 @@ function Code.CodeInstCall:lower_code_inst_to_c(inst, lowered)
     args[i] = C.CBackendAtomLocal(self.args[i]:code_to_c_local_id())
   end
   lowered.stmts[#lowered.stmts + 1] = C.CBackendCall(dst_id, target, args)
+end
+
+----------------------------------------------------------------------
+-- CodeInstAggregate: struct aggregate init → CBackendAggregateInit
+----------------------------------------------------------------------
+
+function Code.CodeInstAggregate:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local ty = self.ty:code_to_c_backend_type()
+  local fields = {}
+  for i = 1, #(self.fields or {}) do
+    local f = self.fields[i]
+    fields[i] = C.CBackendAggregateFieldInit(
+      C.CBackendName(f.field:code_to_c_field_name()),
+      C.CBackendAtomLocal(f.value:code_to_c_local_id()),
+      nil
+    )
+  end
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendAggregateInit(
+    C.CBackendPlaceLocal(dst_id, ty), ty, fields
+  )
+end
+
+----------------------------------------------------------------------
+-- CodeInstArray: array init → CBackendArrayInit
+----------------------------------------------------------------------
+
+function Code.CodeInstArray:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local ty = self.ty:code_to_c_backend_type()
+  local elems = {}
+  for i = 1, #(self.elems or {}) do
+    local e = self.elems[i]
+    elems[i] = C.CBackendArrayElemInit(
+      e.index,
+      C.CBackendAtomLocal(e.value:code_to_c_local_id())
+    )
+  end
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendArrayInit(
+    C.CBackendPlaceLocal(dst_id, ty), ty, elems
+  )
+end
+
+----------------------------------------------------------------------
+-- CodeInstViewMake: view aggregate init
+----------------------------------------------------------------------
+
+function Code.CodeInstViewMake:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local ty = C.CBackendViewDescriptor(self.elem_ty:code_to_c_backend_type())
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendAggregateInit(
+    C.CBackendPlaceLocal(dst_id, ty), ty,
+    {
+      C.CBackendAggregateFieldInit(C.CBackendName("data"),
+        C.CBackendAtomLocal(self.data:code_to_c_local_id()), 0),
+      C.CBackendAggregateFieldInit(C.CBackendName("len"),
+        C.CBackendAtomLocal(self.len:code_to_c_local_id()), nil),
+      C.CBackendAggregateFieldInit(C.CBackendName("stride"),
+        C.CBackendAtomLocal(self.stride:code_to_c_local_id()), nil),
+    }
+  )
+end
+
+----------------------------------------------------------------------
+-- CodeInstViewData: load view.data field
+----------------------------------------------------------------------
+
+function Code.CodeInstViewData:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local view_local = C.CBackendPlaceLocal(
+    self.view:code_to_c_local_id(),
+    C.CBackendViewDescriptor(Code.CodeTyVoid:code_to_c_backend_type())
+  )
+  local data_ty = C.CBackendDataPtr(Code.CodeTyVoid:code_to_c_backend_type())
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendPlaceLoad(dst_id,
+    C.CBackendPlaceField(view_local, C.CBackendName("data"), data_ty, 0, nil, nil)
+  )
+end
+
+----------------------------------------------------------------------
+-- CodeInstViewLen: load view.len field
+----------------------------------------------------------------------
+
+function Code.CodeInstViewLen:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local view_local = C.CBackendPlaceLocal(
+    self.view:code_to_c_local_id(),
+    C.CBackendViewDescriptor(Code.CodeTyVoid:code_to_c_backend_type())
+  )
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendPlaceLoad(dst_id,
+    C.CBackendPlaceField(view_local, C.CBackendName("len"), C.CBackendIndex, 0, nil, nil)
+  )
+end
+
+----------------------------------------------------------------------
+-- CodeInstViewStride: load view.stride field
+----------------------------------------------------------------------
+
+function Code.CodeInstViewStride:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local view_local = C.CBackendPlaceLocal(
+    self.view:code_to_c_local_id(),
+    C.CBackendViewDescriptor(Code.CodeTyVoid:code_to_c_backend_type())
+  )
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendPlaceLoad(dst_id,
+    C.CBackendPlaceField(view_local, C.CBackendName("stride"), C.CBackendIndex, 0, nil, nil)
+  )
+end
+
+----------------------------------------------------------------------
+-- CodeInstSliceMake: slice aggregate init
+----------------------------------------------------------------------
+
+function Code.CodeInstSliceMake:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local ty = C.CBackendSliceDescriptor(self.elem_ty:code_to_c_backend_type())
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendAggregateInit(
+    C.CBackendPlaceLocal(dst_id, ty), ty,
+    {
+      C.CBackendAggregateFieldInit(C.CBackendName("data"),
+        C.CBackendAtomLocal(self.data:code_to_c_local_id()), 0),
+      C.CBackendAggregateFieldInit(C.CBackendName("len"),
+        C.CBackendAtomLocal(self.len:code_to_c_local_id()), nil),
+    }
+  )
+end
+
+----------------------------------------------------------------------
+-- CodeInstSliceData: load slice.data field
+----------------------------------------------------------------------
+
+function Code.CodeInstSliceData:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local slice_local = C.CBackendPlaceLocal(
+    self.slice:code_to_c_local_id(),
+    C.CBackendSliceDescriptor(Code.CodeTyVoid:code_to_c_backend_type())
+  )
+  local data_ty = C.CBackendDataPtr(Code.CodeTyVoid:code_to_c_backend_type())
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendPlaceLoad(dst_id,
+    C.CBackendPlaceField(slice_local, C.CBackendName("data"), data_ty, 0, nil, nil)
+  )
+end
+
+----------------------------------------------------------------------
+-- CodeInstSliceLen: load slice.len field
+----------------------------------------------------------------------
+
+function Code.CodeInstSliceLen:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local slice_local = C.CBackendPlaceLocal(
+    self.slice:code_to_c_local_id(),
+    C.CBackendSliceDescriptor(Code.CodeTyVoid:code_to_c_backend_type())
+  )
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendPlaceLoad(dst_id,
+    C.CBackendPlaceField(slice_local, C.CBackendName("len"), C.CBackendIndex, 0, nil, nil)
+  )
+end
+
+----------------------------------------------------------------------
+-- CodeInstByteSpanMake: byte span aggregate init
+----------------------------------------------------------------------
+
+function Code.CodeInstByteSpanMake:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local ty = Code.CodeTyByteSpan:code_to_c_backend_type()
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendAggregateInit(
+    C.CBackendPlaceLocal(dst_id, ty), ty,
+    {
+      C.CBackendAggregateFieldInit(C.CBackendName("data"),
+        C.CBackendAtomLocal(self.data:code_to_c_local_id()), 0),
+      C.CBackendAggregateFieldInit(C.CBackendName("len"),
+        C.CBackendAtomLocal(self.len:code_to_c_local_id()), nil),
+    }
+  )
+end
+
+----------------------------------------------------------------------
+-- CodeInstByteSpanData: load bytespan.data field
+----------------------------------------------------------------------
+
+function Code.CodeInstByteSpanData:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local span_local = C.CBackendPlaceLocal(
+    self.span:code_to_c_local_id(),
+    Code.CodeTyByteSpan:code_to_c_backend_type()
+  )
+  local data_ty = C.CBackendDataPtr(Code.CodeTyInt(8, Code.CodeUnsigned):code_to_c_backend_type())
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendPlaceLoad(dst_id,
+    C.CBackendPlaceField(span_local, C.CBackendName("data"), data_ty, 0, nil, nil)
+  )
+end
+
+----------------------------------------------------------------------
+-- CodeInstByteSpanLen: load bytespan.len field
+----------------------------------------------------------------------
+
+function Code.CodeInstByteSpanLen:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local span_local = C.CBackendPlaceLocal(
+    self.span:code_to_c_local_id(),
+    Code.CodeTyByteSpan:code_to_c_backend_type()
+  )
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendPlaceLoad(dst_id,
+    C.CBackendPlaceField(span_local, C.CBackendName("len"), C.CBackendIndex, 0, nil, nil)
+  )
+end
+
+----------------------------------------------------------------------
+-- CodeInstClosure: closure aggregate init (fn + ctx)
+----------------------------------------------------------------------
+
+function Code.CodeInstClosure:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local ty = self.ty:code_to_c_backend_type()
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendAggregateInit(
+    C.CBackendPlaceLocal(dst_id, ty), ty,
+    {
+      C.CBackendAggregateFieldInit(C.CBackendName("fn"),
+        C.CBackendAtomLocal(self.fn:code_to_c_local_id()), 0),
+      C.CBackendAggregateFieldInit(C.CBackendName("ctx"),
+        C.CBackendAtomLocal(self.ctx:code_to_c_local_id()), nil),
+    }
+  )
+end
+
+----------------------------------------------------------------------
+-- CodeInstVariantCtor: variant construction (tag + optional payload)
+----------------------------------------------------------------------
+
+function Code.CodeInstVariantCtor:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local ty = self.ty:code_to_c_backend_type()
+  local dst_place = C.CBackendPlaceLocal(dst_id, ty)
+  -- Write __tag field
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendAggregateInit(
+    dst_place, ty,
+    {
+      C.CBackendAggregateFieldInit(C.CBackendName("__tag"),
+        C.CBackendAtomLiteral(C.CBackendScalar(Core.ScalarU32),
+          Core.LitInt(tostring(self.variant.tag_value))),
+        0),
+    }
+  )
+  -- Write payload if present
+  if self.payload ~= nil then
+    local union_id = self.variant.owner_ty:code_to_c_variant_payload_union_id()
+    local payload_place = C.CBackendPlaceField(
+      dst_place,
+      C.CBackendName("__payload"),
+      union_id and C.CBackendNamed(union_id) or C.CBackendVoid,
+      0, nil, nil
+    )
+    local variant_place = C.CBackendPlaceField(
+      payload_place,
+      C.CBackendName(self.variant.variant_name),
+      self.variant.payload_ty and self.variant.payload_ty:code_to_c_backend_type() or C.CBackendVoid,
+      0, nil, nil
+    )
+    lowered.stmts[#lowered.stmts + 1] = C.CBackendPlaceStore(
+      variant_place,
+      C.CBackendAtomLocal(self.payload:code_to_c_local_id())
+    )
+  end
+end
+
+----------------------------------------------------------------------
+-- CodeInstVariantTag: load __tag field from variant value
+----------------------------------------------------------------------
+
+function Code.CodeInstVariantTag:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local value_id = self.value:code_to_c_local_id()
+  local tag_ty = self.tag_ty:code_to_c_backend_type()
+  -- Look up the owner type from lowered.value_types if available
+  local owner_ty = (lowered.value_types and lowered.value_types[self.value.text])
+  local owner_cty = owner_ty and owner_ty:code_to_c_backend_type() or C.CBackendVoid
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendPlaceLoad(dst_id,
+    C.CBackendPlaceField(
+      C.CBackendPlaceLocal(value_id, owner_cty),
+      C.CBackendName("__tag"),
+      tag_ty, 0, nil, nil
+    )
+  )
+end
+
+----------------------------------------------------------------------
+-- CodeInstVariantPayload: load payload field from variant value
+----------------------------------------------------------------------
+
+function Code.CodeInstVariantPayload:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local value_id = self.value:code_to_c_local_id()
+  local owner_ty = self.variant.owner_ty
+  local owner_cty = owner_ty and owner_ty:code_to_c_backend_type() or C.CBackendVoid
+  local base_place = C.CBackendPlaceLocal(value_id, owner_cty)
+  -- Navigate to __payload.variant_name
+  local union_id = owner_ty and owner_ty:code_to_c_variant_payload_union_id()
+  local payload_place = C.CBackendPlaceField(
+    base_place,
+    C.CBackendName("__payload"),
+    union_id and C.CBackendNamed(union_id) or C.CBackendVoid,
+    0, nil, nil
+  )
+  local variant_place = C.CBackendPlaceField(
+    payload_place,
+    C.CBackendName(self.variant.variant_name),
+    self.variant.payload_ty and self.variant.payload_ty:code_to_c_backend_type() or C.CBackendVoid,
+    0, nil, nil
+  )
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendPlaceLoad(dst_id, variant_place)
+end
+
+----------------------------------------------------------------------
+-- CodeInstAtomicLoad: atomic load via helper
+----------------------------------------------------------------------
+
+function Code.CodeInstAtomicLoad:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local access = self.access
+  local trap = C.CBackendMayTrap
+  if access.trap == Code.CodeMustNotTrap then trap = C.CBackendMustNotTrap
+  elseif access.trap == Code.CodeCheckedTrap then trap = C.CBackendCheckedTrap end
+  local c_access = C.CBackendMemoryAccess(
+    access.ty:code_to_c_backend_type(),
+    access.align, trap, access.volatile, access.ordering
+  )
+  local helper_id = C.CBackendHelperId("helper_atomic_load")
+  local spec = C.CBackendHelperAtomicLoad(c_access)
+  lowered.helpers[#lowered.helpers + 1] = C.CBackendHelperUse(helper_id, spec)
+  -- Get address from place
+  local addr_atom
+  if self.place:code_to_c_is_deref() then
+    local cplace = self.place:lower_code_place_to_c(nil)
+    addr_atom = cplace.addr
+  else
+    local addr_id = C.CBackendLocalId("atomic_addr_load")
+    lowered.locals[#lowered.locals + 1] = C.CBackendLocal(addr_id, C.CBackendName("atomic_addr_load"),
+      C.CBackendDataPtr(c_access.ty))
+    lowered.stmts[#lowered.stmts + 1] = C.CBackendAssign(addr_id,
+      C.CBackendRAddrOfPlace(self.place:lower_code_place_to_c(nil)))
+    addr_atom = C.CBackendAtomLocal(addr_id)
+  end
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendHelperCall(dst_id, helper_id, { addr_atom })
+end
+
+----------------------------------------------------------------------
+-- CodeInstAtomicStore: atomic store via helper
+----------------------------------------------------------------------
+
+function Code.CodeInstAtomicStore:lower_code_inst_to_c(inst, lowered)
+  local access = self.access
+  local trap = C.CBackendMayTrap
+  if access.trap == Code.CodeMustNotTrap then trap = C.CBackendMustNotTrap
+  elseif access.trap == Code.CodeCheckedTrap then trap = C.CBackendCheckedTrap end
+  local c_access = C.CBackendMemoryAccess(
+    access.ty:code_to_c_backend_type(),
+    access.align, trap, access.volatile, access.ordering
+  )
+  local helper_id = C.CBackendHelperId("helper_atomic_store")
+  local spec = C.CBackendHelperAtomicStore(c_access)
+  lowered.helpers[#lowered.helpers + 1] = C.CBackendHelperUse(helper_id, spec)
+  local addr_atom
+  if self.place:code_to_c_is_deref() then
+    local cplace = self.place:lower_code_place_to_c(nil)
+    addr_atom = cplace.addr
+  else
+    local addr_id = C.CBackendLocalId("atomic_addr_store")
+    lowered.locals[#lowered.locals + 1] = C.CBackendLocal(addr_id, C.CBackendName("atomic_addr_store"),
+      C.CBackendDataPtr(c_access.ty))
+    lowered.stmts[#lowered.stmts + 1] = C.CBackendAssign(addr_id,
+      C.CBackendRAddrOfPlace(self.place:lower_code_place_to_c(nil)))
+    addr_atom = C.CBackendAtomLocal(addr_id)
+  end
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendHelperCall(nil, helper_id, {
+    addr_atom,
+    C.CBackendAtomLocal(self.value:code_to_c_local_id()),
+  })
+end
+
+----------------------------------------------------------------------
+-- CodeInstAtomicRmw: atomic read-modify-write via helper
+----------------------------------------------------------------------
+
+function Code.CodeInstAtomicRmw:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local access = self.access
+  local trap = C.CBackendMayTrap
+  if access.trap == Code.CodeMustNotTrap then trap = C.CBackendMustNotTrap
+  elseif access.trap == Code.CodeCheckedTrap then trap = C.CBackendCheckedTrap end
+  local c_access = C.CBackendMemoryAccess(
+    access.ty:code_to_c_backend_type(),
+    access.align, trap, access.volatile, access.ordering
+  )
+  local helper_id = C.CBackendHelperId("helper_atomic_rmw")
+  local spec = C.CBackendHelperAtomicRmw(self.op, c_access)
+  lowered.helpers[#lowered.helpers + 1] = C.CBackendHelperUse(helper_id, spec)
+  local addr_atom
+  if self.place:code_to_c_is_deref() then
+    local cplace = self.place:lower_code_place_to_c(nil)
+    addr_atom = cplace.addr
+  else
+    local addr_id = C.CBackendLocalId("atomic_addr_rmw")
+    lowered.locals[#lowered.locals + 1] = C.CBackendLocal(addr_id, C.CBackendName("atomic_addr_rmw"),
+      C.CBackendDataPtr(c_access.ty))
+    lowered.stmts[#lowered.stmts + 1] = C.CBackendAssign(addr_id,
+      C.CBackendRAddrOfPlace(self.place:lower_code_place_to_c(nil)))
+    addr_atom = C.CBackendAtomLocal(addr_id)
+  end
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendHelperCall(dst_id, helper_id, {
+    addr_atom,
+    C.CBackendAtomLocal(self.value:code_to_c_local_id()),
+  })
+end
+
+----------------------------------------------------------------------
+-- CodeInstAtomicCas: atomic compare-and-swap via helper
+----------------------------------------------------------------------
+
+function Code.CodeInstAtomicCas:lower_code_inst_to_c(inst, lowered)
+  local dst_id = self.dst:code_to_c_local_id()
+  local access = self.access
+  local trap = C.CBackendMayTrap
+  if access.trap == Code.CodeMustNotTrap then trap = C.CBackendMustNotTrap
+  elseif access.trap == Code.CodeCheckedTrap then trap = C.CBackendCheckedTrap end
+  local c_access = C.CBackendMemoryAccess(
+    access.ty:code_to_c_backend_type(),
+    access.align, trap, access.volatile, access.ordering
+  )
+  local helper_id = C.CBackendHelperId("helper_atomic_cas")
+  local spec = C.CBackendHelperAtomicCas(c_access, self.ordering, self.ordering)
+  lowered.helpers[#lowered.helpers + 1] = C.CBackendHelperUse(helper_id, spec)
+  -- Address-of expected value
+  local expected_addr_id = C.CBackendLocalId("atomic_cas_expected_addr")
+  lowered.locals[#lowered.locals + 1] = C.CBackendLocal(expected_addr_id,
+    C.CBackendName("atomic_cas_expected_addr"), C.CBackendDataPtr(c_access.ty))
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendAssign(expected_addr_id,
+    C.CBackendRAddrOfPlace(C.CBackendPlaceLocal(
+      self.expected:code_to_c_local_id(), c_access.ty)))
+  -- Get atomic address
+  local addr_atom
+  if self.place:code_to_c_is_deref() then
+    local cplace = self.place:lower_code_place_to_c(nil)
+    addr_atom = cplace.addr
+  else
+    local addr_id = C.CBackendLocalId("atomic_addr_cas")
+    lowered.locals[#lowered.locals + 1] = C.CBackendLocal(addr_id, C.CBackendName("atomic_addr_cas"),
+      C.CBackendDataPtr(c_access.ty))
+    lowered.stmts[#lowered.stmts + 1] = C.CBackendAssign(addr_id,
+      C.CBackendRAddrOfPlace(self.place:lower_code_place_to_c(nil)))
+    addr_atom = C.CBackendAtomLocal(addr_id)
+  end
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendHelperCall(dst_id, helper_id, {
+    addr_atom,
+    C.CBackendAtomLocal(expected_addr_id),
+    C.CBackendAtomLocal(self.replacement:code_to_c_local_id()),
+  })
+end
+
+----------------------------------------------------------------------
+-- CodeInstAtomicFence: atomic fence via helper
+----------------------------------------------------------------------
+
+function Code.CodeInstAtomicFence:lower_code_inst_to_c(inst, lowered)
+  local helper_id = C.CBackendHelperId("helper_atomic_fence")
+  local spec = C.CBackendHelperAtomicFence(self.ordering)
+  lowered.helpers[#lowered.helpers + 1] = C.CBackendHelperUse(helper_id, spec)
+  lowered.stmts[#lowered.stmts + 1] = C.CBackendHelperCall(nil, helper_id, {})
 end
 
 ----------------------------------------------------------------------
