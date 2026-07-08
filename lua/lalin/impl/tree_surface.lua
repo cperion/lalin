@@ -49,14 +49,14 @@ end
 function Tr.TypeDeclStruct:tree_surface_resolve(mod_name)
   local fields = {}
   for i = 1, #(self.fields or {}) do
-    fields[i] = Sem.FieldDecl(self.fields[i].field_name, self.fields[i].ty:tree_surface_resolve_ty(mod_name))
+    fields[i] = Ty.FieldDecl(self.fields[i].field_name, self.fields[i].ty:tree_surface_resolve_ty(mod_name))
   end
   return Tr.TypeDeclStruct(self.name, fields)
 end
 function Tr.TypeDeclUnion:tree_surface_resolve(mod_name)
   local fields = {}
   for i = 1, #(self.fields or {}) do
-    fields[i] = Sem.FieldDecl(self.fields[i].field_name, self.fields[i].ty:tree_surface_resolve_ty(mod_name))
+    fields[i] = Ty.FieldDecl(self.fields[i].field_name, self.fields[i].ty:tree_surface_resolve_ty(mod_name))
   end
   return Tr.TypeDeclUnion(self.name, fields)
 end

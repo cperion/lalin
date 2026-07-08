@@ -114,7 +114,7 @@ assert(asdl.classof(lhs) == Tr.ExprRef, "lhs should be ExprRef, got " .. tostrin
 assert(asdl.classof(lhs.h) == Tr.ExprTyped, "lhs header should be ExprTyped")
 assert(asdl.classof(lhs.ref) == B.ValueRefBinding, "lhs.ref should be ValueRefBinding (NOT ValueRefName), got " .. tostring(asdl.classof(lhs.ref)))
 assert(lhs.ref.binding.name == "a", "lhs binding name should be 'a', got '" .. lhs.ref.binding.name .. "'")
-assert(lhs.ref.binding.id.text == "arg:add:a", "lhs binding id should be 'arg:add:a', got '" .. lhs.ref.binding.id.text .. "'")
+assert(lhs.ref.binding.id.text == "arg_add_a", "lhs binding id should be 'arg_add_a', got '" .. lhs.ref.binding.id.text .. "'")
 assert(asdl.classof(lhs.ref.binding.role) == B.BindingRoleArg, "lhs binding role should be BindingRoleArg")
 
 -- Verify RHS — the critical ValueRefBinding check
@@ -123,7 +123,7 @@ assert(asdl.classof(rhs) == Tr.ExprRef, "rhs should be ExprRef, got " .. tostrin
 assert(asdl.classof(rhs.h) == Tr.ExprTyped, "rhs header should be ExprTyped")
 assert(asdl.classof(rhs.ref) == B.ValueRefBinding, "rhs.ref should be ValueRefBinding (NOT ValueRefName), got " .. tostring(asdl.classof(rhs.ref)))
 assert(rhs.ref.binding.name == "b", "rhs binding name should be 'b', got '" .. rhs.ref.binding.name .. "'")
-assert(rhs.ref.binding.id.text == "arg:add:b", "rhs binding id should be 'arg:add:b', got '" .. rhs.ref.binding.id.text .. "'")
+assert(rhs.ref.binding.id.text == "arg_add_b", "rhs binding id should be 'arg_add_b', got '" .. rhs.ref.binding.id.text .. "'")
 
 -- Verify types
 assert(asdl.classof(lhs.ref.binding.ty) == Ty.TScalar, "lhs type should be TScalar (i32)")
