@@ -316,16 +316,28 @@ end
 local function lower_stmt(stmt, named_env)
   if type(stmt) ~= "table" then return stmt end
   local cls = asdl.classof(stmt)
+  if cls == P.StmtKnown then
+    return stmt.stmt  -- unwrap LalinTree.Stmt
+  elseif cls == P.StmtLetParsed then
+    local binding = B.Binding(C.Id("parsed." .. stmt.name), stmt.name,
+      resolve_type_source(stmt.ty_source, named_env), B.BindingRoleLocalValue)
+    return Tr.StmtLet(Tr.StmtSurface, binding, stmt.init)
+  elseif cls == P.StmtVarParsed then
+    local binding = B.Binding(C.Id("parsed." .. stmt.name), stmt.name,
+      resolve_type_source(stmt.ty_source, named_env), B.BindingRoleLocalValue)
+    return Tr.StmtVar(Tr.StmtSurface, binding, stmt.init)
+  elseif cls == P.StmtRequiresParsed then
+    -- Pass through for contract extraction in decl_to_item
+    return {
+      tag = "StmtRequires",
+      exprs = stmt.exprs,
+      is_requires = true,
+    }
+  end
+  -- Already resolved ASDL values pass through
   if cls then return stmt end
-  if stmt.tag == "StmtLet" then
-    local binding = B.Binding(C.Id("parsed." .. stmt.name), stmt.name,
-      resolve_type_source(stmt.type, named_env), B.BindingRoleLocalValue)
-    return Tr.StmtLet(Tr.StmtSurface, binding, stmt.init or Tr.ExprLit(Tr.ExprSurface, C.LitInt("0")))
-  elseif stmt.tag == "StmtVar" then
-    local binding = B.Binding(C.Id("parsed." .. stmt.name), stmt.name,
-      resolve_type_source(stmt.type, named_env), B.BindingRoleLocalValue)
-    return Tr.StmtVar(Tr.StmtSurface, binding, stmt.init or Tr.ExprLit(Tr.ExprSurface, C.LitInt("0")))
-  elseif stmt.tag == "StmtForRange" then
+  -- Legacy raw-table intermediates
+  if stmt.tag == "StmtForRange" then
     -- Lower loop via for_to_loop (needs T context)
     local ftl = require("lalin.syntax_v2.for_to_loop")(require("lalin.schema_v2"))
     return ftl.lower(stmt)
@@ -392,11 +404,12 @@ local function decl_to_item(parsed, named_env, anon_counter)
     local result_ty = resolve_type_source(parsed.result_source, named_env)
     local body_src, contracts = {}, {}
     for _, stmt in ipairs(parsed.body or {}) do
-      if type(stmt) == "table" and stmt.is_requires then
+      local scls = asdl.classof(stmt)
+      if scls == P.StmtRequiresParsed then
         for _, expr in ipairs(stmt.exprs or {}) do
           contracts[#contracts + 1] = contract_from_expr(expr)
         end
-      else
+      elseif type(stmt) == "table" and stmt.is_requires then
         body_src[#body_src + 1] = stmt
       end
     end

@@ -13,11 +13,32 @@ local Tree = package.loaded["lalin.schema_v2.tree"]
 local Core = package.loaded["lalin.schema_v2.core"]
 local Bind = package.loaded["lalin.schema_v2.bind"]
 local Ty = package.loaded["lalin.schema_v2.type"]
+local P  = package.loaded["lalin.schema_v2.parse"]
+local asdl = require("lalin.asdl")
 
 local Stmt = {}
 
 local function name_ref(n)
   return Tree.ExprRef(Tree.ExprSurface, Bind.ValueRefName(n))
+end
+
+local function stmt_known(stmt)
+  if stmt == nil then return nil end
+  return P.StmtKnown(stmt)
+end
+
+-- Unwrap ParsedStmt[] → LalinTree.Stmt[] for use in StmtIf etc.
+local function unwrap_stmts(parsed_stmts)
+  local out = {}
+  for _, ps in ipairs(parsed_stmts or {}) do
+    if asdl.classof(ps) == P.StmtKnown then
+      out[#out + 1] = ps.stmt
+    else
+      -- StmtLetParsed etc. pass through for later lowering
+      out[#out + 1] = ps
+    end
+  end
+  return out
 end
 
 local function block_label(n)
@@ -200,12 +221,7 @@ function Stmt.parse(lex, ctx)
     local start = lex:next()
     local exprs = parse_expr_list_until_no_comma(lex, ctx)
     -- Return intermediate; contracts are extracted by decl parser
-    return {
-      tag = "StmtRequires",
-      exprs = exprs,
-      origin = Ast.origin(lex, start, lex.last, "parsed:requires"),
-      is_requires = true,
-    }
+    return P.StmtRequiresParsed(exprs)
 
   elseif t.value == "return" then
     local start = lex:next()
@@ -215,9 +231,9 @@ function Stmt.parse(lex, ctx)
       values = parse_expr_list_until_no_comma(lex, ctx)
     end
     if #values == 0 then
-      return Tree.StmtReturnVoid(Tree.StmtSurface)
+      return stmt_known(Tree.StmtReturnVoid(Tree.StmtSurface))
     elseif #values == 1 then
-      return Tree.StmtReturnValue(Tree.StmtSurface, values[1])
+      return stmt_known(Tree.StmtReturnValue(Tree.StmtSurface, values[1]))
     else
       lex:error_at(start, "return accepts at most one value")
     end
@@ -226,19 +242,19 @@ function Stmt.parse(lex, ctx)
     local start = lex:next()
     local cond = Expr.parse(lex, ctx)
     lex:expect("then")
-    local then_body = Stmt.parse_block(lex, ctx, { "elseif", "else", "end" })
-    local else_body = {}
-    while lex:next_if("elseif") do
-      local ec = Expr.parse(lex, ctx)
-      lex:expect("then")
-      local eb = Stmt.parse_block(lex, ctx, { "elseif", "else", "end" })
-      else_body = { Tree.StmtIf(Tree.StmtSurface, ec, eb, else_body) }
-    end
-    if lex:next_if("else") then
-      else_body = Stmt.parse_block(lex, ctx, { "end" })
+    local then_body = unwrap_stmts(Stmt.parse_block(lex, ctx, { "elseif", "else", "end" }))
+  local else_body = {}
+  while lex:next_if("elseif") do
+    local ec = Expr.parse(lex, ctx)
+    lex:expect("then")
+    local eb = unwrap_stmts(Stmt.parse_block(lex, ctx, { "elseif", "else", "end" }))
+    else_body = { Tree.StmtIf(Tree.StmtSurface, ec, eb, else_body) }
+  end
+  if lex:next_if("else") then
+    else_body = unwrap_stmts(Stmt.parse_block(lex, ctx, { "end" }))
     end
     lex:expect("end")
-    return Tree.StmtIf(Tree.StmtSurface, cond, then_body, else_body)
+    return stmt_known(Tree.StmtIf(Tree.StmtSurface, cond, then_body, else_body))
 
   elseif t.value == "switch" then
     local start = lex:next()
@@ -253,19 +269,19 @@ function Stmt.parse(lex, ctx)
         local ctok = lex:next()
         local key = Expr.parse(lex, ctx)
         lex:expect("then")
-        local body = Stmt.parse_block(lex, ctx, { "case", "default", "end" })
+        local body = unwrap_stmts(Stmt.parse_block(lex, ctx, { "case", "default", "end" }))
         arms[#arms + 1] = Tree.SwitchStmtArm(Stmt.switch_key(key), body)
       elseif lex:peek().value == "default" then
         lex:next()
         lex:expect("then")
-        default_body = Stmt.parse_block(lex, ctx, { "end" })
+        default_body = unwrap_stmts(Stmt.parse_block(lex, ctx, { "end" }))
       else
         lex:error_at(lex:peek(), "expected `case`, `default`, or `end` in switch")
       end
       lex:skip_separators()
     end
     lex:expect("end")
-    return Tree.StmtSwitch(Tree.StmtSurface, value, arms, variant_arms, default_body or {})
+    return stmt_known(Tree.StmtSwitch(Tree.StmtSurface, value, arms, variant_arms, default_body or {}))
 
   elseif t.value == "for" then
     lex:error_at(t, "source loops use `loop`, not `for`")
@@ -356,20 +372,19 @@ function Stmt.parse(lex, ctx)
     local init = nil
     if lex:next_if("=") then init = Expr.parse(lex, ctx) end
     -- Return intermediate: type is HostEval, resolved during lowering
-    return {
-      tag = mutable and "StmtVar" or "StmtLet",
-      name = name_tok.value,
-      type = ty,
-      init = init,
-      origin = Ast.origin(lex, start, lex.last, "parsed:local"),
-    }
+    local default_init = Tree.ExprLit(Tree.ExprSurface, Core.LitInt("0"))
+    if mutable then
+      return P.StmtVarParsed(name_tok.value, ty, init or default_init)
+    else
+      return P.StmtLetParsed(name_tok.value, ty, init or default_init)
+    end
 
   elseif t.value == "jump" then
     local start = lex:next()
     local target = lex:expect_name("jump target").value
     local payload = {}
     if lex:peek().value == "(" then payload = parse_named_payload(lex, ctx) end
-    return Tree.StmtJump(Tree.StmtSurface, block_label(target), jump_args_from_payload(payload))
+    return stmt_known(Tree.StmtJump(Tree.StmtSurface, block_label(target), jump_args_from_payload(payload)))
 
   elseif t.value == "emit" or t.value == "call" then
     local start = lex:next()
@@ -403,21 +418,21 @@ function Stmt.parse(lex, ctx)
       lex:expect(")")
     end
     if start.value == "call" then
-      return Tree.StmtRegionCall(
+      return stmt_known(Tree.StmtRegionCall(
         Tree.StmtSurface,
         "lln.call.",
         Tree.RegionInvokeTarget(Stmt._region_path(callee_path)),
         data_args,
         Stmt._region_wiring(cont_wiring)
-      )
+      ))
     else
-      return Tree.StmtRegionEmit(
+      return stmt_known(Tree.StmtRegionEmit(
         Tree.StmtSurface,
         "lln.emit.",
         Tree.RegionInvokeTarget(Stmt._region_path(callee_path)),
         data_args,
         Stmt._region_wiring(cont_wiring)
-      )
+      ))
     end
 
   elseif t.value == "yield" then
@@ -428,9 +443,9 @@ function Stmt.parse(lex, ctx)
       values = parse_expr_list_until_no_comma(lex, ctx)
     end
     if #values == 0 then
-      return Tree.StmtYieldVoid(Tree.StmtSurface)
+      return stmt_known(Tree.StmtYieldVoid(Tree.StmtSurface))
     else
-      return Tree.StmtYieldValue(Tree.StmtSurface, values[1])
+      return stmt_known(Tree.StmtYieldValue(Tree.StmtSurface, values[1]))
     end
 
   else
@@ -442,12 +457,12 @@ function Stmt.parse(lex, ctx)
       local optok = lex:next()
       local value = Expr.parse(lex, ctx)
       if op == "=" then
-        return Tree.StmtSet(Tree.StmtSurface, Expr.to_place(left), value)
+        return stmt_known(Tree.StmtSet(Tree.StmtSurface, Expr.to_place(left), value))
       else
         lex:error_at(optok, "compound assignment " .. tostring(op) .. " is not yet supported")
       end
     end
-    return Tree.StmtExpr(Tree.StmtSurface, left)
+    return stmt_known(Tree.StmtExpr(Tree.StmtSurface, left))
   end
 end
 

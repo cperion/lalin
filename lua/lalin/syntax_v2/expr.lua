@@ -14,6 +14,38 @@ local Ty = package.loaded["lalin.schema_v2.type"]
 
 local Expr = {}
 
+-- Simple type resolver for cast/sizeof/alignof.
+-- Uses lazy construction because ASDL scalars are not ready at module load.
+local function resolve_type_source(source)
+  if source == nil or source == "" then return Ty.TScalar(Core.ScalarVoid) end
+  source = source:match("^%s*(.-)%s*$")
+  local ptr_inner = source:match("^ptr %[(.+)%]$")
+  if ptr_inner then return Ty.TPtr(resolve_type_source(ptr_inner)) end
+  local view_inner = source:match("^view %[(.+)%]$")
+  if view_inner then return Ty.TView(resolve_type_source(view_inner)) end
+  local slice_inner = source:match("^slice %[(.+)%]$")
+  if slice_inner then return Ty.TSlice(resolve_type_source(slice_inner)) end
+  local owned_inner = source:match("^owned %[(.+)%]$")
+  if owned_inner then return Ty.TOwned(resolve_type_source(owned_inner)) end
+  -- Scalar lookup (lazy — constructors work at call time)
+  local scalar = {
+    i8 = Core.ScalarI8, i16 = Core.ScalarI16, i32 = Core.ScalarI32, i64 = Core.ScalarI64,
+    u8 = Core.ScalarU8, u16 = Core.ScalarU16, u32 = Core.ScalarU32, u64 = Core.ScalarU64,
+    f32 = Core.ScalarF32, f64 = Core.ScalarF64, bool = Core.ScalarBool,
+    void = Core.ScalarVoid, rawptr = Core.ScalarRawPtr, index = Core.ScalarIndex,
+  }
+  if scalar[source] then return Ty.TScalar(scalar[source]) end
+  -- Named/qualified type: use TNamed with path
+  if source:find("%.") then
+    local parts = {}
+    for part in source:gmatch("[^.]+") do
+      parts[#parts + 1] = Core.Name(part)
+    end
+    return Ty.TNamed(Ty.TypeRefPath(Core.Path(parts)))
+  end
+  return Ty.TNamed(Ty.TypeRefPath(Core.Path({ Core.Name(source) })))
+end
+
 local parser
 
 local function decode_lua_string(raw, lex, tok)
@@ -216,18 +248,19 @@ local function atom(lex, ctx)
       return Tree.ExprLit(Tree.ExprSurface, Core.LitNil)
     elseif t.value == "as" then
       -- as [type] (expr)  — type conversion
-      local ty_node = Type.parse(lex, ctx)
+      local ty_source = Type.parse(lex, ctx)
+      local ty_ty = resolve_type_source(ty_source)
       lex:expect("(")
       local value = Expr.parse(lex, ctx)
       lex:expect(")")
-      return Tree.ExprCast(Tree.ExprSurface, Core.SurfaceCast, ty_node, value)
+      return Tree.ExprCast(Tree.ExprSurface, Core.SurfaceCast, ty_ty, value)
     elseif t.value == "sizeof" then
       -- sizeof [type]  — type size query
-      local ty_node = Type.parse(lex, ctx)
-      return Tree.ExprSizeOf(Tree.ExprSurface, ty_node)
+      local ty_source = Type.parse(lex, ctx)
+      return Tree.ExprSizeOf(Tree.ExprSurface, resolve_type_source(ty_source))
     elseif t.value == "alignof" then
-      local ty_node = Type.parse(lex, ctx)
-      return Tree.ExprAlignOf(Tree.ExprSurface, ty_node)
+      local ty_source = Type.parse(lex, ctx)
+      return Tree.ExprAlignOf(Tree.ExprSurface, resolve_type_source(ty_source))
     elseif t.value == "_" then
       -- LLBL-owned sentinel.
       if lex:peek().value == "(" then

@@ -11,6 +11,7 @@ local Tr   = require("lalin.schema_v2.tree")
 local B    = require("lalin.schema_v2.bind")
 local Sem  = require("lalin.schema_v2.sem")
 local asdl = require("lalin.asdl")
+local asdl = require("lalin.asdl")
 
 -- Module-level entry point — pipeline calls tree_module:surface_resolve()
 function Tr.Module:surface_resolve()
@@ -18,12 +19,15 @@ function Tr.Module:surface_resolve()
   local items = {}
   for i = 1, #(self.items or {}) do
     local item = self.items[i]
-    if item.func then
+    local item_class = asdl.classof(item)
+    if item_class == Tr.ItemFunc then
       items[i] = Tr.ItemFunc(item.func:surface_resolve_item(mod_name))
-    elseif item.t then
-      items[i] = Tr.ItemType(item.t:tree_surface_resolve(mod_name))
-    elseif item.extern then
+    elseif item_class == Tr.ItemExtern then
       items[i] = item  -- externs pass through
+    elseif item_class == Tr.ItemType then
+      items[i] = Tr.ItemType(item.t:tree_surface_resolve(mod_name))
+    elseif item_class == Tr.ItemRegion then
+      items[i] = item  -- regions pass through
     else
       items[i] = item
     end

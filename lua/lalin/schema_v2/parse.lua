@@ -39,13 +39,21 @@ return schema. LalinParse {
     field. kind [str],
     field. name [str],
     state [many [LalinParse.ParsedField]],
-    body [many [LalinTree.Stmt]],
+    body [many [LalinParse.ParsedStmt]],
   },
 
   product. ParsedMetaRef {
     interned,
     path [many [LalinCore.Name]],
   },
+
+  sum. ParsedStmt {
+    StmtKnown { variant_unique, field. stmt [LalinTree.Stmt], },
+    StmtLetParsed { variant_unique, field. name [str], field. ty_source [str], field. init [LalinTree.Expr], },
+    StmtVarParsed { variant_unique, field. name [str], field. ty_source [str], field. init [LalinTree.Expr], },
+    StmtRequiresParsed { variant_unique, exprs [many [LalinTree.Expr]], },
+  },
+
 
   sum. ParsedDecl {
     ParsedFunc {
@@ -55,7 +63,7 @@ return schema. LalinParse {
       field. implicit_self [bool],
       params [many [LalinParse.ParsedField]],
       field. result_source [str],
-      body [many [LalinTree.Stmt]],
+      body [many [LalinParse.ParsedStmt]],
       field. has_control [bool],
     },
     ParsedStruct {
@@ -97,7 +105,7 @@ return schema. LalinParse {
     },
     ParsedStmtFragment {
       variant_unique,
-      body [many [LalinTree.Stmt]],
+      body [many [LalinParse.ParsedStmt]],
     },
   },
 
