@@ -285,11 +285,25 @@ function Code.CodeDataReloc:lower_code_data_init_to_c()
   error("code_to_c: CodeDataReloc lowering not yet implemented", 3)
 end
 
+function Code.CodeDataReloc:lower_code_data_init_to_c()
+  error("code_to_c: CodeDataReloc lowering not yet implemented", 3)
+end
+
 -----------------------------------------------------------------------
 -- CodeTypeDecl → CBackendTypeDecl conversion
 -----------------------------------------------------------------------
 
 function Code.CodeTypeDecl:lower_code_type_decl_to_c()
-  -- Default: emit as opaque declaration for now
-  return C.CBackendOpaqueDecl(C.CTypeId(self.name, self.name))
+  local mod_name = self.name
+  local typ_name = self.name
+
+  if self.ty then
+    local tycls = asdl.classof(self.ty)
+    if tycls == Code.CodeTyNamed then
+      mod_name = self.ty.module_name
+      typ_name = self.ty.type_name
+    end
+  end
+
+  return C.CBackendOpaqueDecl(C.CTypeId(mod_name, typ_name))
 end

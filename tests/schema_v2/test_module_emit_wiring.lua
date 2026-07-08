@@ -164,7 +164,7 @@ assert(#c_unit.types >= 1, "expected >=1 types, got " .. #c_unit.types)
 local ctype = c_unit.types[1]
 assert(asdl.classof(ctype) == C.CBackendOpaqueDecl,
   "expected CBackendOpaqueDecl, got " .. tostring(asdl.classof(ctype)))
-assert(ctype.id.module_name == "MyType", "type ID module_name: " .. ctype.id.module_name)
+assert(ctype.id.module_name == "wired_module", "type ID module_name: " .. ctype.id.module_name)
 assert(ctype.id.spelling == "MyType", "type ID spelling: " .. ctype.id.spelling)
 print("PASS: 1 type decl (CBackendOpaqueDecl 'MyType')")
 
