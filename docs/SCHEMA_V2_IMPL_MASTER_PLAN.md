@@ -302,10 +302,10 @@ Release-level gates:
 
 | ID | Priority | Dependencies | Suggested scope | Status | Owner/branch |
 |---|---:|---|---|---|---|
-| RGN-1 | P0 | none | Region helper restoration + focused tests | ready | — |
-| STN-1 | P0 | none | Stencil semantic construction | ready | — |
+| RGN-1 | P0 | none | Region helper restoration + focused tests | working | `pack/rgn-1` (`wX:p1`) |
+| STN-1 | P0 | none | Stencil semantic construction | working | `pack/stn-1` (`wY:p1`) |
 | LAY-1 | P0 | STN-1 analysis | Layout projection/resolution | blocked | — |
-| TYP-1 | P0 | none | Typecheck projection regressions | ready | — |
+| TYP-1 | P0 | none | Typecheck projection regressions | working | `pack/typ-1` (`wZ:p1`) |
 | CMP-1 | P1 | none | Compiler-process contracts | ready | — |
 | M0.1 | P0 | none | Failure ledger and focused reproducers | ready | — |
 | ASDL-CLOSURE | P1 | baseline stabilization | Closure state and leaf-method migration | planned | — |
