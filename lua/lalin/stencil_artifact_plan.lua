@@ -84,6 +84,11 @@ local function bind_context(T)
 
     local api = {}
 
+    -- Leaf methods below close over helpers defined later in the module.
+    local i32_ty, canonical_axis, producer_shape
+    local axis_ref_invalid_reason, axis_set_invalid_reason
+    local producer_axis_invalid_reason, producer_window_invalid_reason, producer_axes_forward
+    local producer_param_name, artifact_shape
     -- CodeType leaf methods for stencil artifact naming
     function Code.CodeTyInt:stencil_artifact_type_name()
         return (self.signedness == Code.CodeSigned and "i" or "u") .. tostring(self.bits)
@@ -143,6 +148,10 @@ local function bind_context(T)
     function Stencil.StencilSink:stencil_artifact_is_reduce() return false end
     function Stencil.StencilSinkStore:stencil_artifact_is_store() return true end
     function Stencil.StencilSink:stencil_artifact_is_store() return false end
+    function Stencil.StencilSinkStore:stencil_artifact_vocab() return Stencil.StencilStore end
+    function Stencil.StencilSinkReduce:stencil_artifact_vocab() return Stencil.StencilReduce end
+    function Stencil.StencilSinkScan:stencil_artifact_vocab() return Stencil.StencilScan end
+    function Stencil.StencilSinkScatterReduce:stencil_artifact_vocab() return Stencil.StencilScatterReduce end
 
     -- StencilSink materializer and auto_vector leaf methods
     function Stencil.StencilSink:stencil_artifact_sink_materializer_reject_reason(producer)
@@ -204,19 +213,28 @@ local function bind_context(T)
     -- StencilLanePolicy leaf methods
     function Stencil.StencilLaneFixed:stencil_artifact_is_fixed_lane() return true end
     function Stencil.StencilLanePolicy:stencil_artifact_is_fixed_lane() return false end
-    -- StencilReduceSemantics / StencilSinkSemantics leaf methods
-    function Stencil.StencilReduceFold:stencil_artifact_is_fold() return true end
-    function Stencil.StencilReduceFold:stencil_artifact_is_partition() return false end
-    function Stencil.StencilReduceFold:stencil_artifact_is_find() return false end
+    -- StencilStoreSemantics / StencilReductionSemantics leaf methods
+    function Stencil.StencilStoreElementwise:stencil_artifact_is_fold() return false end
+    function Stencil.StencilStoreElementwise:stencil_artifact_is_partition() return false end
+    function Stencil.StencilStoreElementwise:stencil_artifact_is_find() return false end
+    function Stencil.StencilStoreCopy:stencil_artifact_is_fold() return false end
+    function Stencil.StencilStoreCopy:stencil_artifact_is_partition() return false end
+    function Stencil.StencilStoreCopy:stencil_artifact_is_find() return false end
+    function Stencil.StencilStoreScatter:stencil_artifact_is_fold() return false end
+    function Stencil.StencilStoreScatter:stencil_artifact_is_partition() return false end
+    function Stencil.StencilStoreScatter:stencil_artifact_is_find() return false end
     function Stencil.StencilStorePartition:stencil_artifact_is_fold() return false end
     function Stencil.StencilStorePartition:stencil_artifact_is_partition() return true end
     function Stencil.StencilStorePartition:stencil_artifact_is_find() return false end
+    function Stencil.StencilReduceFold:stencil_artifact_is_fold() return true end
+    function Stencil.StencilReduceFold:stencil_artifact_is_partition() return false end
+    function Stencil.StencilReduceFold:stencil_artifact_is_find() return false end
+    function Stencil.StencilReduceCount:stencil_artifact_is_fold() return false end
+    function Stencil.StencilReduceCount:stencil_artifact_is_partition() return false end
+    function Stencil.StencilReduceCount:stencil_artifact_is_find() return false end
     function Stencil.StencilReduceFind:stencil_artifact_is_fold() return false end
     function Stencil.StencilReduceFind:stencil_artifact_is_partition() return false end
     function Stencil.StencilReduceFind:stencil_artifact_is_find() return true end
-    function Stencil.StencilSinkSemantics:stencil_artifact_is_fold() return false end
-    function Stencil.StencilSinkSemantics:stencil_artifact_is_partition() return false end
-    function Stencil.StencilSinkSemantics:stencil_artifact_is_find() return false end
 
     -- StencilBody leaf methods
     function Stencil.StencilBodyPoint:stencil_artifact_is_point() return true end
@@ -488,10 +506,10 @@ local function bind_context(T)
     function Stencil.StencilLayoutAffine1D:stencil_artifact_is_field_or_soa() return false end
     function Stencil.StencilLayoutAffine1D:stencil_artifact_scale() return tonumber(self.scale) or 0 end
     function Stencil.StencilLayoutAffine1D:stencil_artifact_parent_layout() return self.parent end
-    function Stencil.StencilLayout:stencil_artifact_is_indexed() return false end
-    function Stencil.StencilLayout:stencil_artifact_is_field_or_soa() return false end
-    function Stencil.StencilLayout:stencil_artifact_parent_layout() return nil end
-    function Stencil.StencilLayout:stencil_artifact_scale() return 0 end
+    function Stencil.StencilAccessLayout:stencil_artifact_is_indexed() return false end
+    function Stencil.StencilAccessLayout:stencil_artifact_is_field_or_soa() return false end
+    function Stencil.StencilAccessLayout:stencil_artifact_parent_layout() return nil end
+    function Stencil.StencilAccessLayout:stencil_artifact_scale() return 0 end
 
     -- has_dynamic_stride: true if the layout depends on a non-constant stride
     function Stencil.StencilAccessLayout:stencil_artifact_has_dynamic_stride() return false end
@@ -681,9 +699,9 @@ local function bind_context(T)
     function Code.CodeTyDataPtr:stencil_artifact_is_data_ptr() return true end
     function Code.CodeType:stencil_artifact_is_data_ptr() return false end
 
-    -- StencilAlignment leaf methods
+    -- StencilAlignmentFact leaf methods
     function Stencil.StencilAlignmentKnown:stencil_artifact_alignment_bytes() return tonumber(self.bytes) end
-    function Stencil.StencilAlignment:stencil_artifact_alignment_bytes() return nil end
+    function Stencil.StencilAlignmentFact:stencil_artifact_alignment_bytes() return nil end
 
     -- StencilScheduleReject leaf methods
     function Stencil.StencilScheduleRejectCompilerMatrix:stencil_artifact_is_compiler_matrix() return true end
@@ -1052,7 +1070,7 @@ local function bind_context(T)
 
     local artifact
 
-    local function i32_ty()
+    i32_ty = function()
         return Code.CodeTyInt(32, Code.CodeSigned)
     end
 
@@ -1063,7 +1081,7 @@ local function bind_context(T)
         )
     end
 
-    local function canonical_axis(axis)
+    canonical_axis = function(axis)
         return Stencil.StencilProducerAxis(axis.index_ty, nil, nil, axis.step, axis.order, axis.index_name)
     end
 
@@ -1181,6 +1199,14 @@ local function bind_context(T)
         return desc and desc.producer or nil
     end
 
+    function Stencil.StencilDescriptor:stencil_artifact_vocab()
+        return self.sink:stencil_artifact_vocab()
+    end
+
+    local function descriptor_vocab(desc)
+        return desc:stencil_artifact_vocab()
+    end
+
     local function descriptor_access_identity_map(desc)
         local map = {}
         local input_i, output_i = 0, 0
@@ -1256,7 +1282,7 @@ local function bind_context(T)
         return repr(desc)
     end
 
-    local function producer_shape(producer)
+    producer_shape = function(producer)
         if producer == nil then return nil end
         if producer:stencil_artifact_is_producer() then return producer.shape end
         return producer
@@ -1268,7 +1294,7 @@ local function bind_context(T)
         return shape:stencil_artifact_producer_axis_count()
     end
 
-    local function axis_ref_invalid_reason(axis, producer, site)
+    axis_ref_invalid_reason = function(axis, producer, site)
         site = site or "stencil axis"
         local idx = tonumber(axis and axis.index)
         if idx == nil or idx < 1 or math.floor(idx) ~= idx then return site .. " must be a positive integer axis index" end
@@ -1277,7 +1303,7 @@ local function bind_context(T)
         return nil
     end
 
-    local function axis_set_invalid_reason(axes, producer, site)
+    axis_set_invalid_reason = function(axes, producer, site)
         if #(axes or {}) == 0 then return (site or "axis set") .. " requires at least one axis" end
         local seen = {}
         for i, axis in ipairs(axes or {}) do
@@ -1289,13 +1315,13 @@ local function bind_context(T)
         return nil
     end
 
-    local function producer_axis_invalid_reason(axis, index)
+    producer_axis_invalid_reason = function(axis, index)
         if axis == nil then return "producer axis " .. tostring(index) .. " is missing" end
         if (tonumber(axis.step) or 0) <= 0 then return "producer axis " .. tostring(index) .. " step must be a positive compile-time constant" end
         return nil
     end
 
-    local function producer_window_invalid_reason(window, index)
+    producer_window_invalid_reason = function(window, index)
         if window == nil then return "producer window " .. tostring(index) .. " is missing" end
         if (tonumber(window.before) or -1) < 0 then return "producer window " .. tostring(index) .. " before extent must be nonnegative" end
         if (tonumber(window.after) or -1) < 0 then return "producer window " .. tostring(index) .. " after extent must be nonnegative" end
@@ -1312,7 +1338,7 @@ local function bind_context(T)
         return producer_shape_reject_reason(producer) == nil
     end
 
-    local function producer_axes_forward(axes)
+    producer_axes_forward = function(axes)
         for _, axis in ipairs(axes or {}) do
             if axis.order ~= Stencil.StencilProducerForward then return false end
         end
@@ -2248,7 +2274,7 @@ local function bind_context(T)
         return artifact(inst, symbol, int32_desc_decl(symbol, desc, args))
     end
 
-    local function producer_param_name(axis_index, suffix)
+    producer_param_name = function(axis_index, suffix)
         return "axis" .. tostring(axis_index) .. "_" .. suffix
     end
 
@@ -2704,7 +2730,7 @@ local function bind_context(T)
         return scatter_reduce_n_shape(desc, self)
     end
 
-    local function artifact_shape(artifact)
+    artifact_shape = function(artifact)
         return artifact:artifact_shape()
     end
 
@@ -2737,6 +2763,7 @@ local function bind_context(T)
     api.point_compare_expr = point_compare_expr
     api.point_cast_expr = point_cast_expr
     api.point_select_expr = point_select_expr
+    api.descriptor_vocab = descriptor_vocab
     api.descriptor_accesses = descriptor_accesses
     api.descriptor_producer = descriptor_producer
     api.producer_shape = producer_shape

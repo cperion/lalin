@@ -127,6 +127,7 @@ local artifact = Stencil.StencilArtifact(
 )
 
 assert(StencilArtifactPlan.descriptor_vocab(instance.descriptor) == Stencil.StencilReduce)
+assert(not Stencil.StencilLayoutContiguous(1):stencil_artifact_is_indexed())
 assert(asdl.classof(StencilArtifactPlan.descriptor_producer(instance.descriptor).shape) == Stencil.StencilProduceRange1D)
 assert(StencilArtifactPlan.descriptor_accesses(instance.descriptor)[1].role == Stencil.StencilAccessRead)
 assert(StencilArtifactPlan.descriptor_accesses(instance.descriptor)[2].role == Stencil.StencilAccessReduce)
