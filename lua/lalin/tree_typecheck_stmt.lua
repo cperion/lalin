@@ -706,6 +706,16 @@ return function(T)
         return out
     end
 
+    local function append_splice_blocks(blocks, splice, stmt_input, extra_blocks, issues, region_id)
+        for i = 1, #(splice.blocks or {}) do
+            local block = splice.blocks[i]
+            local nested_blocks = {}
+            local body = expand_control_body(block.body or {}, expansion_scope_for_block_params(stmt_input, region_id, block, issues), nested_blocks, issues, region_id)
+            blocks[#blocks + 1] = Tr.ControlBlock(block.label, block.params, body)
+            for j = 1, #nested_blocks do blocks[#blocks + 1] = nested_blocks[j] end
+        end
+    end
+
     ------------------------------------------------------------------------
     -- Control expansion: leaf methods on Tr.Stmt
     -- Parent default: pass-through (no expansion needed)
@@ -773,6 +783,26 @@ return function(T)
         for i = 1, #(body or {}) do
             out[i] = body[i]:typecheck_tree_expand_control(current_input, extra_blocks, issues, region_id)
             current_input = out[i]:typecheck_tree_expansion_input(current_input)
+        end
+        return out
+    end
+
+    local function expansion_input_for_entry(stmt_input, region_id, entry, issues)
+        local out = stmt_input
+        for i = 1, #(entry.params or {}) do
+            local next_input, _, param_issues = entry.params[i]:typecheck_tree_add_to_scope(out, region_id, entry.label, i)
+            out = next_input
+            append_all(issues, param_issues)
+        end
+        return out
+    end
+
+    local function expansion_input_for_block(stmt_input, region_id, block, issues)
+        local out = stmt_input
+        for i = 1, #(block.params or {}) do
+            local next_input, _, param_issues = block.params[i]:typecheck_tree_add_to_scope(out, region_id, block.label, i)
+            out = next_input
+            append_all(issues, param_issues)
         end
         return out
     end
