@@ -351,11 +351,11 @@ Release-level gates:
 |---|---:|---|---|---|---|
 | RGN-1 | P0 | none | Region helper restoration + focused tests | integrated | `82ec214af`; approved by `w4:p14` |
 | STN-1 | P0 | none | Stencil semantic construction | integrated | `35c1ce5a3`; approved by `w4:p16` |
-| STN-SCHED | P0 | STN-1 | Typed schedule selection | ready | — |
+| STN-SCHED | P0 | STN-1 | Typed schedule selection | working | `pack/stn-sched` (`w4:p1A`) |
 | LAY-1 | P0 | STN-1 analysis | Typed leaf-owned layout resolution | integrated | `00303c45b`; approved by `w4:p14` |
 | TYP-1 | P0 | none | Typed frontend target projection | integrated | `1750e4ce5`; approved by `w4:p6` |
 | TYP-OWN | P0 | none | Check/lower schema ownership | ready | — |
-| ABI-SIG | P0 | LAY-1 | Required code signature projection | ready | — |
+| ABI-SIG | P0 | LAY-1 | Required code signature projection | working | `pack/abi-sig` (`w4:p19`) |
 | CMP-1 | P1 | none | Compiler-process contracts | ready | — |
 | M0.1 | P0 | none | Failure ledger and focused reproducers | ready | — |
 | ASDL-CLOSURE | P1 | baseline stabilization | Closure state and leaf-method migration | planned | — |
