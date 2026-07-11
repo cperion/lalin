@@ -1,7 +1,7 @@
 # Lalin Compiler Completion and ASDL Migration — Master Plan
 
 > **Status:** Single source of truth for compiler completion, regression repair, and the clean ASDL + leaf-method migration.
-> **Baseline:** `8630bc808` (2026-07-10).
+> **Planning evidence baseline:** `main@15117196ad0f456c18b1df2e916639f9b4bc6f35` (2026-07-11), merged into this worktree after completed integration history. The historical failure ledger below remains anchored at `8630bc808` until M0 refreshes it after CMP-1.
 > **Primary path:** parsed `.lln` / builder declarations → typed ASDL → Code facts → `CBackendUnit` → `emit_c` → GCC.
 > **Authority:** `docs/ASDL_GUIDE.md` is binding. `docs/LANGUAGE_REFERENCE.md` defines the promised language surface.
 > **Historical input:** `docs/SCHEMA_V2_MIGRATION_GAP.md` is an older assessment, not the current tracker.
@@ -57,6 +57,8 @@ This file is the distribution and tracking authority for all pack work.
 Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.lua`, `test_emit_c_validate.lua`, `test_emit_c_tcc.lua`, parsed extern, and parsed union emission.
 
 ## Milestone 0 — Failure Ledger and Reproducible Baseline
+
+**Next gate:** after `CMP-1` integrates, refresh the complete baseline at the integration head before assigning later repair or migration packages. Until that refresh is green, package acceptance means focused checks + the relevant category suite + no new default-suite failures; it does not require a package to repair unrelated baseline failures.
 
 ### M0.1 Failure classification
 
@@ -208,166 +210,577 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 - Do not schedule LuaTrace or LuaJIT stencil work while main C compiler milestones remain.
 - Reopen only on an explicit project-owner request.
 
-### AUX-1 — Remaining baseline clusters
+### Deferred baseline clusters
 
-- [ ] Fix closure-escape missing `tree_module_name`.
-- [ ] Fix native value `CodeBackendReadonlyProjection` construction.
-- [ ] Fix core `func_abi_plan` failures.
-- [ ] Fix core `type_to_c` failures.
-- [ ] Classify and repair the slow binary failure.
+The native `CodeBackendReadonlyProjection` failure, slow embedded binary profile, LuaTrace, LuaJIT stencil/region repair, and experimental native copy-patch are not priorities in this plan. Reopen them only by explicit project-owner decision. The main path remains GCC over `emit_c`.
 
-## Milestone 2 — Complete the Documented Language Surface
+## Milestone 2 — Bounded Language and Main-C AUX Packages
 
-### LNG-REG — Regions and control protocols
+**Evidence baseline:** current `main` at `15117196ad0f456c18b1df2e916639f9b4bc6f35`, validated 2026-07-11. The package order is intentional: harness-only AUX first, narrow infrastructure second, independent C coverage third, control/expression fourth, and richer dependent surfaces last.
 
-**Depends on:** RGN-1.
+### Language/AUX assignment order
 
-- [x] Region emit compile/run.
-- [x] Region call compile/run.
-- [ ] Jump and target-application coverage.
-- [ ] Nested and parameterized regions.
-- [ ] Typed rejection for missing targets, wires, and unsupported frames.
+| Order | ID | Outcome | Dependencies |
+|---:|---|---|---|
+| 1 | AUX-FUNC-ABI | Repair/classify the stale core ABI test | none |
+| 2 | AUX-TYPE-C | Test the canonical typed machine/type-to-C contract | ABI-SIG, ABI-STATE vocabulary |
+| 3 | AUX-CLOSURE-NAME | Install the existing module-name leaf contract at closure entry | canonical Tree schema |
+| 4 | LNG-DIAG | Deterministic unsupported-control diagnostics | none |
+| 5 | LNG-LOOP-C | Parsed loop/data-parallel GCC runtime matrix | STN-1, STN-SCHED, LAY-1, ABI-STATE |
+| 6 | LNG-EXT-C | Extern, builder, HostEval, and method GCC runtime | AUX-FUNC-ABI, AUX-TYPE-C, ABI-STATE |
+| 7 | LNG-REG-C | Complete main-C region protocol coverage | RGN-1, LAY-1, ABI-STATE |
+| 8 | LNG-EXPR-C | Close expression parser/lowering mismatches | LNG-DIAG if rejection is selected |
+| 9 | LNG-VAR-C | Parsed variants, switch, identity decision, GCC runtime | LNG-EXPR-C only if grammar overlaps |
+| 10 | LNG-OWN-C | Ownership/domain runtime and typed escape rejection | LNG-REG-C only for resolver-region fixtures |
 
-### LNG-LOOP — Loop and data-parallel forms
+Orders 1–6 may run concurrently where owned files do not overlap. Serialize `LNG-DIAG` with expression-parser edits, `LNG-EXPR-C` with variant grammar edits, and any region resolver fixture shared by `LNG-REG-C`/`LNG-OWN-C`.
 
-**Depends on:** STN-1 and LAY-1.
+### AUX-FUNC-ABI — Core function ABI test repair
 
-- [ ] Plain loop compile/run.
-- [ ] Fold compile/run.
-- [ ] Scan compile/run.
-- [ ] Grid, tiled, and window behavior.
-- [ ] Copy, reduce, and SOAC C execution.
-- [ ] Verify LuaJIT and C modes agree where both are explicitly supported.
+**Evidence:** `tests/core/test_func_abi_plan.lua:27` fails. The test declares `local Back = T.LalinBackend` but then uses global `Backend`; direct inspection shows the produced `BackValId`, `BackIndex`, and bindings are valid. This is a harness defect unless the corrected test exposes a production defect.
 
-### LNG-EXPR — Expression completeness
+**ASDL/leaf contract:** retain `FuncAbiPlan`; `AbiParamScalar`, `AbiParamView`, `AbiParamRejected`; `AbiResultVoid`, `AbiResultScalar`, `AbiResultView`, `AbiResultRejected`. No aliases or compatibility constructors.
 
-- [ ] Decide and model `//` as an ASDL operator, or reject it during parsing.
-- [ ] Decide and model `^` as an ASDL operator, or reject it during parsing.
-- [ ] Eliminate parser-accepts/lowering-rejects mismatches.
-- [ ] Add focused `sizeof` tests.
-- [ ] Cover casts, indexing, fields, records, and arrays through GCC.
+**Owned files:** primarily `tests/core/test_func_abi_plan.lua`; `lua/lalin/func_abi_plan.lua`, `schema/type.lua`, and `schema/backend_schema.lua` are review-only unless a corrected assertion proves a real defect.
 
-### LNG-AGG — Aggregates, variants, and identity
+**Work/acceptance:**
 
-- [ ] Parsed union constructor coverage.
-- [ ] Parsed variant-switch coverage.
-- [ ] Tagged-union GCC runtime test.
-- [ ] Design and implement parsed `unique` structure identity, or expose a deterministic unsupported diagnostic.
-- [ ] Keep unique identity in ASDL rather than hidden Lua identity tables.
+- [ ] Correct `Back`/`Backend`; add value-ID text assertions and scalar/index/view/aggregate/array/rejected parameter coverage.
+- [ ] Cover void/scalar/view/rejected results and zero-based role indices.
+- [ ] Run `luajit tests/core/test_func_abi_plan.lua`.
+- [ ] Run `luajit tests/core/test_type_abi_classify.lua` and `luajit tests/core/test_type_to_backend_scalar.lua`.
+- [ ] Run `luajit tests/run.lua core` and the default-suite no-regression gate.
 
-### LNG-OWN — Ownership and domains
+**Out of scope:** full `func_abi_plan.lua` leaf migration, platform aggregate ABI, variadics, native calling conventions. Completion evidence must classify the root cause and keep production unchanged unless independently justified.
 
-- [ ] Successful parsed ownership-to-C runtime test.
-- [ ] Lease/access/view runtime tests.
-- [ ] Escape rejection tests.
-- [ ] Handle/domain contract runtime coverage.
-- [ ] Verify backend erasure preserves checked semantics.
+### AUX-TYPE-C — Canonical type-to-C contract
 
-### LNG-EXT — Extern, builder, and HostEval surfaces
+**Evidence:** `tests/core/test_type_to_c.lua:24` calls `api.code_type_to_c(code_ty, {})`; the current contract at `code_type.lua:579-580` is `(machine, ty)`, so `{}` is misclassified as the Code type. `tests/code_ir/test_code_type.lua` passes with the proper contract.
 
-- [ ] Actual extern symbol link/run test.
-- [ ] Builder DSL → C → GCC runtime test.
-- [ ] HostEval-generated declaration → C runtime test.
-- [ ] Qualified method runtime test.
+**ASDL/leaf contract:** concrete `CodeTy* :code_to_c_backend_type(...) -> CBackendType`; use the typed C emission machine/projection when registration is required. Do not restore reversed arguments or accept a loose `{}` state.
 
-### LNG-UNSUP — Explicit unsupported diagnostics
+**Owned files:** primarily `tests/core/test_type_to_c.lua`; review-only `lua/lalin/code_type.lua`, `impl/lower_emit_c/code_to_c.lua`, `schema/cemit_machine.lua`, and `schema/c.lua`.
 
-- [ ] Focused deterministic rejection test for source `while`.
-- [ ] Focused deterministic rejection test for source `break`.
-- [ ] Focused deterministic rejection test for source `continue`.
-- [ ] Cover rejection in function and region contexts.
+**Work/acceptance:**
 
-## Milestone 3 — Complete the ASDL + Leaf-Method Migration
+- [ ] Test `(machine, ty)` and prefer direct concrete leaf methods when accumulation is unnecessary.
+- [ ] Cover scalar/nullary, data/code/imported pointers, arrays, slices, views, closures, named/imported C types, handles, leases, vectors, callable signature registration, and `ArrayLenExpr` rejection.
+- [ ] Run `luajit tests/core/test_type_to_c.lua`, `luajit tests/code_ir/test_code_type.lua`, and `luajit tests/schema_v2/test_complex_types.lua`.
+- [ ] Run relevant core/code-IR suites and the default-suite no-regression gate.
 
-### ASDL-CLOSURE — Closure conversion
+**Out of scope:** new C ABI policy, generic convenience APIs, native representation, and LuaJIT ctype projection. Evidence must show the current `unsupported CodeType ... table` failure is gone without a shim.
 
-- [ ] Replace the mutable Lua rewrite input in `impl/tree_closure.lua`.
-- [ ] Replace scope, capture, helper, and capture-environment maps with precise ASDL relations.
-- [ ] Do not replace the Lua context bag with one broad ASDL context bag.
-- [ ] Define narrow traversal inputs and typed step/results before implementation.
-- [ ] Put behavior on every relevant concrete Expr, Place, IndexBase, View, Stmt, Func, and Item leaf.
-- [ ] Return a typed unsupported result for `ExprClosure` where support is intentionally absent.
-- [ ] Preserve all focused closure-conversion tests.
+### AUX-CLOSURE-NAME — Closure module-name binding
 
-### ASDL-STENCIL — Stencil planning and materialization
+**Evidence:** `tests/code_ir/test_closure_escape.lua` fails at `closure_convert.lua:779` with `attempt to call method 'tree_module_name'`; `test_closure_convert.lua` passes because it installs `tree_module_type(T)`. Implementations already exist at `tree_module_type.lua:55-72`.
 
-- [ ] Replace `{kind=...}` producer and codegen-plan records in `impl/stencil_plan.lua`.
-- [ ] Replace `{valid=true,...}` validation records with a result union.
-- [ ] Replace policy/control/materialization records in `impl/lower_emit_c/materialize.lua`.
-- [ ] Remove generic `input or {}` semantic protocols.
-- [ ] Put selection and materialization behavior on concrete leaves.
+**ASDL/leaf contract:** `ModuleHeader:tree_module_name() -> str`, implemented by `ModuleSurface`, `ModuleTyped`, `ModuleSem`, and `ModuleCode`. The closure entrypoint installs the owning implementation before calling it.
 
-### ASDL-MEM — Memory analysis
+**Owned files:** `lua/lalin/closure_convert.lua`, `tree_module_type.lua`, `tests/code_ir/test_closure_escape.lua`, and `test_closure_convert.lua`.
 
-- [ ] Replace `contract_index` with named typed relation entries.
-- [ ] Move `CodeContractFact` indexing behavior to concrete leaves.
-- [ ] Move `CodePlace` object resolution to concrete leaves.
-- [ ] Move `CodeInstOp` memory transfer behavior to concrete leaves.
-- [ ] Replace ad hoc `access_records` with a named facet/product.
-- [ ] Model alias, bounds, dependence, contract, and backend facts explicitly.
-- [ ] Remove semantic nil signaling.
-- [ ] Add leaf-level tests before replacing orchestration.
+**Work/acceptance:**
 
-### ASDL-EFFECT — Effect analysis
+- [ ] Bind the canonical methods at the owning API boundary; test surface/typed names and deterministic helper names.
+- [ ] Run both closure tests and `luajit tests/run.lua code_ir`; apply the default-suite no-regression gate.
 
-- [ ] Remove raw-field instruction and terminator classification.
-- [ ] Stop reconstructing memory projections as Lua maps.
-- [ ] Move effect production to concrete instruction and call-target leaves.
-- [ ] Return typed effect facts or typed rejects.
+**Out of scope:** the CLO migration below, capture redesign, new escape semantics, and LuaJIT/native closure work. No LuaJIT backend file may change.
 
-### ASDL-KERNEL — Kernel and schedule planning
+### LNG-DIAG — Unsupported control diagnostics
 
-- [ ] Move candidate selection to concrete `KernelLoopCandidate` leaves.
-- [ ] Move selection consumption to concrete `KernelLoopPlanSelection` leaves.
-- [ ] Replace loop-text semantic indexes.
-- [ ] Replace executable booleans and string modes with typed alternatives.
-- [ ] Remove raw probing from schedule and lower-plan paths.
+**Evidence:** `syntax/stmt.lua:346-355` falls into generic expression parsing. `break` reaches `emit_c` and reports `missing explainer for phase: backend`; `continue` becomes unresolved; `while` produces an unrelated parse/document error.
 
-### ASDL-VALIDATE-C — Validation and C lowering
+**ASDL/leaf contract:** the parser boundary returns a canonical LLBL or typed diagnostic carrying the `while`/`break`/`continue` alternative, source origin, function/region context, stable code, and message. If represented in Tree ASDL, each unsupported form is a concrete leaf returning a typed issue.
 
-- [ ] Remove `classof` routing from `impl/code_validate.lua`.
-- [ ] Replace helper-signature Lua records in `impl/code_to_c.lua:729-770`.
-- [ ] Remove the `classof` branch in `impl/cemit_emit.lua:786-790`.
-- [ ] Audit semantic maps in graph, validation, and C lowering.
-- [ ] Keep GCC/TCC process options confined to true IO boundaries.
+**Owned files:** `lua/lalin/syntax/stmt.lua`, syntax origin/diagnostic support, `schema/check.lua`, `error/catalog.lua`, and a new `tests/frontend/test_lalin_unsupported_control_diagnostics.lua`.
 
-### ASDL-DESC — Optional-soup descriptors
+**Work/acceptance:**
 
-- [ ] Split stencil-machine descriptors into complete alternatives.
-- [ ] Refine loop annotations into explicit facets/unions.
-- [ ] Refine pointer capabilities and proofs into typed alternatives.
-- [ ] Replace semantic booleans with typed decisions.
+- [ ] Test three forms in both function and region contexts and preserve the dedicated `for` → `loop` diagnostic.
+- [ ] Prove none reaches type lowering or backend explanation.
+- [ ] Run the focused test, `luajit tests/run.lua frontend`, and the default-suite no-regression gate.
 
-## Milestone 4 — Canonical Schema Ownership
+**Out of scope:** implementing `while`, `break`, or `continue`, hidden-jump rewrites, and backend explanations for forms rejected earlier.
 
-### SCH-1 — Inventory and ownership
+### LNG-LOOP-C — Loop and data-parallel C completeness
 
-- [ ] Inventory all 24 same-named modules under `schema/` and `schema_v2/`.
-- [ ] Assign one canonical owner for every compiler vocabulary.
-- [ ] Document legitimate Host and LuaJIT boundary imports.
-- [ ] Detect ambiguous duplicate constructors/method attachments in tests.
+**Evidence:** inline CMat copy/reduce/scan and SOAC-map tests pass. A current-main ad hoc parsed source compile returned `dot([2,3],[4,5],2) == 23`, but no committed parsed-loop GCC matrix exists.
 
-### SCH-2 — Migration
+**ASDL/leaf contract:** retain typed range/grid/tiled/window producers; fold/scan/store/copy/reduce/SOAC sinks; schedule selection; stencil descriptors; precise reject leaves. New failures must not create mode strings, `{kind=...}` plans, or text indexes.
 
-- [ ] Migrate active consumers one semantic boundary at a time.
-- [ ] Keep source ASDL separate from lower projections/facets.
-- [ ] Route the public compile facade through the canonical typed compiler pipeline.
-- [ ] Prove GCC compile/run after every migrated boundary.
-- [ ] Remove old modules only after all consumers migrate.
-- [ ] Add no old-to-new compatibility wrappers.
+**Owned files:** `syntax/stmt.lua`, `syntax/for_to_loop.lua`, `tree_typecheck_stmt.lua`, `tree_lower.lua`, `impl/tree_code.lua`, `impl/stencil_plan.lua`, `impl/lower_emit_c/materialize.lua`, and new `tests/c_backend/test_lalin_parsed_loops_gcc.lua`.
+
+**Work/acceptance:**
+
+- [ ] GCC runtime: plain loop, copy, fold reducers `add/mul/min/max`, scan, 2D grid, tiled ND, window/clamp edge, reduce, SOAC, zero-trip, and one-trip.
+- [ ] Run the new test and existing `test_emit_c_inline_cmat_copy.lua`, `...reduce.lua`, `...scan.lua`, and `test_emit_c_inline_soac_map.lua`.
+- [ ] Run frontend/C-backend suites and the default-suite no-regression gate.
+
+**Out of scope:** LuaJIT parity, LuaTrace, native copy-patch, scheduling optimization, and vectorization policy.
+
+### LNG-EXT-C — Extern, builder, HostEval, and methods
+
+**Evidence:** parsed extern, HostEval-role, method-syntax, and Lua-owned DSL tests pass only their current parse/staging checks; no dedicated four-surface GCC runtime matrix exists.
+
+**ASDL/leaf contract:** `ItemExtern -> CodeExtern -> C extern`; builder `Decl`, HostEval declaration streams, and qualified methods converge on the same canonical Tree items and statically resolved functions. No new schema is expected.
+
+**Owned files:** `syntax/document.lua`, `syntax/role_adapter.lua`, `syntax/to_tree.lua`, `dsl/*`, `frontend_pipeline.lua`, `init.lua`, `emit_c_compile.lua`, and new C tests.
+
+**Work/acceptance:**
+
+- [ ] Link/run a real extern (for example libc `abs`), including explicit symbol spelling.
+- [ ] Compile/run builder declarations, a HostEval-generated declaration, and a qualified method with explicit/injected receiver.
+- [ ] Add `test_lalin_extern_builder_hosteval_gcc.lua` and `test_lalin_qualified_method_gcc.lua`.
+- [ ] Run existing surface tests, new tests, frontend/C-backend suites, and the default-suite no-regression gate.
+
+**Out of scope:** dynamic method lookup, a new FFI subsystem, LuaJIT callable modules, and native symbol patching.
+
+### LNG-REG-C — Regions and control protocols
+
+**Evidence:** `test_emit_c_region_main.lua`, `test_emit_c_region_call.lua`, and `test_region_expansion_helpers.lua` pass. `test_region_emit_expansion.lua` fails only after entering excluded LuaJIT code at `luajit_lower.lua:90`.
+
+**ASDL/leaf contract:** `RegionInvokeTarget`; `RegionWireTarget` leaves; `RegionInvokeMissingTarget`, `RegionInvokeArgCount`, `RegionInvokeMissingWire`, `RegionInvokeExtraWire`, `RegionInvokeDuplicateWire`, `RegionInvokeCallFrameUnsupported`; `RegionInvokeExpandInput`; `RegionInvokeExpanded/Rejected`; `ControlReject*`; `TypeIssueRegionInvoke`. Every reject leaf owns explanation.
+
+**Owned files:** `schema/tree.lua`, `schema/check.lua`, `tree_typecheck_stmt.lua`, `tree_control_facts.lua`, `tree_lower.lua`, `impl/tree_code.lua`, `syntax/stmt.lua`, and region C tests.
+
+**Work/acceptance:**
+
+- [ ] Parsed nested/parameterized regions; positional/named target application; block/continuation wiring; exact reject-leaf tests.
+- [ ] Compile/run one nested protocol in new `test_lalin_parsed_region_protocols_gcc.lua`.
+- [ ] Run the three passing focused tests, new test, frontend/C-backend suites, and default-suite no-regression gate.
+
+**Out of scope:** `StencilMachineSkeletonInput`, LuaJIT region optimization, native continuation stencils, and broad region migration.
+
+### LNG-EXPR-C — Expression completeness
+
+**Evidence:** `syntax/expr.lua:189,191` accepts `//` and `^`; `syntax/to_tree.lua:37-42` maps neither, so both fail as `parsed_to_tree: unsupported expression tag BinOp`. `ExprSizeOf` exists but lacks parsed GCC coverage.
+
+**ASDL/leaf contract:** for each operator, either add a concrete `BinaryOp` leaf with leaf-owned typecheck/lowering/C behavior or reject during parsing with a typed diagnostic. Specify negative-operand semantics for supported `//`. Retain `ExprCast`, `ExprSizeOf`, `ExprIndex`, `ExprDot`, `ExprAgg`, and `ExprArray`.
+
+**Owned files:** `syntax/expr.lua`, `syntax/to_tree.lua`, `schema/core.lua`, `schema/tree.lua`, `impl/tree_check/expr.lua`, `impl/tree_code.lua`, `impl/lower_emit_c/code_to_c.lua`, and expression tests.
+
+**Work/acceptance:**
+
+- [ ] Remove both parser/lowering mismatches; test invalid operands.
+- [ ] GCC runtime for `sizeof` scalar/struct/array, casts, pointer indexing, field load/store, named records, and positional arrays.
+- [ ] Add `test_lalin_expression_operator_contract.lua` and `test_lalin_parsed_expressions_gcc.lua`; run frontend/C-backend suites and default-suite no-regression gate.
+
+**Out of scope:** generic math libraries, arbitrary precision, vector expansion, LuaJIT lowering, and broad optimization.
+
+### LNG-VAR-C — Variants and identity
+
+**Evidence:** `test_lalin_parsed_union_emit_c.lua` passes emitted-text checks only. `syntax/stmt.lua:212-236` parses scalar cases; `syntax/to_tree.lua` maps calls to `ExprCall`, not `ExprCtor`. Lowering already has variant constructor/tag/payload/switch nodes; multi-field payload lowering is explicitly unsupported.
+
+**ASDL/leaf contract:** reuse `ExprCtor`, `SwitchVariantStmtArm`, `SwitchVariantExprArm`, typed variant refs, `CodeInstVariantCtor/Tag/Payload`, and `CodeTermVariantSwitch`. Syntax projects directly to these values. `unique` becomes real ASDL identity or a precise unsupported diagnostic.
+
+**Owned files:** `syntax/expr.lua`, `syntax/stmt.lua`, `syntax/to_tree.lua`, `schema/tree.lua`, `schema/tree_lower.lua`, `tree_typecheck_expr.lua`, `tree_lower.lua`, `impl/tree_check/expr.lua`, `impl/tree_code.lua`, lower-emit-C variant files, and union tests.
+
+**Work/acceptance:**
+
+- [ ] Define constructor spelling; parse nullary/one-payload constructors and variant arms with payload binds.
+- [ ] GCC runtime for nullary/payload/default cases; exact unknown-variant/invalid-bind issues; explicit `unique` decision.
+- [ ] Add `test_lalin_parsed_variant_surface.lua` and `test_lalin_parsed_variant_gcc.lua`; run existing union test, frontend/C-backend suites, and default-suite no-regression gate.
+
+**Out of scope:** silent multi-field flattening, hidden identity maps, dynamic reflection, and native variant stencils.
+
+### LNG-OWN-C — Ownership and domains
+
+**Evidence:** `test_lalin_domain_contract.lua` passes typechecking only. Typed lease-escape/domain reasons exist, but there is no parsed ownership GCC runtime test.
+
+**ASDL/leaf contract:** `TypeAccess` leaves; `TAccess`, `TLease`, `LeaseOrigin`; `TypeUnaryLeaseEscape*`; `TypeUnaryHandle*`; `TypeIssueInvalidUnary`; `TypeIssueDomainContract`. New outcomes are precise leaves, never booleans or mode strings.
+
+**Owned files:** `schema/type.lua`, `schema/check.lua`, `tree_typecheck_type.lua`, `tree_typecheck.lua`, `tree_typecheck_expr.lua`, `tree_lower.lua`, `impl/tree_check/*`, `impl/tree_code.lua`, and ownership tests.
+
+**Work/acceptance:**
+
+- [ ] Parsed GCC success for readonly/writeonly/preserve/noescape/lease/view and handle/domain resolver behavior; assert legal C erasure.
+- [ ] Exact return/store/aggregate/call/durable escape and invalidating-call-while-live issue leaves.
+- [ ] Add `test_lalin_ownership_rejections.lua` and `test_lalin_ownership_erasure_gcc.lua`; run domain, frontend/C-backend suites, and default-suite no-regression gate.
+
+**Out of scope:** runtime GC/borrow tracking, hidden lease state in C, general memory-analysis migration, and LuaJIT ownership.
+
+## Milestone 3 — Bounded ASDL and Leaf-Method Migration Packages
+
+**Planning corrections:** there are **25** duplicate schema module names, not 24. Ad hoc C helper signatures are in `lua/lalin/impl/cemit_emit.lua:734-770`. The active schema-v2 C path lacks `LalinCMat`; `schema_v2/stencil_machine.lua` contains `LalinLuaJIT.LJExpr` and is excluded from the neutral main-C design.
+
+### Dependency graph
+
+```text
+CLO-1 -> CLO-2 -> CLO-3
+
+MEM-1 -> MEM-2 -> MEM-3 -> MEM-4 -> EFF-1 -> EFF-2
+                                           `-> KRN-1 -> SCH-1 -> SCH-2
+
+CMAT-1 -+-> STN-PLAN -+-> DESC-2 -+-> CMAT-2 -> CMAT-3
+         `-> DESC-1 ----'           |
+VAL-1 ------------------------------+-> CLOW-1 -> CVAL-2
+CVAL-1 -> CEMIT-1 ------------------'
+
+OWN-0 starts independently; OWN-FRONT/ANALYSIS/STENCIL/C/META follow
+their completed semantic chains; all converge at OWN-CUTOVER.
+```
+
+### CLO-1 — Closure semantic vocabulary
+
+**Evidence:** `schema_v2/sem.lua:126-142` has unused/incomplete capture products; `impl/tree_closure.lua:25-79,614-684` uses mutable loose scope/capture/name/helper state, nil capture modes, fixed eight-byte layouts, and multiple returns.
+
+**Define/leaf ownership:** `ClosureBinding`, `ClosureScopeFrame/Stack`, `ClosureCaptureCandidate/Set/Layout/Environment`, `ClosureNameSupply`, narrow `ClosureTraversalInput`, `ClosureLookup = Found|Missing`, and `ClosureConvertResult = Converted|Unchanged|Unsupported`. `ValueRefName:closure_lookup`; other refs return missing; type leaves own capture layout; scope/result leaves own transitions.
+
+**Owned files:** `schema_v2/sem.lua`; new `test_closure_semantic_schema.lua`. **Dependencies:** none. **Out of scope:** traversal, rewriting, helper insertion, C ABI, compatibility.
+
+**Checks/acceptance:** `luajit tests/schema_v2/test_closure_semantic_schema.lua`; schema suite. Constructors reject loose tables; unsupported is typed; no broad ClosureContext.
+
+### CLO-2 — Capture collection and layout leaves
+
+**Evidence:** `impl/tree_closure.lua:101-286` uses `classof`, ad hoc capture records, copied Lua scope maps, and fixed layouts; equivalent old-path state remains in `closure_convert.lua`.
+
+**Define/leaf ownership:** `ClosureCollectInput/Result`, `ClosureCaptureLayoutInput/Result`, `ClosureScopeTransition`. Every concrete `Expr`, `Place`, `IndexBase`, `View`, and `Stmt` implements `closure_collect`; binding statements return typed transitions; type leaves own size/alignment.
+
+**Owned files:** `impl/tree_closure.lua`; narrow additions to `schema_v2/sem.lua`; new capture-leaf tests. **Dependencies:** CLO-1. **Out of scope:** rewriting/helper insertion and adapting old `closure_convert.lua`.
+
+**Checks/acceptance:** closure capture leaf test and schema-v2 closure test; no `classof`, locals/seen/scope/capture maps, fixed eight-byte assumption, or uncovered concrete leaf.
+
+### CLO-3 — Typed closure rewriting and helper transitions
+
+**Evidence:** `impl/tree_closure.lua:299-600,690-792` manually dispatches, mutates module/item/function state, returns multiple values, and throws unsupported; the current test expects that throw.
+
+**Define/leaf ownership:** typed `ClosureExpr/Place/View/StmtRewriteResult`; `ClosureFuncResult = Converted|Unchanged|Unsupported`; `ClosureItemResult = Converted|Unchanged|Rejected`. Every relevant concrete expression/place/index/view/statement leaf owns `closure_rewrite`; every Func/Item leaf owns conversion; module composition returns typed transitions.
+
+**Owned files:** `impl/tree_closure.lua`, `impl/compiler_api.lua`, closure schema-v2 tests. **Dependencies:** CLO-2. **Out of scope:** LuaJIT/native lowering and runtime escape policy.
+
+**Checks/acceptance:** closure convert/frontend-complete/frontend suite; no mutable bag, multiple semantic returns, parent dispatch, hidden helper list, or thrown unsupported result.
+
+### MEM-1 — Typed memory contract/access projections
+
+**Evidence:** `impl/code_mem.lua:31-67,171-223` mutates `many` fields as maps, signals missing via nil, and builds `contract_index`; `code_effect.lua` rebuilds the same maps.
+
+**Define/leaf ownership:** named bounds/window/same-length/disjoint/noalias/readonly/writeonly relation entries; `MemContractProjection`; typed access/object/backend/proof lookup unions. Every `CodeContractFact:project_memory_contract`; contract value/place-load leaves own expression projection; proof leaves emit entries; projection lookup returns unions.
+
+**Owned files:** `schema_v2/mem.lua`, `impl/code_mem.lua`, new contract-projection test. **Dependencies:** none. **Out of scope:** place resolution, transfer, alias decisions.
+
+**Checks/acceptance:** focused test and schema suite; remove `contract_index`, string-key mutation, and semantic nil; effect consumes the projection.
+
+### MEM-2 — CodePlace memory resolution
+
+**Evidence:** `impl/code_mem.lua:502+` selects by raw field presence and returns multiple values/nil.
+
+**Define/leaf ownership:** `MemPlaceResolveInput`; `MemPlaceResolved`, `MemPlaceUnresolved`, `MemPlaceResolveResult`; `MemPlaceDiscoveries`; `MemAccessSafetyDecision = Proven|Unproven`. Every concrete `CodePlace* :resolve_memory_place`; object-form/extent leaves own safety proof.
+
+**Owned files:** `schema_v2/mem.lua`, `impl/code_mem.lua`, new place-leaf test. **Dependencies:** MEM-1. **Out of scope:** instruction scanning and dependence pairs.
+
+**Checks/acceptance:** remove `object_for_place`; no raw-field dispatch, nil, or multiple returns; resolved/unresolved tests for every place leaf.
+
+### MEM-3 — Instruction memory-transfer facet
+
+**Evidence:** `impl/code_mem.lua:424-456,695-736` keeps value/local/load/stride/store side maps and ad hoc boolean/string-key access records.
+
+**Define/leaf ownership:** named value/local/constant/loaded-place/scaled-stride entries; `MemTransferFacet`; `MemInstructionTransferInput/Result`; `MemDependenceAccess`. Every `CodeInstOp:transfer_memory`; memory leaves own access facts; non-memory leaves return typed unchanged; `MemAccessOp` leaves classify.
+
+**Owned files:** `schema_v2/mem.lua`, `impl/code_mem.lua`, new instruction-leaf test. **Dependencies:** MEM-2. **Out of scope:** pairwise dependence.
+
+**Checks/acceptance:** remove access records/raw chains and semantic booleans; direct load/store/atomic coverage.
+
+### MEM-4 — Alias, dependence, and backend decisions
+
+**Evidence:** `MemBackendAccessInfo.movable [bool]` and same-store/movement/alias facts are booleans and Lua maps.
+
+**Define/leaf ownership:** `MemMovementDecision = Movable|Pinned`; `MemObjectPairDecision = Independent|Dependent|Unproven`; named same-store/disjoint/access-mode entries; typed dependence request/result. Trap and safety leaves own movement; access/dependence leaves own pair classification; contracts produce access/alias relations.
+
+**Owned files:** `schema_v2/mem.lua`, `impl/code_mem.lua`, consumers of `movable`. **Dependencies:** MEM-3. **Out of scope:** kernel policy.
+
+**Checks/acceptance:** dependence leaf test and code-IR suite; no same-store/disjoint/access-mode maps or `(bool, reason)` decisions.
+
+### EFF-1 — Effect evidence, contracts, and call summaries
+
+**Evidence:** `schema_v2/effect.lua:31-36` has paired optional call fields; `impl/code_effect.lua:33-129` mutates contract arrays and a purity map.
+
+**Define/leaf ownership:** `EffectEvidence`; complete direct/extern/indirect/closure `CallSummary` leaves; `FunctionEffectClassification`; `ContractEffectResult`. Every contract fact owns `contract_effect`; every call target owns summary; function/call-summary leaves own consumption.
+
+**Owned files:** `schema_v2/effect.lua`, `impl/code_effect.lua`, direct kernel consumers. **Dependencies:** MEM-1, preferably MEM-4. **Out of scope:** instruction/terminator traversal.
+
+**Checks/acceptance:** focused contract/call test; no optional-pair summary, contract output map, or purity map; all target alternatives tested.
+
+### EFF-2 — Instruction and terminator effect leaves
+
+**Evidence:** `impl/code_effect.lua:132-205` rebuilds maps, probes fields, and represents no effects by empty arrays.
+
+**Define/leaf ownership:** `EffectAnalysisRequest`, `EffectInstructionInput`, instruction result alternatives, term result alternatives, analysis result. Every `CodeInstOp:compute_effect`; call delegates to target; every `CodeTermOp:compute_term_effect`; graph composes.
+
+**Owned files:** `schema_v2/effect.lua`, `impl/code_effect.lua`, `impl/compiler_api.lua`, new effect tests. **Dependencies:** EFF-1, MEM-4. **Out of scope:** kernel/schedule policy and C emission.
+
+**Checks/acceptance:** instruction/pipeline tests and code-IR suite; no raw classification, rebuilt maps, nil, or multiple results.
+
+### KRN-1 — Kernel candidate projection and leaf consumption
+
+**Evidence:** `impl/kernel_plan.lua:181-252` uses loop-text indexes/raw selection probing; closed form drops real trip facts; `KernelLoopPlanClosedForm` has `add_trip_unknown_proof [bool]`.
+
+**Define/leaf ownership:** named reduction/closed-form-by-loop entries; `KernelLoopFactProjection`; `KernelLoopPlanRequest`; `KernelTripEvidence = Known|Unavailable`. Candidate leaves select plans; plan-selection leaves materialize; flow trip-count leaves convert evidence; planned/no-plan leaves own eligibility.
+
+**Owned files:** `schema_v2/kernel.lua`, `impl/kernel_plan.lua`, new kernel tests. **Dependencies:** MEM-4, EFF-2. **Out of scope:** stencil reconstruction, schedule selection, lower-plan lookup.
+
+**Checks/acceptance:** kernel leaf/module/add-compile tests; no raw probing/text index; every candidate tested; no cross-loop contamination; real trip fact retained.
+
+### SCH-1 — Schedule candidates and capabilities
+
+**Evidence:** `ScheduleEmitterCapability.executable [bool]`, paired optionals, and `impl/schedule_plan.lua` boolean/raw probing.
+
+**Define/leaf ownership:** executable/rejected capability alternatives; vector/scalar/closed-form candidate alternatives; retain typed `SchedulePlanSelection`. Capability, candidate, kernel-plan, schedule-form, and target-fact leaves own selection/contribution.
+
+**Owned files:** `schema_v2/schedule.lua`, `impl/schedule_plan.lua`, capability tests. **Dependencies:** KRN-1. **Out of scope:** vector emitter, stencil schedules, lower lookup.
+
+**Checks/acceptance:** capability/add-compile tests; no executable bool, paired optionals, or rawget; rejection evidence survives fallback.
+
+### SCH-2 — Typed kernel/schedule relations for lower planning
+
+**Evidence:** `impl/lower_emit_c/schedule_form.lua:48-130` uses nil/text indexes; `impl/lower_plan.lua:310-446` uses loop/kernel/schedule maps.
+
+**Define/leaf ownership:** `LowerScheduleByKernelEntry/Projection/Lookup`; `LowerLoopByIdEntry`; `LowerKernelByLoopEntry/Lookup`. Projection lookup, lookup-result, schedule, and lower-strategy leaves own behavior.
+
+**Owned files:** `schema_v2/lower.lua`, `impl/lower_plan.lua`, `impl/lower_emit_c/schedule_form.lua`, new projection test. **Dependencies:** KRN-1, SCH-1. **Out of scope:** carrier/address redesign and instruction lowering.
+
+**Checks/acceptance:** projection/module-wiring tests; no nil or text-key maps; scalar/vector/closed/no-plan are typed.
+
+### CMAT-1 — Canonical schema-v2 C materialization vocabulary
+
+**Evidence:** old bootstrap owns `c_materialize`; schema-v2 omits it while loading the materializer, forcing loose results.
+
+**Define:** checked CMat IDs, loop order/tail/axis/nest, stream/sink/fused/module products; const/restrict/lane capability alternatives; `CMatMaterialization = MaterializedFused|RejectedComputation`.
+
+**Owned files:** new `schema_v2/c_materialize.lua`, `schema_v2/init.lua`, new schema test. **Dependencies:** existing Code, Kernel, Stencil schemas. **Out of scope:** old schema, implementation, LuaJIT/native materializers.
+
+**Checks/acceptance:** schema test and grep for LuaJIT/LuaTrace; checked success/reject constructors; no loose payloads, eligibility booleans, optional computation, or backend imports.
+
+### STN-PLAN — Typed stencil planning and validation
+
+This ID deliberately replaces the planning report's `STN-1`; `STN-1` is already completed/integrated history.
+
+**Evidence:** `impl/stencil_plan.lua:165-190` returns ad hoc producer/validation/codegen records; descriptor building uses loose arguments and stale selections.
+
+**Define/leaf ownership:** typed producer-analysis input/result; descriptor-build/validation inputs; valid/invalid result; codegen-plan input; `StencilCodegenPlan = CMat|Rejected`. Four producer-shape leaves analyze; sink leaves build; access/descriptor/sink leaves validate; selected/no-selection leaves own codegen.
+
+**Owned files:** `schema_v2/stencil.lua`, `impl/stencil_plan.lua`, new methods test. **Dependencies:** CMAT-1. **Out of scope:** materialization and C emission.
+
+**Checks/acceptance:** stencil methods and schedule-selection tests; no kind/valid records, loose input, nil, or fake success; invalid cases are typed.
+
+### DESC-1 — C-neutral access descriptor alternatives
+
+**Evidence:** `schema_v2/stencil.lua:166-233` combines base with optional descriptor and nullable stride facts.
+
+**Define/leaf ownership:** `StencilAccessLayout = Direct|Described`; `StencilStrideFact = Dynamic|Known`. Layout, descriptor, and base leaves own validation, CMat binding, offsets, and layout behavior.
+
+**Owned files:** `schema_v2/stencil.lua`, descriptor portions of `impl/stencil_plan.lua`, `impl/stencil_metastencil.lua`, new tests. **Dependencies:** CMAT-1. **Out of scope:** `stencil_machine.lua` and all `LJExpr` fields.
+
+**Checks/acceptance:** access-layout test; impossible direct/described combinations unconstructable; direct/slice/view/byte/foreign leaves covered.
+
+### DESC-2 — Boundary-neutral machine descriptor spine
+
+**Evidence:** store/reduce/scan/partition/scatter/skeleton products in `schema_v2/stencil_machine.lua` contain optional soup and excluded LuaJIT values.
+
+**Define/leaf ownership:** new neutral `StencilMachineDescriptor` union with complete store/reduce/scan/find/partition/count/scatter leaves; scheduled/explicitly-unscheduled alternatives; value/store/control result alternatives. Each descriptor, schedule, and result leaf validates/projects to `StencilComputation`.
+
+**Owned files:** new `schema_v2/stencil_descriptor.lua` and C-facing tests/producer code. **Dependencies:** STN-PLAN, DESC-1. **Out of scope:** `impl/stencil_machine.lua`, legacy LuaJIT adapters/arguments, compatibility wrappers.
+
+**Checks/acceptance:** descriptor test and no-LuaJIT grep; main C imports no descriptor carrying `LJExpr`; every operation is a complete leaf.
+
+### CMAT-2 — Typed stencil-to-C materialization plan
+
+**Evidence:** `impl/lower_emit_c/materialize.lua:93-299` uses loose access/axis/selector/stream/sink/result records and `input = input or {}`.
+
+**Define/leaf ownership:** `CMatMaterializationInput`, typed loop-policy/access-binding results as needed. Access-role, producer direction/shape, schedule, sink, and computation leaves own complete typed materialization.
+
+**Owned files:** `impl/lower_emit_c/materialize.lua`, new materialization-method test. **Dependencies:** CMAT-1, STN-PLAN, DESC-1. **Out of scope:** CBackend statement emission.
+
+**Checks/acceptance:** focused test; no empty bag, selector strings, semantic booleans, ad hoc records, or permissive parent defaults; success/rejection typed.
+
+### CMAT-3 — CBackend stencil emission and GCC runtime
+
+**Evidence:** `impl/stencil_c.lua` is a placeholder/second path; no schema-v2 planner→CMat→CBackend test exists.
+
+**Define/leaf ownership:** `CMatCEmissionInput`; `CMatCEmission = Emitted|Rejected`. Materialized/rejected, producer, stream, and sink leaves emit typed CBackend nodes. Initial closed scope: range-1D, scalar contiguous access, point expressions, store, and domain fold.
+
+**Owned files:** new `impl/lower_emit_c/stencil.lua`, lower-emit init/assembly, reduce old placeholder to loader, new CMat/CBackend/GCC tests. **Dependencies:** CMAT-2, CLOW-1 typed function result. **Out of scope:** vector and LuaJIT/native materialization.
+
+**Checks/acceptance:** CMat-to-CBackend and GCC tests; validate before emit; assert map/store/fold values; no C text/comments in semantic leaves.
+
+### VAL-1 — Leaf-owned Code IR structural validation
+
+**Evidence:** `schema_v2/code_validation.lua:17-24` is broad/optional; `impl/code_validate.lua` uses classof/string indexes and omits old tested behavior.
+
+**Define/leaf ownership:** named function/block/value ID entries and module projection; function/block inputs and validation step. Module/function/block/instruction wrappers delegate to every concrete op/terminator/type/place leaf.
+
+**Owned files:** `schema_v2/code_validation.lua`, issue-only `schema_v2/code.lua`, `impl/code_validate.lua`, new tests. **Dependencies:** existing signature projection. **Out of scope:** graph/CBackend validation.
+
+**Checks/acceptance:** leaf and existing validation tests; duplicate/missing ID, arity, type, relocation, signature, alignment; no classof, optional machine, or string index; final `Ok|Failed`.
+
+### CVAL-1 — Typed C helper signatures
+
+**Evidence:** `impl/cemit_emit.lua:734-770` returns `{params=..., result=...}` and validator consumes it.
+
+**Define/leaf ownership:** `CBackendHelperSignature { params, result }`; every helper-spec leaf owns `c_helper_signature`, including integer/unary/cast/pointer/div/rem/shift/intrinsic/load/store/memory/trap/atomic helpers.
+
+**Owned files:** `schema_v2/c.lua`, `impl/cemit_emit.lua`, canonical validator, new helper-signature tests. **Dependencies:** none. **Out of scope:** helper bodies and unary rendering.
+
+**Checks/acceptance:** helper-signature and validator tests; no loose signatures; constructor rejects raw records; validator compares typed values.
+
+### CEMIT-1 — Unary operation leaf emission
+
+**Evidence:** `impl/cemit_emit.lua:786-790` branches on `classof(self.op)`.
+
+**Define/leaf ownership:** no semantic selector; `UnaryNeg`, `UnaryNot`, and `UnaryBitNot` own expression formatting; helper unary delegates. Optional `CEmitExpression` only if reused.
+
+**Owned files:** `impl/cemit_emit.lua`, new unary tests. **Dependencies:** CVAL-1 because both edit helper code. **Out of scope:** other operators/signatures.
+
+**Checks/acceptance:** unary leaf test; no classof branch; generated `-`, `!`, `~` C compiles.
+
+### CLOW-1 — Typed C instruction/function lowering results
+
+**Evidence:** lower-emit uses loose accumulators/results, text maps, and a variant value-type side map.
+
+**Define/leaf ownership:** `LowerCInstEmission`, `LowerCFunctionEmission`, named signature/value-type entries/projections. Every instruction/terminator leaf lowers; function and module roots compose typed results.
+
+**Owned files:** `schema_v2/lower.lua`, `schema_v2/c.lua`, `impl/lower_emit_c.lua`, `impl/lower_emit_c/code_to_c.lua`, new tests. **Dependencies:** VAL-1, CVAL-1, CEMIT-1. **Out of scope:** advanced vector/stencil and process execution.
+
+**Checks/acceptance:** lowering/module/instrop tests; no loose accumulators/text semantic maps; scalar GCC runtime value.
+
+### CVAL-2 — Canonical CBackend validation
+
+**Evidence:** `impl/lower_emit_c/validate.lua` traverses nonexistent fields and constructs a nonexistent result while the real validation input/report is in `schema_v2/c.lua`.
+
+**Define/leaf ownership:** retain `CBackendValidationInput/Report/Issue`; named signature/function/global/extern/helper/local/label relations. Unit/body/type/atom/place/rvalue/statement/target/term/helper/data/relocation leaves own validation.
+
+**Owned files:** `schema_v2/c.lua`, canonical validator, remove/stop loading stale validator, new tests. **Dependencies:** CVAL-1, CLOW-1, OWN-0. **Out of scope:** GCC/TCC execution and annotations.
+
+**Checks/acceptance:** validator and canonical-context tests; one validator/report, no string semantic state; negative assertions and GCC smoke.
+
+## Milestone 4 — Canonical Schema Ownership Packages
+
+### OWN-0 — Ownership inventory and ambiguity guard
+
+**Evidence:** old/v2 bootstraps coexist; public facades route separate compilers; `tests/run.lua` omits schema-v2. Exactly **25** names are duplicated: `bind check c code compiler core effect exec flow graph init kernel lower mem parse phase project schedule sem source stencil stencil_machine tree type value`.
+
+**Define/ownership:** repository ownership metadata, not semantic ASDL. Own new `docs/SCHEMA_OWNERSHIP.md`, inventory test, and `tests/run.lua`. **Dependencies:** none; start immediately. **Out of scope:** moving/deleting modules.
+
+**Checks/acceptance:** ownership inventory and schema suite; assert 25, one intended owner per namespace, legitimate Host boundary, explicit LuaJIT/LuaTrace exclusion, and failure on new ambiguity.
+
+### OWN-FRONT — Canonical frontend/closure ownership
+
+**Evidence/target:** old and v2 modules define the same frontend namespaces, and without cutover closure semantics require two implementations. Canonical target is schema-v2 `core parse source type bind sem tree check tree_code`; completed CLO methods attach only to canonical concrete classes. No old→new conversion methods.
+
+**Owned files:** corresponding schema pairs, frontend wiring/imports, closure tests, ownership manifest. **Dependencies:** CLO-3, OWN-0, typed check ownership. **Out of scope:** analysis, stencil, C, Host.
+
+**Checks/acceptance:** frontend-complete, closure, frontend suite; one constructor identity; parsed/builder convergence; remove old only after zero consumers; no wrappers/mixed contexts.
+
+### OWN-ANALYSIS — Canonical code-analysis ownership
+
+**Evidence/target:** every `code graph flow value mem effect kernel schedule lower` namespace is duplicated; active implementations import schema-v2 while old code-IR tests still instantiate `require("lalin.schema")`. MEM/EFF/KRN/SCH methods and projection identities become canonical on one set of concrete leaves.
+
+**Owned files:** corresponding pairs; graph/flow/value/mem/effect/kernel/schedule/lower implementations; test imports. **Dependencies:** MEM-4, EFF-2, KRN-1, SCH-2, OWN-0. **Out of scope:** C materialization/public facade.
+
+**Checks/acceptance:** code-IR suite and add-compile; one identity per fact, no adapters, port old tests before removal, scalar GCC remains green.
+
+### OWN-STENCIL — Canonical stencil/CMat ownership
+
+**Evidence/target:** the old schema alone owns `LalinCMat`, schema-v2 materialization returns a parallel untyped model, and `stencil_machine` mixes excluded LuaJIT values with semantic descriptors. Canonical target is `schema_v2/stencil.lua`, neutral DESC-2, and `schema_v2/c_materialize.lua`; planning/materialization/emission methods attach only there.
+
+**Owned files:** old/new stencil/CMat schemas, C-facing implementations/tests, ownership manifest. **Dependencies:** STN-PLAN, DESC-1, DESC-2, CMAT-3, OWN-0. **Out of scope:** LuaJIT/LuaTrace adapters.
+
+**Checks/acceptance:** stencil-plan, CMat-materialize, GCC tests; one neutral main-C vocabulary, no backend imports, old CMat removed only after migration, runtime values asserted.
+
+### OWN-C — Canonical Code validation and C lowering ownership
+
+**Evidence/target:** public and v2 pipelines instantiate different `LalinCode`/`LalinC` classes, with duplicate validators/lowerers and incompatible result assumptions. Canonical target is `code code_validation c cemit backend compiler exec`; VAL/CLOW/CVAL/CEMIT behavior attaches only to canonical concrete leaves, while process execution remains IO-boundary plumbing.
+
+**Owned files:** corresponding schema pairs, validators/lowering, compiler wiring, C tests. **Dependencies:** VAL-1, CVAL-2, CLOW-1, OWN-0. **Out of scope:** process-option redesign, LuaJIT/native.
+
+**Checks/acceptance:** module wiring, validator, C-backend suite; one `LalinCode`/`LalinC`, no old implementation in canonical context, no aliases, GCC value after cutover.
+
+### OWN-META — Phase/project ownership
+
+**Evidence/target:** duplicated phase/project/exec are not prerequisites. Add no semantic type unless migration exposes a precise missing union; concrete canonical leaves retain behavior.
+
+**Owned files:** schema pairs, phase/project/exec implementations, compiler-process tests. **Dependencies:** OWN-0; after compiler/C contracts stabilize. **Out of scope:** compiler-process implementation changes beyond imports.
+
+**Checks/acceptance:** phase plan/validate/execute tests; one identity, no mixed contexts/adapters.
+
+### OWN-CUTOVER — Public facade and old-tree retirement
+
+**Evidence:** public old-schema and explicit v2 pipelines remain separate ownership islands.
+
+**Owned files:** `init.lua`, compiler facade/wiring, public GCC tests, final bootstrap consolidation, architecture/status docs. **Dependencies:** OWN-FRONT, OWN-ANALYSIS, OWN-STENCIL, OWN-C, OWN-META. **Out of scope:** LuaJIT/LuaTrace/native.
+
+**Checks/acceptance:** add-compile, aggregate-lowering, default suite, public scalar and aggregate/union GCC runtime; parsed/builder convergence; no separate v2 island; one bootstrap; delete old only after zero consumers; no wrappers.
+
+### Parallel execution and mandatory serialization
+
+Safe independent starts after the refreshed M0 gate: `OWN-0`, `CLO-1`, `MEM-1`, `CMAT-1`, `VAL-1`, and `CVAL-1`. Closure, memory/effect, validation, and helper-emission chains can proceed independently. `STN-PLAN` and `DESC-1` may overlap only with explicit line ownership.
+
+| Serialize | Shared ownership |
+|---|---|
+| CLO-1/2/3 | `schema_v2/sem.lua`, `impl/tree_closure.lua` |
+| MEM-1/2/3/4 | `schema_v2/mem.lua`, `impl/code_mem.lua` |
+| EFF-1/2 | `schema_v2/effect.lua`, `impl/code_effect.lua` |
+| KRN-1/SCH-1/SCH-2 | kernel/schedule/lower method contracts |
+| CMAT-1/bootstrap | `schema_v2/init.lua` |
+| STN-PLAN/DESC-1 | `schema_v2/stencil.lua`, `impl/stencil_plan.lua` |
+| DESC-1/CMAT-2/CMAT-3 | materializer and CMat method contracts |
+| CVAL-1/CEMIT-1 | `impl/cemit_emit.lua` |
+| CLOW-1/CVAL-2 | C/lower schemas and validation contracts |
+| OWN-* | corresponding completed semantic package |
+| OWN-CUTOVER | all ownership migrations and bootstraps |
+
+Ownership packages may prepare in parallel after interfaces freeze, but final imports, deletions, and bootstrap edits are serialized.
+
+### Exact focused command matrix
+
+Bare package summaries above do not replace these assignment commands. Each package also runs its relevant category suite and the default-suite no-regression gate.
+
+| Package | Focused commands |
+|---|---|
+| CLO-1 | `luajit tests/schema_v2/test_closure_semantic_schema.lua`; `luajit tests/run.lua schema` |
+| CLO-2 | `luajit tests/schema_v2/test_closure_capture_leaves.lua`; `luajit tests/schema_v2/test_closure_convert.lua` |
+| CLO-3 | `luajit tests/schema_v2/test_closure_convert.lua`; `luajit tests/schema_v2/test_frontend_complete.lua`; `luajit tests/run.lua frontend` |
+| MEM-1 | `luajit tests/schema_v2/test_code_mem_contract_projection.lua`; `luajit tests/run.lua schema` |
+| MEM-2 | `luajit tests/schema_v2/test_code_mem_place_leaves.lua` |
+| MEM-3 | `luajit tests/schema_v2/test_code_mem_instruction_leaves.lua` |
+| MEM-4 | `luajit tests/schema_v2/test_code_mem_dependence_leaves.lua`; `luajit tests/run.lua code_ir` |
+| EFF-1 | `luajit tests/schema_v2/test_code_effect_contract_call_leaves.lua` |
+| EFF-2 | `luajit tests/schema_v2/test_code_effect_instruction_leaves.lua`; `luajit tests/schema_v2/test_code_effect_pipeline.lua`; `luajit tests/run.lua code_ir` |
+| KRN-1 | `luajit tests/schema_v2/test_kernel_plan_leaf_ownership.lua`; `luajit tests/schema_v2/test_kernel_plan_module.lua`; `luajit tests/schema_v2/test_add_compile.lua` |
+| SCH-1 | `luajit tests/schema_v2/test_schedule_capability_leaves.lua`; `luajit tests/schema_v2/test_add_compile.lua` |
+| SCH-2 | `luajit tests/schema_v2/test_lower_schedule_projection.lua`; `luajit tests/schema_v2/test_module_emit_wiring.lua` |
+| CMAT-1 | `luajit tests/schema_v2/test_cmat_schema.lua`; `rg -n 'LalinLuaJIT\|LuaTrace' lua/lalin/schema_v2/c_materialize.lua` |
+| STN-PLAN | `luajit tests/schema_v2/test_stencil_plan_methods.lua`; `luajit tests/code_ir/test_stencil_schedule_selection.lua` |
+| DESC-1 | `luajit tests/schema_v2/test_stencil_access_layout_alternatives.lua` |
+| DESC-2 | `luajit tests/schema_v2/test_stencil_descriptor_alternatives.lua`; `rg -n 'LalinLuaJIT\|LuaTrace' lua/lalin/schema_v2/stencil_descriptor.lua` |
+| CMAT-2 | `luajit tests/schema_v2/test_cmat_materialize_methods.lua` |
+| CMAT-3 | `luajit tests/schema_v2/test_cmat_to_cbackend.lua`; `luajit tests/c_backend/test_stencil_c_gcc.lua` |
+| VAL-1 | `luajit tests/schema_v2/test_code_validate_leaves.lua`; `luajit tests/code_ir/test_code_validate.lua` |
+| CVAL-1 | `luajit tests/schema_v2/test_c_helper_signatures.lua`; `luajit tests/c_backend/test_emit_c_validate.lua` |
+| CEMIT-1 | `luajit tests/schema_v2/test_cemit_unary_leaves.lua` |
+| CLOW-1 | `luajit tests/schema_v2/test_c_lowering_results.lua`; `luajit tests/schema_v2/test_module_emit_wiring.lua`; `luajit tests/schema_v2/test_code_to_c_instrops.lua` |
+| CVAL-2 | `luajit tests/c_backend/test_emit_c_validate.lua`; `luajit tests/schema_v2/test_cbackend_validation.lua` |
+| OWN-0 | `luajit tests/schema/test_schema_ownership_inventory.lua`; `luajit tests/run.lua schema` |
+| OWN-FRONT | `luajit tests/schema_v2/test_frontend_complete.lua`; `luajit tests/schema_v2/test_closure_convert.lua`; `luajit tests/run.lua frontend` |
+| OWN-ANALYSIS | `luajit tests/run.lua code_ir`; `luajit tests/schema_v2/test_add_compile.lua` |
+| OWN-STENCIL | `luajit tests/schema_v2/test_stencil_plan_methods.lua`; `luajit tests/schema_v2/test_cmat_materialize_methods.lua`; `luajit tests/c_backend/test_stencil_c_gcc.lua` |
+| OWN-C | `luajit tests/schema_v2/test_module_emit_wiring.lua`; `luajit tests/c_backend/test_emit_c_validate.lua`; `luajit tests/run.lua c_backend` |
+| OWN-META | `luajit tests/compiler_process/test_phase_plan.lua`; `luajit tests/compiler_process/test_phase_validate.lua`; `luajit tests/compiler_process/test_phase_execute.lua` |
+| OWN-CUTOVER | `luajit tests/schema_v2/test_add_compile.lua`; `luajit tests/schema_v2/test_aggregate_lowering.lua`; `luajit tests/run.lua`; public scalar and aggregate/union `compile_c_gcc` runtime tests |
+
+For every migrated semantic boundary, audit owned files with `rg -n 'classof|rawget|return \{| or \{\}|executable \[bool\]' <owned-files>`. Every remaining match must be demonstrated to be formatting/IO-only. C-affecting packages validate `CBackendUnit`, emit C, compile with GCC, execute, and assert a value.
+
 
 ## Milestone 5 — Validation, Documentation, and Release Gates
 
 For every work package:
 
-- [ ] Focused regression tests pass.
-- [ ] Relevant category suite passes.
-- [ ] Default suite gains no failures.
-- [ ] Slow suite runs when relevant.
-- [ ] Emitted C compiles under GCC where applicable.
-- [ ] Runtime values are asserted; artifact existence alone is insufficient.
-- [ ] An independent reviewer checks ASDL ownership and doctrine compliance.
-- [ ] Integrated changes are synchronized into all active worktrees.
+- [ ] Its focused regression checks pass.
+- [ ] Its relevant category suite passes.
+- [ ] The default suite is run and gains no failures relative to the refreshed M0 ledger.
+- [ ] Before M0 is green, unrelated known failures remain ledgered rather than becoming the package's responsibility.
+- [ ] Slow/experimental profiles run only when the package explicitly owns them; current LuaTrace/LuaJIT/native exclusions are not release priorities.
+- [ ] Emitted C is validated, compiled with GCC, executed, and checked for runtime values where applicable.
+- [ ] An independent reviewer checks ASDL ownership/doctrine compliance.
+- [ ] Integrated changes are synchronized into active worktrees.
 
 Release-level gates:
 
@@ -379,24 +792,35 @@ Release-level gates:
 
 ## Work-Package Queue
 
-| ID | Priority | Dependencies | Suggested scope | Status | Owner/branch |
-|---|---:|---|---|---|---|
-| RGN-1 | P0 | none | Region helper restoration + focused tests | integrated | `82ec214af`; approved by `w4:p14` |
-| STN-1 | P0 | none | Stencil semantic construction | integrated | `35c1ce5a3`; approved by `w4:p16` |
-| STN-SCHED | P0 | STN-1 | Typed schedule selection | integrated | `d66eff0b6`; approved by `w4:p16` |
-| LAY-1 | P0 | STN-1 analysis | Typed leaf-owned layout resolution | integrated | `00303c45b`; approved by `w4:p14` |
-| TYP-1 | P0 | none | Typed frontend target projection | integrated | `1750e4ce5`; approved by `w4:p6` |
-| TYP-OWN | P0 | none | Canonical CHECK ownership | integrated | `ae2a8e164`; approved by `w4:p6` |
-| ABI-SIG | P0 | LAY-1 | Required code signature projection | integrated | `c95973fd5`; approved by `w4:p6` |
-| ABI-STATE | P0 | ABI-SIG vocabulary | Cross-unit lowering isolation | integrated | `f7ba18a`; approved by `w4:p6` |
-| LJBC-STENCIL | deferred | — | Abandoned LuaTrace / low-priority LuaJIT work | stopped | branch not integrated |
-| CMP-1 | P1 | none | Compiler-process contracts | working | `pack/cmp-1` (`w4:p1E`) |
-| M0.1 | P0 | none | Failure ledger and focused reproducers | ready | — |
-| ASDL-CLOSURE | P1 | baseline stabilization | Closure state and leaf-method migration | planned | — |
-| ASDL-STENCIL | P1 | STN-1 | Typed stencil/materialization results | planned | — |
-| ASDL-MEM | P1 | baseline stabilization | Memory facets and leaf methods | planned | — |
-| LNG-* | P1/P2 | owning infrastructure packages | Documented language completion | planned | — |
-| SCH-* | P2 | stable canonical path | Schema ownership consolidation | planned | — |
+| Order | ID | Priority | Dependencies | Scope | Status/owner |
+|---:|---|---:|---|---|---|
+| history | RGN-1 | P0 | none | Region helper restoration | integrated `82ec214af`; approved |
+| history | STN-1 | P0 | none | Stencil semantic construction | integrated `35c1ce5a3`; approved |
+| history | STN-SCHED | P0 | STN-1 | Typed schedule selection | integrated `d66eff0b6`; approved |
+| history | LAY-1 | P0 | STN-1 | Layout projection | integrated `00303c45b`; approved |
+| history | TYP-1 | P0 | none | Frontend target projection | integrated `1750e4ce5`; approved |
+| history | TYP-OWN | P0 | none | Canonical check ownership | integrated `ae2a8e164`; approved |
+| history | ABI-SIG | P0 | LAY-1 | Required signatures | integrated `c95973fd5`; approved |
+| history | ABI-STATE | P0 | ABI-SIG | Cross-unit isolation | integrated `f7ba18a`; approved |
+| current | CMP-1 | P1 | none | Compiler-process contracts | working `pack/cmp-1` |
+| next | M0.1 | P0 | CMP-1 | Refresh failure ledger/baseline | ready after CMP |
+| 1 | AUX-FUNC-ABI | P1 | M0 refresh | ABI harness classification | planned |
+| 2 | AUX-TYPE-C | P1 | M0 refresh | Canonical type-to-C test | planned |
+| 3 | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | planned |
+| 4 | LNG-DIAG | P1 | M0 refresh | Unsupported control diagnostics | planned |
+| 5 | LNG-LOOP-C | P1 | integrated stencil/layout | Parsed loop GCC matrix | planned |
+| 6 | LNG-EXT-C | P1 | AUX ABI/type | Extern/builder/HostEval GCC | planned |
+| 7 | LNG-REG-C | P1 | RGN-1, LAY-1 | Region protocol GCC | planned |
+| 8 | LNG-EXPR-C | P1 | optional LNG-DIAG | Expressions through GCC | planned |
+| 9 | LNG-VAR-C | P2 | optional LNG-EXPR-C | Variants/identity | planned |
+| 10 | LNG-OWN-C | P2 | optional LNG-REG-C | Ownership/domain runtime | planned |
+| M3-A | CLO-1→3 | P1 | M0 refresh | Closure vocabulary/collection/rewrite | planned |
+| M3-B | MEM-1→4→EFF-1→2 | P1 | M0 refresh | Memory/effect facets and leaves | planned |
+| M3-C | KRN-1→SCH-1→2 | P1 | MEM/EFF | Kernel/schedule leaves | planned |
+| M3-D | CMAT-1→STN-PLAN/DESC-1→DESC-2→CMAT-2→3 | P1 | M0 refresh | Neutral stencil/CMat C path | planned |
+| M3-E | VAL-1 + CVAL-1→CEMIT-1→CLOW-1→CVAL-2 | P1 | M0 refresh | Validation/C lowering | planned |
+| M4 | OWN-0→OWN-FRONT/ANALYSIS/STENCIL/C/META→CUTOVER | P2 | completed M3 boundaries | Canonical ownership | planned |
+| deferred | LJBC-STENCIL/native/slow binary | — | owner decision | Explicit non-main profiles | stopped/not scheduled |
 
 ## Distribution Protocol
 
@@ -425,4 +849,7 @@ After integration, all active implementation branches must merge or rebase the i
 - **2026-07-10:** Closure conversion is the smallest high-impact migration laboratory; memory analysis is the most central larger migration.
 - **2026-07-10:** This file, not `.pi/workflows/*`, is the tracking authority.
 - **2026-07-11:** LuaTrace is abandoned. LuaJIT bytecode remains explicit but low priority; do not invest in LuaJIT stencil work ahead of the C compiler.
+- **2026-07-11:** Milestones 2–4 are assigned as bounded packages with explicit ASDL vocabulary, leaf ownership, files, dependencies, exclusions, and tests; the planned stencil package is `STN-PLAN` because `STN-1` is completed history.
+- **2026-07-11:** Schema ownership inventory counts 25 duplicate names. C helper signature evidence is `impl/cemit_emit.lua:734-770`.
+- **2026-07-11:** After CMP-1, M0 baseline refresh is the next gate. Until M0 is green, package gates require focused tests, the relevant suite, and no default-suite regression—not repair of unrelated failures.
 
