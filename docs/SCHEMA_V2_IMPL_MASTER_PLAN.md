@@ -124,14 +124,19 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 
 ### LAY-1 — Layout projection and resolution
 
+**Status:** integrated at `00303c45b`; independently approved.
 **Depends on:** STN-1 contract analysis.
-**Failure cluster:** missing `sem_layout_*` facts at `lua/lalin/layout_resolve.lua:52`.
+**Root cause:** a shadowed `resolve_expr` closure plus semantic behavior outside ASDL leaves.
 
-- [ ] Trace the phase that owns each missing layout fact.
-- [ ] Model missing facts as an explicit projection/facet.
-- [ ] Remove phase-order assumptions represented by nil.
-- [ ] Add focused layout projection tests.
-- [ ] Pass inline CMat copy/reduce/scan/SOAC C tests.
+- [x] Restore the correct lexical phase function.
+- [x] Define typed `TypeLayoutLookup`, `FieldLayoutLookup`, and `LayoutValueType` alternatives.
+- [x] Move layout matching, field lookup, dot projection, size/alignment, and IndexBase behavior to concrete leaves.
+- [x] Remove `schema.classof`, raw-header variant dispatch, `maybe_one`, and semantic nil signaling from active layout resolution.
+- [x] Bind schema_v2 to the canonical layout implementation.
+- [x] Add focused exact-value layout projection tests.
+- [x] Pass region main/call C tests.
+- [x] Pass inline CMat copy/reduce/scan/SOAC C tests.
+- [x] Pass runtime and schema suites.
 
 ### TYP-1 — Typed frontend target projection
 
@@ -144,7 +149,7 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 - [x] Carry the effective `HostTargetModel` in `TypeModuleResult`.
 - [x] Prove 32-bit pointer, 16-bit index, and big-endian behavior through public `lalin.emit_c`.
 - [x] Pass focused target projection and schema tests.
-- [ ] Pass `tests/frontend/test_dsl_lua_owned.lua` (now blocked only by LAY-1).
+- [ ] Pass `tests/frontend/test_dsl_lua_owned.lua` (layout now passes; blocked by ABI-SIG missing CodeSig facts).
 
 ### TYP-OWN — Check/lower schema ownership
 
@@ -160,6 +165,16 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 - [ ] Identify the compiler-process ASDL constructor mismatch.
 - [ ] Correct the producer/consumer contract without boundary-to-semantic table leakage.
 - [ ] Pass all `compiler_process` tests.
+
+### ABI-SIG — Required code signature projection
+
+**Failure cluster:** after LAY-1, `test_dsl_lua_owned.lua` reaches CodeResult validation and reports multiple `CodeIssueMissingSig` facts.
+
+- [ ] Trace ownership of required helper/call signatures.
+- [ ] Model signature collection as a named typed projection over Code facts.
+- [ ] Ensure every call/helper producer contributes its required `CodeSig`.
+- [ ] Remove string-keyed or implicit signature discovery.
+- [ ] Pass `tests/frontend/test_dsl_lua_owned.lua` and focused code-validation tests.
 
 ### AUX-1 — Remaining baseline clusters
 
@@ -337,9 +352,10 @@ Release-level gates:
 | RGN-1 | P0 | none | Region helper restoration + focused tests | integrated | `82ec214af`; approved by `w4:p14` |
 | STN-1 | P0 | none | Stencil semantic construction | integrated | `35c1ce5a3`; approved by `w4:p16` |
 | STN-SCHED | P0 | STN-1 | Typed schedule selection | ready | — |
-| LAY-1 | P0 | STN-1 analysis | Layout projection/resolution | working | `pack/lay-1` (`w4:p18`) |
+| LAY-1 | P0 | STN-1 analysis | Typed leaf-owned layout resolution | integrated | `00303c45b`; approved by `w4:p14` |
 | TYP-1 | P0 | none | Typed frontend target projection | integrated | `1750e4ce5`; approved by `w4:p6` |
 | TYP-OWN | P0 | none | Check/lower schema ownership | ready | — |
+| ABI-SIG | P0 | LAY-1 | Required code signature projection | ready | — |
 | CMP-1 | P1 | none | Compiler-process contracts | ready | — |
 | M0.1 | P0 | none | Failure ledger and focused reproducers | ready | — |
 | ASDL-CLOSURE | P1 | baseline stabilization | Closure state and leaf-method migration | planned | — |
