@@ -265,19 +265,16 @@ Orders 1–6 may run concurrently where owned files do not overlap. Serialize `L
 
 ### AUX-FUNC-ABI — Core function ABI test repair
 
-**Evidence:** `tests/core/test_func_abi_plan.lua:27` fails. The test declares `local Back = T.LalinBackend` but then uses global `Backend`; direct inspection shows the produced `BackValId`, `BackIndex`, and bindings are valid. This is a harness defect unless the corrected test exposes a production defect.
+**Status:** integrated at `b9a40cd`; independently approved.
+**Root cause:** harness-only `Back`/`Backend` namespace typo; production ABI values were correct.
 
-**ASDL/leaf contract:** retain `FuncAbiPlan`; `AbiParamScalar`, `AbiParamView`, `AbiParamRejected`; `AbiResultVoid`, `AbiResultScalar`, `AbiResultView`, `AbiResultRejected`. No aliases or compatibility constructors.
+**ASDL/leaf contract:** retained `FuncAbiPlan`; `AbiParamScalar`, `AbiParamView`, `AbiParamRejected`; `AbiResultVoid`, `AbiResultScalar`, `AbiResultView`, `AbiResultRejected`. No aliases or production changes.
 
-**Owned files:** primarily `tests/core/test_func_abi_plan.lua`; `lua/lalin/func_abi_plan.lua`, `schema/type.lua`, and `schema/backend_schema.lua` are review-only unless a corrected assertion proves a real defect.
+**Completed:**
 
-**Work/acceptance:**
-
-- [ ] Correct `Back`/`Backend`; add value-ID text assertions and scalar/index/view/aggregate/array/rejected parameter coverage.
-- [ ] Cover void/scalar/view/rejected results and zero-based role indices.
-- [ ] Run `luajit tests/core/test_func_abi_plan.lua`.
-- [ ] Run `luajit tests/core/test_type_abi_classify.lua` and `luajit tests/core/test_type_to_backend_scalar.lua`.
-- [ ] Run `luajit tests/run.lua core` and the default-suite no-regression gate.
+- [x] Correct namespace use and assert exact value-ID text.
+- [x] Cover scalar, index, view, aggregate/array by-address, rejected parameters, void/scalar/view/rejected results, and zero-based roles.
+- [x] Pass focused ABI tests, core 18/18, and improve the default baseline by one test.
 
 **Out of scope:** full `func_abi_plan.lua` leaf migration, platform aggregate ABI, variadics, native calling conventions. Completion evidence must classify the root cause and keep production unchanged unless independently justified.
 
@@ -831,9 +828,9 @@ Release-level gates:
 | history | ABI-STATE | P0 | ABI-SIG | Cross-unit isolation | integrated `f7ba18a`; approved |
 | history | CMP-1 | P1 | none | Compiler-process contracts | integrated `7b983824`; approved |
 | history | M0.1 | P0 | CMP-1 | Refreshed failure ledger/baseline | complete at `af80ae43` source |
-| current-A | AUX-FUNC-ABI | P1 | M0 refresh | ABI harness classification | working `w4:p1K` |
+| history | AUX-FUNC-ABI | P1 | M0 refresh | ABI harness classification | integrated `b9a40cd`; approved |
 | history | AUX-TYPE-C | P1 | M0 refresh | Canonical type-to-C projection | integrated `d94df76ae`; approved |
-| current-C | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | working `w4:p1M` |
+| current | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | review `60ff2a31` by `w4:p6` |
 | 4 | LNG-DIAG | P1 | M0 refresh | Unsupported control diagnostics | planned |
 | 5 | LNG-LOOP-C | P1 | integrated stencil/layout | Parsed loop GCC matrix | planned |
 | 6 | LNG-EXT-C | P1 | AUX ABI/type | Extern/builder/HostEval GCC | planned |
