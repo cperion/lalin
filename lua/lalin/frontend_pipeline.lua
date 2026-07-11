@@ -112,10 +112,10 @@ local function bind_context(T)
         local resolved = Layout.module(checked.module, layout_env, host_target)
         progress(process_ctx, "layout_resolve", { module = resolved, target = is_c and "c" or "back" })
         if is_c then assert_no_c_phase_unreachable(resolved, opts.site or "C frontend") end
-        local code_module, code_contracts = TreeToCode.module_with_contracts(resolved, { layout_env = layout_env, target = target, module_id = opts.module_id })
-        local code_contract_set = code_contracts
-        code_contracts = (code_contract_set and code_contract_set.facts) or code_contracts or {}
-        if code_module == nil then error((opts.site or "frontend") .. " lowering failed: tree_lower produced nil module", 2) end
+        local lowering = TreeToCode.module_result(resolved, { layout_env = layout_env, target = target, module_id = opts.module_id })
+        local code_module = lowering.code_module
+        local code_contract_set = lowering.contracts
+        local code_contracts = code_contract_set.facts
         progress(process_ctx, "tree_lower", { code_module = code_module, code_contracts = code_contracts, code_contract_set = code_contract_set, target = is_c and "c" or "back" })
         local code_report = CodeValidate.validate(code_module, collector)
         progress(process_ctx, "code_validate", { report = code_report, target = is_c and "c" or "back" })

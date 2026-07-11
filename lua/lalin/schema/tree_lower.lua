@@ -32,6 +32,7 @@ return schema. LalinTreeLower {
   product. TreeLowerCallTargetResult {
     target [LalinCode.CodeCallTarget],
     sig [LalinCode.CodeSigId],
+    state [LalinTreeLower.TreeLowerFunctionState],
   },
   product. TreeLowerFunctionRegistrationEntry {
     interned,
@@ -184,10 +185,11 @@ return schema. LalinTreeLower {
   },
   product. TreeLowerFunctionFacts {
     module_facts [LalinTreeLower.TreeLowerModuleFacts],
-    sigs [LalinTreeLower.TreeLowerModuleSigState],
     registrations [LalinTreeLower.TreeLowerModuleRegistrationState],
-    module_emission [LalinTreeLower.TreeLowerModuleEmissionState],
     func_name [str],
+  },
+  product. TreeLowerFunctionAbiFacet {
+    sigs [LalinTreeLower.TreeLowerModuleSigState],
   },
   product. TreeLowerFunctionState {
     bindings [LalinTreeLower.TreeLowerBindingState],
@@ -196,6 +198,8 @@ return schema. LalinTreeLower {
     counters [LalinTreeLower.TreeLowerCounterState],
     alpha [LalinTreeLower.TreeLowerAlphaState],
     control [LalinTreeLower.TreeLowerControlState],
+    abi [LalinTreeLower.TreeLowerFunctionAbiFacet],
+    module_emission [LalinTreeLower.TreeLowerModuleEmissionState],
   },
   product. TreeLowerFunctionLoweringStart {
     facts [LalinTreeLower.TreeLowerFunctionFacts],
@@ -207,30 +211,74 @@ return schema. LalinTreeLower {
     registrations [LalinTreeLower.TreeLowerModuleRegistrationState],
     emission [LalinTreeLower.TreeLowerModuleEmissionState],
   },
-  product. TreeLowerItemRegisterInput {
-    interned,
-    module_facts [LalinTreeLower.TreeLowerModuleFacts],
+  product. TreeLowerTypeTransitionResult {
+    field. ty [LalinCode.CodeType],
+    sigs [LalinTreeLower.TreeLowerModuleSigState],
+  },
+  product. TreeLowerSigTransitionResult {
+    field. sig [LalinCode.CodeSigId],
+    sigs [LalinTreeLower.TreeLowerModuleSigState],
+  },
+  product. TreeLowerFreshStringDataResult {
+    field. id [LalinCode.CodeDataId],
+    length [number],
+    state [LalinTreeLower.TreeLowerFunctionState],
+  },
+  product. TreeLowerModuleRegistrationFacet {
     sigs [LalinTreeLower.TreeLowerModuleSigState],
     registrations [LalinTreeLower.TreeLowerModuleRegistrationState],
   },
-  product. TreeLowerItemContractsInput {
-    interned,
-    module_facts [LalinTreeLower.TreeLowerModuleFacts],
-    sigs [LalinTreeLower.TreeLowerModuleSigState],
-    registrations [LalinTreeLower.TreeLowerModuleRegistrationState],
-    emission [LalinTreeLower.TreeLowerModuleEmissionState],
-    contract_facts [many [LalinCode.CodeFuncContractFact]],
-  },
-  product. TreeLowerItemLowerInput {
-    interned,
-    module_facts [LalinTreeLower.TreeLowerModuleFacts],
-    sigs [LalinTreeLower.TreeLowerModuleSigState],
-    registrations [LalinTreeLower.TreeLowerModuleRegistrationState],
-    emission [LalinTreeLower.TreeLowerModuleEmissionState],
-    mod_name [str],
+  product. TreeLowerItemAccumulationFacet {
     funcs [many [LalinCode.CodeFunc]],
     data [many [LalinCode.CodeData]],
     globals [many [LalinCode.CodeGlobal]],
+  },
+  product. TreeLowerItemRegisterResult {
+    registration [LalinTreeLower.TreeLowerModuleRegistrationFacet],
+  },
+  product. TreeLowerFunctionLowerResult {
+    func [LalinCode.CodeFunc],
+    abi [LalinTreeLower.TreeLowerFunctionAbiFacet],
+    emission [LalinTreeLower.TreeLowerModuleEmissionState],
+  },
+  product. TreeLowerGlobalLowerResult {
+    global [LalinCode.CodeGlobal],
+    abi [LalinTreeLower.TreeLowerFunctionAbiFacet],
+    emission [LalinTreeLower.TreeLowerModuleEmissionState],
+  },
+  product. TreeLowerItemLowerResult {
+    registration [LalinTreeLower.TreeLowerModuleRegistrationFacet],
+    emission [LalinTreeLower.TreeLowerModuleEmissionState],
+    accumulation [LalinTreeLower.TreeLowerItemAccumulationFacet],
+  },
+  product. TreeLowerModuleLowerResult {
+    code_module [LalinCode.CodeModule],
+    contracts [LalinCode.CodeContractFactSet],
+    parts [LalinTreeLower.TreeLowerModuleParts],
+  },
+  product. TreeLowerItemRegisterInput {
+    module_facts [LalinTreeLower.TreeLowerModuleFacts],
+    registration [LalinTreeLower.TreeLowerModuleRegistrationFacet],
+  },
+  product. TreeLowerContractState {
+    sigs [LalinTreeLower.TreeLowerModuleSigState],
+    facts [many [LalinCode.CodeFuncContractFact]],
+  },
+  product. TreeLowerItemContractsInput {
+    module_facts [LalinTreeLower.TreeLowerModuleFacts],
+    registrations [LalinTreeLower.TreeLowerModuleRegistrationState],
+    state [LalinTreeLower.TreeLowerContractState],
+  },
+  sum. TreeLowerItemContractsResult {
+    TreeLowerItemContractsUnsupported { state [LalinTreeLower.TreeLowerContractState] },
+    TreeLowerItemContractsAccumulated { state [LalinTreeLower.TreeLowerContractState] },
+  },
+  product. TreeLowerItemLowerInput {
+    module_facts [LalinTreeLower.TreeLowerModuleFacts],
+    registration [LalinTreeLower.TreeLowerModuleRegistrationFacet],
+    emission [LalinTreeLower.TreeLowerModuleEmissionState],
+    accumulation [LalinTreeLower.TreeLowerItemAccumulationFacet],
+    mod_name [str],
   },
   sum. TreeLowerInput {
     TreeLowerExprInput {
@@ -255,11 +303,22 @@ return schema. LalinTreeLower {
     },
   },
   product. TreeLowerContractInput {
-    interned,
     module_facts [LalinTreeLower.TreeLowerModuleFacts],
     sigs [LalinTreeLower.TreeLowerModuleSigState],
     func_name [str],
     func_id [LalinCode.CodeFuncId],
+  },
+  sum. TreeLowerContractValueProjection {
+    TreeLowerContractValueSupported { field. value [LalinCode.CodeValueId] },
+    TreeLowerContractValueUnsupported { reason [str] },
+  },
+  sum. TreeLowerContractExprProjection {
+    TreeLowerContractExprSupported { field. expr [LalinCode.CodeContractExpr] },
+    TreeLowerContractExprUnsupported { reason [str] },
+  },
+  sum. TreeLowerContractPlaceProjection {
+    TreeLowerContractPlaceSupported { field. place [LalinCode.CodePlace] },
+    TreeLowerContractPlaceUnsupported { reason [str] },
   },
   product. TreeLowerStateResult {
     state [LalinTreeLower.TreeLowerFunctionState],

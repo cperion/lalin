@@ -32,6 +32,7 @@ return schema. LalinTreeCode {
   product. TreeCodeCallTargetResult {
     target [LalinCode.CodeCallTarget],
     sig [LalinCode.CodeSigId],
+    state [LalinTreeCode.TreeCodeFuncState],
   },
   product. TreeCodeFuncRegistrationEntry {
     interned,
@@ -182,12 +183,13 @@ return schema. LalinTreeCode {
     current_regions [many [LalinTreeCode.TreeCodeControlRegionSlot]],
     flags [many [LalinTreeCode.TreeCodeControlFlag]],
   },
-  product. TreeCodeFuncFacts {
+  product. TreeCodeFunctionFacts {
     module_facts [LalinTreeCode.TreeCodeModuleFacts],
-    sigs [LalinTreeCode.TreeCodeModuleSigState],
     registrations [LalinTreeCode.TreeCodeModuleRegistrationState],
-    module_emission [LalinTreeCode.TreeCodeModuleEmissionState],
     func_name [str],
+  },
+  product. TreeCodeFunctionAbiFacet {
+    sigs [LalinTreeCode.TreeCodeModuleSigState],
   },
   product. TreeCodeFuncState {
     bindings [LalinTreeCode.TreeCodeBindingState],
@@ -196,9 +198,11 @@ return schema. LalinTreeCode {
     counters [LalinTreeCode.TreeCodeCounterState],
     alpha [LalinTreeCode.TreeCodeAlphaState],
     control [LalinTreeCode.TreeCodeControlState],
+    abi [LalinTreeCode.TreeCodeFunctionAbiFacet],
+    module_emission [LalinTreeCode.TreeCodeModuleEmissionState],
   },
   product. TreeCodeFuncLoweringStart {
-    facts [LalinTreeCode.TreeCodeFuncFacts],
+    facts [LalinTreeCode.TreeCodeFunctionFacts],
     state [LalinTreeCode.TreeCodeFuncState],
   },
   product. TreeCodeModuleParts {
@@ -207,61 +211,122 @@ return schema. LalinTreeCode {
     registrations [LalinTreeCode.TreeCodeModuleRegistrationState],
     emission [LalinTreeCode.TreeCodeModuleEmissionState],
   },
-  product. TreeCodeItemRegisterInput {
-    interned,
-    module_facts [LalinTreeCode.TreeCodeModuleFacts],
+  product. TreeCodeTypeTransitionResult {
+    field. ty [LalinCode.CodeType],
+    sigs [LalinTreeCode.TreeCodeModuleSigState],
+  },
+  product. TreeCodeSigTransitionResult {
+    field. sig [LalinCode.CodeSigId],
+    sigs [LalinTreeCode.TreeCodeModuleSigState],
+  },
+  product. TreeCodeFreshStringDataResult {
+    field. id [LalinCode.CodeDataId],
+    length [number],
+    state [LalinTreeCode.TreeCodeFuncState],
+  },
+  product. TreeCodeModuleRegistrationFacet {
     sigs [LalinTreeCode.TreeCodeModuleSigState],
     registrations [LalinTreeCode.TreeCodeModuleRegistrationState],
   },
-  product. TreeCodeItemContractsInput {
-    interned,
-    module_facts [LalinTreeCode.TreeCodeModuleFacts],
-    sigs [LalinTreeCode.TreeCodeModuleSigState],
-    registrations [LalinTreeCode.TreeCodeModuleRegistrationState],
-    emission [LalinTreeCode.TreeCodeModuleEmissionState],
-    contract_facts [many [LalinCode.CodeFuncContractFact]],
-  },
-  product. TreeCodeItemLowerInput {
-    -- NOTE: NOT interned - must create fresh instance per compilation to
-    -- avoid state leaks through shared mutable funcs/data/globals tables.
-
-    module_facts [LalinTreeCode.TreeCodeModuleFacts],
-    sigs [LalinTreeCode.TreeCodeModuleSigState],
-    registrations [LalinTreeCode.TreeCodeModuleRegistrationState],
-    emission [LalinTreeCode.TreeCodeModuleEmissionState],
-    mod_name [str],
+  product. TreeCodeItemAccumulationFacet {
     funcs [many [LalinCode.CodeFunc]],
     data [many [LalinCode.CodeData]],
     globals [many [LalinCode.CodeGlobal]],
   },
+  product. TreeCodeItemRegisterResult {
+    registration [LalinTreeCode.TreeCodeModuleRegistrationFacet],
+  },
+  product. TreeCodeFuncLowerResult {
+    func [LalinCode.CodeFunc],
+    abi [LalinTreeCode.TreeCodeFunctionAbiFacet],
+    emission [LalinTreeCode.TreeCodeModuleEmissionState],
+  },
+  product. TreeCodeGlobalLowerResult {
+    global [LalinCode.CodeGlobal],
+    abi [LalinTreeCode.TreeCodeFunctionAbiFacet],
+    emission [LalinTreeCode.TreeCodeModuleEmissionState],
+  },
+  product. TreeCodeItemLowerResult {
+    registration [LalinTreeCode.TreeCodeModuleRegistrationFacet],
+    emission [LalinTreeCode.TreeCodeModuleEmissionState],
+    accumulation [LalinTreeCode.TreeCodeItemAccumulationFacet],
+  },
+  product. TreeCodeModuleLowerResult {
+    code_module [LalinCode.CodeModule],
+    contracts [LalinCode.CodeContractFactSet],
+    parts [LalinTreeCode.TreeCodeModuleParts],
+  },
+  product. TreeCodeItemRegisterInput {
+    module_facts [LalinTreeCode.TreeCodeModuleFacts],
+    registration [LalinTreeCode.TreeCodeModuleRegistrationFacet],
+  },
+  product. TreeCodeContractState {
+    sigs [LalinTreeCode.TreeCodeModuleSigState],
+    facts [many [LalinCode.CodeFuncContractFact]],
+  },
+  product. TreeCodeItemContractsInput {
+    module_facts [LalinTreeCode.TreeCodeModuleFacts],
+    registrations [LalinTreeCode.TreeCodeModuleRegistrationState],
+    state [LalinTreeCode.TreeCodeContractState],
+  },
+  sum. TreeCodeItemContractsResult {
+    TreeCodeItemContractsUnsupported {
+      state [LalinTreeCode.TreeCodeContractState],
+    },
+    TreeCodeItemContractsAccumulated {
+      state [LalinTreeCode.TreeCodeContractState],
+    },
+  },
+  product. TreeCodeItemLowerInput {
+    module_facts [LalinTreeCode.TreeCodeModuleFacts],
+    registration [LalinTreeCode.TreeCodeModuleRegistrationFacet],
+    emission [LalinTreeCode.TreeCodeModuleEmissionState],
+    accumulation [LalinTreeCode.TreeCodeItemAccumulationFacet],
+    mod_name [str],
+  },
   sum. TreeCodeInput {
     TreeCodeExprInput {
       variant_unique,
-      facts [LalinTreeCode.TreeCodeFuncFacts],
+      facts [LalinTreeCode.TreeCodeFunctionFacts],
       state [LalinTreeCode.TreeCodeFuncState],
     },
     TreeCodePlaceInput {
       variant_unique,
-      facts [LalinTreeCode.TreeCodeFuncFacts],
+      facts [LalinTreeCode.TreeCodeFunctionFacts],
       state [LalinTreeCode.TreeCodeFuncState],
     },
     TreeCodeStmtInput {
       variant_unique,
-      facts [LalinTreeCode.TreeCodeFuncFacts],
+      facts [LalinTreeCode.TreeCodeFunctionFacts],
       state [LalinTreeCode.TreeCodeFuncState],
     },
     TreeCodeControlInput {
       variant_unique,
-      facts [LalinTreeCode.TreeCodeFuncFacts],
+      facts [LalinTreeCode.TreeCodeFunctionFacts],
       state [LalinTreeCode.TreeCodeFuncState],
     },
   },
   product. TreeCodeContractInput {
-    interned,
     module_facts [LalinTreeCode.TreeCodeModuleFacts],
     sigs [LalinTreeCode.TreeCodeModuleSigState],
     func_name [str],
     func_id [LalinCode.CodeFuncId],
+  },
+  product. TreeCodeContractFunctionResult {
+    sigs [LalinTreeCode.TreeCodeModuleSigState],
+    facts [many [LalinCode.CodeFuncContractFact]],
+  },
+  sum. TreeCodeContractValueProjection {
+    TreeCodeContractValueSupported { field. value [LalinCode.CodeValueId] },
+    TreeCodeContractValueUnsupported { reason [str] },
+  },
+  sum. TreeCodeContractExprProjection {
+    TreeCodeContractExprSupported { field. expr [LalinCode.CodeContractExpr] },
+    TreeCodeContractExprUnsupported { reason [str] },
+  },
+  sum. TreeCodeContractPlaceProjection {
+    TreeCodeContractPlaceSupported { field. place [LalinCode.CodePlace] },
+    TreeCodeContractPlaceUnsupported { reason [str] },
   },
   product. TreeCodeStateResult {
     state [LalinTreeCode.TreeCodeFuncState],

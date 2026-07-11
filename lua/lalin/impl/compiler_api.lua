@@ -26,9 +26,39 @@ require("lalin.impl.stencil_metastencil")
 require("lalin.impl.stencil_c")
 require("lalin.impl.exec_plan")
 
+local CodeValidation = require("lalin.schema_v2.code_validation")
+
+local function compile_validated(input)
+  local code_module, contracts = input.module, input.contracts
+  local graph_ok, graph = pcall(function() return code_module:build_graph() end)
+  if not graph_ok then return Compiler.CompilerArtifactError("build_graph: " .. tostring(graph)) end
+  local flow = graph:compute_flow(code_module)
+  local values = graph:compute_values(code_module, flow)
+  local mem = graph:compute_mem(code_module, flow, values, contracts)
+  local effects = graph:compute_effects(code_module, mem, contracts)
+  local kernels = mem:plan_kernels(flow, values, mem, effects)
+  local schedules = kernels:plan_schedules(code_module, flow, values, mem, effects)
+  local lower_plan = code_module:plan_lowering(graph, kernels, schedules)
+  local c_unit = lower_plan:emit_c(code_module)
+  local Cemit = require("lalin.schema_v2.cemit")
+  local C_schema = require("lalin.schema_v2.c")
+  local Lower_schema = require("lalin.schema_v2.lower")
+  local target = C_schema.CBackendTarget(C_schema.CBackendC99, C_schema.CBackendHostedNative, 64, 64, C_schema.CBackendLittleEndian, true)
+  local spine = Lower_schema.LowerBackSpine(code_module, graph, target)
+  local artifact = Cemit.CEmitMachine(spine, {}, {}, {}, {}):emit_module(c_unit)
+  return Compiler.CompilerArtifactC(artifact.source, artifact.header)
+end
+
+function CodeValidation.CodeValidateOk:compiler_compile(input)
+  return compile_validated(input)
+end
+function CodeValidation.CodeValidateFailed:compiler_compile(input)
+  local msgs = {}
+  for i = 1, #self.issues do msgs[#msgs + 1] = tostring(self.issues[i]) end
+  return Compiler.CompilerArtifactError("code_validate: " .. #msgs .. " issue(s): " .. table.concat(msgs, "; "))
+end
+
 function Compiler.CompilerSession:compile()
-  -- Reset module-level state to prevent cross-compilation leaks
-  require("lalin.schema_v2.tree_code").reset_module_sig_state()
 
   -- Parse source → LalinTree Module
   local Document = require("lalin.syntax_v2.document")
@@ -66,13 +96,14 @@ function Compiler.CompilerSession:compile()
   local backend_target = require("lalin.backend_target_model")(T)
   local back_target = backend_target.default_native()
   local host_target = backend_target.host_target(back_target)
-  local lower_ok, code_module, contracts = pcall(function()
-    return checked:lower_tree_module_with_contracts_to_code({ target = host_target })
+  local lower_ok, lowering = pcall(function()
+    return checked:lower_tree_module_result_to_code({ target = host_target })
   end)
   if not lower_ok then
-    return Compiler.CompilerArtifactError("lower_to_code: " .. tostring(code_module))
+    return Compiler.CompilerArtifactError("lower_to_code: " .. tostring(lowering))
   end
-  if contracts == nil then contracts = {} end
+  local code_module = lowering.code_module
+  local contracts = lowering.contracts.facts
 
   -- Code validation gate
   local validate_mod = require("lalin.impl.code_validate")
@@ -82,82 +113,14 @@ function Compiler.CompilerSession:compile()
   if not validate_ok then
     return Compiler.CompilerArtifactError("code_validate crashed: " .. tostring(validate_result))
   end
-  -- validate_result is CodeValidateOk or CodeValidateFailed
-  local CodeValidation_mod = require("lalin.schema_v2.code_validation")
-  local asdl = require("lalin.asdl")
-  if asdl.classof(validate_result) ~= CodeValidation_mod.CodeValidateOk then
-    local issues = validate_result.issues or {}
-    local msgs = {}
-    for i = 1, #issues do msgs[#msgs+1] = tostring(issues[i]) end
-    return Compiler.CompilerArtifactError("code_validate: " .. #msgs .. " issue(s): " .. table.concat(msgs, "; "))
-  end
-
-
-  -- Phase 5: Build CFG
-  local graph_ok, graph = pcall(function() return code_module:build_graph() end)
-  if not graph_ok then
-    return Compiler.CompilerArtifactError("build_graph: " .. tostring(graph))
-  end
-
-  -- Phase 6: Facts
-  local flow    = graph:compute_flow(code_module)
-  local values  = graph:compute_values(code_module, flow)
-  local mem     = graph:compute_mem(code_module, flow, values, contracts)
-  local effects = graph:compute_effects(code_module, mem, contracts)
-
-  -- Phase 7: Plans
-  local kernels   = mem:plan_kernels(flow, values, mem, effects)
-  local schedules = kernels:plan_schedules(code_module, flow, values, mem, effects)
-  local lower_plan = code_module:plan_lowering(graph, kernels, schedules)
-
-  -- Phase 8: Emit C
-  local c_unit = lower_plan:emit_c(code_module)
-
-  -- Phase 9: CEmit - convert to source/header text
-  local Cemit = require("lalin.schema_v2.cemit")
-  local C_schema = require("lalin.schema_v2.c")
-  local Lower_schema = require("lalin.schema_v2.lower")
-  local Graph_schema = require("lalin.schema_v2.graph")
-
-  -- Create a spine for CEmitMachine
-  local target = C_schema.CBackendTarget(
-    C_schema.CBackendC99,
-    C_schema.CBackendHostedNative,
-    64, 64,
-    C_schema.CBackendLittleEndian,
-    true
-  )
-  local spine = Lower_schema.LowerBackSpine(
-    code_module,
-    graph,
-    target
-  )
-  local cemit_machine = Cemit.CEmitMachine(spine, {}, {}, {}, {})
-  local artifact = cemit_machine:emit_module(c_unit)
-
-  -- Package as CompilerArtifact
-  local Compiler = require("lalin.schema_v2.compiler")
-  return Compiler.CompilerArtifactC(artifact.source, artifact.header)
+  return validate_result:compiler_compile(Compiler.CompilerCodeGenerationInput(code_module, contracts))
 end
 
 
--- Compile to C then build shared object via GCC (or TCC fallback)
--- Returns a session object with :symbol(name, ctype) and :free()
-function Compiler.CompilerSession:compile_gcc(opts)
+-- Compile a successful C artifact through the public IO boundary.
+local function compile_c_artifact(result, opts, source_name, source_text)
   opts = opts or {}
-  local asdl = require("lalin.asdl")
-
-  -- Run the full pipeline to get C source/header
-  local result = self:compile()
-  if result == nil then
-    return nil, "compile returned nil"
-  end
-  if asdl.classof(result) ~= Compiler.CompilerArtifactC then
-    return nil, result  -- return the error artifact as second value
-  end
-
-  local source = result.source
-  local header = result.header
+  local source, header = result.source, result.header
 
   -- Attempt TCC first if preferred
   local use_tcc = opts.use_tcc or opts.runner == "libtcc" or os.getenv("LALIN_V2_USE_TCC") == "1"
@@ -212,7 +175,7 @@ char *dlerror(void);
   -- Write C files to temp dir
   local out_dir = opts.out_dir or opts.build_dir or "target/lalin_v2_gcc"
   os.execute("mkdir -p '" .. out_dir:gsub("'", "'\\''") .. "'")
-  local stem = (opts.name or self.source_name or "lalin_v2"):gsub("[^%w_%-%.]", "_")
+  local stem = (opts.name or source_name or "lalin_v2"):gsub("[^%w_%-%.]", "_")
   if stem == "" then stem = "lalin_v2" end
   local suffix = tostring(os.time()) .. "_" .. tostring(math.random(1000000, 9999999))
   local c_path = out_dir .. "/" .. stem .. "_" .. suffix .. ".c"
@@ -258,8 +221,8 @@ char *dlerror(void);
   local session = {
     _handle = handle,
     _freed = false,
-    _source_text = self.source_text,
-    _source_name = self.source_name,
+    _source_text = source_text,
+    _source_name = source_name,
     _c_path = c_path,
     _so_path = so_path,
     _cc = cc,
@@ -302,6 +265,16 @@ char *dlerror(void);
   function session:get_so_path() return so_path end
 
   return session
+end
+
+function Compiler.CompilerArtifactC:compile_gcc_artifact(opts, source_name, source_text)
+  return compile_c_artifact(self, opts, source_name, source_text)
+end
+function Compiler.CompilerArtifactError:compile_gcc_artifact(opts, source_name, source_text)
+  return nil, self
+end
+function Compiler.CompilerSession:compile_gcc(opts)
+  return self:compile():compile_gcc_artifact(opts, self.source_name, self.source_text)
 end
 
 return Compiler

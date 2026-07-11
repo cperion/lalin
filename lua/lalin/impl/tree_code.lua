@@ -96,7 +96,9 @@ local function state_with(self, parts)
     parts.emission or self.emission,
     parts.counters or self.counters,
     parts.alpha or self.alpha,
-    parts.control or self.control
+    parts.control or self.control,
+    parts.abi or self.abi,
+    parts.module_emission or self.module_emission
   )
 end
 
@@ -189,30 +191,24 @@ local function tree_code_target(raw_target)
 end
 
 ----------------------------------------------------------------------
--- Sig state (module-level, set per module lowering)
--- NOTE: module_sig_state is reset per compilation to prevent state leaks.
-local module_sig_state = nil
-TreeCode.reset_module_sig_state = function() module_sig_state = nil end
-local function reset_module_sig_state()
-  module_sig_state = nil
+-- Signature transitions are owned by narrow typed lowering inputs.
+----------------------------------------------------------------------
+local function type_to_code_s(sigs, ty)
+  local code_ty, next_sigs = CodeType.type_to_code(sigs, ty)
+  if next_sigs ~= sigs then
+    error("tree code type projection discovered an unregistered signature", 3)
+  end
+  return TreeCode.TreeCodeTypeTransitionResult(code_ty, sigs)
 end
 
-local function type_to_code_s(ty)
-  local code_ty, ss = CodeType.type_to_code(module_sig_state, ty)
-  module_sig_state = ss
-  return code_ty
+local function ensure_type_sig_s(sigs, params, result, requirement)
+  local sig, next_sigs = CodeType.ensure_type_sig_requirement(sigs, params, result, requirement)
+  return TreeCode.TreeCodeSigTransitionResult(sig, next_sigs)
 end
 
-local function ensure_type_sig_s(params, result, requirement)
-  local sig_id, ss = CodeType.ensure_type_sig_requirement(module_sig_state, params, result, requirement)
-  module_sig_state = ss
-  return sig_id
-end
-
-local function ensure_code_sig_s(params, results, requirement)
-  local sig_id, ss = CodeType.ensure_code_sig_requirement(module_sig_state, params, results, requirement)
-  module_sig_state = ss
-  return sig_id
+local function ensure_code_sig_s(sigs, params, results, requirement)
+  local sig, next_sigs = CodeType.ensure_code_sig_requirement(sigs, params, results, requirement)
+  return TreeCode.TreeCodeSigTransitionResult(sig, next_sigs)
 end
 
 ----------------------------------------------------------------------
@@ -568,8 +564,8 @@ function TreeCode.TreeCodeInput:tree_code_func_facts() return self.facts end
 function TreeCode.TreeCodeInput:tree_code_func_name() return self.facts.func_name end
 function TreeCode.TreeCodeInput:tree_code_state() return self.state end
 function TreeCode.TreeCodeInput:tree_code_module_facts() return self.facts.module_facts end
-function TreeCode.TreeCodeInput:tree_code_module_sigs() return self.facts.sigs end
-function TreeCode.TreeCodeInput:tree_code_module_emission() return self.facts.module_emission end
+function TreeCode.TreeCodeInput:tree_code_module_sigs() return self.state.abi.sigs end
+function TreeCode.TreeCodeInput:tree_code_module_emission() return self.state.module_emission end
 
 function TreeCode.TreeCodeExprInput:tree_code_with_state(state)
   return TreeCode.TreeCodeExprInput(self.facts, state)
@@ -600,8 +596,8 @@ function TreeCode.TreeCodeExprResult:tree_code_state() return self.state end
 function TreeCode.TreeCodePlaceResult:tree_code_state() return self.state end
 function TreeCode.TreeCodeStmtResult:tree_code_state() return self.state end
 
-function TreeCode.TreeCodeInput:tree_code_type(ty) return type_to_code_s(ty) end
-function TreeCode.TreeCodeContractInput:tree_code_type(ty) return type_to_code_s(ty) end
+function TreeCode.TreeCodeInput:tree_code_type(ty) return type_to_code_s(self.state.abi.sigs, ty).ty end
+function TreeCode.TreeCodeContractInput:tree_code_type(ty) return type_to_code_s(self.sigs, ty).ty end
 
 ----------------------------------------------------------------------
 -- Bind.Binding
@@ -714,14 +710,18 @@ end
 function TreeCode.TreeCodeInput:tree_code_fresh_string_data(bytes)
   local module_facts = self:tree_code_module_facts()
   local emission = self:tree_code_module_emission()
-  local next_string_data = ((emission.counters and emission.counters.string_data and emission.counters.string_data.next_value) or 0) + 1
-  emission.counters.string_data = TreeCode.TreeCodeCounterEntry("string_data", next_string_data)
+  local counter = map_get(emission.counters, "string_data")
+  local next_string_data = ((counter and counter.next_value) or 0) + 1
   local stem = "str_" .. sanitize(self:tree_code_func_name()) .. "_" .. tostring(next_string_data)
   local id = Code.CodeDataId("data_" .. tostring(module_facts.module_name or "module") .. "_" .. stem)
   local decoded = decoded_string_bytes(bytes)
   local nul_terminated = decoded .. "\0"
-  emission.generated_data[#emission.generated_data + 1] = Code.CodeData(id, stem, Code.CodeLinkageLocal, #nul_terminated, 1, { Code.CodeDataBytes(0, nul_terminated) }, Code.CodeOriginGenerated("string literal " .. stem))
-  return id, #decoded
+  local datum = Code.CodeData(id, stem, Code.CodeLinkageLocal, #nul_terminated, 1, { Code.CodeDataBytes(0, nul_terminated) }, Code.CodeOriginGenerated("string literal " .. stem))
+  local next_emission = TreeCode.TreeCodeModuleEmissionState(
+    array_append(emission.generated_data, datum),
+    map_with(emission.counters, "string_data", TreeCode.TreeCodeCounterEntry("string_data", next_string_data))
+  )
+  return TreeCode.TreeCodeFreshStringDataResult(id, #decoded, state_with(self.state, { module_emission = next_emission }))
 end
 
 ----------------------------------------------------------------------
@@ -1257,7 +1257,9 @@ end
 function Core.LitString:lower_tree_literal_to_code_aux(input, source_ty)
   local ty = input:tree_code_type(source_ty)
   local elem_ty = u8_code_ty()
-  local data_id, len_bytes = input:tree_code_fresh_string_data(self.bytes)
+  local string_data = input:tree_code_fresh_string_data(self.bytes)
+  input = input:tree_code_with_result_state(string_data)
+  local data_id, len_bytes = string_data.id, string_data.length
   local data_result = input:tree_code_new_value("str_data"); input = input:tree_code_with_result_state(data_result)
   input = input:tree_code_with_result_state(input:tree_code_append_inst(Code.CodeInstGlobalRef(data_result.value, Code.CodeGlobalRefData(data_id), Code.CodeTyDataPtr(elem_ty)), origin_generated("string literal data ref")))
   local len_result = input:tree_code_new_value("str_len"); input = input:tree_code_with_result_state(len_result)
@@ -1369,10 +1371,11 @@ function Tree.ExprCall:lower_tree_expr_to_code(input)
   local call_target_result
   if target == nil then
     local callee_result = self.callee:lower_tree_expr_to_code(input:tree_code_expr_input()); input = input:tree_code_with_result_state(callee_result)
-    call_target_result = fn_ty:tree_code_indirect_call_target(callee_result.value)
+    call_target_result = fn_ty:tree_code_indirect_call_target(callee_result.value, input)
   else
-    call_target_result = target:tree_code_require_call_sig(fn_ty)
+    call_target_result = target:tree_code_require_call_sig(fn_ty, input)
   end
+  input = input:tree_code_with_result_state(call_target_result)
   target = call_target_result.target
   local sig = call_target_result.sig
   local expr_ty = self.h and self.h:tree_code_expr_type(); local result_ty = input:tree_code_type(expr_ty)
@@ -1509,21 +1512,25 @@ function Bind.BindingRole:tree_code_direct_call_target(binding) return nil end
 function Bind.BindingRoleGlobalFunc:tree_code_direct_call_target(binding) return Code.CodeCallDirect(code_func_id(self.item_name)) end
 function Bind.BindingRoleExtern:tree_code_direct_call_target(binding) return Code.CodeCallExtern(code_extern_id(binding.name)) end
 
-function Code.CodeCallDirect:tree_code_require_call_sig(fn_ty)
-  local sig = ensure_type_sig_s(fn_ty.params, fn_ty.result, TreeCode.TreeCodeDirectCallSigRequirement)
-  return TreeCode.TreeCodeCallTargetResult(self, sig)
+function Code.CodeCallDirect:tree_code_require_call_sig(fn_ty, input)
+  local transition = ensure_type_sig_s(input.state.abi.sigs, fn_ty.params, fn_ty.result, TreeCode.TreeCodeDirectCallSigRequirement)
+  local state = state_with(input.state, { abi = TreeCode.TreeCodeFunctionAbiFacet(transition.sigs) })
+  return TreeCode.TreeCodeCallTargetResult(self, transition.sig, state)
 end
-function Code.CodeCallExtern:tree_code_require_call_sig(fn_ty)
-  local sig = ensure_type_sig_s(fn_ty.params, fn_ty.result, TreeCode.TreeCodeDirectCallSigRequirement)
-  return TreeCode.TreeCodeCallTargetResult(self, sig)
+function Code.CodeCallExtern:tree_code_require_call_sig(fn_ty, input)
+  local transition = ensure_type_sig_s(input.state.abi.sigs, fn_ty.params, fn_ty.result, TreeCode.TreeCodeDirectCallSigRequirement)
+  local state = state_with(input.state, { abi = TreeCode.TreeCodeFunctionAbiFacet(transition.sigs) })
+  return TreeCode.TreeCodeCallTargetResult(self, transition.sig, state)
 end
-function Ty.Type:tree_code_indirect_call_target(callee)
-  local sig = ensure_type_sig_s(self.params, self.result, TreeCode.TreeCodeIndirectCallSigRequirement)
-  return TreeCode.TreeCodeCallTargetResult(Code.CodeCallIndirect(callee, sig), sig)
+function Ty.Type:tree_code_indirect_call_target(callee, input)
+  local transition = ensure_type_sig_s(input.state.abi.sigs, self.params, self.result, TreeCode.TreeCodeIndirectCallSigRequirement)
+  local state = state_with(input.state, { abi = TreeCode.TreeCodeFunctionAbiFacet(transition.sigs) })
+  return TreeCode.TreeCodeCallTargetResult(Code.CodeCallIndirect(callee, transition.sig), transition.sig, state)
 end
-function Ty.TClosure:tree_code_indirect_call_target(callee)
-  local sig = ensure_type_sig_s(self.params, self.result, TreeCode.TreeCodeClosureSigRequirement)
-  return TreeCode.TreeCodeCallTargetResult(Code.CodeCallClosure(callee, sig), sig)
+function Ty.TClosure:tree_code_indirect_call_target(callee, input)
+  local transition = ensure_type_sig_s(input.state.abi.sigs, self.params, self.result, TreeCode.TreeCodeClosureSigRequirement)
+  local state = state_with(input.state, { abi = TreeCode.TreeCodeFunctionAbiFacet(transition.sigs) })
+  return TreeCode.TreeCodeCallTargetResult(Code.CodeCallClosure(callee, transition.sig), transition.sig, state)
 end
 
 -- len lowering on Ty.Type
@@ -2189,21 +2196,23 @@ end
 
 function Tree.Func:lower_tree_func_to_code(input)
   local parts = self:lower_tree_func_parts_to_code()
-  local residence = collect_address_taken_stmts(parts.body or {}, {addressed={}, mutable={}})
+  local residence = collect_address_taken_stmts(parts.body or {}, { addressed = {}, mutable = {} })
   local start = input:tree_code_func_lowering_start(parts.name, residence)
   local stmt_input = TreeCode.TreeCodeStmtInput(start.facts, start.state)
   local entry = Code.CodeBlockId("block_" .. sanitize(parts.name) .. "_entry")
   stmt_input = stmt_input:tree_code_with_result_state(stmt_input:tree_code_start_block(entry, "entry", {}, origin_generated("entry block")))
-  local code_params = {}; local sig_params = {}
+  local code_params, sig_params = {}, {}
   for i = 1, #(parts.params or {}) do
-    local pr = parts.params[i]:lower_tree_param_to_code(stmt_input, parts.name, i)
-    stmt_input = stmt_input:tree_code_with_result_state(pr)
-    code_params[#code_params+1] = pr.param; sig_params[#sig_params+1] = pr.ty
+    local param_result = parts.params[i]:lower_tree_param_to_code(stmt_input, parts.name, i)
+    stmt_input = stmt_input:tree_code_with_result_state(param_result)
+    code_params[#code_params + 1] = param_result.param
+    sig_params[#sig_params + 1] = param_result.ty
   end
   local result = stmt_input:tree_code_type(parts.result)
   local sig_results = {}
-  if result ~= Code.CodeTyVoid then sig_results[#sig_results+1] = result end
-  local sig = ensure_code_sig_s(sig_params, sig_results, TreeCode.TreeCodeFunctionSigRequirement)
+  if result ~= Code.CodeTyVoid then sig_results[#sig_results + 1] = result end
+  local transition = ensure_code_sig_s(stmt_input.state.abi.sigs, sig_params, sig_results, TreeCode.TreeCodeFunctionSigRequirement)
+  stmt_input = stmt_input:tree_code_with_state(state_with(stmt_input.state, { abi = TreeCode.TreeCodeFunctionAbiFacet(transition.sigs) }))
   stmt_input = stmt_input:tree_code_lower_stmt_body(parts.body or {})
   if stmt_input:tree_code_state():tree_code_has_current_block() then
     if result == Code.CodeTyVoid then
@@ -2212,103 +2221,128 @@ function Tree.Func:lower_tree_func_to_code(input)
       unsupported(self, "non-void function without return")
     end
   end
-  return Code.CodeFunc(Code.CodeFuncId("fn_" .. parts.name), parts.name, parts.linkage, sig, code_params, stmt_input:tree_code_state().emission.locals, entry, stmt_input:tree_code_state().emission.blocks, origin_generated("function " .. parts.name))
+  local func = Code.CodeFunc(Code.CodeFuncId("fn_" .. parts.name), parts.name, parts.linkage, transition.sig, code_params, stmt_input.state.emission.locals, entry, stmt_input.state.emission.blocks, origin_generated("function " .. parts.name))
+  return TreeCode.TreeCodeFuncLowerResult(func, stmt_input.state.abi, stmt_input.state.module_emission)
 end
 
 ----------------------------------------------------------------------
--- Item lowering
+-- Item registration and accumulation
 ----------------------------------------------------------------------
 function Tree.Item:tree_code_add_const_entries(entries, mod_name) end
 function Tree.ItemConst:tree_code_add_const_entries(entries, mod_name) self.c:tree_code_add_const_entries(entries, mod_name) end
-function Tree.ConstItem:tree_code_add_const_entries(entries, mod_name) entries[#entries+1] = Bind.ConstEntry(mod_name, self.name, self.ty, self.value) end
+function Tree.ConstItem:tree_code_add_const_entries(entries, mod_name) entries[#entries + 1] = Bind.ConstEntry(mod_name, self.name, self.ty, self.value) end
 
-function Tree.Item:lower_tree_item_register_to_code(input) end
+function Tree.Item:lower_tree_item_register_to_code(input)
+  return TreeCode.TreeCodeItemRegisterResult(input.registration)
+end
 function Tree.ItemFunc:lower_tree_item_register_to_code(input)
   local parts = self.func:lower_tree_func_parts_to_code()
-  local sig = ensure_type_sig_s(parts:tree_code_param_types(), parts.result, TreeCode.TreeCodeFunctionSigRequirement)
+  local transition = ensure_type_sig_s(input.registration.sigs, parts:tree_code_param_types(), parts.result, TreeCode.TreeCodeFunctionSigRequirement)
   local key = func_key(input.module_facts.module_name, parts.name)
-  input.registrations.funcs[key] = TreeCode.TreeCodeFuncRegistrationEntry(key, TreeCode.TreeCodeFuncRegistration(code_func_id(parts.name), sig))
+  local entry = TreeCode.TreeCodeFuncRegistrationEntry(key, TreeCode.TreeCodeFuncRegistration(code_func_id(parts.name), transition.sig))
+  local registrations = TreeCode.TreeCodeModuleRegistrationState(map_with(input.registration.registrations.funcs, key, entry), input.registration.registrations.externs, input.registration.registrations.extern_order)
+  return TreeCode.TreeCodeItemRegisterResult(TreeCode.TreeCodeModuleRegistrationFacet(transition.sigs, registrations))
 end
-function Tree.ItemExtern:lower_tree_item_register_to_code(input) self.func:tree_code_register_extern(input) end
+function Tree.ItemExtern:lower_tree_item_register_to_code(input) return self.func:tree_code_register_extern(input) end
 function Tree.ExternFunc:tree_code_register_extern(input)
   local param_tys = {}
   for j = 1, #(self.params or {}) do param_tys[j] = self.params[j].ty end
-  local sig = ensure_type_sig_s(param_tys, self.result, TreeCode.TreeCodeExternSigRequirement)
-  local ex = Code.CodeExtern(code_extern_id(self.name), self.name, self.symbol, sig, origin_generated("extern " .. self.name))
-  input.registrations.externs[self.name] = TreeCode.TreeCodeExternEntry(self.name, ex)
-  input.registrations.extern_order[#input.registrations.extern_order+1] = ex
+  local transition = ensure_type_sig_s(input.registration.sigs, param_tys, self.result, TreeCode.TreeCodeExternSigRequirement)
+  local ex = Code.CodeExtern(code_extern_id(self.name), self.name, self.symbol, transition.sig, origin_generated("extern " .. self.name))
+  local entry = TreeCode.TreeCodeExternEntry(self.name, ex)
+  local registrations = TreeCode.TreeCodeModuleRegistrationState(input.registration.registrations.funcs, map_with(input.registration.registrations.externs, self.name, entry), array_append(input.registration.registrations.extern_order, ex))
+  return TreeCode.TreeCodeItemRegisterResult(TreeCode.TreeCodeModuleRegistrationFacet(transition.sigs, registrations))
 end
 
-function Tree.Item:lower_tree_item_to_code(input) end
-function Tree.ItemFunc:lower_tree_item_to_code(input) input.funcs[#input.funcs+1] = self.func:lower_tree_func_to_code(input) end
-function Tree.ItemData:lower_tree_item_to_code(input) input.data[#input.data+1] = Code.CodeData(code_data_id(self.data.id), self.data.id.text, Code.CodeLinkageLocal, self.data.size, self.data.align, {Code.CodeDataBytes(0, self.data.bytes)}, origin_generated("data " .. tostring(self.data.id.text))) end
-function Tree.ItemConst:lower_tree_item_to_code(input) self.c:tree_code_lower_const_item(input) end
-function Tree.ConstItem:tree_code_lower_const_item(input) input.globals[#input.globals+1] = self:tree_code_lower_global_to_code(input) end
-function Tree.ItemStatic:lower_tree_item_to_code(input) self.s:tree_code_lower_static_item(input) end
-function Tree.StaticItem:tree_code_lower_static_item(input) input.globals[#input.globals+1] = self:tree_code_lower_global_to_code(input) end
-function Tree.ItemExtern:lower_tree_item_to_code(input) end
-function Tree.ItemType:lower_tree_item_to_code(input) end
-function Tree.ItemImport:lower_tree_item_to_code(input) end
+local function item_lower_result(registration, emission, accumulation)
+  return TreeCode.TreeCodeItemLowerResult(registration, emission, accumulation)
+end
+function Tree.Item:lower_tree_item_to_code(input)
+  return item_lower_result(input.registration, input.emission, input.accumulation)
+end
+function Tree.ItemFunc:lower_tree_item_to_code(input)
+  local result = self.func:lower_tree_func_to_code(input)
+  local registration = TreeCode.TreeCodeModuleRegistrationFacet(result.abi.sigs, input.registration.registrations)
+  local accumulation = TreeCode.TreeCodeItemAccumulationFacet(array_append(input.accumulation.funcs, result.func), input.accumulation.data, input.accumulation.globals)
+  return item_lower_result(registration, result.emission, accumulation)
+end
+function Tree.ItemData:lower_tree_item_to_code(input)
+  local datum = Code.CodeData(code_data_id(self.data.id), self.data.id.text, Code.CodeLinkageLocal, self.data.size, self.data.align, { Code.CodeDataBytes(0, self.data.bytes) }, origin_generated("data " .. tostring(self.data.id.text)))
+  local accumulation = TreeCode.TreeCodeItemAccumulationFacet(input.accumulation.funcs, array_append(input.accumulation.data, datum), input.accumulation.globals)
+  return item_lower_result(input.registration, input.emission, accumulation)
+end
+function Tree.ItemConst:lower_tree_item_to_code(input)
+  local result = self.c:tree_code_lower_global_to_code(input)
+  local registration = TreeCode.TreeCodeModuleRegistrationFacet(result.abi.sigs, input.registration.registrations)
+  local accumulation = TreeCode.TreeCodeItemAccumulationFacet(input.accumulation.funcs, input.accumulation.data, array_append(input.accumulation.globals, result.global))
+  return item_lower_result(registration, result.emission, accumulation)
+end
+function Tree.ItemStatic:lower_tree_item_to_code(input)
+  local result = self.s:tree_code_lower_global_to_code(input)
+  local registration = TreeCode.TreeCodeModuleRegistrationFacet(result.abi.sigs, input.registration.registrations)
+  local accumulation = TreeCode.TreeCodeItemAccumulationFacet(input.accumulation.funcs, input.accumulation.data, array_append(input.accumulation.globals, result.global))
+  return item_lower_result(registration, result.emission, accumulation)
+end
+function Tree.ItemExtern:lower_tree_item_to_code(input) return item_lower_result(input.registration, input.emission, input.accumulation) end
+function Tree.ItemType:lower_tree_item_to_code(input) return item_lower_result(input.registration, input.emission, input.accumulation) end
+function Tree.ItemImport:lower_tree_item_to_code(input) return item_lower_result(input.registration, input.emission, input.accumulation) end
 function Tree.ItemRegion:lower_tree_item_to_code(input) unsupported(self, "region item leaked past frontend") end
 
 function TreeCode.TreeCodeInput:tree_code_global_init_for_const(source_ty, value_expr, site)
-  local value = value_expr:tree_code_const_eval(
-    self:tree_code_module_facts().const_env, Sem.ConstLocalEnv({}))
+  local value = value_expr:tree_code_const_eval(self:tree_code_module_facts().const_env, Sem.ConstLocalEnv({}))
   local ty = self:tree_code_type(source_ty)
   return value:tree_code_global_init(self, ty, value_expr, site)
 end
-
-function Tree.Expr:tree_code_const_eval(const_env, local_env)
-  return self:sem_const_eval(Sem.ConstEvalInput(const_env, local_env))
-end
+function Tree.Expr:tree_code_const_eval(const_env, local_env) return self:sem_const_eval(Sem.ConstEvalInput(const_env, local_env)) end
 function Tree.Expr:sem_const_eval(input) return Sem.ConstNotFoldable("not foldable") end
 function Sem.ConstValue:tree_code_global_init(input, ty, value_expr, site) unsupported(value_expr, "non-scalar constant initializer") end
-function Sem.ConstInt:tree_code_global_init(input, ty, value_expr, site) return {Code.CodeDataScalar(0, ty, Core.LitInt(self.raw))} end
-function Sem.ConstFloat:tree_code_global_init(input, ty, value_expr, site) return {Code.CodeDataScalar(0, ty, Core.LitFloat(self.raw))} end
-function Sem.ConstBool:tree_code_global_init(input, ty, value_expr, site) return {Code.CodeDataScalar(0, ty, Core.LitBool(self.value))} end
+function Sem.ConstInt:tree_code_global_init(input, ty, value_expr, site) return { Code.CodeDataScalar(0, ty, Core.LitInt(self.raw)) } end
+function Sem.ConstFloat:tree_code_global_init(input, ty, value_expr, site) return { Code.CodeDataScalar(0, ty, Core.LitFloat(self.raw)) } end
+function Sem.ConstBool:tree_code_global_init(input, ty, value_expr, site) return { Code.CodeDataScalar(0, ty, Core.LitBool(self.value)) } end
 
 function Tree.ConstItem:tree_code_lower_global_to_code(input)
   local start = input:tree_code_func_lowering_start(input.module_facts.module_name)
-  local ei = TreeCode.TreeCodeExprInput(start.facts, start.state)
-  local inits = ei:tree_code_global_init_for_const(self.ty, self.value, self.name)
-  return Code.CodeGlobal(code_global_id(input.module_facts.module_name, self.name), self.name, ei:tree_code_type(self.ty), Code.CodeLinkageLocal, ei:tree_code_size_of(self.ty), ei:tree_code_align_of(self.ty), inits, origin_generated("global " .. tostring(self.name)))
+  local expr_input = TreeCode.TreeCodeExprInput(start.facts, start.state)
+  local inits = expr_input:tree_code_global_init_for_const(self.ty, self.value, self.name)
+  local global = Code.CodeGlobal(code_global_id(input.module_facts.module_name, self.name), self.name, expr_input:tree_code_type(self.ty), Code.CodeLinkageLocal, expr_input:tree_code_size_of(self.ty), expr_input:tree_code_align_of(self.ty), inits, origin_generated("global " .. tostring(self.name)))
+  return TreeCode.TreeCodeGlobalLowerResult(global, expr_input.state.abi, expr_input.state.module_emission)
 end
-
 function Tree.StaticItem:tree_code_lower_global_to_code(input)
   local start = input:tree_code_func_lowering_start(input.module_facts.module_name)
-  local ei = TreeCode.TreeCodeExprInput(start.facts, start.state)
-  local inits = ei:tree_code_global_init_for_const(self.ty, self.value, self.name)
-  return Code.CodeGlobal(code_global_id(input:tree_code_module_facts().module_name, self.name), self.name, ei:tree_code_type(self.ty), Code.CodeLinkageLocal, ei:tree_code_size_of(self.ty), ei:tree_code_align_of(self.ty), inits, origin_generated("global " .. tostring(self.name)))
+  local expr_input = TreeCode.TreeCodeExprInput(start.facts, start.state)
+  local inits = expr_input:tree_code_global_init_for_const(self.ty, self.value, self.name)
+  local global = Code.CodeGlobal(code_global_id(expr_input:tree_code_module_facts().module_name, self.name), self.name, expr_input:tree_code_type(self.ty), Code.CodeLinkageLocal, expr_input:tree_code_size_of(self.ty), expr_input:tree_code_align_of(self.ty), inits, origin_generated("global " .. tostring(self.name)))
+  return TreeCode.TreeCodeGlobalLowerResult(global, expr_input.state.abi, expr_input.state.module_emission)
 end
 
 function TreeCode.TreeCodeModuleParts:tree_code_func_lowering_start(func_name, residence)
   residence = residence or {}
   return TreeCode.TreeCodeFuncLoweringStart(
-    TreeCode.TreeCodeFuncFacts(self.module_facts, self.sigs, self.registrations, self.emission, func_name),
+    TreeCode.TreeCodeFunctionFacts(self.module_facts, self.registrations, func_name),
     TreeCode.TreeCodeFuncState(
       TreeCode.TreeCodeBindingState({}, {}),
       TreeCode.TreeCodeResidenceFacts(residence.addressed or {}, residence.mutable or {}),
       TreeCode.TreeCodeEmissionState({}, {}, {}),
       TreeCode.TreeCodeCounterState({}),
       TreeCode.TreeCodeAlphaState({}, {}, 0),
-      TreeCode.TreeCodeControlState({}, {})
+      TreeCode.TreeCodeControlState({}, {}),
+      TreeCode.TreeCodeFunctionAbiFacet(self.sigs),
+      self.emission
     )
   )
 end
-
 function TreeCode.TreeCodeItemLowerInput:tree_code_func_lowering_start(func_name, residence)
-  return TreeCode.TreeCodeModuleParts(self.module_facts, self.sigs, self.registrations, self.emission):tree_code_func_lowering_start(func_name, residence)
+  return TreeCode.TreeCodeModuleParts(self.module_facts, self.registration.sigs, self.registration.registrations, self.emission):tree_code_func_lowering_start(func_name, residence)
 end
 
 ----------------------------------------------------------------------
--- Module lowering
+-- Module lowering and typed contract accumulation
 ----------------------------------------------------------------------
 function Tree.Module:tree_code_layout_env(target)
   local envs = self:tree_module_env(target)
   local layouts = (#envs > 0 and envs[1].layouts) or {}
   return Sem.LayoutEnv(layouts)
 end
-
 function Tree.Module:tree_code_module_parts(opts)
   local layout_env = opts.layout_env
   if layout_env == nil then layout_env = self:tree_code_layout_env(opts.target) end
@@ -2316,53 +2350,55 @@ function Tree.Module:tree_code_module_parts(opts)
   local const_entries = {}
   for i = 1, #(self.items or {}) do self.items[i]:tree_code_add_const_entries(const_entries, mod_name) end
   local module_facts = TreeCode.TreeCodeModuleFacts(mod_name, layout_env, tree_code_target(opts.target), Bind.ConstEnv(const_entries), self:tree_code_variant_defs(mod_name))
-  local sigs = TreeCode.TreeCodeModuleSigState(mod_name, {}, {})
-  module_sig_state = sigs
-  local registrations = TreeCode.TreeCodeModuleRegistrationState({}, {}, {})
-  local emission = TreeCode.TreeCodeModuleEmissionState({}, {})
-  local reg_input = TreeCode.TreeCodeItemRegisterInput(module_facts, sigs, registrations)
-  for i = 1, #(self.items or {}) do self.items[i]:lower_tree_item_register_to_code(reg_input) end
-  sigs = module_sig_state
-  return TreeCode.TreeCodeModuleParts(module_facts, sigs, registrations, emission)
+  local registration = TreeCode.TreeCodeModuleRegistrationFacet(TreeCode.TreeCodeModuleSigState(mod_name, {}, {}), TreeCode.TreeCodeModuleRegistrationState({}, {}, {}))
+  for i = 1, #(self.items or {}) do
+    registration = self.items[i]:lower_tree_item_register_to_code(TreeCode.TreeCodeItemRegisterInput(module_facts, registration)).registration
+  end
+  return TreeCode.TreeCodeModuleParts(module_facts, registration.sigs, registration.registrations, TreeCode.TreeCodeModuleEmissionState({}, {}))
 end
 
-function Tree.Module:lower_tree_module_to_code(opts)
-  opts = opts or {}
-  local mod_name = self:tree_code_module_name()
-  local parts = self:tree_code_module_parts(opts)
-  local funcs, data, globals = {}, {}, {}
-  local input = TreeCode.TreeCodeItemLowerInput(parts.module_facts, parts.sigs, parts.registrations, parts.emission, mod_name, funcs, data, globals)
-  for i = 1, #(self.items or {}) do self.items[i]:lower_tree_item_to_code(input) end
-  for i = 1, #parts.emission.generated_data do data[#data+1] = parts.emission.generated_data[i] end
-  return Code.CodeModule(Code.CodeModuleId("module_" .. sanitize(opts.module_id or self:tree_code_module_name())), module_sig_state.code_sig_order, {}, data, globals, parts.registrations.extern_order, input.funcs, origin_generated("tree_lower module"))
+function TreeCode.TreeCodeItemContractsUnsupported:tree_code_contract_state() return self.state end
+function TreeCode.TreeCodeItemContractsAccumulated:tree_code_contract_state() return self.state end
+function Tree.Item:lower_tree_item_contracts_to_code(input)
+  return TreeCode.TreeCodeItemContractsUnsupported(input.state)
 end
-
-function Tree.Module:lower_tree_module_contracts_to_code(opts)
-  opts = opts or {}
-  local parts = self:tree_code_module_parts(opts)
-  local mod_id = Code.CodeModuleId("module_" .. sanitize(opts.module_id or self:tree_code_module_name()))
-  local facts = {}
-  local input = TreeCode.TreeCodeItemContractsInput(parts.module_facts, parts.sigs, parts.registrations, parts.emission, facts)
-  for i = 1, #(self.items or {}) do self.items[i]:lower_tree_item_contracts_to_code(input) end
-  return Code.CodeContractFactSet(mod_id, input.contract_facts)
-end
-
-function Tree.Item:lower_tree_item_contracts_to_code(input) end
 function Tree.ItemFunc:lower_tree_item_contracts_to_code(input)
   local parts = self.func:lower_tree_func_parts_to_code()
   local func_id = code_func_id(parts.name)
-  local tree_facts = self.func:tree_code_contract_facts()
-  local ci = TreeCode.TreeCodeContractInput(input.module_facts, input.sigs, parts.name, func_id)
-  for j = 1, #(tree_facts.facts or {}) do
-    input.contract_facts[#input.contract_facts+1] = tree_facts.facts[j]:lower_tree_contract_fact_to_code(ci).fact
+  local source_facts = self.func:tree_code_contract_facts()
+  local contract_input = TreeCode.TreeCodeContractInput(input.module_facts, input.state.sigs, parts.name, func_id)
+  local facts = clone_array(input.state.facts)
+  for j = 1, #source_facts.facts do
+    facts[#facts + 1] = source_facts.facts[j]:lower_tree_contract_fact_to_code(contract_input).fact
   end
+  return TreeCode.TreeCodeItemContractsAccumulated(TreeCode.TreeCodeContractState(contract_input.sigs, facts))
+end
+function Tree.Func:tree_code_contract_facts()
+  return Tree.ContractFactSet(self:tree_check_contract_facts(self.contracts))
 end
 
-function Tree.Func:tree_code_contract_facts()
-  return { facts = self:tree_check_contract_facts(self.contracts or {}) }
-end
-function Tree.Module:lower_tree_module_with_contracts_to_code(opts)
-  return self:lower_tree_module_to_code(opts), self:lower_tree_module_contracts_to_code(opts)
+function Tree.Module:lower_tree_module_result_to_code(opts)
+  opts = opts or {}
+  local mod_name = self:tree_code_module_name()
+  local parts = self:tree_code_module_parts(opts)
+  local registration = TreeCode.TreeCodeModuleRegistrationFacet(parts.sigs, parts.registrations)
+  local accumulation = TreeCode.TreeCodeItemAccumulationFacet({}, {}, {})
+  local input = TreeCode.TreeCodeItemLowerInput(parts.module_facts, registration, parts.emission, accumulation, mod_name)
+  for i = 1, #(self.items or {}) do
+    local result = self.items[i]:lower_tree_item_to_code(input)
+    input = TreeCode.TreeCodeItemLowerInput(input.module_facts, result.registration, result.emission, result.accumulation, mod_name)
+  end
+  local data = clone_array(input.accumulation.data)
+  for i = 1, #input.emission.generated_data do data[#data + 1] = input.emission.generated_data[i] end
+  local code_module = Code.CodeModule(Code.CodeModuleId("module_" .. sanitize(opts.module_id or self:tree_code_module_name())), input.registration.sigs.code_sig_order, {}, data, input.accumulation.globals, input.registration.registrations.extern_order, input.accumulation.funcs, origin_generated("tree_lower module"))
+  local contract_state = TreeCode.TreeCodeContractState(input.registration.sigs, {})
+  for i = 1, #(self.items or {}) do
+    local result = self.items[i]:lower_tree_item_contracts_to_code(TreeCode.TreeCodeItemContractsInput(input.module_facts, input.registration.registrations, contract_state))
+    contract_state = result:tree_code_contract_state()
+  end
+  local contracts = Code.CodeContractFactSet(code_module.id, contract_state.facts)
+  local final_parts = TreeCode.TreeCodeModuleParts(input.module_facts, input.registration.sigs, input.registration.registrations, input.emission)
+  return TreeCode.TreeCodeModuleLowerResult(code_module, contracts, final_parts)
 end
 
 ----------------------------------------------------------------------
@@ -2375,59 +2411,60 @@ end
 function TreeCode.TreeCodeContractInput:tree_code_value_for_expr(expr) return expr:tree_code_contract_value(self) end
 function TreeCode.TreeCodeContractInput:tree_code_contract_expr_for_expr(expr) return expr:tree_code_contract_expr(self) end
 
-function Tree.Expr:tree_code_contract_value(input) return nil end
+function Tree.Expr:tree_code_contract_value(input) return TreeCode.TreeCodeContractValueUnsupported("expression has no contract value projection") end
 function Tree.ExprRef:tree_code_contract_value(input) return self.ref:tree_code_contract_value(input, self) end
-function Bind.ValueRef:tree_code_contract_value(input, expr) return nil end
-function Bind.ValueRefBinding:tree_code_contract_value(input, expr) return input:tree_code_value_for_binding(self.binding) end
+function Bind.ValueRef:tree_code_contract_value(input, expr) return TreeCode.TreeCodeContractValueUnsupported("reference has no contract value projection") end
+function Bind.ValueRefBinding:tree_code_contract_value(input, expr) return TreeCode.TreeCodeContractValueSupported(input:tree_code_value_for_binding(self.binding)) end
+function TreeCode.TreeCodeContractValueSupported:tree_code_contract_expr_projection() return TreeCode.TreeCodeContractExprSupported(Code.CodeContractValueRef(self.value)) end
+function TreeCode.TreeCodeContractValueUnsupported:tree_code_contract_expr_projection() return TreeCode.TreeCodeContractExprUnsupported(self.reason) end
 
-function Tree.Expr:tree_code_contract_expr(input) local v = self:tree_code_contract_value(input); if v then return Code.CodeContractValueRef(v) end; return nil end
-function Tree.ExprRef:tree_code_contract_expr(input) local v = self:tree_code_contract_value(input); if v then return Code.CodeContractValueRef(v) end; return nil end
-function Tree.ExprField:tree_code_contract_expr(input) local p = self:tree_code_contract_place(input); if p then return Code.CodeContractPlaceLoad(p) end; return nil end
+function Tree.Expr:tree_code_contract_expr(input) return self:tree_code_contract_value(input):tree_code_contract_expr_projection() end
+function Tree.ExprRef:tree_code_contract_expr(input) return self:tree_code_contract_value(input):tree_code_contract_expr_projection() end
+function Tree.ExprField:tree_code_contract_expr(input) return self:tree_code_contract_place(input):tree_code_contract_expr_projection() end
+function TreeCode.TreeCodeContractPlaceSupported:tree_code_contract_expr_projection() return TreeCode.TreeCodeContractExprSupported(Code.CodeContractPlaceLoad(self.place)) end
+function TreeCode.TreeCodeContractPlaceUnsupported:tree_code_contract_expr_projection() return TreeCode.TreeCodeContractExprUnsupported(self.reason) end
 
-function Tree.Expr:tree_code_contract_place(input) return nil end
+function Tree.Expr:tree_code_contract_place(input) return TreeCode.TreeCodeContractPlaceUnsupported("expression has no contract place projection") end
 function Tree.ExprRef:tree_code_contract_place(input) return self.ref:tree_code_contract_place(input, self) end
-function Bind.ValueRef:tree_code_contract_place(input, expr) return nil end
+function Bind.ValueRef:tree_code_contract_place(input, expr) return TreeCode.TreeCodeContractPlaceUnsupported("reference has no contract place projection") end
 function Bind.ValueRefBinding:tree_code_contract_place(input, expr)
-  local role = self.binding.role
-  if role and role.tree_code_global_place then
-    local place = role:tree_code_global_place(input, self.binding)
-    if place then return place end
-  end
-  return Code.CodePlaceDeref(input:tree_code_value_for_binding(self.binding), input:tree_code_type(self.binding.ty), input:tree_code_align_of(self.binding.ty))
+  return TreeCode.TreeCodeContractPlaceSupported(Code.CodePlaceDeref(input:tree_code_value_for_binding(self.binding), input:tree_code_type(self.binding.ty), input:tree_code_align_of(self.binding.ty)))
 end
+function TreeCode.TreeCodeContractPlaceSupported:tree_code_contract_field(input, field)
+  local layout = input:tree_code_layout_of(field.ty)
+  return TreeCode.TreeCodeContractPlaceSupported(Code.CodePlaceField(self.place, field, input:tree_code_type(field.ty), field.offset, layout.size, layout.align))
+end
+function TreeCode.TreeCodeContractPlaceUnsupported:tree_code_contract_field(input, field) return self end
 function Tree.ExprField:tree_code_contract_place(input)
   self.field:tree_code_require_lowered_field(input)
-  local base_ty = self.base.h and self.base.h:tree_code_expr_type()
-  if base_ty then base_ty = base_ty:tree_code_source_access_base() end
-  local base_place = base_ty and base_ty:tree_code_contract_field_base_place(input, self.base) or self.base:tree_code_contract_place(input)
-  if base_place == nil then return nil end
-  local fl = input:tree_code_layout_of(self.field.ty)
-  return Code.CodePlaceField(base_place, self.field, input:tree_code_type(self.field.ty), self.field.offset, fl and fl.size, fl and fl.align)
+  local base_ty = self.base.h:tree_code_expr_type():tree_code_source_access_base()
+  return base_ty:tree_code_contract_field_base_place(input, self.base):tree_code_contract_field(input, self.field)
 end
 function Ty.Type:tree_code_contract_field_base_place(input, base) return base:tree_code_contract_place(input) end
-function Ty.TPtr:tree_code_contract_field_base_place(input, base)
-  local v = base:tree_code_contract_value(input)
-  if v == nil then return nil end
-  return Code.CodePlaceDeref(v, input:tree_code_type(self.elem), input:tree_code_align_of(self.elem))
-end
+function TreeCode.TreeCodeContractValueSupported:tree_code_contract_deref(input, elem) return TreeCode.TreeCodeContractPlaceSupported(Code.CodePlaceDeref(self.value, input:tree_code_type(elem), input:tree_code_align_of(elem))) end
+function TreeCode.TreeCodeContractValueUnsupported:tree_code_contract_deref(input, elem) return TreeCode.TreeCodeContractPlaceUnsupported(self.reason) end
+function Ty.TPtr:tree_code_contract_field_base_place(input, base) return base:tree_code_contract_value(input):tree_code_contract_deref(input, self.elem) end
 
 function TreeCode.TreeCodeContractInput:tree_code_contract_reject(reason)
-  return Code.CodeFuncContractFact(self.func_id, Code.CodeContractRejected(tostring(reason or "unsupported")), origin_generated("contract rejection"))
+  return Code.CodeFuncContractFact(self.func_id, Code.CodeContractRejected(reason), origin_generated("contract rejection"))
 end
 
 function Tree.ContractFactBounds:lower_tree_contract_fact_to_code(input)
   return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractBounds(input:tree_code_value_for_binding(self.base), input:tree_code_value_for_binding(self.len)), origin_binding(self.base)))
 end
-function Tree.ContractFactExprBounds:lower_tree_contract_fact_to_code(input)
-  local base = input:tree_code_contract_expr_for_expr(self.base); local len = input:tree_code_contract_expr_for_expr(self.len)
-  if base == nil or len == nil then return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject("expr bounds")) end
-  return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractProjectionBounds(base, len), origin_generated("projection bounds")))
-end
+function TreeCode.TreeCodeContractExprUnsupported:tree_code_contract_bounds(input, rhs) return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject(self.reason)) end
+function TreeCode.TreeCodeContractExprSupported:tree_code_contract_bounds(input, rhs) return rhs:tree_code_contract_bounds_rhs(input, self.expr) end
+function TreeCode.TreeCodeContractExprUnsupported:tree_code_contract_bounds_rhs(input, lhs) return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject(self.reason)) end
+function TreeCode.TreeCodeContractExprSupported:tree_code_contract_bounds_rhs(input, lhs) return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractProjectionBounds(lhs, self.expr), origin_generated("projection bounds"))) end
+function Tree.ContractFactExprBounds:lower_tree_contract_fact_to_code(input) return input:tree_code_contract_expr_for_expr(self.base):tree_code_contract_bounds(input, input:tree_code_contract_expr_for_expr(self.len)) end
+function TreeCode.TreeCodeContractValueUnsupported:tree_code_contract_window(input, start, len, base) return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject(self.reason)) end
+function TreeCode.TreeCodeContractValueSupported:tree_code_contract_window(input, start, len, base) return start:tree_code_contract_window_start(input, len, base, self.value) end
+function TreeCode.TreeCodeContractValueUnsupported:tree_code_contract_window_start(input, len, base, base_len) return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject(self.reason)) end
+function TreeCode.TreeCodeContractValueSupported:tree_code_contract_window_start(input, len, base, base_len) return len:tree_code_contract_window_len(input, base, base_len, self.value) end
+function TreeCode.TreeCodeContractValueUnsupported:tree_code_contract_window_len(input, base, base_len, start) return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject(self.reason)) end
+function TreeCode.TreeCodeContractValueSupported:tree_code_contract_window_len(input, base, base_len, start) return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractWindowBounds(base, base_len, start, self.value), origin_generated("window bounds"))) end
 function Tree.ContractFactWindowBounds:lower_tree_contract_fact_to_code(input)
-  local base = input:tree_code_value_for_binding(self.base)
-  local bl = input:tree_code_value_for_expr(self.base_len); local st = input:tree_code_value_for_expr(self.start); local ln = input:tree_code_value_for_expr(self.len)
-  if bl == nil or st == nil or ln == nil then return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject("window bounds")) end
-  return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractWindowBounds(base, bl, st, ln), origin_binding(self.base)))
+  return input:tree_code_value_for_expr(self.base_len):tree_code_contract_window(input, input:tree_code_value_for_expr(self.start), input:tree_code_value_for_expr(self.len), input:tree_code_value_for_binding(self.base))
 end
 function Tree.ContractFactDisjoint:lower_tree_contract_fact_to_code(input)
   return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractDisjoint(input:tree_code_value_for_binding(self.a), input:tree_code_value_for_binding(self.b)), origin_binding(self.a)))
@@ -2447,16 +2484,12 @@ end
 function Tree.ContractFactWriteonly:lower_tree_contract_fact_to_code(input)
   return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractWriteonly(input:tree_code_value_for_binding(self.base)), origin_binding(self.base)))
 end
-function Tree.ContractFactExprReadonly:lower_tree_contract_fact_to_code(input)
-  local base = input:tree_code_contract_expr_for_expr(self.base)
-  if base == nil then return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject("expr readonly")) end
-  return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractProjectionReadonly(base), origin_generated("projection readonly")))
-end
-function Tree.ContractFactExprWriteonly:lower_tree_contract_fact_to_code(input)
-  local base = input:tree_code_contract_expr_for_expr(self.base)
-  if base == nil then return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject("expr writeonly")) end
-  return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractProjectionWriteonly(base), origin_generated("projection writeonly")))
-end
+function TreeCode.TreeCodeContractExprUnsupported:tree_code_contract_readonly(input) return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject(self.reason)) end
+function TreeCode.TreeCodeContractExprSupported:tree_code_contract_readonly(input) return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractProjectionReadonly(self.expr), origin_generated("projection readonly"))) end
+function Tree.ContractFactExprReadonly:lower_tree_contract_fact_to_code(input) return input:tree_code_contract_expr_for_expr(self.base):tree_code_contract_readonly(input) end
+function TreeCode.TreeCodeContractExprUnsupported:tree_code_contract_writeonly(input) return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject(self.reason)) end
+function TreeCode.TreeCodeContractExprSupported:tree_code_contract_writeonly(input) return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractProjectionWriteonly(self.expr), origin_generated("projection writeonly"))) end
+function Tree.ContractFactExprWriteonly:lower_tree_contract_fact_to_code(input) return input:tree_code_contract_expr_for_expr(self.base):tree_code_contract_writeonly(input) end
 function Tree.ContractFactInvalidate:lower_tree_contract_fact_to_code(input)
   return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractInvalidate(input:tree_code_value_for_binding(self.base)), origin_binding(self.base)))
 end
@@ -2467,5 +2500,4 @@ function Tree.ContractFactRejected:lower_tree_contract_fact_to_code(input)
   return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject("tree contract rejected: " .. class_name(self.issue)))
 end
 -- Keep schema_v2 on the canonical leaf-owned layout implementation.
-Tree.Module.lower_to_code = Tree.Module.lower_tree_module_to_code
 require("lalin.layout_resolve")(require("lalin.schema_v2"))

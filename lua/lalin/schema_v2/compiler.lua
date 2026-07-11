@@ -31,6 +31,10 @@ return schema. LalinCompiler {
     contracts [many [LalinCode.CodeFuncContractFact]],
     layout_env [LalinSem.LayoutEnv],
   },
+  product. CompilerCodeGenerationInput {
+    field. module [LalinCode.CodeModule],
+    contracts [many [LalinCode.CodeFuncContractFact]],
+  },
 
   product. CompilerSession {
     interned,
