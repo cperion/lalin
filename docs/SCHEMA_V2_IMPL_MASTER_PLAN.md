@@ -155,7 +155,8 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 
 ### TYP-OWN — Check/lower schema ownership
 
-**Failure cluster:** `tree_typecheck_type.lua:556` still looks for `TypeIssue` under `LalinTree`; correcting that exposes missing `LalinTreeLower` / `TreeLowerInput` ownership at `tree_lower.lua:20,142`.
+**Status:** integrated at `ae2a8e164`; independently approved.
+**Root cause:** canonical check-stage vocabulary remained under `LalinTree`; the apparent lower failure came from incorrectly binding legacy `tree_lower.lua` to the schema_v2 context.
 
 - [x] Move canonical check inputs/results/facts, issues, reasons, and explanations to `LalinCheck`.
 - [x] Preserve separate canonical `LalinTreeLower` and schema_v2 `LalinTreeCode` ownership.
@@ -380,7 +381,7 @@ Release-level gates:
 | STN-SCHED | P0 | STN-1 | Typed schedule selection | integrated | `d66eff0b6`; approved by `w4:p16` |
 | LAY-1 | P0 | STN-1 analysis | Typed leaf-owned layout resolution | integrated | `00303c45b`; approved by `w4:p14` |
 | TYP-1 | P0 | none | Typed frontend target projection | integrated | `1750e4ce5`; approved by `w4:p6` |
-| TYP-OWN | P0 | none | Canonical CHECK ownership | review | `d424d3f63`; reviewer `w4:p6` |
+| TYP-OWN | P0 | none | Canonical CHECK ownership | integrated | `ae2a8e164`; approved by `w4:p6` |
 | ABI-SIG | P0 | LAY-1 | Required code signature projection | integrated | `c95973fd5`; approved by `w4:p6` |
 | ABI-STATE | P0 | ABI-SIG vocabulary | Cross-unit lowering isolation | working | `pack/abi-state` (`w4:p1B`) |
 | LJBC-STENCIL | deferred | — | Abandoned LuaTrace / low-priority LuaJIT work | stopped | branch not integrated |
