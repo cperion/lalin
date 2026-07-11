@@ -32,4 +32,20 @@ return schema. LalinCompiler {
     layout_env [LalinSem.LayoutEnv],
   },
 
+  product. CompilerCBackendResult {
+    interned,
+    unit [LalinC.CBackendUnit],
+    report [LalinC.CBackendValidationReport],
+  },
+
+  sum. TreeCodeImplementation {
+    TreeCodeCanonicalImplementation,
+  },
+
+  product. CompilerImplementationRegistry {
+    interned,
+    tree_code [LalinCompiler.TreeCodeImplementation],
+  },
+
+  product. CompilerImplementationOwner { interned, },
 }

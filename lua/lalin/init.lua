@@ -592,9 +592,9 @@ local function prepare_c_backend(decl, name, opts)
         target_model = opts.target_model,
         back_target_model = opts.backend_target_model,
     })
-    if opts.reject_on_c_issues ~= false and c_result.c_report and c_result.c_report.issues and #c_result.c_report.issues ~= 0 then
+    if opts.reject_on_c_issues ~= false and #c_result.report.issues ~= 0 then
         local messages = {}
-        for i = 1, #c_result.c_report.issues do messages[#messages + 1] = tostring(c_result.c_report.issues[i]) end
+        for i = 1, #c_result.report.issues do messages[#messages + 1] = tostring(c_result.report.issues[i]) end
         error("emit_c validation failed: " .. table.concat(messages, "\n"), 2)
     end
     return {
@@ -605,9 +605,9 @@ local function prepare_c_backend(decl, name, opts)
         checked = checked,
         code_result = code_result,
         c_result = c_result,
-        c_unit = c_result.c_unit,
-        c_report = c_result.c_report,
-        unit = c_result.c_unit,
+        c_unit = c_result.unit,
+        c_report = c_result.report,
+        unit = c_result.unit,
     }
 end
 

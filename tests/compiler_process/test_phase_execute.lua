@@ -9,6 +9,7 @@ local Execute = require("lalin.phase_execute")
 local T = asdl.context()
 PhaseModel(T)
 PhaseDsl(T)
+local P = T.LalinPhase
 
 local pkg = assert(PhaseDsl.loadstring([[
 return package "demo.compiler" {
@@ -54,36 +55,51 @@ return package "demo.compiler" {
 ]], "phase_execute_test.lua"))()
 
 local planned = Plan.assert_plan(pkg, "compile")
-local executor = Execute.registry()
-executor:register_lua("demo.compiler", "check", function(input)
-    return { checked = input.source + 1 }
+local executor = Execute.registry(T)
+executor:register(P.MachineImplementationCapability(P.ImplLua("demo.compiler", "check")), function(request)
+    return P.PhaseValueNumber(request.input.value + 1)
 end)
-executor:register_lua("demo.compiler", "lower", function(input)
-    return { code = input.checked * 2 }
+executor:register(P.MachineImplementationCapability(P.ImplLua("demo.compiler", "lower")), function(request)
+    return P.PhaseValueNumber(request.input.value * 2)
 end)
 
-local report = executor:run(planned.plan, { source = 20 })
-assert(report.ok)
-assert(report.output.code == 42)
+local lua_impl = P.ImplLua("demo.compiler", "check")
+assert(asdl.classof(lua_impl:machine_implementation_capability()) == P.MachineImplementationCapability)
+assert(asdl.classof(lua_impl:resolve_machine_implementation(executor)) == P.MachineImplementationAvailable)
+assert(asdl.classof(P.ImplLalin("demo", "run"):resolve_machine_implementation(executor)) == P.MachineImplementationUnavailable)
+assert(asdl.classof(P.ImplC("demo_run"):resolve_machine_implementation(executor)) == P.MachineImplementationUnavailable)
+assert(asdl.classof(P.ImplExternal("demo.capability"):resolve_machine_implementation(executor)) == P.MachineImplementationUnavailable)
+
+local request = P.PhaseExecutionRequest(planned.plan, P.PhaseValueNumber(20))
+local report = executor:run(request)
+assert(asdl.classof(report) == P.PhaseExecutionSucceeded)
+assert(report.output.value == 42)
 assert(#report.steps == 2)
-assert(report.run.status == "done")
+assert(asdl.classof(report.steps[1]) == P.PhaseExecutionStepReport)
+assert(asdl.classof(report.steps[1].result) == P.PhaseMachineExecutionSucceeded)
+assert(asdl.classof(report.run) == P.PhaseRunArtifact)
+assert(report.run.status == P.PhaseRunSucceeded)
 assert(report.run.task.value == "compile")
 assert(#report.run.events == 6)
 assert(#report.run.steps == 2)
 
 local seen = {}
-local handle = executor:process(planned.plan, { source = 1 })
+local process_request = P.PhaseExecutionRequest(planned.plan, P.PhaseValueNumber(1))
+local handle = executor:process(process_request)
 for ev in handle:events() do seen[ev.kind] = (seen[ev.kind] or 0) + 1 end
-assert(handle:result().output.code == 4)
+assert(handle:result().output.value == 4)
 assert(seen.execute_start == 1)
 assert(seen.step_start == 2)
 assert(seen.step_done == 2)
 assert(seen.execute_done == 1)
 
-local unbound = Execute.registry():run(planned.plan, { source = 1 })
-assert(not unbound.ok)
-assert(unbound.diagnostics[1].code == "E_MACHINE_UNBOUND")
-assert(unbound.run.status == "failed")
-assert(unbound.run.steps[1].status == "failed")
+local unbound_request = P.PhaseExecutionRequest(planned.plan, P.PhaseValueNumber(1))
+local unbound = Execute.registry(T)
+unbound.bindings = {}
+local failed = unbound:run(unbound_request)
+assert(asdl.classof(failed) == P.PhaseExecutionFailed)
+assert(asdl.classof(failed.diagnostics[1]) == P.PhaseDiagnosticMachineUnavailable)
+assert(failed.run.status == P.PhaseRunFailed)
+assert(failed.run.steps[1].outcome == P.PhaseRunStepFailed)
 
 io.write("lalin phase_execute ok\n")

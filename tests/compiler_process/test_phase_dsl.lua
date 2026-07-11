@@ -104,7 +104,8 @@ assert(machine.abi == P.MachineAbiStatusReturning)
 assert(asdl.classof(machine.impl) == P.ImplLua)
 assert(machine.impl.module_name == "lalin.tree_typecheck")
 assert(machine.impl.function_name == "typecheck")
-assert(machine.capabilities[1] == "diagnostics")
+assert(machine.capabilities[1] == P.MachineCapabilityDiagnostics)
+assert(machine.capabilities[2] == P.MachineCapabilitySourceIndex)
 
 local phase = pkg.phases[2]
 assert(phase.id.text == "tree_lower")
@@ -113,6 +114,21 @@ assert(phase.output.text == "code")
 assert(phase.cache == P.CacheNode)
 assert(phase.deterministic == true)
 assert(phase.machine.text == "lalin_tree_lower")
+local unknown_capability_ok, unknown_capability_err = pcall(function()
+    return assert(PhaseDsl.loadstring([[
+return package "bad.capability" {
+    world. tree [LalinTree.Module],
+    machine. bad {
+        from. tree,
+        to. tree,
+        impl. lua { module = "bad", func = "run" },
+        capabilities { "not_a_capability" },
+    },
+}
+    ]], "phase_dsl_bad_capability.lua"))()
+end)
+assert(not unknown_capability_ok)
+assert(tostring(unknown_capability_err):match("unknown machine capability"))
 
 assert(pkg.roots[1].id.text == "compile")
 assert(pkg.roots[1].input.text == "tree")

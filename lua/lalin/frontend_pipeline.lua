@@ -47,25 +47,9 @@ local function assert_no_c_phase_unreachable(root, site)
 end
 
 local function bind_context(T)
-    require("lalin.compiler_model")(T)
-    local SurfaceResolve = require("lalin.surface_resolve")(T)
-    local ClosureConvert = require("lalin.closure_convert")(T)
-    local Typecheck = require("lalin.tree_typecheck")(T)
     local Layout = require("lalin.layout_resolve")(T)
-    local TreeToCode = require("lalin.tree_lower")(T)
-    local CodeValidate = require("lalin.code_validate")(T)
-    local CodeGraph = require("lalin.code_graph")(T)
-    local CodeFlowFacts = require("lalin.code_flow_facts")(T)
-    local CodeValueFacts = require("lalin.code_value_facts")(T)
-    local CodeMemFacts = require("lalin.code_mem_facts")(T)
-    local CodeEffectFacts = require("lalin.code_effect_facts")(T)
-    local CodeKernelPlan = require("lalin.code_kernel_plan")(T)
-    local CodeSchedulePlan = require("lalin.code_schedule_plan")(T)
-    local KernelValidate = require("lalin.kernel_validate")(T)
-    local CodeLowerPlan = require("lalin.code_lower_plan")(T)
+    local TreeToCode = T.LalinCompiler.CompilerImplementationOwner():compiler_implementation_registry().tree_code
     local CodeType = require("lalin.code_type")(T)
-    local LowerToC = require("lalin.lower_to_c")(T)
-    local CValidate = require("lalin.emit_c_validate")(T)
     local BackTarget = require("lalin.backend_target_model")(T)
     local CompilerAbi = require("lalin.compiler_abi")(T)
     local Errors = require("lalin.error")
@@ -112,13 +96,13 @@ local function bind_context(T)
         local resolved = Layout.module(checked.module, layout_env, host_target)
         progress(process_ctx, "layout_resolve", { module = resolved, target = is_c and "c" or "back" })
         if is_c then assert_no_c_phase_unreachable(resolved, opts.site or "C frontend") end
-        local lowering = TreeToCode.module_result(resolved, { layout_env = layout_env, target = target, module_id = opts.module_id })
+        local lowering = TreeToCode:module_result(resolved, { layout_env = layout_env, target = target, module_id = opts.module_id })
         local code_module = lowering.code_module
         local code_contract_set = lowering.contracts
         local code_contracts = code_contract_set.facts
         progress(process_ctx, "tree_lower", { code_module = code_module, code_contracts = code_contracts, code_contract_set = code_contract_set, target = is_c and "c" or "back" })
-        local code_report = CodeValidate.validate(code_module, collector)
-        progress(process_ctx, "code_validate", { report = code_report, target = is_c and "c" or "back" })
+        local code_issues = TreeToCode:code_validation_issues(code_module, collector)
+        progress(process_ctx, "code_validate", { issues = code_issues, target = is_c and "c" or "back" })
         return T.LalinCompiler.CodeResult(code_module, code_contracts, layout_env)
     end
 
@@ -133,40 +117,7 @@ local function bind_context(T)
             Errors.Terminal.render
         )
         CompilerAbi.assert_valid_code_result(code_result, { collector = collector })
-        local c_target = CodeType.default_target(opts.c_target or opts)
-        local c_opts = {}
-        for k, v in pairs(opts.c_opts or {}) do c_opts[k] = v end
-        for k, v in pairs(opts) do if c_opts[k] == nil then c_opts[k] = v end end
-        c_opts.target = c_target
-        c_opts.c_target = c_target
-        c_opts.layout_env = code_result.layout_env
-        local code_module, code_contracts = code_result.module, code_result.contracts
-        local graph = CodeGraph.graph(code_module)
-        progress(process_ctx, "code_graph", { graph = graph, target = "c" })
-        local flow_facts = CodeFlowFacts.facts(code_module, graph)
-        local flow_semantics = CodeFlowFacts.semantic_facts(code_module, graph, flow_facts)
-        progress(process_ctx, "flow_facts", { facts = flow_facts, semantics = flow_semantics, target = "c" })
-        local value_facts = CodeValueFacts.facts(code_module, graph, flow_facts)
-        progress(process_ctx, "value_facts", { facts = value_facts, target = "c" })
-        local mem_semantics = CodeMemFacts.semantic_facts(code_module, graph, flow_facts, value_facts, code_contracts)
-        local mem_facts = CodeMemFacts.facts(code_module, graph, flow_facts, value_facts, code_contracts)
-        progress(process_ctx, "memory_facts", { facts = mem_facts, semantics = mem_semantics, target = "c" })
-        local effect_facts = CodeEffectFacts.facts(code_module, graph, mem_semantics, code_contracts)
-        progress(process_ctx, "effect_facts", { facts = effect_facts, target = "c" })
-        local kernel_plan = CodeKernelPlan.plan(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts)
-        progress(process_ctx, "kernel_plan", { plan = kernel_plan, target = "c" })
-        local schedule_plan = CodeSchedulePlan.plan(code_module, kernel_plan, flow_facts, value_facts, mem_semantics, effect_facts, opts.target_model or opts.backend_target_model)
-        progress(process_ctx, "schedule_plan", { plan = schedule_plan, target = "c" })
-        local lower_plan = CodeLowerPlan.plan(code_module, graph, kernel_plan, schedule_plan, T.LalinLower.LowerTargetC)
-        progress(process_ctx, "lower_plan", { plan = lower_plan, target = "c" })
-        local kernel_report = KernelValidate.validate(code_module, graph, flow_facts, value_facts, mem_semantics, effect_facts, kernel_plan, schedule_plan, lower_plan, { collector = collector })
-        progress(process_ctx, "kernel_validate", { report = kernel_report, target = "c" })
-        c_opts.validate = false
-        local c_unit = LowerToC.module(code_module, lower_plan, c_opts)
-        progress(process_ctx, "lower_to_c", { c_unit = c_unit, target = "c" })
-        local c_report = CValidate.validate(c_unit, collector)
-        progress(process_ctx, "c_validate", { report = c_report, target = "c" })
-        return { c_unit = c_unit, c_report = c_report }
+        return TreeToCode:code_result_to_c(code_result, opts)
     end
 
     local function typecheck_module(module, opts)
@@ -179,12 +130,12 @@ local function bind_context(T)
             Errors.Catalog,
             Errors.Terminal.render
         )
-        local surfaced = SurfaceResolve.module(module)
+        local surfaced = TreeToCode:surface_resolve(module)
         progress(process_ctx, "surface_resolve", { module = surfaced })
-        local closed = ClosureConvert.module(surfaced)
+        local closed = TreeToCode:closure_convert(surfaced)
         progress(process_ctx, "closure_convert", { module = closed })
         local host_target = typecheck_host_target(opts)
-        local checked = Typecheck.check_module(closed, { collector = collector, layout_env = opts.layout_env, target = host_target })
+        local checked = TreeToCode:typecheck_module(closed, { collector = collector, layout_env = opts.layout_env, target = host_target })
         progress(process_ctx, "typecheck", { result = checked, module = checked and checked.module })
         return checked
     end

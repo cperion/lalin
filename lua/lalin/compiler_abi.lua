@@ -12,15 +12,13 @@ local function class_name(v)
 end
 
 local function bind_context(T)
-    require("lalin.compiler_model")(T)
-
     T._lalin_api_cache = T._lalin_api_cache or {}
     if T._lalin_api_cache.compiler_abi ~= nil then return T._lalin_api_cache.compiler_abi end
 
     local Compiler = T.LalinCompiler
     local Code = T.LalinCode
     local Sem = T.LalinSem
-    local CodeValidate = require("lalin.code_validate")(T)
+    local TreeToCode = Compiler.CompilerImplementationOwner():compiler_implementation_registry().tree_code
 
     local api = {}
 
@@ -59,9 +57,9 @@ local function bind_context(T)
         end
 
         if module_ok then
-            local code_report = CodeValidate.validate(code_result.module, opts.collector)
-            for i = 1, #(code_report.issues or {}) do
-                add(issues, Compiler.CodeResultIssueInvalidCode(code_report.issues[i]))
+            local code_issues = TreeToCode:code_validation_issues(code_result.module, opts.collector)
+            for i = 1, #code_issues do
+                add(issues, Compiler.CodeResultIssueInvalidCode(code_issues[i]))
             end
         end
 

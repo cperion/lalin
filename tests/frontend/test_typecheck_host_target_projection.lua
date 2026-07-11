@@ -66,6 +66,12 @@ assert(checked.target.pointer_bits == 32)
 assert(checked.target.index_bits == 16)
 assert(checked.target.endian == H.HostEndianBig)
 
+local canonical_code = Pipeline.checked_to_code_result(checked, { root = "emit_c", c_target = c_target })
+local canonical_c = Pipeline.code_result_to_c(canonical_code, { c_target = c_target })
+assert(asdl.classof(canonical_c) == T.LalinCompiler.CompilerCBackendResult)
+assert(asdl.classof(canonical_c.unit) == T.LalinC.CBackendUnit)
+assert(asdl.classof(canonical_c.report) == T.LalinC.CBackendValidationReport)
+
 local lalin = require("lalin")
 local public_decls = assert(lalin.loadstring([=[
 struct Pair

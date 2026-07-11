@@ -9,11 +9,13 @@ local function phase_module()
 end
 
 function M.schema(T)
+    require("lalin.schema")(T)
     return S.to_asdl_schema(T, { phase_module() })
 end
 
 local function bind_context(T)
     if T.LalinPhase ~= nil then return T end
+    require("lalin.schema")(T)
     return S.define(T, { phase_module() })
 end
 

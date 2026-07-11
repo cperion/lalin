@@ -23,7 +23,7 @@ local machine = Ph.Machine(
     Ph.WorldId("diag"),
     Ph.MachineAbiStatusReturning,
     Ph.ImplLua("lalin.tree_typecheck", "typecheck"),
-    { "diagnostics" }
+    { Ph.MachineCapabilityDiagnostics }
 )
 assert(machine.input.text == "tree")
 assert(machine.impl.function_name == "typecheck")
@@ -35,7 +35,7 @@ local root = Ph.Root(Ph.RootId("compile"), Ph.WorldId("tree"), Ph.WorldId("check
 assert(root.id.text == "compile")
 assert(root.output.text == "checked")
 
-local step = Ph.PlanStep(1, Ph.PhaseId("typecheck"), Ph.MachineId("typecheck"), Ph.WorldId("tree"), Ph.WorldId("checked"), Ph.WorldId("diag"), Ph.CacheIdentity, true, Ph.MachineAbiStatusReturning, Ph.ImplLua("lalin.tree_typecheck", "typecheck"), { "diagnostics" })
+local step = Ph.PlanStep(1, Ph.PhaseId("typecheck"), Ph.MachineId("typecheck"), Ph.WorldId("tree"), Ph.WorldId("checked"), Ph.WorldId("diag"), Ph.CacheIdentity, true, Ph.MachineAbiStatusReturning, Ph.ImplLua("lalin.tree_typecheck", "typecheck"), { Ph.MachineCapabilityDiagnostics })
 local plan = Ph.Plan(Ph.RootId("compile"), Ph.WorldId("tree"), Ph.WorldId("checked"), { step })
 assert(plan.steps[1].phase.text == "typecheck")
 

@@ -77,7 +77,9 @@ function M.schema(T)
 end
 
 local function bind_context(T)
-    return Dsl.define(T, M.load_modules())
+    Dsl.define(T, M.load_modules())
+    require("lalin.compiler_implementation").install_canonical(T)
+    return T
 end
 
 M.dsl = Dsl

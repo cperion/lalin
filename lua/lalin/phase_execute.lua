@@ -1,184 +1,160 @@
--- LalinPhase plan execution shell.
---
--- LalinPhase plan execution shell.
---
--- This is the runtime boundary for planned compiler packages. The executor is
--- deliberately explicit: Lua/Lalin/C/external implementations all
--- resolve through a registry key, with Lua/Lalin allowed to fall back to
--- require(module)[function] for hosted compiler code.
+-- Typed LalinPhase plan execution.
 
 local llbl = require("llbl")
 local asdl = require("lalin.asdl")
 
 local M = {}
-local M = {}
-
 local Executor = {}
 Executor.__index = Executor
 
-local function id_text(id)
-    if type(id) == "table" and type(id.text) == "string" then return id.text end
-    if type(id) == "string" then return id end
-    return tostring(id)
+local function append(values, value)
+    local out = {}
+    for i = 1, #values do out[i] = values[i] end
+    out[#out + 1] = value
+    return out
 end
 
-local function class_kind(v)
-    return asdl.class_basename(v)
+local function install_methods(T)
+    local P = T.LalinPhase
+
+    function P.ImplLua:machine_implementation_capability() return P.MachineImplementationCapability(self) end
+    function P.ImplLalin:machine_implementation_capability() return P.MachineImplementationCapability(self) end
+    function P.ImplC:machine_implementation_capability() return P.MachineImplementationCapability(self) end
+    function P.ImplExternal:machine_implementation_capability() return P.MachineImplementationCapability(self) end
+
+    local function resolve_implementation(implementation, executor)
+        return executor:resolve(implementation:machine_implementation_capability())
+    end
+
+    function P.ImplLua:resolve_machine_implementation(executor) return resolve_implementation(self, executor) end
+    function P.ImplLalin:resolve_machine_implementation(executor) return resolve_implementation(self, executor) end
+    function P.ImplC:resolve_machine_implementation(executor) return resolve_implementation(self, executor) end
+    function P.ImplExternal:resolve_machine_implementation(executor) return resolve_implementation(self, executor) end
+
+    function P.MachineImplementationAvailable:execute_machine(executor, request)
+        return executor:invoke(self.capability, request)
+    end
+
+    function P.MachineImplementationUnavailable:execute_machine(_, request)
+        return P.PhaseMachineExecutionFailed(P.PhaseDiagnosticMachineUnavailable(
+            request.step, self.capability.implementation, self.reason
+        ))
+    end
+
+    function P.PhaseMachineExecutionSucceeded:advance_execution(progress, step)
+        local report = P.PhaseExecutionStepReport(step, progress.current, self)
+        return P.PhaseExecutionContinuing(
+            self.output, append(progress.steps, report), progress.diagnostics,
+            append(progress.run_steps, P.PhaseRunStep(step.index, step.phase, step.machine, P.PhaseRunStepCompleted))
+        )
+    end
+
+    function P.PhaseMachineExecutionFailed:advance_execution(progress, step)
+        local report = P.PhaseExecutionStepReport(step, progress.current, self)
+        return P.PhaseExecutionStopped(
+            progress.current, append(progress.steps, report), append(progress.diagnostics, self.diagnostic),
+            append(progress.run_steps, P.PhaseRunStep(step.index, step.phase, step.machine, P.PhaseRunStepFailed))
+        )
+    end
+
+    local function run_artifact(request, status, events, steps)
+        return P.PhaseRunArtifact(P.PhaseRunTaskId(request.plan.root.text), status, events, steps)
+    end
+
+    function P.PhaseExecutionContinuing:execute_remaining(executor, request, index, ctx, run_events)
+        if index > #request.plan.steps then
+            local event = P.PhaseRunExecuteSucceeded(#run_events + 1)
+            run_events[#run_events + 1] = event
+            ctx:event("execute_done", event)
+            return P.PhaseExecutionSucceeded(
+                request, self.current, self.steps, self.diagnostics,
+                run_artifact(request, P.PhaseRunSucceeded, run_events, self.run_steps)
+            )
+        end
+
+        local step = request.plan.steps[index]
+
+        local started = P.PhaseRunStepStarted(#run_events + 1, step.index, step.phase, step.machine)
+        run_events[#run_events + 1] = started
+        local machine_request = P.PhaseMachineExecutionRequest(step, self.current)
+        ctx:event("step_start", machine_request)
+        local result = step.impl:resolve_machine_implementation(executor):execute_machine(executor, machine_request)
+        local finished = P.PhaseRunStepFinished(#run_events + 1, step.index, step.phase, step.machine)
+        run_events[#run_events + 1] = finished
+        ctx:event("step_done", result)
+        return result:advance_execution(self, step):execute_remaining(executor, request, index + 1, ctx, run_events)
+    end
+
+    function P.PhaseExecutionStopped:execute_remaining(_, request, _, ctx, run_events)
+        local event = P.PhaseRunExecuteFailed(#run_events + 1)
+        run_events[#run_events + 1] = event
+        ctx:event("execute_done", event)
+        return P.PhaseExecutionFailed(
+            request, self.current, self.steps, self.diagnostics,
+            run_artifact(request, P.PhaseRunFailed, run_events, self.run_steps)
+        )
+    end
+
+    function P.PhaseExecutionSucceeded:require_output() return self.output end
+    function P.PhaseExecutionFailed:require_output()
+        local messages = {}
+        for i = 1, #self.diagnostics do messages[i] = self.diagnostics[i]:diagnostic_text() end
+        error(table.concat(messages, "\n"), 2)
+    end
+
+    function P.PhaseDiagnosticMachineUnavailable:diagnostic_text()
+        return "machine " .. self.step.machine.text .. " unavailable: " .. self.reason
+    end
+    function P.PhaseDiagnosticMachineFailed:diagnostic_text()
+        return "machine " .. self.step.machine.text .. " failed: " .. self.message
+    end
+
+    function P.PhaseValueTreeModule:compiler_value() return self.module end
+    function P.PhaseValueCheckedModule:compiler_value() return self.checked end
+    function P.PhaseValueCompilerCode:compiler_value() return self.code end
+    function P.PhaseValueCBackend:compiler_value() return self.result.unit end
+    function P.PhaseValueNumber:compiler_value() return self.value end
 end
 
-local function impl_key(impl)
-    local kind = class_kind(impl)
-    if kind == "ImplLua" then return "lua", impl.module_name .. ":" .. impl.function_name end
-    if kind == "ImplLalin" then return "lalin", impl.module_name .. ":" .. impl.function_name end
-    if kind == "ImplC" then return "c", impl.symbol end
-    if kind == "ImplExternal" then return "external", impl.capability end
-    return "unknown", tostring(impl)
+function M.registry(T)
+    if T ~= nil then install_methods(T) end
+    local executor = setmetatable({ bindings = {}, context = T }, Executor)
+    if T ~= nil then require("lalin.compiler_machines").register_capabilities(executor, T) end
+    return executor
 end
 
-local function call_result(a, b)
-    if type(a) == "table" and rawget(a, "output") ~= nil then return a.output, a.diagnostics end
-    return a, b
-end
-
-function M.registry(opts)
-    return setmetatable({ bindings = {}, opts = opts or {} }, Executor)
-end
-
-function Executor:register(kind, key, fn)
-    if type(fn) ~= "function" then error("phase_execute: binding must be a function", 2) end
-    self.bindings[tostring(kind) .. ":" .. tostring(key)] = fn
+function Executor:register(capability, fn)
+    if type(fn) ~= "function" then error("phase_execute: capability binding must be a function", 2) end
+    local T = asdl.context_of(capability)
+    if self.context == nil then self.context = T; install_methods(T) end
+    self.bindings[capability.implementation] = fn
     return self
 end
 
-function Executor:register_lua(module_name, function_name, fn)
-    return self:register("lua", tostring(module_name) .. ":" .. tostring(function_name), fn)
+function Executor:resolve(capability)
+    if self.bindings[capability.implementation] ~= nil then
+        return self.context.LalinPhase.MachineImplementationAvailable(capability)
+    end
+    return self.context.LalinPhase.MachineImplementationUnavailable(capability, "no registered typed capability")
 end
 
-function Executor:register_lalin(module_name, function_name, fn)
-    return self:register("lalin", tostring(module_name) .. ":" .. tostring(function_name), fn)
-end
-
-function Executor:register_c(symbol, fn)
-    return self:register("c", symbol, fn)
-end
-
-function Executor:register_external(capability, fn)
-    return self:register("external", capability, fn)
-end
-
-function Executor:resolve(impl)
-    local kind, key = impl_key(impl)
-    local registered = self.bindings[kind .. ":" .. key]
-    if registered then return registered, kind, key end
-
-    if kind == "lua" or kind == "lalin" then
-        local module_name, function_name = key:match("^(.*):([^:]*)$")
-        local ok, module = pcall(require, module_name)
-        if ok then
-            local fn = module[function_name]
-            if type(fn) == "function" then return fn, kind, key end
-            if type(module) == "function" and (function_name == "call" or function_name == "run") then return module, kind, key end
-        end
-    end
-
-    return nil, kind, key
-end
-
-local function execute_plan(ctx, executor, plan, input, opts)
-    opts = opts or {}
-    executor = executor or M.registry()
-    local report = {
-        ok = true,
-        plan = plan,
-        input = input,
-        output = nil,
-        diagnostics = {},
-        steps = {},
-        run = nil,
-    }
-    local run_events = {}
-    local run_steps = {}
-
-    local function task_event(seq, kind, payload)
-        return { seq = seq or 0, kind = tostring(kind or "event"), message = tostring(payload or "") }
-    end
-
-    local function task_step(index, phase, machine, status)
-        return { index = index or 0, phase = tostring(phase or ""), machine = tostring(machine or ""), status = tostring(status or "done") }
-    end
-
-    local function task_run(name, status, events, steps)
-        return { task = tostring(name or "task"), status = tostring(status or "done"), events = events or {}, steps = steps or {} }
-    end
-
-    local function emit(kind, payload)
-        run_events[#run_events + 1] = task_event(#run_events + 1, kind, payload)
-        return ctx:event(kind, payload)
-    end
-    emit("execute_start", { plan = plan, root = plan and plan.root and id_text(plan.root) or nil })
-
-    local current = input
-    for i = 1, #(plan.steps or {}) do
-        local step = plan.steps[i]
-        local phase_name = id_text(step.phase)
-        local fn, kind, key = executor:resolve(step.impl)
-        emit("step_start", { index = i, phase = phase_name, machine = id_text(step.machine), impl_kind = kind, impl_key = key, input = current, step = step })
-        if not fn then
-            local d = { severity = "error", code = "E_MACHINE_UNBOUND", message = "no binding for " .. tostring(kind) .. " implementation '" .. tostring(key) .. "'", step = step }
-            report.ok = false
-            report.diagnostics[#report.diagnostics + 1] = d
-            run_steps[#run_steps + 1] = task_step(i, phase_name, id_text(step.machine), "failed")
-            ctx:diagnostic(d)
-            break
-        end
-        local ok, a, b = pcall(fn, current, step, { executor = executor, plan = plan, opts = opts })
-        if not ok then
-            local d = { severity = "error", code = "E_MACHINE_FAILED", message = tostring(a), step = step }
-            report.ok = false
-            report.diagnostics[#report.diagnostics + 1] = d
-            run_steps[#run_steps + 1] = task_step(i, phase_name, id_text(step.machine), "failed")
-            ctx:diagnostic(d)
-            break
-        end
-        local output, diagnostics = call_result(a, b)
-        if diagnostics then report.diagnostics[#report.diagnostics + 1] = diagnostics end
-        local step_report = { step = step, input = current, output = output }
-        current = output
-        report.steps[#report.steps + 1] = step_report
-        run_steps[#run_steps + 1] = task_step(i, phase_name, id_text(step.machine), "done")
-        emit("step_done", { index = i, phase = phase_name, output = output, diagnostics = diagnostics, step = step })
-    end
-
-    report.output = current
-    emit("execute_done", { ok = report.ok, output = report.output, diagnostics = report.diagnostics })
-    report.run = task_run(plan and plan.root and id_text(plan.root) or "phase_execute", report.ok and "done" or "failed", run_events, run_steps)
-    return report
+function Executor:invoke(capability, request)
+    local P = self.context.LalinPhase
+    local ok, output = pcall(self.bindings[capability.implementation], request)
+    if ok then return P.PhaseMachineExecutionSucceeded(output) end
+    return P.PhaseMachineExecutionFailed(P.PhaseDiagnosticMachineFailed(
+        request.step, capability.implementation, tostring(output)
+    ))
 end
 
 local function collecting_context(ctx, events)
-    return setmetatable({}, {
-        __index = function(_, key)
-            if key == "event" then
-                return function(_, kind, payload)
-                    local ev = ctx:make_event(kind, payload)
-                    events[#events + 1] = ev
-                    return ev
-                end
-            end
-            if key == "diagnostic" then
-                return function(_, spec)
-                    local ev = ctx:diagnostic_event(spec)
-                    events[#events + 1] = ev
-                    return ev
-                end
-            end
-            return function(_, payload)
-                local ev = ctx:make_event(key, payload)
-                events[#events + 1] = ev
-                return ev
-            end
+    return {
+        event = function(_, kind, payload)
+            local event = ctx:make_event(kind, payload)
+            events[#events + 1] = event
+            return event
         end,
-    })
+    }
 end
 
 local function materialized_event_region(ctx, fn)
@@ -189,34 +165,38 @@ local function materialized_event_region(ctx, fn)
             events[#events + 1] = param.ctx:make_event("result", { result = report })
             state = { events = events, index = 1 }
         end
-        local ev = state.events[state.index]
-        if ev == nil then return nil end
+        local event = state.events[state.index]
+        if event == nil then return nil end
         state.index = state.index + 1
-        return state, ev
+        return state, event
     end
     return gen, { ctx = ctx, fn = fn }, nil
 end
 
-local function phase_execute_process_body(ctx, executor, plan, input, opts)
-        return materialized_event_region(ctx, function(event_ctx)
-            return execute_plan(event_ctx, executor, plan, input, opts)
-        end)
+local function execute_request(ctx, executor, request)
+    local P = executor.context.LalinPhase
+    local run_events = { P.PhaseRunExecuteStarted(1) }
+    ctx:event("execute_start", request)
+    return P.PhaseExecutionContinuing(request.input, {}, {}, {}):execute_remaining(
+        executor, request, 1, ctx, run_events
+    )
 end
 
-M.process = llbl.process.phase_execute { "executor", "plan", "input", "opts" } (phase_execute_process_body)
+local function phase_execute_process_body(ctx, executor, request)
+    return materialized_event_region(ctx, function(event_ctx)
+        return execute_request(event_ctx, executor, request)
+    end)
+end
 
-function Executor:run(plan, input, opts)
-    local handle = M.process:start(self, plan, input, opts)
+M.process = llbl.process.phase_execute { "executor", "request" } (phase_execute_process_body)
+
+function Executor:run(request)
+    local handle = M.process:start(self, request)
     for _ in handle:events() do end
     return handle:result()
 end
 
-function Executor:process(plan, input, opts)
-    return M.process:start(self, plan, input, opts)
-end
-
-function M.execute(plan, input, executor, opts)
-    return (executor or M.registry()):run(plan, input, opts)
-end
+function Executor:process(request) return M.process:start(self, request) end
+function M.execute(request, executor) return executor:run(request) end
 
 return M

@@ -25,6 +25,15 @@ assert(pkg.worlds[4].ty.type_name == "CBackendUnit")
 assert(pkg.worlds[5].ty.module_name == "LalinDiag")
 assert(pkg.worlds[5].ty.type_name == "Report")
 
+local canonical_implementations = T.LalinCompiler.CompilerImplementationOwner():compiler_implementation_registry()
+assert(canonical_implementations.tree_code == T.LalinCompiler.TreeCodeCanonicalImplementation)
+assert(canonical_implementations.tree_code:implementation_module_name() == "lalin.tree_lower")
+
+local V2 = require("lalin.schema_v2")
+local schema_v2_implementations = V2.LalinCompiler.CompilerImplementationOwner():compiler_implementation_registry()
+assert(schema_v2_implementations.tree_code == V2.LalinCompiler.TreeCodeSchemaV2Implementation)
+assert(schema_v2_implementations.tree_code:implementation_module_name() == "lalin.impl.tree_code")
+
 local planned = Plan.assert_plan(pkg, "compile")
 assert(asdl.classof(planned.plan) == P.Plan)
 assert(#planned.plan.steps == 3)

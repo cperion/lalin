@@ -55,6 +55,27 @@ return schema. LalinPhase {
     },
   },
 
+  product. MachineImplementationCapability {
+    interned,
+    implementation [LalinPhase.MachineImpl],
+  },
+
+  sum. MachineImplementationResolution {
+    MachineImplementationAvailable { variant_unique, capability [LalinPhase.MachineImplementationCapability], },
+    MachineImplementationUnavailable { variant_unique, capability [LalinPhase.MachineImplementationCapability], reason [str], },
+  },
+
+  sum. MachineCapability {
+    MachineCapabilityDiagnostics,
+    MachineCapabilitySourceIndex,
+    MachineCapabilitySurfaceResolve,
+    MachineCapabilityClosureConvert,
+    MachineCapabilityLayout,
+    MachineCapabilityTreeLower,
+    MachineCapabilityCodeFacts,
+    MachineCapabilityCBackend,
+  },
+
   product. Machine {
     interned,
     field. id [LalinPhase.MachineId],
@@ -63,7 +84,7 @@ return schema. LalinPhase {
     diagnostics [optional [LalinPhase.WorldId]],
     abi [LalinPhase.MachineAbi],
     impl [LalinPhase.MachineImpl],
-    capabilities [many [LalinSchedule.ScheduleEmitterKind]],
+    capabilities [many [LalinPhase.MachineCapability]],
   },
 
   product. Phase {
@@ -96,7 +117,7 @@ return schema. LalinPhase {
     deterministic [bool],
     abi [LalinPhase.MachineAbi],
     impl [LalinPhase.MachineImpl],
-    capabilities [many [LalinSchedule.ScheduleEmitterKind]],
+    capabilities [many [LalinPhase.MachineCapability]],
   },
 
   product. Plan {
@@ -105,6 +126,115 @@ return schema. LalinPhase {
     input [LalinPhase.WorldId],
     output [LalinPhase.WorldId],
     steps [many [LalinPhase.PlanStep]],
+  },
+
+  sum. PhaseExecutionValue {
+    PhaseValueTreeModule { variant_unique, field. module [LalinTree.Module], },
+    PhaseValueCheckedModule { variant_unique, checked [LalinCheck.TypeModuleResult], },
+    PhaseValueCompilerCode { variant_unique, code [LalinCompiler.CodeResult], },
+    PhaseValueCBackend { variant_unique, result [LalinCompiler.CompilerCBackendResult], },
+    PhaseValueNumber { variant_unique, field. value [number], },
+  },
+
+  product. PhaseExecutionRequest {
+    interned,
+    plan [LalinPhase.Plan],
+    input [LalinPhase.PhaseExecutionValue],
+  },
+
+  product. PhaseMachineExecutionRequest {
+    interned,
+    step [LalinPhase.PlanStep],
+    input [LalinPhase.PhaseExecutionValue],
+  },
+
+  sum. PhaseExecutionDiagnostic {
+    PhaseDiagnosticMachineUnavailable { variant_unique, step [LalinPhase.PlanStep], implementation [LalinPhase.MachineImpl], reason [str], },
+    PhaseDiagnosticMachineFailed { variant_unique, step [LalinPhase.PlanStep], implementation [LalinPhase.MachineImpl], message [str], },
+  },
+
+  sum. PhaseMachineExecutionResult {
+    PhaseMachineExecutionSucceeded { variant_unique, output [LalinPhase.PhaseExecutionValue], },
+    PhaseMachineExecutionFailed { variant_unique, diagnostic [LalinPhase.PhaseExecutionDiagnostic], },
+  },
+
+  product. PhaseExecutionStepReport {
+    interned,
+    step [LalinPhase.PlanStep],
+    input [LalinPhase.PhaseExecutionValue],
+    result [LalinPhase.PhaseMachineExecutionResult],
+  },
+
+  sum. PhaseExecutionProgress {
+    PhaseExecutionContinuing {
+      variant_unique,
+      current [LalinPhase.PhaseExecutionValue],
+      steps [many [LalinPhase.PhaseExecutionStepReport]],
+      diagnostics [many [LalinPhase.PhaseExecutionDiagnostic]],
+      run_steps [many [LalinPhase.PhaseRunStep]],
+    },
+    PhaseExecutionStopped {
+      variant_unique,
+      current [LalinPhase.PhaseExecutionValue],
+      steps [many [LalinPhase.PhaseExecutionStepReport]],
+      diagnostics [many [LalinPhase.PhaseExecutionDiagnostic]],
+      run_steps [many [LalinPhase.PhaseRunStep]],
+    },
+  },
+
+  product. PhaseRunTaskId { interned, field. value [str], },
+
+  sum. PhaseRunStatus {
+    PhaseRunSucceeded,
+    PhaseRunFailed,
+  },
+
+  sum. PhaseRunStepOutcome {
+    PhaseRunStepCompleted,
+    PhaseRunStepFailed,
+  },
+
+  product. PhaseRunStep {
+    interned,
+    field. index [number],
+    phase [LalinPhase.PhaseId],
+    machine [LalinPhase.MachineId],
+    outcome [LalinPhase.PhaseRunStepOutcome],
+  },
+
+  sum. PhaseRunEvent {
+    PhaseRunExecuteStarted { variant_unique, seq [number], },
+    PhaseRunStepStarted { variant_unique, seq [number], field. index [number], phase [LalinPhase.PhaseId], machine [LalinPhase.MachineId], },
+    PhaseRunStepFinished { variant_unique, seq [number], field. index [number], phase [LalinPhase.PhaseId], machine [LalinPhase.MachineId], },
+    PhaseRunExecuteSucceeded { variant_unique, seq [number], },
+    PhaseRunExecuteFailed { variant_unique, seq [number], },
+  },
+
+  product. PhaseRunArtifact {
+    interned,
+    task [LalinPhase.PhaseRunTaskId],
+    status [LalinPhase.PhaseRunStatus],
+    events [many [LalinPhase.PhaseRunEvent]],
+    steps [many [LalinPhase.PhaseRunStep]],
+  },
+
+  sum. PhaseExecutionReport {
+    PhaseExecutionSucceeded {
+      variant_unique,
+      request [LalinPhase.PhaseExecutionRequest],
+      output [LalinPhase.PhaseExecutionValue],
+      steps [many [LalinPhase.PhaseExecutionStepReport]],
+      diagnostics [many [LalinPhase.PhaseExecutionDiagnostic]],
+      run [LalinPhase.PhaseRunArtifact],
+    },
+    PhaseExecutionFailed {
+      variant_unique,
+      request [LalinPhase.PhaseExecutionRequest],
+      last_value [LalinPhase.PhaseExecutionValue],
+      steps [many [LalinPhase.PhaseExecutionStepReport]],
+      diagnostics [many [LalinPhase.PhaseExecutionDiagnostic]],
+      run [LalinPhase.PhaseRunArtifact],
+    },
   },
 
   product. Package {

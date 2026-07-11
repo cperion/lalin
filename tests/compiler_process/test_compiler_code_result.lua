@@ -23,17 +23,19 @@ local module_ast = decl:ast()
 local T = asdl.context_of(module_ast)
 local C = T.LalinCompiler
 
-local checked = Machines.typecheck_module(module_ast, nil, { opts = { context = T, site = "test_compiler_code_result" } })
+local checked = Machines.typecheck_module(module_ast)
 
 local abi = Abi(T)
 
-local c_code = Machines.checked_to_c_code(checked, nil, { opts = { context = T, site = "test_compiler_code_result_c" } })
+local c_code = Machines.checked_to_c_code(checked)
 assert(asdl.classof(c_code) == C.CodeResult)
 local c_report = abi.validate_code_result(c_code)
 assert(#c_report.issues == 0)
 
-local c_unit = Machines.code_to_c(c_code, nil, { opts = { context = T, site = "test_compiler_code_result_c" } })
-assert(tostring(asdl.classof(c_unit)):match("LalinC%.CBackendUnit"))
+local c_backend = Machines.code_to_c(c_code)
+assert(asdl.classof(c_backend) == C.CompilerCBackendResult)
+assert(tostring(asdl.classof(c_backend.unit)):match("LalinC%.CBackendUnit"))
+assert(#c_backend.report.issues == 0)
 
 local bad_report = abi.validate_code_result(c_code.module)
 assert(#bad_report.issues == 1)

@@ -31,10 +31,26 @@ return schema. LalinCompiler {
     contracts [many [LalinCode.CodeFuncContractFact]],
     layout_env [LalinSem.LayoutEnv],
   },
+  product. CompilerCBackendResult {
+    interned,
+    unit [LalinC.CBackendUnit],
+    report [LalinC.CBackendValidationReport],
+  },
   product. CompilerCodeGenerationInput {
     field. module [LalinCode.CodeModule],
     contracts [many [LalinCode.CodeFuncContractFact]],
   },
+
+  sum. TreeCodeImplementation {
+    TreeCodeSchemaV2Implementation,
+  },
+
+  product. CompilerImplementationRegistry {
+    interned,
+    tree_code [LalinCompiler.TreeCodeImplementation],
+  },
+
+  product. CompilerImplementationOwner { interned, },
 
   product. CompilerSession {
     interned,

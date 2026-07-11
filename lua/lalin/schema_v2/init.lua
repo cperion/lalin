@@ -48,6 +48,8 @@ modules[#modules + 1] = luajit_decl
 local T = asdl.context()
 S.define(T, modules)
 
+require("lalin.compiler_implementation").install_schema_v2(T)
+
 -- Step 3: Patch package.loaded so impl files get typed namespaces
 -- Map schema module name → T namespace
 local name_to_path = {}

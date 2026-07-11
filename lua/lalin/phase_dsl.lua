@@ -99,11 +99,35 @@ local function stage_machine_ref(v)
     return nil
 end
 
-local function string_array(v, what)
+local function machine_capability(spec)
+    local P = require_phase()
+    if spec == P.MachineCapabilityDiagnostics
+        or spec == P.MachineCapabilitySourceIndex
+        or spec == P.MachineCapabilitySurfaceResolve
+        or spec == P.MachineCapabilityClosureConvert
+        or spec == P.MachineCapabilityLayout
+        or spec == P.MachineCapabilityTreeLower
+        or spec == P.MachineCapabilityCodeFacts
+        or spec == P.MachineCapabilityCBackend then
+        return spec
+    end
+    local name = ident_text(spec, "machine capability")
+    if name == "diagnostics" then return P.MachineCapabilityDiagnostics end
+    if name == "source_index" then return P.MachineCapabilitySourceIndex end
+    if name == "surface_resolve" then return P.MachineCapabilitySurfaceResolve end
+    if name == "closure_convert" then return P.MachineCapabilityClosureConvert end
+    if name == "layout" then return P.MachineCapabilityLayout end
+    if name == "tree_lower" then return P.MachineCapabilityTreeLower end
+    if name == "code_facts" then return P.MachineCapabilityCodeFacts end
+    if name == "c_backend" then return P.MachineCapabilityCBackend end
+    error("phase_dsl: unknown machine capability " .. tostring(name), 3)
+end
+
+local function machine_capabilities(v)
     if v == nil then return {} end
-    if type(v) ~= "table" then error("phase_dsl: " .. what .. " expects table", 3) end
+    if type(v) ~= "table" then error("phase_dsl: capabilities expects table", 3) end
     local out = {}
-    for i = 1, #v do out[#out + 1] = tostring(v[i]) end
+    for i = 1, #v do out[#out + 1] = machine_capability(v[i]) end
     return out
 end
 
@@ -237,7 +261,7 @@ local Lang = llbl.dialect "LalinPhaseDsl" {
 
     g.head .capabilities {
         g.slot .names [g.value],
-        emit = function(n) return part("capabilities", string_array(n.names, "capabilities")) end,
+        emit = function(n) return part("capabilities", machine_capabilities(n.names)) end,
     },
 
     g.head .root {
@@ -329,6 +353,25 @@ local function abi_text(v)
     return tostring(v)
 end
 
+local function capability_text(v)
+    local P = require_phase()
+    if v == P.MachineCapabilityDiagnostics then return "diagnostics" end
+    if v == P.MachineCapabilitySourceIndex then return "source_index" end
+    if v == P.MachineCapabilitySurfaceResolve then return "surface_resolve" end
+    if v == P.MachineCapabilityClosureConvert then return "closure_convert" end
+    if v == P.MachineCapabilityLayout then return "layout" end
+    if v == P.MachineCapabilityTreeLower then return "tree_lower" end
+    if v == P.MachineCapabilityCodeFacts then return "code_facts" end
+    if v == P.MachineCapabilityCBackend then return "c_backend" end
+    error("phase_dsl: unsupported machine capability", 3)
+end
+
+local function capability_names(values)
+    local names = {}
+    for i = 1, #(values or {}) do names[i] = capability_text(values[i]) end
+    return names
+end
+
 local function record_doc(t)
     local keys, parts = {}, {}
     local n = #(t or {})
@@ -397,7 +440,7 @@ function M.format_doc(value, f)
     if part_kind(value) == "abi" then return doc.group { "abi. ", abi_text(value.value) } end
     if part_kind(value) == "deterministic" then return doc.group { "deterministic ", tostring(value.value) } end
     if part_kind(value) == "machine" then return doc.group { "machine. ", id_text(value.value) } end
-    if part_kind(value) == "capabilities" then return doc.group { "capabilities ", record_doc(value.value) } end
+    if part_kind(value) == "capabilities" then return doc.group { "capabilities ", record_doc(capability_names(value.value)) } end
     if part_kind(value) == "impl" then
         local impl = value.value
         local icls = asdl.classof(impl)

@@ -9,8 +9,8 @@ function M.schema(T)
 end
 
 local function bind_context(T)
-    if T.LalinCompiler ~= nil then return T end
-    return Schema(T)
+    if T.LalinCompiler == nil then Schema(T) end
+    return T
 end
 
 return setmetatable(M, {
