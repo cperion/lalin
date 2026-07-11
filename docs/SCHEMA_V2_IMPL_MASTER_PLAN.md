@@ -283,18 +283,17 @@ Orders 1–6 may run concurrently where owned files do not overlap. Serialize `L
 
 ### AUX-TYPE-C — Canonical type-to-C contract
 
-**Evidence:** `tests/core/test_type_to_c.lua:24` calls `api.code_type_to_c(code_ty, {})`; the current contract at `code_type.lua:579-580` is `(machine, ty)`, so `{}` is misclassified as the Code type. `tests/code_ir/test_code_type.lua` passes with the proper contract.
+**Status:** integrated at `d94df76ae`; independently approved.
+**Evidence:** the stale test reversed the canonical `(machine, ty)` contract; corrected coverage also exposed missing concrete C projection leaves.
 
-**ASDL/leaf contract:** concrete `CodeTy* :code_to_c_backend_type(...) -> CBackendType`; use the typed C emission machine/projection when registration is required. Do not restore reversed arguments or accept a loose `{}` state.
+**ASDL/leaf contract:** concrete `CodeTy* :code_to_c_backend_type(...) -> CBackendType`; typed signature projection is used when registration is required. No reversed-argument or loose-state shim.
 
-**Owned files:** primarily `tests/core/test_type_to_c.lua`; review-only `lua/lalin/code_type.lua`, `impl/lower_emit_c/code_to_c.lua`, `schema/cemit_machine.lua`, and `schema/c.lua`.
+**Completed:**
 
-**Work/acceptance:**
-
-- [ ] Test `(machine, ty)` and prefer direct concrete leaf methods when accumulation is unnecessary.
-- [ ] Cover scalar/nullary, data/code/imported pointers, arrays, slices, views, closures, named/imported C types, handles, leases, vectors, callable signature registration, and `ArrayLenExpr` rejection.
-- [ ] Run `luajit tests/core/test_type_to_c.lua`, `luajit tests/code_ir/test_code_type.lua`, and `luajit tests/schema_v2/test_complex_types.lua`.
-- [ ] Run relevant core/code-IR suites and the default-suite no-regression gate.
+- [x] Test canonical `(machine, ty)` and direct concrete leaf methods.
+- [x] Cover scalar/nullary, data/code/imported pointers, arrays, slices, views, closures, named/imported C types, handles, leases, vectors, callable signature registration/deduplication, and `ArrayLenExpr` rejection.
+- [x] Add concrete leaf methods for handles, leases, imported C/function pointers, and vectors.
+- [x] Pass focused type/code/C-lowering tests and improve the default baseline by one test.
 
 **Out of scope:** new C ABI policy, generic convenience APIs, native representation, and LuaJIT ctype projection. Evidence must show the current `unsupported CodeType ... table` failure is gone without a shim.
 
@@ -833,7 +832,7 @@ Release-level gates:
 | history | CMP-1 | P1 | none | Compiler-process contracts | integrated `7b983824`; approved |
 | history | M0.1 | P0 | CMP-1 | Refreshed failure ledger/baseline | complete at `af80ae43` source |
 | current-A | AUX-FUNC-ABI | P1 | M0 refresh | ABI harness classification | working `w4:p1K` |
-| current-B | AUX-TYPE-C | P1 | M0 refresh | Canonical type-to-C test | review `bfbdf4569` by `w4:p6` |
+| history | AUX-TYPE-C | P1 | M0 refresh | Canonical type-to-C projection | integrated `d94df76ae`; approved |
 | current-C | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | working `w4:p1M` |
 | 4 | LNG-DIAG | P1 | M0 refresh | Unsupported control diagnostics | planned |
 | 5 | LNG-LOOP-C | P1 | integrated stencil/layout | Parsed loop GCC matrix | planned |
