@@ -836,12 +836,14 @@ Release-level gates:
 | history | LNG-OWN-C + OWN-0 | P2 | integrated regions | Ownership runtime and ambiguity inventory | integrated `8b24eff3d`; inventory fix `67f53804c` |
 | history | CLO-1→3 | P1 | M0 refresh | Closure vocabulary → collection → rewrite | integrated `d424017`; canonical-input fix `a61918a` |
 | history | MEM-1→4→EFF-1→2 | P1 | M0 refresh | Memory/effect facets and leaves | integrated `d071edb`; projection-owner fix `a09c2ab65` |
-| next | KRN-1→SCH-1→2 | P1 | MEM/EFF | Kernel/schedule leaves | ready |
+| current-A | KRN-1→SCH-1→2 | P1 | MEM/EFF | Kernel/schedule leaves | working `pack/kernel-schedule` (`w4:p23`) |
 | history | CMAT-1→STN-PLAN/DESC-1→DESC-2→CMAT-2 | P1 | M0 refresh | Neutral stencil planning/materialization | integrated `ec873d5` |
-| next | CMAT-3 | P1 | CMAT-2, CLOW-1 | CBackend stencil emission/GCC | ready |
+| current-B | CMAT-3 | P1 | CMAT-2, CLOW-1 | CBackend stencil emission/GCC | working `pack/cmat-emission` (`w4:p24`) |
 | history | VAL-1→CVAL-1→CEMIT-1→CLOW-1 | P1 | M0 refresh | Validation and typed C lowering | integrated `df10f3ea9`; C backend 28/28 |
-| next | CVAL-2 | P1 | CLOW-1, OWN-0 | Canonical CBackend validation | ready |
-| M4 | OWN-FRONT/ANALYSIS/STENCIL/C/META→CUTOVER | P2 | current and next packages | Canonical ownership | planned |
+| current-C | CVAL-2 | P1 | CLOW-1, OWN-0 | Canonical CBackend validation | working `pack/canonical-c-validation` (`w4:p25`) |
+| current-D | OWN-FRONT→OWN-META | P2 | OWN-0, stabilized compiler contracts | Frontend and phase/project/exec ownership | working `pack/ownership-front-meta` (`w4:p26`) |
+| next | OWN-ANALYSIS / OWN-STENCIL / OWN-C | P2 | current A/B/C | Domain cutovers | blocked on current wave |
+| final | OWN-CUTOVER | P2 | all ownership domains | Public facade and old-tree retirement | blocked on domain cutovers |
 | deferred | LJBC-STENCIL/native/slow binary | — | owner decision | Explicit non-main profiles | stopped/not scheduled |
 
 ## Distribution Protocol
