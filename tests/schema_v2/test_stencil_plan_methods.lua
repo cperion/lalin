@@ -1,0 +1,20 @@
+package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
+local asdl = require("lalin.asdl")
+require("lalin.schema_v2")
+require("lalin.impl.stencil_plan")
+local Code = require("lalin.schema_v2.code")
+local Stencil = require("lalin.schema_v2.stencil")
+local i32 = Code.CodeTyInt(32, Code.CodeSigned)
+local shape = Stencil.StencilProduceRange1D(i32, nil, nil, 1, Stencil.StencilProducerForward)
+local producer = Stencil.StencilProducer(nil, shape)
+local analysis = producer:stencil_analyze(Stencil.StencilProducerAnalysisInput(producer))
+assert(asdl.classof(analysis) == Stencil.StencilProducerAnalysisRange1D)
+local access = Stencil.StencilAccess("xs", Stencil.StencilAccessRead, i32,
+  Stencil.StencilAccessDirect(Stencil.StencilLayoutContiguous(4)))
+local sink = Stencil.StencilSinkStore(Stencil.StencilAccessRef("xs"), Stencil.StencilStoreElementwise)
+local body = Stencil.StencilBodyPoint(Stencil.StencilPointInput(Stencil.StencilAccessRef("xs")))
+local built = sink:stencil_build_descriptor(Stencil.StencilDescriptorBuildInput(producer, { access }, body))
+assert(asdl.classof(built) == Stencil.StencilDescriptorBuilt)
+assert(asdl.classof(built.descriptor:stencil_validate(
+  Stencil.StencilDescriptorValidationInput(Stencil.StencilProviderC))) == Stencil.StencilDescriptorValid)
+io.write("test_stencil_plan_methods: ok\n")

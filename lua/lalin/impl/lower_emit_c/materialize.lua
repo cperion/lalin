@@ -1,300 +1,131 @@
--- impl/lower_emit_c/materialize.lua
--- C value/place materialization helpers for stencil computations.
--- Ported from emit_c_materialize.lua.
-
+-- Typed stencil-to-C materialization.  CBackend emission begins at CMAT-3.
 require("lalin.schema_v2")
-
 local Stencil = require("lalin.schema_v2.stencil")
+local CMat = require("lalin.schema_v2.c_materialize")
 
-----------------------------------------------------------------------
--- StencilAccessRole → cmat_mutability / cmat_const_eligible / cmat_restrict_eligible
-----------------------------------------------------------------------
+function Stencil.StencilAccessRead:cmat_mutability() return CMat.CMatAccessReadOnly end
+function Stencil.StencilAccessWrite:cmat_mutability() return CMat.CMatAccessWriteOnly end
+function Stencil.StencilAccessIndex:cmat_mutability() return CMat.CMatAccessReadOnly end
+function Stencil.StencilAccessReadWrite:cmat_mutability() return CMat.CMatAccessReadWrite end
+function Stencil.StencilAccessReduce:cmat_mutability() return CMat.CMatAccessReduce end
+function Stencil.StencilAccessControlResult:cmat_mutability() return CMat.CMatAccessWriteOnly end
+function Stencil.StencilAccessRead:cmat_const_capability() return CMat.CMatConstEligible end
+function Stencil.StencilAccessIndex:cmat_const_capability() return CMat.CMatConstEligible end
+function Stencil.StencilAccessWrite:cmat_const_capability() return CMat.CMatConstIneligible("write access") end
+function Stencil.StencilAccessReadWrite:cmat_const_capability() return CMat.CMatConstIneligible("read-write access") end
+function Stencil.StencilAccessReduce:cmat_const_capability() return CMat.CMatConstIneligible("reduction access") end
+function Stencil.StencilAccessControlResult:cmat_const_capability() return CMat.CMatConstIneligible("control result") end
 
-function Stencil.StencilAccessRole:cmat_mutability()
-  -- parent default — not used, concrete leaves override
+function Stencil.StencilLayoutScalar:cmat_restrict_capability() return CMat.CMatRestrictIneligible("scalar is not pointer-like") end
+function Stencil.StencilLayoutContiguous:cmat_restrict_capability() return CMat.CMatRestrictEligible end
+function Stencil.StencilLayoutIndexed:cmat_restrict_capability() return CMat.CMatRestrictEligible end
+function Stencil.StencilLayoutAffine1D:cmat_restrict_capability() return CMat.CMatRestrictEligible end
+function Stencil.StencilLayoutAffineND:cmat_restrict_capability() return CMat.CMatRestrictEligible end
+function Stencil.StencilLayoutFieldProjection:cmat_restrict_capability() return CMat.CMatRestrictEligible end
+function Stencil.StencilLayoutSoAComponent:cmat_restrict_capability() return CMat.CMatRestrictEligible end
+function Stencil.StencilAccessDirect:cmat_restrict_capability() return self.base:cmat_restrict_capability() end
+function Stencil.StencilAccessDescribed:cmat_restrict_capability() return self.base:cmat_restrict_capability() end
+
+function Stencil.StencilValidationAccepted:cmat_bind(access, input)
+  return CMat.CMatAccessBound(CMat.CMatAccessBinding(
+    Stencil.StencilAccessRef(access.name), access, input.local_id, access.ty, access.layout,
+    access.role:cmat_mutability(), access.layout:cmat_restrict_capability(),
+    access.role:cmat_const_capability(), Stencil.StencilAlignmentUnknown))
+end
+function Stencil.StencilValidationRejected:cmat_bind(access, input)
+  return CMat.CMatAccessBindingRejected(
+    CMat.CMatIssueUnsupportedAccess(access, "access layout validation rejected materialization"))
+end
+function Stencil.StencilAccess:cmat_binding(input)
+  return self:stencil_validate():cmat_bind(self, input)
 end
 
-function Stencil.StencilAccessRead:cmat_mutability()
-  return "readonly"
+function Stencil.StencilProducerForward:cmat_loop_order() return CMat.CMatLoopForward end
+function Stencil.StencilProducerBackward:cmat_loop_order() return CMat.CMatLoopBackward end
+local function axis(index, ty, step, order)
+  return CMat.CMatLoopAxis(Stencil.StencilAxisRef(index), CMat.CMatLocalId("i" .. tostring(index)), ty, step, order:cmat_loop_order())
+end
+function Stencil.StencilProduceRange1D:cmat_loop_plan()
+  return CMat.CMatLoopPlanned({ axis(1, self.index_ty, self.step, self.order) })
+end
+local function axes_plan(axes)
+  local result = {}
+  for i, producer_axis in ipairs(axes) do
+    result[#result + 1] = axis(i, producer_axis.index_ty, producer_axis.step, producer_axis.order)
+  end
+  return CMat.CMatLoopPlanned(result)
+end
+function Stencil.StencilProduceRangeND:cmat_loop_plan() return axes_plan(self.axes) end
+function Stencil.StencilProduceWindowND:cmat_loop_plan() return axes_plan(self.axes) end
+function Stencil.StencilProduceTiledND:cmat_loop_plan() return axes_plan(self.axes) end
+
+function Stencil.StencilVectorScalarTail:cmat_tail_policy() return CMat.CMatTailScalar end
+function Stencil.StencilVectorMaskTail:cmat_tail_policy() return CMat.CMatTailMask end
+function Stencil.StencilVectorOverreadProvenSafe:cmat_tail_policy() return CMat.CMatTailOverreadProvenSafe end
+function Stencil.StencilLaneFromTarget:cmat_lane_capability() return CMat.CMatLaneFromTarget end
+function Stencil.StencilLaneNative:cmat_lane_capability() return CMat.CMatLaneNative end
+function Stencil.StencilLaneFixed:cmat_lane_capability() return CMat.CMatLaneFixed(self.lanes) end
+function Stencil.StencilScheduleScalar:cmat_schedule_policy() return CMat.CMatSchedulePolicy(1, 1, CMat.CMatVectorNone) end
+function Stencil.StencilScheduleAutoVector:cmat_schedule_policy()
+  return CMat.CMatSchedulePolicy(1, 1, CMat.CMatVectorAutovec(CMat.CMatLaneFromTarget, CMat.CMatTailScalar))
+end
+function Stencil.StencilScheduleUnrolled:cmat_schedule_policy() return CMat.CMatSchedulePolicy(self.factor, 1, CMat.CMatVectorNone) end
+function Stencil.StencilScheduleVector:cmat_schedule_policy()
+  return CMat.CMatSchedulePolicy(self.vector_unroll, self.interleave,
+    CMat.CMatVectorExplicit(self.lane_policy:cmat_lane_capability(), self.tail:cmat_tail_policy()))
 end
 
-function Stencil.StencilAccessIndex:cmat_mutability()
-  return "readonly"
+function Stencil.StencilStreamDef:cmat_stream_materialization()
+  return CMat.CMatStreamInline(Stencil.StencilStreamRef(self.id), self.ty)
 end
+function Stencil.StencilSinkDef:cmat_sink_materialization() return self.op:cmat_sink_materialization(self.id) end
+function Stencil.StencilSinkOpStore:cmat_sink_materialization(id) return CMat.CMatSinkStoreResult(Stencil.StencilSinkRef(id), self.dst) end
+function Stencil.StencilSinkOpFold:cmat_sink_materialization(id) return CMat.CMatSinkInline(Stencil.StencilSinkRef(id)) end
+function Stencil.StencilSinkOpScan:cmat_sink_materialization(id) return CMat.CMatSinkStoreResult(Stencil.StencilSinkRef(id), self.dst) end
+function Stencil.StencilSinkOpScatterStore:cmat_sink_materialization(id) return CMat.CMatSinkStoreResult(Stencil.StencilSinkRef(id), self.dst) end
+function Stencil.StencilSinkOpScatterFold:cmat_sink_materialization(id) return CMat.CMatSinkStoreResult(Stencil.StencilSinkRef(id), self.dst) end
+function Stencil.StencilSinkOpAll:cmat_sink_materialization(id) return CMat.CMatSinkControlResult(Stencil.StencilSinkRef(id)) end
+function Stencil.StencilSinkOpAny:cmat_sink_materialization(id) return CMat.CMatSinkControlResult(Stencil.StencilSinkRef(id)) end
+function Stencil.StencilSinkOpFind:cmat_sink_materialization(id) return CMat.CMatSinkControlResult(Stencil.StencilSinkRef(id)) end
 
-function Stencil.StencilAccessWrite:cmat_mutability()
-  return "writeonly"
+function CMat.CMatAccessCollectionReady:cmat_add_bound(binding)
+  local bindings = {}
+  for _, prior in ipairs(self.bindings) do bindings[#bindings + 1] = prior end
+  bindings[#bindings + 1] = binding
+  return CMat.CMatAccessCollectionReady(bindings)
 end
-
-function Stencil.StencilAccessReadWrite:cmat_mutability()
-  return "readwrite"
+function CMat.CMatAccessCollectionRejected:cmat_add_bound(binding) return self end
+function CMat.CMatAccessCollectionReady:cmat_add_issue(issue) return CMat.CMatAccessCollectionRejected({ issue }) end
+function CMat.CMatAccessCollectionRejected:cmat_add_issue(issue)
+  local issues = {}
+  for _, prior in ipairs(self.issues) do issues[#issues + 1] = prior end
+  issues[#issues + 1] = issue
+  return CMat.CMatAccessCollectionRejected(issues)
 end
-
-function Stencil.StencilAccessReduce:cmat_mutability()
-  return "reduce"
+function CMat.CMatAccessBound:cmat_collect(collection) return collection:cmat_add_bound(self.binding) end
+function CMat.CMatAccessBindingRejected:cmat_collect(collection) return collection:cmat_add_issue(self.issue) end
+function CMat.CMatAccessCollectionRejected:cmat_finish(computation, input, loop, streams, sinks)
+  return CMat.CMatRejectedComputation(computation, self.issues)
 end
-
-function Stencil.StencilAccessControlResult:cmat_mutability()
-  return "writeonly"
+function CMat.CMatAccessCollectionReady:cmat_finish(computation, input, loop, streams, sinks)
+  return CMat.CMatMaterializedFused(CMat.CMatFusedKernel(
+    input.kernel, computation, CMat.CMatLoopNest(loop.axes, computation.schedule:cmat_schedule_policy()),
+    self.bindings, streams, sinks, computation.schedule, computation.proofs))
 end
-
-function Stencil.StencilAccessRole:cmat_const_eligible()
-  return false
+function CMat.CMatLoopRejected:cmat_materialize_computation(computation, input)
+  return CMat.CMatRejectedComputation(computation, { self.issue })
 end
-
-function Stencil.StencilAccessRead:cmat_const_eligible()
-  return true
+function CMat.CMatLoopPlanned:cmat_materialize_computation(computation, input)
+  local collection = CMat.CMatAccessCollectionReady({})
+  for _, access in ipairs(computation.accesses) do
+    collection = access:cmat_binding(CMat.CMatAccessBindingInput(CMat.CMatLocalId(access.name))):cmat_collect(collection)
+  end
+  local streams = {}
+  for _, stream in ipairs(computation.streams) do streams[#streams + 1] = stream:cmat_stream_materialization() end
+  local sinks = {}
+  for _, sink in ipairs(computation.sinks) do sinks[#sinks + 1] = sink:cmat_sink_materialization() end
+  return collection:cmat_finish(computation, input, self, streams, sinks)
 end
-
-function Stencil.StencilAccessIndex:cmat_const_eligible()
-  return true
-end
-
-function Stencil.StencilAccessRole:cmat_restrict_eligible(layout)
-  return false
-end
-
-function Stencil.StencilAccessRead:cmat_restrict_eligible(layout)
-  return layout:cmat_is_pointer_like()
-end
-
-function Stencil.StencilAccessWrite:cmat_restrict_eligible(layout)
-  return layout:cmat_is_pointer_like()
-end
-
-function Stencil.StencilAccessReadWrite:cmat_restrict_eligible(layout)
-  return layout:cmat_is_pointer_like()
-end
-
-function Stencil.StencilAccessReduce:cmat_restrict_eligible(layout)
-  return layout:cmat_is_pointer_like()
-end
-
-function Stencil.StencilAccessIndex:cmat_restrict_eligible(layout)
-  return layout:cmat_is_pointer_like()
-end
-
-----------------------------------------------------------------------
--- StencilAccessLayout → cmat_is_pointer_like
-----------------------------------------------------------------------
-
-function Stencil.StencilAccessLayout:cmat_is_pointer_like()
-  return true
-end
-
-function Stencil.StencilLayoutScalar:cmat_is_pointer_like()
-  return false
-end
-
-----------------------------------------------------------------------
--- StencilAccess → cmat_binding
-----------------------------------------------------------------------
-
-function Stencil.StencilAccess:cmat_binding(_input)
-  -- creates a CMat access binding from this stencil access descriptor
-  return {
-    name = self.name,
-    ty = self.ty,
-    layout = self.layout,
-    mutability = self.role:cmat_mutability(),
-    restrict = self.role:cmat_restrict_eligible(self.layout),
-    const = self.role:cmat_const_eligible(),
-  }
-end
-
-----------------------------------------------------------------------
--- StencilProducerOrder → cmat_loop_order
-----------------------------------------------------------------------
-
-function Stencil.StencilProducerOrder:cmat_loop_order()
-  -- parent default
-end
-
-function Stencil.StencilProducerForward:cmat_loop_order()
-  return "forward"
-end
-
-function Stencil.StencilProducerBackward:cmat_loop_order()
-  return "backward"
-end
-
-----------------------------------------------------------------------
--- StencilProducerAxis → cmat_loop_axis
-----------------------------------------------------------------------
-
-function Stencil.StencilProducerAxis:cmat_loop_axis(i)
-  return {
-    axis = i,
-    index_name = self.index_name or ("i" .. tostring(i)),
-    index_ty = self.index_ty,
-    step = self.step,
-    order = self.order:cmat_loop_order(),
-  }
-end
-
-----------------------------------------------------------------------
--- StencilProducerShape → cmat_loop_axes
-----------------------------------------------------------------------
-
-function Stencil.StencilProducerShape:cmat_loop_axes()
-  error("c_materialize: unsupported producer shape", 2)
-end
-
-function Stencil.StencilProduceRange1D:cmat_loop_axes()
-  return { Stencil.StencilProducerAxis:cmat_loop_axis(self.axes and self.axes[1] or self, 1) }
-end
-
-function Stencil.StencilProduceRangeND:cmat_loop_axes()
-  local out = {}
-  for i, axis in ipairs(self.axes or {}) do out[#out + 1] = axis:cmat_loop_axis(i) end
-  return out
-end
-
-function Stencil.StencilProduceWindowND:cmat_loop_axes()
-  local out = {}
-  for i, axis in ipairs(self.axes or {}) do out[#out + 1] = axis:cmat_loop_axis(i) end
-  return out
-end
-
-function Stencil.StencilProduceTiledND:cmat_loop_axes()
-  local out = {}
-  for i, axis in ipairs(self.axes or {}) do out[#out + 1] = axis:cmat_loop_axis(i) end
-  return out
-end
-
-----------------------------------------------------------------------
--- StencilVectorTailPolicy → cmat_tail_policy
-----------------------------------------------------------------------
-
-function Stencil.StencilVectorTailPolicy:cmat_tail_policy()
-  -- parent default
-end
-
-function Stencil.StencilVectorScalarTail:cmat_tail_policy()
-  return "scalar"
-end
-
-function Stencil.StencilVectorMaskTail:cmat_tail_policy()
-  return "mask"
-end
-
-function Stencil.StencilVectorOverreadProvenSafe:cmat_tail_policy()
-  return "overread_proven_safe"
-end
-
-----------------------------------------------------------------------
--- StencilLanePolicy → cmat_lane_count
-----------------------------------------------------------------------
-
-function Stencil.StencilLanePolicy:cmat_lane_count()
-  return nil
-end
-
-function Stencil.StencilLaneFixed:cmat_lane_count()
-  return self.lanes
-end
-
-----------------------------------------------------------------------
--- StencilSchedule → cmat_vector_policy / cmat_unroll / cmat_interleave
-----------------------------------------------------------------------
-
-function Stencil.StencilSchedule:cmat_vector_policy()
-  return "none"
-end
-
-function Stencil.StencilScheduleAutoVector:cmat_vector_policy()
-  return { kind = "autovec", tail = "scalar" }
-end
-
-function Stencil.StencilScheduleVector:cmat_vector_policy()
-  return {
-    kind = "explicit",
-    lanes = self.lane_policy and self.lane_policy:cmat_lane_count() or self.vector_unroll,
-    tail = self.tail and self.tail:cmat_tail_policy() or "scalar",
-  }
-end
-
-function Stencil.StencilSchedule:cmat_unroll()
-  return 1
-end
-
-function Stencil.StencilScheduleUnrolled:cmat_unroll()
-  return self.factor
-end
-
-function Stencil.StencilScheduleVector:cmat_unroll()
-  return self.vector_unroll
-end
-
-function Stencil.StencilSchedule:cmat_interleave()
-  return 1
-end
-
-function Stencil.StencilScheduleVector:cmat_interleave()
-  return self.interleave
-end
-
-----------------------------------------------------------------------
--- StencilStreamDef → cmat_stream_materialization
-----------------------------------------------------------------------
-
-function Stencil.StencilStreamDef:cmat_stream_materialization(_input)
-  return { kind = "inline", id = self.id, ty = self.ty }
-end
-
-----------------------------------------------------------------------
--- StencilSinkDef / StencilSinkOp → cmat_sink_materialization
-----------------------------------------------------------------------
-
-function Stencil.StencilSinkDef:cmat_sink_materialization(input)
-  return self.op and self.op:cmat_sink_materialization(input, self.id)
-end
-
-function Stencil.StencilSinkOp:cmat_sink_materialization(_input, ref)
-  return { kind = "inline", ref = ref }
-end
-
-function Stencil.StencilSinkOpAll:cmat_sink_materialization(_input, ref)
-  return { kind = "control_result", ref = ref }
-end
-
-function Stencil.StencilSinkOpAny:cmat_sink_materialization(_input, ref)
-  return { kind = "control_result", ref = ref }
-end
-
-function Stencil.StencilSinkOpFind:cmat_sink_materialization(_input, ref)
-  return { kind = "control_result", ref = ref }
-end
-
-----------------------------------------------------------------------
--- StencilComputation → cmat_materialize
-----------------------------------------------------------------------
-
 function Stencil.StencilComputation:cmat_materialize(input)
-  input = input or {}
-  local bindings, streams, sinks = {}, {}, {}
-  for _, access in ipairs(self.accesses or {}) do
-    bindings[#bindings + 1] = access:cmat_binding(input)
-  end
-  for _, stream in ipairs(self.streams or {}) do
-    streams[#streams + 1] = stream:cmat_stream_materialization(input)
-  end
-  for _, sink in ipairs(self.sinks or {}) do
-    sinks[#sinks + 1] = sink:cmat_sink_materialization(input)
-  end
-  local schedule = self.schedule
-  return {
-    id = self.id,
-    loop_nest = {
-      axes = self.producer and self.producer.shape and self.producer.shape:cmat_loop_axes() or {},
-      unroll = schedule and schedule:cmat_unroll() or 1,
-      interleave = schedule and schedule:cmat_interleave() or 1,
-      vector = schedule and schedule:cmat_vector_policy() or "none",
-    },
-    bindings = bindings,
-    streams = streams,
-    sinks = sinks,
-    schedule = schedule,
-    proofs = self.proofs or {},
-  }
+  return self.producer.shape:cmat_loop_plan():cmat_materialize_computation(self, input)
 end

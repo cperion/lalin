@@ -11,13 +11,13 @@
 local S = require("lalin.schema.dsl")
 local asdl = require("lalin.asdl")
 
--- All 28 schema_v2 files in dependency order (must match cross-module references)
+-- Canonical schema-v2 files in dependency order.
 local files = {
   "core", "parse", "source",
   "type", "c", "bind", "sem",
   "tree", "check", "tree_code",
   "code", "graph", "flow", "value", "mem", "effect",
-  "kernel", "stencil", "stencil_machine",
+  "kernel", "stencil", "stencil_descriptor", "c_materialize", "stencil_machine",
   "lower", "schedule",
   "backend", "cemit",
   "compiler", "code_validation", "exec",

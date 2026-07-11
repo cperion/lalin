@@ -1,81 +1,52 @@
--- impl/stencil_metastencil.lua
--- Leaf methods on LalinStencil types for metastencil fusion.
--- Ported from stencil_metastencil.lua.
---
--- The heavy algorithm logic (legality checking, cover selection, fusion
--- artifact generation) lives as local helpers.  When the stencil_plan
--- infrastructure is fully ported, those will become methods on the
--- appropriate ASDL types.
---
--- Currently installed:
---   Stencil.StencilDescriptor:metastencil_access_named(name)
---   Stencil.StencilReduceScope*:metastencil_dst_name()
-
+-- Neutral stencil descriptor and metastencil projection methods.
 require("lalin.schema_v2")
-
 local Stencil = require("lalin.schema_v2.stencil")
+local Descriptor = require("lalin.schema_v2.stencil_descriptor")
 
-----------------------------------------------------------------------
--- Stencil.StencilDescriptor:metastencil_access_named
---
--- Finds the access with the given name in this descriptor.
--- Depends on descriptor_accesses, which in the old code is
--- Plan.descriptor_accesses(desc).  In the new impl, this will be
--- a method on StencilDescriptor once stencil_plan.lua is ported.
--- For now we walk the body access list directly.
-----------------------------------------------------------------------
-
-function Stencil.StencilDescriptor:metastencil_access_named(name)
-  -- Walk the descriptor accesses.  In old code this was Plan.descriptor_accesses(self).
-  -- The body may be a StencilBodyPoint with a single access, or more complex.
-  local body = self.body
-  if body == nil then return nil end
-
-  -- StencilBodyPoint carries the expression; accesses are in the descriptor's
-  -- access list (descriptor.accesses) or baked into the body.
-  -- Old code gathered accesses via Plan.descriptor_accesses which unified
-  -- both the body's expression inputs and any sink-related accesses.
-  --
-  -- For now, walk what we know: body inputs + sink accesses.
-  -- Full unification will come when stencil_plan.lua installs
-  -- descriptor_accesses as a method.
-
-  -- body may have an expr with inputs (StencilPointExpr)
-  if body.expr ~= nil and body.expr.access ~= nil then
-    if body.expr.access.name == name then
-      return { name = name, ty = nil, role = nil, layout = nil }
-    end
+function Stencil.StencilDescriptor:metastencil_access(ref)
+  for _, access in ipairs(self.accesses) do
+    if access.name == ref.name then return Stencil.StencilAccessFound(access) end
   end
+  return Stencil.StencilAccessMissing(ref, "descriptor has no access with that identity")
+end
+function Stencil.StencilReduceScopeDomain:metastencil_destination() return Stencil.StencilDestinationNone end
+function Stencil.StencilReduceScopeAxes:metastencil_destination() return Stencil.StencilDestinationAccess(self.dst) end
+function Stencil.StencilReduceScopeWindow:metastencil_destination() return Stencil.StencilDestinationAccess(self.dst) end
 
-  -- check sink-related accesses if any
-  if self.sink ~= nil then
-    -- StencilSink subtypes may carry named data references
-    if self.sink.dst ~= nil and self.sink.dst.name == name then
-      return { name = name, ty = nil, role = self.sink.dst.role, layout = self.sink.dst.layout or nil }
-    end
-    if self.sink.reduction ~= nil and self.sink.reduction.dst ~= nil and self.sink.reduction.dst.name == name then
-      return { name = name, ty = nil, role = "reduce", layout = nil }
-    end
+function Descriptor.StencilDescriptorValueResult:stencil_descriptor_validate_result() return Stencil.StencilValidationAccepted end
+function Descriptor.StencilDescriptorStoreResult:stencil_descriptor_validate_result() return Stencil.StencilValidationAccepted end
+function Descriptor.StencilDescriptorControlResult:stencil_descriptor_validate_result() return Stencil.StencilValidationAccepted end
+
+local function projection_input(descriptor)
+  local spine = descriptor.spine
+  return Descriptor.StencilDescriptorProjectionInput(
+    spine.id, spine.producer, spine.accesses, spine.streams, { descriptor.sink },
+    spine.legality, spine.proofs)
+end
+function Descriptor.StencilDescriptorScheduled:stencil_project_schedule(input, descriptor)
+  return Descriptor.StencilDescriptorProjected(Stencil.StencilComputation(
+    input.id, input.producer, input.accesses, input.streams, input.sinks,
+    input.legality, self.schedule, input.proofs))
+end
+function Descriptor.StencilDescriptorExplicitlyUnscheduled:stencil_project_schedule(input, descriptor)
+  return Descriptor.StencilDescriptorProjectionRejected(descriptor, {
+    Descriptor.StencilDescriptorProjectionUnscheduled(self.reason),
+  })
+end
+local function project_descriptor(self)
+  local contribution = self.result:stencil_descriptor_validate_result()
+  local rejects = contribution:stencil_collect({})
+  if #rejects > 0 then
+    return Descriptor.StencilDescriptorProjectionRejected(self, {
+      Descriptor.StencilDescriptorProjectionInvalidResult("descriptor result rejected"),
+    })
   end
-
-  return nil
+  return self.spine.schedule:stencil_project_schedule(projection_input(self), self)
 end
-
-----------------------------------------------------------------------
--- Stencil.StencilReduceScope:metastencil_dst_name
--- Returns the name of the destination access for a reduce scope.
-----------------------------------------------------------------------
-
-function Stencil.StencilReduceScope:metastencil_dst_name()
-  return nil
-end
-
-function Stencil.StencilReduceScopeAxes:metastencil_dst_name()
-  if self.dst ~= nil then return self.dst.name end
-  return nil
-end
-
-function Stencil.StencilReduceScopeWindow:metastencil_dst_name()
-  if self.dst ~= nil then return self.dst.name end
-  return nil
-end
+function Descriptor.StencilDescriptorStore:stencil_project_computation() return project_descriptor(self) end
+function Descriptor.StencilDescriptorReduce:stencil_project_computation() return project_descriptor(self) end
+function Descriptor.StencilDescriptorScan:stencil_project_computation() return project_descriptor(self) end
+function Descriptor.StencilDescriptorFind:stencil_project_computation() return project_descriptor(self) end
+function Descriptor.StencilDescriptorPartition:stencil_project_computation() return project_descriptor(self) end
+function Descriptor.StencilDescriptorCount:stencil_project_computation() return project_descriptor(self) end
+function Descriptor.StencilDescriptorScatterReduce:stencil_project_computation() return project_descriptor(self) end

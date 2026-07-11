@@ -163,7 +163,7 @@ return schema. LalinStencil {
     StencilAccessControlResult,
   },
 
-  -- StencilAccessLayout axis split: base (memory layout kind) vs descriptor (descriptor wrapper)
+  -- C-neutral access layout: direct and descriptor-backed states are distinct.
   sum. StencilAccessLayoutBase {
     StencilLayoutScalar { variant_unique, field. value [optional [LalinValue.ValueExpr]], },
     StencilLayoutContiguous { variant_unique, stride [number], },
@@ -202,35 +202,47 @@ return schema. LalinStencil {
     },
   },
 
+  sum. StencilStrideFact {
+    StencilStrideDynamic,
+    StencilStrideKnown { variant_unique, bytes [number], },
+  },
+
   sum. StencilAccessDescriptor {
     StencilLayoutSliceDescriptor {
+      variant_unique,
       slice [LalinCode.CodeValueId],
       data [LalinCode.CodeValueId],
       len [LalinCode.CodeValueId],
     },
     StencilLayoutByteSpanDescriptor {
+      variant_unique,
       span [LalinCode.CodeValueId],
       data [LalinCode.CodeValueId],
       len [LalinCode.CodeValueId],
     },
     StencilLayoutViewDescriptor {
+      variant_unique,
       view [LalinCode.CodeValueId],
       data [LalinCode.CodeValueId],
       len [LalinCode.CodeValueId],
       stride [LalinCode.CodeValueId],
-      stride_const [optional [number]],
+      stride_fact [LalinStencil.StencilStrideFact],
     },
     StencilLayoutForeignBuffer {
+      variant_unique,
       buffer_name [str],
       data [LalinCode.CodeValueId],
       len [LalinCode.CodeValueId],
     },
   },
 
-  product. StencilAccessLayout {
-    interned,
-    base [LalinStencil.StencilAccessLayoutBase],
-    descriptor [optional [LalinStencil.StencilAccessDescriptor]],
+  sum. StencilAccessLayout {
+    StencilAccessDirect { variant_unique, base [LalinStencil.StencilAccessLayoutBase], },
+    StencilAccessDescribed {
+      variant_unique,
+      base [LalinStencil.StencilAccessLayoutBase],
+      descriptor [LalinStencil.StencilAccessDescriptor],
+    },
   },
 
   product. StencilAccess {
@@ -1137,5 +1149,66 @@ return schema. LalinStencil {
     field. module [LalinCode.CodeModuleId],
     kernel [LalinKernel.KernelModulePlan],
     selections [many [LalinStencil.StencilPlanEntry]],
+  },
+  product. StencilProducerAnalysisInput {
+    interned,
+    producer [LalinStencil.StencilProducer],
+  },
+  sum. StencilProducerAnalysis {
+    StencilProducerAnalysisRange1D { variant_unique, execution [LalinStencil.StencilProducerExecution], },
+    StencilProducerAnalysisRangeND { variant_unique, execution [LalinStencil.StencilProducerExecution], },
+    StencilProducerAnalysisWindowND { variant_unique, execution [LalinStencil.StencilProducerExecution], },
+    StencilProducerAnalysisTiledND { variant_unique, execution [LalinStencil.StencilProducerExecution], },
+    StencilProducerAnalysisRejected { variant_unique, producer [LalinStencil.StencilProducer], reason [str], },
+  },
+
+  product. StencilAccessValidationInput { interned, access [LalinStencil.StencilAccess], },
+  sum. StencilValidationReject {
+    StencilValidationInvalidStride { variant_unique, access [LalinStencil.StencilAccessRef], stride [number], },
+    StencilValidationUnsupportedProducer { variant_unique, producer [LalinStencil.StencilProducer], reason [str], },
+    StencilValidationUnsupportedSink { variant_unique, sink [LalinStencil.StencilSink], reason [str], },
+  },
+  sum. StencilValidationContribution {
+    StencilValidationAccepted,
+    StencilValidationRejected { variant_unique, reject [LalinStencil.StencilValidationReject], },
+  },
+  product. StencilDescriptorValidationInput { interned, provider [LalinStencil.StencilProvider], },
+  sum. StencilDescriptorValidation {
+    StencilDescriptorValid { variant_unique, descriptor [LalinStencil.StencilDescriptor], },
+    StencilDescriptorInvalid {
+      variant_unique,
+      descriptor [LalinStencil.StencilDescriptor],
+      rejects [many [LalinStencil.StencilValidationReject]],
+    },
+  },
+
+  product. StencilDescriptorBuildInput {
+    interned,
+    producer [LalinStencil.StencilProducer],
+    accesses [many [LalinStencil.StencilAccess]],
+    body [LalinStencil.StencilBody],
+  },
+  sum. StencilDescriptorBuild {
+    StencilDescriptorBuilt { variant_unique, descriptor [LalinStencil.StencilDescriptor], },
+    StencilDescriptorBuildRejected { variant_unique, reject [LalinStencil.StencilValidationReject], },
+  },
+
+  sum. StencilAccessLookup {
+    StencilAccessFound { variant_unique, access [LalinStencil.StencilAccess], },
+    StencilAccessMissing { variant_unique, access [LalinStencil.StencilAccessRef], reason [str], },
+  },
+  sum. StencilDestination {
+    StencilDestinationAccess { variant_unique, access [LalinStencil.StencilAccessRef], },
+    StencilDestinationNone,
+  },
+
+  product. StencilCodegenPlanInput {
+    interned,
+    computation [LalinStencil.StencilComputation],
+    materialization [LalinCMat.CMatMaterializationInput],
+  },
+  sum. StencilCodegenPlan {
+    StencilCodegenCMat { variant_unique, materialization [LalinCMat.CMatMaterialization], },
+    StencilCodegenRejected { variant_unique, rejects [many [LalinStencil.StencilReject]], },
   },
 }
