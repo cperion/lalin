@@ -381,10 +381,10 @@ Release-level gates:
 | STN-SCHED | P0 | STN-1 | Typed schedule selection | integrated | `d66eff0b6`; approved by `w4:p16` |
 | LAY-1 | P0 | STN-1 analysis | Typed leaf-owned layout resolution | integrated | `00303c45b`; approved by `w4:p14` |
 | TYP-1 | P0 | none | Typed frontend target projection | integrated | `1750e4ce5`; approved by `w4:p6` |
-| TYP-OWN | P0 | none | Check/lower schema ownership | ready | — |
+| TYP-OWN | P0 | none | Check/lower schema ownership | working | `pack/typ-own` (`w4:p1C`) |
 | ABI-SIG | P0 | LAY-1 | Required code signature projection | integrated | `c95973fd5`; approved by `w4:p6` |
 | ABI-STATE | P0 | ABI-SIG vocabulary | Cross-unit lowering isolation | working | `pack/abi-state` (`w4:p1B`) |
-| LJBC-STENCIL | P1 | STN-SCHED | LuaJIT stencil artifact payload | ready | — |
+| LJBC-STENCIL | P1 | STN-SCHED | LuaJIT stencil artifact payload | working | `pack/ljbc-stencil` (`w4:p1D`) |
 | CMP-1 | P1 | none | Compiler-process contracts | ready | — |
 | M0.1 | P0 | none | Failure ledger and focused reproducers | ready | — |
 | ASDL-CLOSURE | P1 | baseline stabilization | Closure state and leaf-method migration | planned | — |
