@@ -296,16 +296,16 @@ Orders 1–6 may run concurrently where owned files do not overlap. Serialize `L
 
 ### AUX-CLOSURE-NAME — Closure module-name binding
 
-**Evidence:** `tests/code_ir/test_closure_escape.lua` fails at `closure_convert.lua:779` with `attempt to call method 'tree_module_name'`; `test_closure_convert.lua` passes because it installs `tree_module_type(T)`. Implementations already exist at `tree_module_type.lua:55-72`.
+**Status:** integrated at `549e74a`; independently approved.
+**Root cause:** the closure API used `ModuleHeader:tree_module_name()` without installing its existing concrete leaf methods.
 
-**ASDL/leaf contract:** `ModuleHeader:tree_module_name() -> str`, implemented by `ModuleSurface`, `ModuleTyped`, `ModuleSem`, and `ModuleCode`. The closure entrypoint installs the owning implementation before calling it.
+**ASDL/leaf contract:** `ModuleSurface`, `ModuleTyped`, `ModuleSem`, and `ModuleCode` own `tree_module_name()`; the canonical closure entrypoint installs that implementation.
 
-**Owned files:** `lua/lalin/closure_convert.lua`, `tree_module_type.lua`, `tests/code_ir/test_closure_escape.lua`, and `test_closure_convert.lua`.
+**Completed:**
 
-**Work/acceptance:**
-
-- [ ] Bind the canonical methods at the owning API boundary; test surface/typed names and deterministic helper names.
-- [ ] Run both closure tests and `luajit tests/run.lua code_ir`; apply the default-suite no-regression gate.
+- [x] Bind canonical module-name methods at the owning closure API boundary.
+- [x] Assert exact surface/typed module names and deterministic helper names.
+- [x] Pass backend-neutral closure conversion and no-regression checks; the escape test now reaches only the excluded LuaJIT skeleton blocker.
 
 **Out of scope:** the CLO migration below, capture redesign, new escape semantics, and LuaJIT/native closure work. No LuaJIT backend file may change.
 
@@ -830,7 +830,7 @@ Release-level gates:
 | history | M0.1 | P0 | CMP-1 | Refreshed failure ledger/baseline | complete at `af80ae43` source |
 | history | AUX-FUNC-ABI | P1 | M0 refresh | ABI harness classification | integrated `b9a40cd`; approved |
 | history | AUX-TYPE-C | P1 | M0 refresh | Canonical type-to-C projection | integrated `d94df76ae`; approved |
-| current | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | review `60ff2a31` by `w4:p6` |
+| history | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | integrated `549e74a`; approved |
 | 4 | LNG-DIAG | P1 | M0 refresh | Unsupported control diagnostics | planned |
 | 5 | LNG-LOOP-C | P1 | integrated stencil/layout | Parsed loop GCC matrix | planned |
 | 6 | LNG-EXT-C | P1 | AUX ABI/type | Extern/builder/HostEval GCC | planned |
