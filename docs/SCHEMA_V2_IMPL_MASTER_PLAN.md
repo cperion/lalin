@@ -167,9 +167,15 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 
 ### CMP-1 — Compiler process typed contracts
 
-- [ ] Identify the compiler-process ASDL constructor mismatch.
-- [ ] Correct the producer/consumer contract without boundary-to-semantic table leakage.
-- [ ] Pass all `compiler_process` tests.
+**Status:** integrated at `7b983824`; independently approved.
+
+- [x] Replace string/schedule-emitter capabilities with typed `MachineCapability` leaves.
+- [x] Select canonical `tree_lower` versus schema_v2 `impl.tree_code` through typed implementation ownership.
+- [x] Make concrete `MachineImpl` leaves execute typed requests without class/string dispatch or require probing.
+- [x] Define typed phase values, diagnostics, step reports, progress, run artifacts, and execution reports.
+- [x] Make canonical and schema_v2 C backends return typed `CompilerCBackendResult`.
+- [x] Consume immutable typed module-lowering results without multi-return wrappers or nil normalization.
+- [x] Pass `compiler_process` 7/7, schema 11/11, isolation, target projection, and scalar GCC runtime checks.
 
 ### ABI-SIG — Required code signature projection
 
@@ -802,8 +808,8 @@ Release-level gates:
 | history | TYP-OWN | P0 | none | Canonical check ownership | integrated `ae2a8e164`; approved |
 | history | ABI-SIG | P0 | LAY-1 | Required signatures | integrated `c95973fd5`; approved |
 | history | ABI-STATE | P0 | ABI-SIG | Cross-unit isolation | integrated `f7ba18a`; approved |
-| current | CMP-1 | P1 | none | Compiler-process contracts | working `pack/cmp-1` |
-| next | M0.1 | P0 | CMP-1 | Refresh failure ledger/baseline | ready after CMP |
+| history | CMP-1 | P1 | none | Compiler-process contracts | integrated `7b983824`; approved |
+| current | M0.1 | P0 | CMP-1 | Refresh failure ledger/baseline | ready |
 | 1 | AUX-FUNC-ABI | P1 | M0 refresh | ABI harness classification | planned |
 | 2 | AUX-TYPE-C | P1 | M0 refresh | Canonical type-to-C test | planned |
 | 3 | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | planned |
