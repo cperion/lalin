@@ -833,13 +833,15 @@ Release-level gates:
 | history | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | integrated `549e74a`; approved |
 | history | SURFACE-C batch | P1/P2 | M0 refresh | `LNG-DIAG → LNG-EXPR-C → LNG-VAR-C` | integrated `1102b742a`; focused gates pass |
 | history | RUNTIME-C batch | P1 | integrated foundations | `LNG-LOOP-C → LNG-EXT-C → LNG-REG-C` | integrated `882fdcbd7`; canonical-stage fix `3d96ecd5` |
-| 10 | LNG-OWN-C | P2 | optional LNG-REG-C | Ownership/domain runtime | planned |
+| current-D | LNG-OWN-C + OWN-0 | P2 | integrated regions | Ownership runtime then ambiguity inventory | working `pack/ownership-bootstrap` (`w4:p10`) |
 | history | CLO-1→3 | P1 | M0 refresh | Closure vocabulary → collection → rewrite | integrated `d424017`; canonical-input fix `a61918a` |
-| M3-B | MEM-1→4→EFF-1→2 | P1 | M0 refresh | Memory/effect facets and leaves | planned |
-| M3-C | KRN-1→SCH-1→2 | P1 | MEM/EFF | Kernel/schedule leaves | planned |
-| M3-D | CMAT-1→STN-PLAN/DESC-1→DESC-2→CMAT-2→3 | P1 | M0 refresh | Neutral stencil/CMat C path | planned |
-| M3-E | VAL-1 + CVAL-1→CEMIT-1→CLOW-1→CVAL-2 | P1 | M0 refresh | Validation/C lowering | planned |
-| M4 | OWN-0→OWN-FRONT/ANALYSIS/STENCIL/C/META→CUTOVER | P2 | completed M3 boundaries | Canonical ownership | planned |
+| current-A | MEM-1→4→EFF-1→2 | P1 | M0 refresh | Memory/effect facets and leaves | working `pack/mem-eff` (`w4:p1X`) |
+| next | KRN-1→SCH-1→2 | P1 | MEM/EFF | Kernel/schedule leaves | blocked on current-A |
+| current-B | CMAT-1→STN-PLAN/DESC-1→DESC-2→CMAT-2 | P1 | M0 refresh | Neutral stencil planning/materialization | working `pack/cmat-plan` (`w4:p1Y`) |
+| next | CMAT-3 | P1 | CMAT-2, CLOW-1 | CBackend stencil emission/GCC | blocked on current-B/current-C |
+| current-C | VAL-1→CVAL-1→CEMIT-1→CLOW-1 | P1 | M0 refresh | Validation and typed C lowering | working `pack/c-validation` (`w4:p1Z`) |
+| next | CVAL-2 | P1 | CLOW-1, OWN-0 | Canonical CBackend validation | blocked on current-C/current-D |
+| M4 | OWN-FRONT/ANALYSIS/STENCIL/C/META→CUTOVER | P2 | current and next packages | Canonical ownership | planned |
 | deferred | LJBC-STENCIL/native/slow binary | — | owner decision | Explicit non-main profiles | stopped/not scheduled |
 
 ## Distribution Protocol
