@@ -109,18 +109,20 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 - [x] Pass the full schema suite (10/10).
 - [x] Pass focused ND scan rejection and native stencil checks.
 - [ ] Restore remaining LuaJIT/stencil tests (blocked by STN-SCHED and missing `StencilMachineSkeletonInput`).
-- [ ] Prove copy, reduce, scan, and SOAC C paths (blocked by LAY-1).
+- [x] Prove copy, reduce, scan, and SOAC C paths.
 
 ### STN-SCHED — Typed schedule selection
 
+**Status:** integrated at `d66eff0b6`; independently approved.
 **Depends on:** STN-1.
-**Failure cluster:** `schedule_for_descriptor_with_info` invokes a method on absent `info.schedule`; no nil default is permitted.
 
-- [ ] Define the schedule-selection alternatives in ASDL.
-- [ ] Ensure every descriptor producer supplies a typed selection.
-- [ ] Put schedule behavior on concrete selection leaves.
-- [ ] Add scheduled and explicitly-unscheduled descriptor tests.
-- [ ] Restore artifact construction tests blocked at schedule selection.
+- [x] Define selected, explicitly-unscheduled, and rejected alternatives in ASDL.
+- [x] Ensure every descriptor producer supplies a typed selection.
+- [x] Put scalar/vector/lane/tail and realization matching on concrete leaves.
+- [x] Remove absent-schedule scalar/autovector/unroll defaults.
+- [x] Check feature, lane policy/type/count, unroll, interleave, and tail exactly.
+- [x] Add scheduled, explicitly-unscheduled, rejected, exact-match, and mismatch tests.
+- [ ] Complete LuaJIT stencil artifact construction (now blocked by LJBC-STENCIL payload mismatch).
 
 ### LAY-1 — Layout projection and resolution
 
@@ -168,16 +170,18 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 
 ### ABI-SIG — Required code signature projection
 
-**Failure cluster:** after LAY-1, `test_dsl_lua_owned.lua` reaches CodeResult validation and reports multiple `CodeIssueMissingSig` facts.
+**Status:** integrated at `c95973fd5`; independently approved.
+**Failure cluster:** CodeResult validation lacked typed required-signature facts.
 
-- [ ] Trace ownership of required function, extern, call, closure, and helper signatures.
-- [ ] Model requirements and signature collection as named typed ASDL projections.
-- [ ] Align canonical `LalinTreeLower` and schema_v2 `LalinTreeCode` ownership without fallback constructors.
-- [ ] Replace nullable signature lookup with typed found/missing alternatives.
-- [ ] Ensure every concrete producer contributes its required `CodeSig`.
-- [ ] Remove string-keyed or implicit signature discovery.
-- [ ] Pass direct binding and pipeline-load smoke tests.
-- [ ] Pass focused code-type/code-validation producer tests.
+- [x] Trace ownership of required function, extern, call, closure, and helper signatures.
+- [x] Model requirements and signature collection as named typed ASDL projections.
+- [x] Align canonical `LalinTreeLower` and schema_v2 `LalinTreeCode` ownership without fallback constructors.
+- [x] Replace nullable signature lookup with typed found/missing alternatives.
+- [x] Ensure every concrete producer contributes its required `CodeSig`.
+- [x] Remove string-keyed signature lookup from this slice.
+- [x] Pass direct binding and pipeline-load smoke tests.
+- [x] Pass focused code-type/code-validation producer tests.
+- [x] Preserve nested callable-pointer signature validation.
 - [ ] Re-run `test_dsl_lua_owned.lua` after ABI-STATE.
 
 ### ABI-STATE — Cross-unit lowering isolation
@@ -189,6 +193,15 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 - [ ] Add alternating A → B → A and repeated-unit tests.
 - [ ] Add failure-then-success isolation tests.
 - [ ] Prove no facts leak between public compile sessions.
+
+### LJBC-STENCIL — LuaJIT stencil artifact payload
+
+**Failure cluster:** schedule selection now completes, then LuaJIT stencil construction rejects an `LJBCStencilEntry` payload shape.
+
+- [ ] Identify the canonical ASDL payload owner and producer.
+- [ ] Replace stale constructor arguments without a compatibility wrapper.
+- [ ] Add focused store/reduce/scan artifact payload tests.
+- [ ] Restore LuaJIT stencil artifact construction.
 
 ### AUX-1 — Remaining baseline clusters
 
@@ -204,8 +217,8 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 
 **Depends on:** RGN-1.
 
-- [ ] Region emit compile/run.
-- [ ] Region call compile/run.
+- [x] Region emit compile/run.
+- [x] Region call compile/run.
 - [ ] Jump and target-application coverage.
 - [ ] Nested and parameterized regions.
 - [ ] Typed rejection for missing targets, wires, and unsupported frames.
@@ -365,12 +378,13 @@ Release-level gates:
 |---|---:|---|---|---|---|
 | RGN-1 | P0 | none | Region helper restoration + focused tests | integrated | `82ec214af`; approved by `w4:p14` |
 | STN-1 | P0 | none | Stencil semantic construction | integrated | `35c1ce5a3`; approved by `w4:p16` |
-| STN-SCHED | P0 | STN-1 | Typed schedule selection | changes requested | `pack/stn-sched` (`w4:p1A`) |
+| STN-SCHED | P0 | STN-1 | Typed schedule selection | integrated | `d66eff0b6`; approved by `w4:p16` |
 | LAY-1 | P0 | STN-1 analysis | Typed leaf-owned layout resolution | integrated | `00303c45b`; approved by `w4:p14` |
 | TYP-1 | P0 | none | Typed frontend target projection | integrated | `1750e4ce5`; approved by `w4:p6` |
 | TYP-OWN | P0 | none | Check/lower schema ownership | ready | — |
-| ABI-SIG | P0 | LAY-1 | Required code signature projection | changes requested | `pack/abi-sig` (`w4:p19`) |
+| ABI-SIG | P0 | LAY-1 | Required code signature projection | integrated | `c95973fd5`; approved by `w4:p6` |
 | ABI-STATE | P0 | ABI-SIG vocabulary | Cross-unit lowering isolation | ready | — |
+| LJBC-STENCIL | P1 | STN-SCHED | LuaJIT stencil artifact payload | ready | — |
 | CMP-1 | P1 | none | Compiler-process contracts | ready | — |
 | M0.1 | P0 | none | Failure ledger and focused reproducers | ready | — |
 | ASDL-CLOSURE | P1 | baseline stabilization | Closure state and leaf-method migration | planned | — |
