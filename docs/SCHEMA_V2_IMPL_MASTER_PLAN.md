@@ -133,12 +133,27 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 - [ ] Add focused layout projection tests.
 - [ ] Pass inline CMat copy/reduce/scan/SOAC C tests.
 
-### TYP-1 — Typecheck projection regressions
+### TYP-1 — Typed frontend target projection
 
-- [ ] Fix `tree_typecheck_type.lua:556` nil failure through the owning typed fact.
-- [ ] Fix DSL `HostTargetModel` table passed where `TypeValueScope` is required.
-- [ ] Pass `tests/frontend/test_dsl_lua_owned.lua`.
-- [ ] Restore affected artifact/compiler tests.
+**Status:** integrated at `1750e4ce5`; independently approved.
+
+- [x] Normalize raw `c_target` to typed `CBackendTarget` before semantic use.
+- [x] Project `HostTargetModel`, `CBackendTarget`, and `BackTargetModel` through owned methods.
+- [x] Put C/backend endian conversion on concrete endian leaves.
+- [x] Preserve pointer width, index width, endian, and target-option precedence.
+- [x] Carry the effective `HostTargetModel` in `TypeModuleResult`.
+- [x] Prove 32-bit pointer, 16-bit index, and big-endian behavior through public `lalin.emit_c`.
+- [x] Pass focused target projection and schema tests.
+- [ ] Pass `tests/frontend/test_dsl_lua_owned.lua` (now blocked only by LAY-1).
+
+### TYP-OWN — Check/lower schema ownership
+
+**Failure cluster:** `tree_typecheck_type.lua:556` still looks for `TypeIssue` under `LalinTree`; correcting that exposes missing `LalinTreeLower` / `TreeLowerInput` ownership at `tree_lower.lua:20,142`.
+
+- [ ] Move issue construction to canonical `LalinCheck.TypeIssue` ownership.
+- [ ] Define or use the canonical typed tree-lowering input/result vocabulary.
+- [ ] Remove duplicate old/new ownership assumptions without a compatibility alias.
+- [ ] Restore focused artifact/compiler reproductions.
 
 ### CMP-1 — Compiler process typed contracts
 
@@ -323,7 +338,8 @@ Release-level gates:
 | STN-1 | P0 | none | Stencil semantic construction | integrated | `35c1ce5a3`; approved by `w4:p16` |
 | STN-SCHED | P0 | STN-1 | Typed schedule selection | ready | — |
 | LAY-1 | P0 | STN-1 analysis | Layout projection/resolution | working | `pack/lay-1` (`w4:p18`) |
-| TYP-1 | P0 | none | Typed frontend target projection | changes requested | `pack/typ-1` (`wZ:p1`) |
+| TYP-1 | P0 | none | Typed frontend target projection | integrated | `1750e4ce5`; approved by `w4:p6` |
+| TYP-OWN | P0 | none | Check/lower schema ownership | ready | — |
 | CMP-1 | P1 | none | Compiler-process contracts | ready | — |
 | M0.1 | P0 | none | Failure ledger and focused reproducers | ready | — |
 | ASDL-CLOSURE | P1 | baseline stabilization | Closure state and leaf-method migration | planned | — |
