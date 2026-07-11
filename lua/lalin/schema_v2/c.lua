@@ -170,6 +170,19 @@ return schema. LalinC {
     params [many [LalinC.CBackendType]],
     result [LalinC.CBackendType],
   },
+  product. CBackendFuncSigEntry {
+    interned,
+    field. id [LalinC.CBackendFuncSigId],
+    sig [LalinC.CBackendFuncSig],
+  },
+  product. CBackendFuncSigProjection {
+    interned,
+    entries [many [LalinC.CBackendFuncSigEntry]],
+  },
+  sum. CBackendFuncSigLookup {
+    CBackendFuncSigFound { variant_unique, entry [LalinC.CBackendFuncSigEntry], },
+    CBackendFuncSigMissing { variant_unique, field. id [LalinC.CBackendFuncSigId], },
+  },
   product. CBackendField {
     interned,
     field. name [LalinC.CBackendName],
@@ -505,6 +518,11 @@ return schema. LalinC {
       align [number],
     },
     CBackendHelperTrap,
+  },
+  product. CBackendHelperSignature {
+    interned,
+    params [many [LalinC.CBackendType]],
+    result [LalinC.CBackendType],
   },
   product. CBackendHelperUse {
     interned,

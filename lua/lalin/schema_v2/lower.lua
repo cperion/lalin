@@ -193,6 +193,83 @@ return schema. LalinLower {
     graph [LalinGraph.CodeGraph],
     target [LalinC.CBackendTarget],
   },
+  product. LowerCSignatureEntry {
+    interned,
+    code_sig [LalinCode.CodeSigId],
+    code_signature [LalinCode.CodeSig],
+    c_sig_id [LalinC.CBackendFuncSigId],
+    c_sig [LalinC.CBackendFuncSig],
+  },
+  product. LowerCSignatureProjection {
+    interned,
+    entries [many [LalinLower.LowerCSignatureEntry]],
+  },
+  sum. LowerCSignatureLookup {
+    LowerCSignatureFound { variant_unique, entry [LalinLower.LowerCSignatureEntry], },
+    LowerCSignatureMissing { variant_unique, sig [LalinCode.CodeSigId], },
+  },
+  product. LowerCValueTypeEntry {
+    interned,
+    field. value [LalinCode.CodeValueId],
+    code_ty [LalinCode.CodeType],
+    c_local [LalinC.CBackendLocal],
+  },
+  product. LowerCValueTypeProjection {
+    interned,
+    entries [many [LalinLower.LowerCValueTypeEntry]],
+  },
+  sum. LowerCValueTypeLookup {
+    LowerCValueTypeFound { variant_unique, entry [LalinLower.LowerCValueTypeEntry], },
+    LowerCValueTypeMissing { variant_unique, field. value [LalinCode.CodeValueId], },
+  },
+  product. LowerCInstructionInput {
+    interned,
+    signatures [LalinLower.LowerCSignatureProjection],
+    values [LalinLower.LowerCValueTypeProjection],
+  },
+  product. LowerCInstEmission {
+    interned,
+    stmts [many [LalinC.CBackendStmt]],
+    helpers [many [LalinC.CBackendHelperUse]],
+    locals [many [LalinC.CBackendLocal]],
+    definitions [many [LalinLower.LowerCValueTypeEntry]],
+  },
+  product. LowerCTermInput {
+    interned,
+    values [LalinLower.LowerCValueTypeProjection],
+  },
+  product. LowerCBlockInput {
+    interned,
+    signatures [LalinLower.LowerCSignatureProjection],
+    values [LalinLower.LowerCValueTypeProjection],
+  },
+  product. LowerCBlockEmission {
+    interned,
+    block [LalinC.CBackendBlock],
+    helpers [many [LalinC.CBackendHelperUse]],
+    locals [many [LalinC.CBackendLocal]],
+    values [LalinLower.LowerCValueTypeProjection],
+  },
+  product. LowerCTermEmission {
+    interned,
+    term [LalinC.CBackendTerminator],
+  },
+  product. LowerCFunctionInput {
+    interned,
+    signatures [LalinLower.LowerCSignatureProjection],
+  },
+  product. LowerCFunctionEmission {
+    interned,
+    func [LalinC.CBackendFunc],
+    helpers [many [LalinC.CBackendHelperUse]],
+    value_types [LalinLower.LowerCValueTypeProjection],
+  },
+  product. LowerCModuleEmission {
+    interned,
+    unit [LalinC.CBackendUnit],
+    signatures [LalinLower.LowerCSignatureProjection],
+    functions [many [LalinLower.LowerCFunctionEmission]],
+  },
   product. LowerBackEmitInput {
     code_module [LalinCode.CodeModule],
     graph [LalinGraph.CodeGraph],

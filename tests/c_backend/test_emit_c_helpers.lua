@@ -6,6 +6,10 @@ local T = asdl.context(); Schema(T)
 
 local Core = T.LalinCore
 local C = T.LalinC
+local CEmit = T.LalinCEmit
+local Code = T.LalinCode
+local Graph = T.LalinGraph
+local Lower = T.LalinLower
 local H = require("lalin.emit_c_helpers")(T)
 local Emit = require("lalin.emit_c_lower")(T)
 local CodeType = require("lalin.code_type")(T)
@@ -18,11 +22,20 @@ local f64 = C.CBackendScalar(Core.ScalarF64)
 local add_kind = C.CBackendHelperIntBinary(Core.BinAdd, i32, C.CBackendIntWrap)
 local id = H.helper_id(add_kind)
 assert(id.text == "ml_i32_add_intwrap")
-local ctx = { helpers = {} }
-assert(H.register(ctx, add_kind).text == id.text)
-assert(H.register(ctx, add_kind).text == id.text)
-assert(#ctx.helper_order == 1, "helper register deduplicates")
-local add_src = table.concat(H.emit_helper(ctx.helper_order[1]), "\n")
+local target = CodeType.default_target({ dialect = "c11" })
+local module_id = Code.CodeModuleId("helper_registration")
+local origin = Code.CodeOriginUnknown
+local code_module = Code.CodeModule(module_id, {}, {}, {}, {}, {}, {}, origin)
+local graph = Graph.CodeGraph(module_id, {})
+local spine = Lower.LowerBackSpine(code_module, graph, target)
+local machine = CEmit.CEmitMachine(spine, {}, {}, {}, {})
+local registered_id
+registered_id, machine = H.register(machine, add_kind)
+assert(registered_id.text == id.text)
+registered_id, machine = H.register(machine, add_kind)
+assert(registered_id.text == id.text)
+assert(#machine.helper_order == 1, "typed helper registration deduplicates")
+local add_src = table.concat(H.emit_helper(add_kind), "\n")
 assert(add_src:match("ml_i32_add_intwrap"))
 assert(add_src:match("uint32_t"), "wrapping add uses same-width unsigned arithmetic")
 local float_add_src = table.concat(H.emit_helper(C.CBackendHelperFloatBinary(Core.BinAdd, f64)), "\n")

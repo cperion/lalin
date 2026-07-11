@@ -7,17 +7,15 @@ require("lalin.schema_v2")
 local Cemit = require("lalin.schema_v2.cemit")
 local C     = require("lalin.schema_v2.c")
 local Core  = require("lalin.schema_v2.core")
-local asdl  = require("lalin.asdl")
 
--- Forward: look up a CBackendFuncSig from a CBackendUnit by CBackendFuncSigId
-local function sig_by_id(unit)
-  local out = {}
-  if unit.sigs then
-    for _, s in ipairs(unit.sigs) do
-      out[s.id.text] = s
-    end
-  end
-  return out
+function C.CBackendUnit:c_emit_sig_projection()
+  local entries = {}
+  for i = 1, #self.sigs do entries[i] = C.CBackendFuncSigEntry(self.sigs[i].id, self.sigs[i]) end
+  return C.CBackendFuncSigProjection(entries)
+end
+function C.CBackendFuncSigProjection:c_emit_sig_lookup(id)
+  for i = 1, #self.entries do if self.entries[i].id == id then return C.CBackendFuncSigFound(self.entries[i]) end end
+  return C.CBackendFuncSigMissing(id)
 end
 
 local function func_params(params)
@@ -79,10 +77,10 @@ function Cemit.CEmitMachine:emit_source(c_unit)
   end
 
   -- Function bodies
-  local sigs = sig_by_id(c_unit)
+  local signatures = c_unit:c_emit_sig_projection()
   if c_unit.funcs then
     for _, func in ipairs(c_unit.funcs) do
-      func:c_emit_func_source(sigs, lines)
+      func:c_emit_func_source(signatures, lines)
       lines[#lines + 1] = ''
     end
   end
@@ -114,16 +112,10 @@ function Cemit.CEmitMachine:emit_header(c_unit)
 
   -- Function prototypes
 
-  local sigs = sig_by_id(c_unit)
+  local signatures = c_unit:c_emit_sig_projection()
   if c_unit.funcs then
     for _, func in ipairs(c_unit.funcs) do
-      local sig = sigs[func.sig.text]
-      if sig then
-        local ret = sig.result:c_emit_type()
-        local name = func.name.text
-        local params_str = func_params(func.params)
-        lines[#lines + 1] = ret .. ' ' .. name .. '(' .. params_str .. ');'
-      end
+      signatures:c_emit_sig_lookup(func.sig):c_emit_prototype(func, lines)
     end
   end
   lines[#lines + 1] = ''
@@ -192,6 +184,11 @@ function Core.ScalarF32:c_helper_suffix() return "f32" end
 function Core.ScalarF64:c_helper_suffix() return "f64" end
 function Core.ScalarRawPtr:c_helper_suffix() return "ptr" end
 function Core.ScalarIndex:c_helper_suffix() return "index" end
+
+function Core.UnaryOp:c_helper_suffix() error("missing c_helper_suffix leaf method for UnaryOp", 2) end
+function Core.UnaryNeg:c_helper_suffix() return "neg" end
+function Core.UnaryNot:c_helper_suffix() return "not" end
+function Core.UnaryBitNot:c_helper_suffix() return "bitnot" end
 
 function Core.BinaryOp:c_helper_suffix() error("missing c_helper_suffix leaf method for BinaryOp", 2) end
 function Core.BinAdd:c_helper_suffix() return "add" end
@@ -316,7 +313,7 @@ end
 ----------------------------------------------------------------------
 
 function C.CBackendTypeDecl:c_emit_type_decl(out)
-  error("missing c_emit_type_decl leaf method for " .. tostring(asdl.classof(self)), 2)
+  error("missing c_emit_type_decl leaf method", 2)
 end
 
 function C.CBackendTypedef:c_emit_type_decl(out)
@@ -363,24 +360,26 @@ end
 -- C.CBackendFunc → c_emit_func_source
 ----------------------------------------------------------------------
 
-function C.CBackendFunc:c_emit_func_source(sigs, out)
-  local sig = sigs[self.sig.text]
-  if not sig then
-    out[#out + 1] = "/* function " .. self.name.text .. " missing signature */"
-    out[#out + 1] = "void " .. self.name.text .. "(void) {"
-  else
-    local ret_ty = sig.result:c_emit_type()
-    out[#out + 1] = ret_ty .. " " .. self.name.text .. "(" .. func_params(self.params) .. ") {"
-  end
-
-  -- Emit local declarations
+function C.CBackendFunc:c_emit_func_source(signatures, out)
+  signatures:c_emit_sig_lookup(self.sig):c_emit_func_open(self, out)
   for _, loc in ipairs(self.locals or {}) do
     out[#out + 1] = "  " .. loc.ty:c_emit_decl(loc.id.text) .. ";"
   end
-  -- Emit body via leaf method
   self.body:c_emit_body(out, "  ")
-
   out[#out + 1] = "}"
+end
+function C.CBackendFuncSigFound:c_emit_func_open(func, out)
+  out[#out + 1] = self.entry.sig.result:c_emit_type() .. " " .. func.name.text .. "(" .. func_params(func.params) .. ") {"
+end
+function C.CBackendFuncSigMissing:c_emit_func_open(func, out)
+  out[#out + 1] = "/* function " .. func.name.text .. " missing signature */"
+  out[#out + 1] = "void " .. func.name.text .. "(void) {"
+end
+function C.CBackendFuncSigFound:c_emit_prototype(func, out)
+  out[#out + 1] = self.entry.sig.result:c_emit_type() .. " " .. func.name.text .. "(" .. func_params(func.params) .. ");"
+end
+function C.CBackendFuncSigMissing:c_emit_prototype(func, out)
+  out[#out + 1] = "/* omitted prototype for " .. func.name.text .. ": missing signature */"
 end
 
 ----------------------------------------------------------------------
@@ -392,16 +391,7 @@ function C.CBackendFuncBody:c_emit_body(out, indent)
 end
 
 function C.CBackendBodyBlocks:c_emit_body(out, indent)
-  -- Collect blocks by label for goto resolution
-  local blocks_by_label = {}
-  for _, b in ipairs(self.blocks or {}) do
-    blocks_by_label[b.label.text] = b
-  end
-
-  -- Emit blocks
-  for _, b in ipairs(self.blocks or {}) do
-    b:c_emit_block(out, indent, blocks_by_label)
-  end
+  for _, block in ipairs(self.blocks or {}) do block:c_emit_block(out, indent) end
 end
 
 function C.CBackendBodyExec:c_emit_body(out, indent)
@@ -415,21 +405,14 @@ function C.CBackendBodyMixed:c_emit_body(out, indent)
     out[#out + 1] = indent .. "/* exec fragment */"
   end
 
-  -- Emit blocks
-  local blocks_by_label = {}
-  for _, b in ipairs(self.blocks or {}) do
-    blocks_by_label[b.label.text] = b
-  end
-  for _, b in ipairs(self.blocks or {}) do
-    b:c_emit_block(out, indent, blocks_by_label)
-  end
+  for _, block in ipairs(self.blocks or {}) do block:c_emit_block(out, indent) end
 end
 
 ----------------------------------------------------------------------
 -- C.CBackendBlock → c_emit_block
 ----------------------------------------------------------------------
 
-function C.CBackendBlock:c_emit_block(out, indent, blocks_by_label)
+function C.CBackendBlock:c_emit_block(out, indent)
   -- Label
   out[#out + 1] = indent .. self.label.text .. ":"
 
@@ -731,43 +714,89 @@ function C.CBackendHelperSpec:c_helper_signature()
 end
 function C.CBackendHelperUse:c_helper_signature() return self.spec:c_helper_signature() end
 function C.CBackendHelperIntBinary:c_helper_signature()
-  return { params = { self.ty, self.ty }, result = self.ty }
+  return C.CBackendHelperSignature({ self.ty, self.ty }, self.ty)
 end
 function C.CBackendHelperUnary:c_helper_signature()
-  return { params = { self.ty }, result = self.ty }
+  return C.CBackendHelperSignature({ self.ty }, self.ty)
+end
+function C.CBackendHelperBoolNormalize:c_helper_signature()
+  return C.CBackendHelperSignature({ self.ty }, C.CBackendBool8)
 end
 function C.CBackendHelperCast:c_helper_signature()
-  return { params = { self.from }, result = self.to }
+  return C.CBackendHelperSignature({ self.from }, self.to)
 end
 function C.CBackendHelperPtrOffset:c_helper_signature()
-  return { params = { C.CBackendDataPtr(), C.CBackendIndex() }, result = C.CBackendDataPtr() }
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(nil), C.CBackendIndex }, C.CBackendDataPtr(nil))
 end
 function C.CBackendHelperFloatBinary:c_helper_signature()
-  return { params = { self.ty, self.ty }, result = self.ty }
+  return C.CBackendHelperSignature({ self.ty, self.ty }, self.ty)
 end
 function C.CBackendHelperDivRem:c_helper_signature()
-  return { params = { self.ty, self.ty }, result = self.ty }
+  return C.CBackendHelperSignature({ self.ty, self.ty }, self.ty)
 end
 function C.CBackendHelperShift:c_helper_signature()
-  return { params = { self.ty, self.ty }, result = self.ty }
+  return C.CBackendHelperSignature({ self.ty, self.ty }, self.ty)
 end
-function C.CBackendHelperIntrinsic:c_helper_signature()
-  return { params = { self.ty }, result = self.ty }
-end
+function Core.Intrinsic:c_typed_helper_signature(ty) return C.CBackendHelperSignature({ ty }, ty) end
+function Core.IntrinsicTrap:c_typed_helper_signature(ty) return C.CBackendHelperSignature({}, C.CBackendVoid) end
+function Core.IntrinsicAssume:c_typed_helper_signature(ty) return C.CBackendHelperSignature({ C.CBackendBool8 }, C.CBackendVoid) end
+function Core.IntrinsicFma:c_typed_helper_signature(ty) return C.CBackendHelperSignature({ ty, ty, ty }, ty) end
+function Core.IntrinsicRotl:c_typed_helper_signature(ty) return C.CBackendHelperSignature({ ty, ty }, ty) end
+function Core.IntrinsicRotr:c_typed_helper_signature(ty) return C.CBackendHelperSignature({ ty, ty }, ty) end
+function C.CBackendHelperIntrinsic:c_helper_signature() return self.intrinsic:c_typed_helper_signature(self.ty) end
 function C.CBackendHelperLoad:c_helper_signature()
-  return { params = { C.CBackendDataPtr() }, result = self.access.ty }
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(nil) }, self.access.ty)
 end
 function C.CBackendHelperStore:c_helper_signature()
-  return { params = { C.CBackendDataPtr(), self.access.ty }, result = C.CBackendVoid() }
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(nil), self.access.ty }, C.CBackendVoid)
+end
+function C.CBackendHelperAtomicLoad:c_helper_signature()
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(self.access.ty) }, self.access.ty)
+end
+function C.CBackendHelperAtomicStore:c_helper_signature()
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(self.access.ty), self.access.ty }, C.CBackendVoid)
+end
+function C.CBackendHelperAtomicRmw:c_helper_signature()
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(self.access.ty), self.access.ty }, self.access.ty)
+end
+function C.CBackendHelperAtomicCas:c_helper_signature()
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(self.access.ty), C.CBackendDataPtr(self.access.ty), self.access.ty }, self.access.ty)
+end
+function C.CBackendHelperAtomicFence:c_helper_signature()
+  return C.CBackendHelperSignature({}, C.CBackendVoid)
 end
 function C.CBackendHelperMemcpy:c_helper_signature()
-  return { params = { C.CBackendDataPtr(), C.CBackendDataPtr(), C.CBackendIndex() }, result = C.CBackendVoid() }
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(nil), C.CBackendDataPtr(nil), C.CBackendIndex }, C.CBackendVoid)
+end
+function C.CBackendHelperTypedMemcpy:c_helper_signature()
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(nil), C.CBackendDataPtr(nil) }, C.CBackendVoid)
 end
 function C.CBackendHelperMemset:c_helper_signature()
-  return { params = { C.CBackendDataPtr(), C.CBackendScalar(Core.ScalarI32()), C.CBackendIndex() }, result = C.CBackendVoid() }
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(nil), C.CBackendScalar(Core.ScalarI32), C.CBackendIndex }, C.CBackendVoid)
+end
+function C.CBackendHelperTypedMemset:c_helper_signature()
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(nil), C.CBackendScalar(Core.ScalarI32) }, C.CBackendVoid)
+end
+function C.CBackendHelperMemcmp:c_helper_signature()
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(nil), C.CBackendDataPtr(nil), C.CBackendIndex }, C.CBackendScalar(Core.ScalarI32))
+end
+function C.CBackendHelperLayoutAssert:c_helper_signature()
+  return C.CBackendHelperSignature({}, C.CBackendVoid)
+end
+function C.CBackendHelperRequireFeature:c_helper_signature()
+  return C.CBackendHelperSignature({}, C.CBackendVoid)
+end
+function C.CBackendHelperScan:c_helper_signature()
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(self.ty), C.CBackendDataPtr(self.ty), C.CBackendIndex }, C.CBackendVoid)
+end
+function C.CBackendHelperFind:c_helper_signature()
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(self.ty), C.CBackendIndex, self.ty }, C.CBackendIndex)
+end
+function C.CBackendHelperReduce:c_helper_signature()
+  return C.CBackendHelperSignature({ C.CBackendDataPtr(self.ty), C.CBackendIndex }, self.ty)
 end
 function C.CBackendHelperTrap:c_helper_signature()
-  return { params = {}, result = C.CBackendVoid() }
+  return C.CBackendHelperSignature({}, C.CBackendVoid)
 end
 
 function C.CBackendHelperSpec:c_emit_helper_body(lines, ret)
@@ -782,16 +811,12 @@ function C.CBackendHelperFloatBinary:c_emit_helper_body(lines, ret)
   lines[#lines + 1] = "    return (" .. ret .. ")(" .. self.op:c_helper_expr("a1", "a2") .. ");"
 end
 
+function Core.UnaryNeg:c_emit_unary_expression(value) return "-" .. value end
+function Core.UnaryNot:c_emit_unary_expression(value) return "!" .. value end
+function Core.UnaryBitNot:c_emit_unary_expression(value) return "~" .. value end
+
 function C.CBackendHelperUnary:c_emit_helper_body(lines, ret)
-  if asdl.classof(self.op) == Core.UnaryNeg then
-    lines[#lines + 1] = "    return (" .. ret .. ")(-a1);"
-  elseif asdl.classof(self.op) == Core.UnaryNot then
-    lines[#lines + 1] = "    return (" .. ret .. ")(!a1);"
-  elseif asdl.classof(self.op) == Core.UnaryBitNot then
-    lines[#lines + 1] = "    return (" .. ret .. ")(~a1);"
-  else
-    lines[#lines + 1] = "    return a1;"
-  end
+  lines[#lines + 1] = "    return (" .. ret .. ")(" .. self.op:c_emit_unary_expression("a1") .. ");"
 end
 
 function C.CBackendHelperCast:c_emit_helper_body(lines, ret)

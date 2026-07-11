@@ -109,8 +109,11 @@ local code_module = Code.CodeModule(
 -- Run emit_c and verify fields
 ----------------------------------------------------------------------
 
-local c_unit = lower_module:emit_c(code_module)
-assert(c_unit ~= nil, "emit_c returned nil")
+local emission = lower_module:lower_c_module(code_module)
+assert(asdl.classof(emission) == Lower.LowerCModuleEmission, "module lowering must return typed emission")
+local c_unit = emission.unit
+assert(asdl.classof(c_unit) == C.CBackendUnit, "typed emission must own CBackendUnit")
+assert(lower_module:emit_c(code_module) == c_unit, "public emit boundary must unwrap canonical typed result")
 assert(c_unit.module_name == "wired_module", "bad module_name")
 
 -- Test externs

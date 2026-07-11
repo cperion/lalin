@@ -882,6 +882,7 @@ return schema. LalinCode {
     RelocAddendOverflow { addend [number], max [number], },
     RelocOffsetOutOfRange { offset [number], section_size [number], },
     RelocUnsupportedTargetKind { target_kind [str], },
+    RelocDuplicateId { field. id [LalinCode.CodeRelocId], },
   },
 
   -- CodeUnsupportedContext: typed unsupported contexts
@@ -904,11 +905,13 @@ return schema. LalinCode {
     CodeIssueMissingExtern { variant_unique, extern [LalinCode.CodeExternId], },
     CodeIssueMissingGlobal { variant_unique, global [LalinCode.CodeGlobalId], },
     CodeIssueMissingData { variant_unique, data [LalinCode.CodeDataId], },
+    CodeIssueMissingLocal { variant_unique, local_id [LalinCode.CodeLocalId], },
     CodeIssueDuplicateSig { variant_unique, sig [LalinCode.CodeSigId], },
     CodeIssueDuplicateFunc { variant_unique, func [LalinCode.CodeFuncId], },
     CodeIssueDuplicateExtern { variant_unique, extern [LalinCode.CodeExternId], },
     CodeIssueDuplicateGlobal { variant_unique, global [LalinCode.CodeGlobalId], },
     CodeIssueDuplicateData { variant_unique, data [LalinCode.CodeDataId], },
+    CodeIssueDuplicateLocal { variant_unique, local_id [LalinCode.CodeLocalId], },
     CodeIssueDuplicateInst { variant_unique, inst [LalinCode.CodeInstId], },
     CodeIssueDuplicateTerm { variant_unique, term [LalinCode.CodeTermId], },
     CodeIssueJumpArity {
@@ -942,6 +945,13 @@ return schema. LalinCode {
       variant_unique,
       site [str],
       access [LalinCode.CodeMemoryAccess],
+    },
+    CodeIssueDataInitOutOfBounds {
+      variant_unique,
+      site [str],
+      offset [number],
+      extent [number],
+      size [number],
     },
     -- REFACTORED: stringly reason → typed RelocFailure
     CodeIssueInvalidReloc {
