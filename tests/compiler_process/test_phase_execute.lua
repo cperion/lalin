@@ -70,7 +70,7 @@ assert(asdl.classof(P.ImplLalin("demo", "run"):resolve_machine_implementation(ex
 assert(asdl.classof(P.ImplC("demo_run"):resolve_machine_implementation(executor)) == P.MachineImplementationUnavailable)
 assert(asdl.classof(P.ImplExternal("demo.capability"):resolve_machine_implementation(executor)) == P.MachineImplementationUnavailable)
 
-local request = P.PhaseExecutionRequest(planned.plan, P.PhaseValueNumber(20))
+local request = P.PhaseExecutionRequest(planned.plan, P.PhaseValueNumber(20), P.CompilerStageUnconfigured)
 local report = executor:run(request)
 assert(asdl.classof(report) == P.PhaseExecutionSucceeded)
 assert(report.output.value == 42)
@@ -84,7 +84,7 @@ assert(#report.run.events == 6)
 assert(#report.run.steps == 2)
 
 local seen = {}
-local process_request = P.PhaseExecutionRequest(planned.plan, P.PhaseValueNumber(1))
+local process_request = P.PhaseExecutionRequest(planned.plan, P.PhaseValueNumber(1), P.CompilerStageUnconfigured)
 local handle = executor:process(process_request)
 for ev in handle:events() do seen[ev.kind] = (seen[ev.kind] or 0) + 1 end
 assert(handle:result().output.value == 4)
@@ -93,7 +93,7 @@ assert(seen.step_start == 2)
 assert(seen.step_done == 2)
 assert(seen.execute_done == 1)
 
-local unbound_request = P.PhaseExecutionRequest(planned.plan, P.PhaseValueNumber(1))
+local unbound_request = P.PhaseExecutionRequest(planned.plan, P.PhaseValueNumber(1), P.CompilerStageUnconfigured)
 local unbound = Execute.registry(T)
 unbound.bindings = {}
 local failed = unbound:run(unbound_request)

@@ -76,7 +76,7 @@ local function install_methods(T)
 
         local started = P.PhaseRunStepStarted(#run_events + 1, step.index, step.phase, step.machine)
         run_events[#run_events + 1] = started
-        local machine_request = P.PhaseMachineExecutionRequest(step, self.current)
+        local machine_request = P.PhaseMachineExecutionRequest(step, self.current, request.stage)
         ctx:event("step_start", machine_request)
         local result = step.impl:resolve_machine_implementation(executor):execute_machine(executor, machine_request)
         local finished = P.PhaseRunStepFinished(#run_events + 1, step.index, step.phase, step.machine)

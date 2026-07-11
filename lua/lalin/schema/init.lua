@@ -77,8 +77,10 @@ function M.schema(T)
 end
 
 local function bind_context(T)
+    if T._lalin_canonical_schema_defined then return T end
     Dsl.define(T, M.load_modules())
     require("lalin.compiler_implementation").install_canonical(T)
+    T._lalin_canonical_schema_defined = true
     return T
 end
 

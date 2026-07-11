@@ -136,16 +136,22 @@ return schema. LalinPhase {
     PhaseValueNumber { variant_unique, field. value [number], },
   },
 
+  sum. CompilerStageInput {
+    CompilerStageUnconfigured,
+    CompilerCStageInput { variant_unique, target [LalinC.CBackendTarget], },
+  },
   product. PhaseExecutionRequest {
     interned,
     plan [LalinPhase.Plan],
     input [LalinPhase.PhaseExecutionValue],
+    stage [LalinPhase.CompilerStageInput],
   },
 
   product. PhaseMachineExecutionRequest {
     interned,
     step [LalinPhase.PlanStep],
     input [LalinPhase.PhaseExecutionValue],
+    stage [LalinPhase.CompilerStageInput],
   },
 
   sum. PhaseExecutionDiagnostic {

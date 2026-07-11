@@ -401,7 +401,7 @@ local function bind_context(T)
     local function code_extern_name(c_emission, id)
         local e = c_emission.externs[id.text]
         if e == nil then error("code_to_c: missing extern " .. tostring(id.text), 2) end
-        return c_name(e.name)
+        return c_name(e.symbol)
     end
 
     function Code.CodeGlobalRef:lower_code_global_ref_to_c_name(c_emission)
@@ -1097,7 +1097,7 @@ local function bind_context(T)
     end
 
     local function lower_extern(c_emission, e)
-        return C.CBackendExtern(c_name(e.name), e.symbol, c_sig(c_emission, e.sig), nil)
+        return C.CBackendExtern(c_name(e.symbol), e.symbol, c_sig(c_emission, e.sig), nil)
     end
 
     local function lower_type_decl(c_emission, td)

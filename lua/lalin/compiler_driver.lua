@@ -17,8 +17,10 @@ function M.lower_module(module, opts)
     local package = CompilerPackage(T)
     local planned = PhasePlan.assert_plan(package, opts.root or "compile")
     local executor = opts.executor or PhaseExecute.registry(T)
+    local CodeType = require("lalin.code_type")(T)
+    local stage = T.LalinPhase.CompilerCStageInput(CodeType.default_target(opts.c_target or opts.target or {}))
     local request = T.LalinPhase.PhaseExecutionRequest(
-        planned.plan, T.LalinPhase.PhaseValueTreeModule(module)
+        planned.plan, T.LalinPhase.PhaseValueTreeModule(module), stage
     )
     return executor:run(request):require_output():compiler_value()
 end

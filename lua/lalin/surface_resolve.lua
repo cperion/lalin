@@ -108,7 +108,7 @@ local function bind_context(T)
             if type(value) == "table" then
                 if asdl.classof(value) then
                     next_value = resolve_any(value, ctx)
-                else
+                elseif fields[i].list then
                     next_value = resolve_list(value, ctx)
                 end
             end

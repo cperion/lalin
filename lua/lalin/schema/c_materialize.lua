@@ -25,6 +25,103 @@ return schema. LalinCMat {
     alignment [LalinStencil.StencilAlignmentFact],
   },
 
+  product. CMatKernelBindingEntry {
+    interned,
+    field. id [LalinKernel.KernelValueId],
+    binding [LalinKernel.KernelBinding],
+  },
+  product. CMatCodeBindingEntry {
+    interned,
+    field. value [LalinCode.CodeValueId],
+    binding [LalinKernel.KernelBinding],
+  },
+  sum. CMatBindingLookup {
+    CMatBindingFound { variant_unique, binding [LalinKernel.KernelBinding], },
+    CMatBindingMissing { variant_unique, reason [str], },
+  },
+  product. CMatBindingProjection {
+    interned,
+    kernel_bindings [many [LalinCMat.CMatKernelBindingEntry]],
+    code_bindings [many [LalinCMat.CMatCodeBindingEntry]],
+  },
+  product. CMatLaneDiscovery {
+    interned,
+    lanes [many [LalinKernel.KernelLane]],
+  },
+  product. CMatReadAccessEntry {
+    interned,
+    lane [LalinKernel.KernelLane],
+    access [LalinCMat.CMatAccessBinding],
+  },
+  sum. CMatReadAccessLookup {
+    CMatReadAccessFound { variant_unique, access [LalinCMat.CMatAccessBinding], },
+    CMatReadAccessMissing { variant_unique, lane [LalinKernel.KernelLane], reason [str], },
+  },
+  sum. CMatWindowCounter {
+    CMatWindowNoCounter,
+    CMatWindowCounterValue { variant_unique, field. value [LalinCode.CodeValueId], },
+  },
+  sum. CMatWindowLayout {
+    CMatWindowLayoutNone,
+    CMatWindowLayout1D {
+      variant_unique,
+      axis [LalinStencil.StencilProducerAxis],
+      window [LalinStencil.StencilWindowAxis],
+      counter [LalinCMat.CMatWindowCounter],
+    },
+    CMatWindowLayoutRejected { variant_unique, reason [str], },
+  },
+  sum. CMatWindowOffset {
+    CMatWindowNotIndexed { variant_unique, reason [str], },
+    CMatWindowOffsetKnown { variant_unique, offset [number], },
+    CMatWindowOffsetRejected { variant_unique, reason [str], },
+  },
+  sum. CMatLiteralInt {
+    CMatLiteralIntKnown { variant_unique, raw [str], },
+    CMatLiteralIntMissing,
+  },
+  product. CMatPointProjection {
+    interned,
+    bindings [LalinCMat.CMatBindingProjection],
+    reads [many [LalinCMat.CMatReadAccessEntry]],
+    window [LalinCMat.CMatWindowLayout],
+  },
+  product. CMatAccessNameEntry {
+    interned,
+    field. name [str],
+    binding [LalinCMat.CMatAccessBinding],
+  },
+  sum. CMatAccessLookup {
+    CMatAccessFound { variant_unique, binding [LalinCMat.CMatAccessBinding], },
+    CMatAccessMissing { variant_unique, access [LalinStencil.StencilAccessRef], reason [str], },
+  },
+  product. CMatStreamEntry {
+    interned,
+    field. id [LalinStencil.StencilStreamId],
+    stream [LalinStencil.StencilStreamDef],
+  },
+  sum. CMatStreamLookup {
+    CMatStreamFound { variant_unique, stream [LalinStencil.StencilStreamDef], },
+    CMatStreamMissing { variant_unique, stream [LalinStencil.StencilStreamId], reason [str], },
+  },
+  sum. CMatInlineAccumulator {
+    CMatInlineNoAccumulator,
+    CMatInlineAccumulatorLocal { variant_unique, local_id [LalinC.CBackendLocalId], },
+  },
+  product. CMatInlineProjection {
+    interned,
+    kernel [LalinCMat.CMatFusedKernel],
+    computation [LalinStencil.StencilComputation],
+    accesses [many [LalinCMat.CMatAccessNameEntry]],
+    streams [many [LalinCMat.CMatStreamEntry]],
+    window [LalinCMat.CMatWindowLayout],
+    accumulator [LalinCMat.CMatInlineAccumulator],
+  },
+  sum. CMatInlineSinkResult {
+    CMatInlineNoControl,
+    CMatInlineControl { variant_unique, predicate [LalinC.CBackendAtom], },
+  },
+
   sum. CMatLoopOrder {
     CMatLoopForward,
     CMatLoopBackward,
