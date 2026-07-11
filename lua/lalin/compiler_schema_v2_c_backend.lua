@@ -23,7 +23,8 @@ function M.code_result_to_c(code_result, opts)
     local schedules = kernels:plan_schedules(module, flow, values, mem, effects, opts.target_model or opts.backend_target_model)
     local lower_plan = module:plan_lowering(graph, kernels, schedules, Lower.LowerTargetC)
     local unit = lower_plan:emit_c(module)
-    return require("lalin.schema_v2.compiler").CompilerCBackendResult(unit, require("lalin.schema_v2.c").CBackendValidationReport({}))
+    local validation = require("lalin.impl.lower_emit_c.validate").validate(unit)
+    return require("lalin.schema_v2.compiler").CompilerCBackendResult(unit, validation)
 end
 
 return M

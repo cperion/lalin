@@ -998,6 +998,126 @@ return schema. LalinC {
       reason [str],
     },
   },
+  product. CBackendValidationSignatureEntry {
+    interned,
+    field. id [LalinC.CBackendFuncSigId],
+    signature [LalinC.CBackendFuncSig],
+  },
+  product. CBackendValidationSignatureRelation {
+    interned,
+    entries [many [LalinC.CBackendValidationSignatureEntry]],
+  },
+  product. CBackendValidationFunctionEntry {
+    interned,
+    field. name [LalinC.CBackendName],
+    func [LalinC.CBackendFunc],
+  },
+  product. CBackendValidationFunctionRelation {
+    interned,
+    entries [many [LalinC.CBackendValidationFunctionEntry]],
+  },
+  product. CBackendValidationGlobalEntry {
+    interned,
+    field. id [LalinC.CBackendGlobalId],
+    global [LalinC.CBackendGlobal],
+  },
+  product. CBackendValidationGlobalRelation {
+    interned,
+    entries [many [LalinC.CBackendValidationGlobalEntry]],
+  },
+  product. CBackendValidationExternEntry {
+    interned,
+    field. name [LalinC.CBackendName],
+    extern [LalinC.CBackendExtern],
+  },
+  product. CBackendValidationExternRelation {
+    interned,
+    entries [many [LalinC.CBackendValidationExternEntry]],
+  },
+  product. CBackendValidationHelperEntry {
+    interned,
+    field. id [LalinC.CBackendHelperId],
+    helper [LalinC.CBackendHelperUse],
+  },
+  product. CBackendValidationHelperRelation {
+    interned,
+    entries [many [LalinC.CBackendValidationHelperEntry]],
+  },
+  product. CBackendValidationLocalEntry {
+    interned,
+    field. id [LalinC.CBackendLocalId],
+    field. ty [LalinC.CBackendType],
+    init_state [LalinC.CBackendLocalInitState],
+    residence [LalinC.CBackendResidence],
+    address_taken [bool],
+  },
+  product. CBackendValidationLocalRelation {
+    interned,
+    entries [many [LalinC.CBackendValidationLocalEntry]],
+  },
+  product. CBackendValidationLabelEntry {
+    interned,
+    label [LalinC.CBackendLabel],
+    block [LalinC.CBackendBlock],
+  },
+  product. CBackendValidationLabelRelation {
+    interned,
+    entries [many [LalinC.CBackendValidationLabelEntry]],
+  },
+  sum. CBackendValidationSignatureLookup {
+    CBackendValidationSignatureFound { variant_unique, entry [LalinC.CBackendValidationSignatureEntry], },
+    CBackendValidationSignatureMissing { variant_unique, field. id [LalinC.CBackendFuncSigId], },
+  },
+  sum. CBackendValidationFunctionLookup {
+    CBackendValidationFunctionFound { variant_unique, entry [LalinC.CBackendValidationFunctionEntry], },
+    CBackendValidationFunctionMissing { variant_unique, field. name [LalinC.CBackendName], },
+  },
+  sum. CBackendValidationGlobalLookup {
+    CBackendValidationGlobalFound { variant_unique, entry [LalinC.CBackendValidationGlobalEntry], },
+    CBackendValidationGlobalMissing { variant_unique, field. id [LalinC.CBackendGlobalId], },
+  },
+  sum. CBackendValidationExternLookup {
+    CBackendValidationExternFound { variant_unique, entry [LalinC.CBackendValidationExternEntry], },
+    CBackendValidationExternMissing { variant_unique, field. name [LalinC.CBackendName], },
+  },
+  sum. CBackendValidationHelperLookup {
+    CBackendValidationHelperFound { variant_unique, entry [LalinC.CBackendValidationHelperEntry], },
+    CBackendValidationHelperMissing { variant_unique, field. id [LalinC.CBackendHelperId], },
+  },
+  sum. CBackendValidationLocalLookup {
+    CBackendValidationLocalFound { variant_unique, entry [LalinC.CBackendValidationLocalEntry], },
+    CBackendValidationLocalMissing { variant_unique, field. id [LalinC.CBackendLocalId], },
+  },
+  sum. CBackendValidationLabelLookup {
+    CBackendValidationLabelFound { variant_unique, entry [LalinC.CBackendValidationLabelEntry], },
+    CBackendValidationLabelMissing { variant_unique, label [LalinC.CBackendLabel], },
+  },
+  product. CBackendValidationRelations {
+    interned,
+    signatures [LalinC.CBackendValidationSignatureRelation],
+    functions [LalinC.CBackendValidationFunctionRelation],
+    globals [LalinC.CBackendValidationGlobalRelation],
+    externs [LalinC.CBackendValidationExternRelation],
+    helpers [LalinC.CBackendValidationHelperRelation],
+  },
+  product. CBackendValidationFunctionInput {
+    interned,
+    relations [LalinC.CBackendValidationRelations],
+    func [LalinC.CBackendFunc],
+    signature [LalinC.CBackendFuncSig],
+    locals [LalinC.CBackendValidationLocalRelation],
+    labels [LalinC.CBackendValidationLabelRelation],
+  },
+  product. CBackendValidationDataInput {
+    interned,
+    relations [LalinC.CBackendValidationRelations],
+    global [LalinC.CBackendGlobal],
+  },
+  product. CBackendValidationTypedResult {
+    interned,
+    field. ty [LalinC.CBackendType],
+    report [LalinC.CBackendValidationReport],
+  },
   product. CBackendStorageRecord {
     interned,
     func [LalinC.CBackendName],
@@ -1008,6 +1128,11 @@ return schema. LalinC {
     unit [LalinC.CBackendUnit],
     storage [many [LalinC.CBackendStorageRecord]],
     abi_issues [many [LalinC.CBackendValidationIssue]],
+  },
+  product. CBackendValidationUnitInput {
+    interned,
+    source [LalinC.CBackendValidationInput],
+    relations [LalinC.CBackendValidationRelations],
   },
   product. CBackendValidationReport {
     interned,
