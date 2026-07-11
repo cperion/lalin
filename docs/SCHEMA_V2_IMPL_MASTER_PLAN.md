@@ -78,32 +78,49 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 
 ### RGN-1 — Region invocation expansion
 
-**Status:** root cause proven; implementation pending.
+**Status:** integrated at `82ec214af`; independent review pending.
 **Scope:** `lua/lalin/tree_typecheck_stmt.lua`, region-focused tests.
 **Root cause:** commit `c5c1e3cbe` deleted `expansion_input_for_entry`, `expansion_input_for_block`, and `append_splice_blocks`. Missing globals resolve as tables and corrupt the typed input. `RegionInvokeExpandInput.scope [TypeValueScope]` is already correct.
 
 - [x] Verify `lua/lalin/schema/tree.lua:201-204` requires `TypeValueScope`.
 - [x] Verify calls at `tree_typecheck_stmt.lua:718,728` should pass a real `stmt_input.scope`.
-- [ ] Restore `expansion_input_for_entry`.
-- [ ] Restore `expansion_input_for_block`.
-- [ ] Restore `append_splice_blocks`.
-- [ ] Keep the existing narrow `RegionInvokeExpandInput` schema.
-- [ ] Do not weaken the constructor or coerce plain tables.
-- [ ] Pass `tests/code_ir/test_region_emit_expansion.lua`.
-- [ ] Pass `tests/c_backend/test_emit_c_region_main.lua`.
-- [ ] Pass `tests/c_backend/test_emit_c_region_call.lua`.
-- [ ] Add entry-parameter, block-parameter, nested-splice, and sealed-call coverage.
+- [x] Restore `expansion_input_for_entry`.
+- [x] Restore `expansion_input_for_block`.
+- [x] Restore `append_splice_blocks`.
+- [x] Keep the existing narrow `RegionInvokeExpandInput` schema.
+- [x] Do not weaken the constructor or coerce plain tables.
+- [x] Pass `tests/code_ir/test_region_expansion_helpers.lua`.
+- [ ] Pass `tests/code_ir/test_region_emit_expansion.lua` (now reaches missing `StencilMachineSkeletonInput`).
+- [ ] Pass `tests/c_backend/test_emit_c_region_main.lua` (now reaches LAY-1).
+- [ ] Pass `tests/c_backend/test_emit_c_region_call.lua` (now reaches LAY-1).
+- [x] Add entry-parameter, block-parameter, nested-splice, and sealed-call coverage.
 - [ ] Add parsed `.lln` → C → GCC runtime coverage.
 
 ### STN-1 — Stencil semantic construction
 
-**Failure cluster:** missing `StencilSinkSemantics` at `lua/lalin/stencil_artifact_plan.lua:217`.
+**Status:** integrated at `35c1ce5a3`; independent review pending.
+**Failure cluster:** stale semantic parents and missing local helper capture in `lua/lalin/stencil_artifact_plan.lua`.
 
-- [ ] Identify the missing typed producer/projection.
-- [ ] Repair construction without nil defaults or option bags.
-- [ ] Pass `tests/schema/test_schema_stencil.lua`.
-- [ ] Restore affected LuaJIT/stencil tests.
-- [ ] Prove copy, reduce, scan, and SOAC semantic plans before C lowering.
+- [x] Replace nonexistent semantic parents with concrete `StencilStoreSemantics` and `StencilReductionSemantics` leaf ownership.
+- [x] Attach defaults to canonical `StencilAccessLayout` and `StencilAlignmentFact` parents.
+- [x] Repair local typed validator capture without global-table fallback.
+- [x] Repair construction without nil defaults or option bags.
+- [x] Pass `tests/schema/test_schema_stencil.lua`.
+- [x] Pass the full schema suite (10/10).
+- [x] Pass focused ND scan rejection and native stencil checks.
+- [ ] Restore remaining LuaJIT/stencil tests (blocked by STN-SCHED and missing `StencilMachineSkeletonInput`).
+- [ ] Prove copy, reduce, scan, and SOAC C paths (blocked by LAY-1).
+
+### STN-SCHED — Typed schedule selection
+
+**Depends on:** STN-1.
+**Failure cluster:** `schedule_for_descriptor_with_info` invokes a method on absent `info.schedule`; no nil default is permitted.
+
+- [ ] Define the schedule-selection alternatives in ASDL.
+- [ ] Ensure every descriptor producer supplies a typed selection.
+- [ ] Put schedule behavior on concrete selection leaves.
+- [ ] Add scheduled and explicitly-unscheduled descriptor tests.
+- [ ] Restore artifact construction tests blocked at schedule selection.
 
 ### LAY-1 — Layout projection and resolution
 
@@ -302,9 +319,10 @@ Release-level gates:
 
 | ID | Priority | Dependencies | Suggested scope | Status | Owner/branch |
 |---|---:|---|---|---|---|
-| RGN-1 | P0 | none | Region helper restoration + focused tests | working | `pack/rgn-1` (`wX:p1`) |
-| STN-1 | P0 | none | Stencil semantic construction | working | `pack/stn-1` (`wY:p1`) |
-| LAY-1 | P0 | STN-1 analysis | Layout projection/resolution | blocked | — |
+| RGN-1 | P0 | none | Region helper restoration + focused tests | review | integrated `82ec214af`; reviewer `w4:p14` |
+| STN-1 | P0 | none | Stencil semantic construction | review | integrated `35c1ce5a3`; reviewer `w4:p16` |
+| STN-SCHED | P0 | STN-1 | Typed schedule selection | ready | — |
+| LAY-1 | P0 | STN-1 analysis | Layout projection/resolution | ready | — |
 | TYP-1 | P0 | none | Typecheck projection regressions | working | `pack/typ-1` (`wZ:p1`) |
 | CMP-1 | P1 | none | Compiler-process contracts | ready | — |
 | M0.1 | P0 | none | Failure ledger and focused reproducers | ready | — |
