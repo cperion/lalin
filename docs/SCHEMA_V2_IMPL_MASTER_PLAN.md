@@ -170,11 +170,25 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 
 **Failure cluster:** after LAY-1, `test_dsl_lua_owned.lua` reaches CodeResult validation and reports multiple `CodeIssueMissingSig` facts.
 
-- [ ] Trace ownership of required helper/call signatures.
-- [ ] Model signature collection as a named typed projection over Code facts.
-- [ ] Ensure every call/helper producer contributes its required `CodeSig`.
+- [ ] Trace ownership of required function, extern, call, closure, and helper signatures.
+- [ ] Model requirements and signature collection as named typed ASDL projections.
+- [ ] Align canonical `LalinTreeLower` and schema_v2 `LalinTreeCode` ownership without fallback constructors.
+- [ ] Replace nullable signature lookup with typed found/missing alternatives.
+- [ ] Ensure every concrete producer contributes its required `CodeSig`.
 - [ ] Remove string-keyed or implicit signature discovery.
-- [ ] Pass `tests/frontend/test_dsl_lua_owned.lua` and focused code-validation tests.
+- [ ] Pass direct binding and pipeline-load smoke tests.
+- [ ] Pass focused code-type/code-validation producer tests.
+- [ ] Re-run `test_dsl_lua_owned.lua` after ABI-STATE.
+
+### ABI-STATE — Cross-unit lowering isolation
+
+**Failure cluster:** module-level signature/lowering state leaks declarations across alternating compilation units; this is separate from signature projection vocabulary.
+
+- [ ] Replace mutable `module_sig_state` upvalue with narrow typed module/item/function inputs and results.
+- [ ] Preserve deterministic signature, registration, generated-data, and function ordering.
+- [ ] Add alternating A → B → A and repeated-unit tests.
+- [ ] Add failure-then-success isolation tests.
+- [ ] Prove no facts leak between public compile sessions.
 
 ### AUX-1 — Remaining baseline clusters
 
@@ -351,11 +365,12 @@ Release-level gates:
 |---|---:|---|---|---|---|
 | RGN-1 | P0 | none | Region helper restoration + focused tests | integrated | `82ec214af`; approved by `w4:p14` |
 | STN-1 | P0 | none | Stencil semantic construction | integrated | `35c1ce5a3`; approved by `w4:p16` |
-| STN-SCHED | P0 | STN-1 | Typed schedule selection | working | `pack/stn-sched` (`w4:p1A`) |
+| STN-SCHED | P0 | STN-1 | Typed schedule selection | changes requested | `pack/stn-sched` (`w4:p1A`) |
 | LAY-1 | P0 | STN-1 analysis | Typed leaf-owned layout resolution | integrated | `00303c45b`; approved by `w4:p14` |
 | TYP-1 | P0 | none | Typed frontend target projection | integrated | `1750e4ce5`; approved by `w4:p6` |
 | TYP-OWN | P0 | none | Check/lower schema ownership | ready | — |
-| ABI-SIG | P0 | LAY-1 | Required code signature projection | working | `pack/abi-sig` (`w4:p19`) |
+| ABI-SIG | P0 | LAY-1 | Required code signature projection | changes requested | `pack/abi-sig` (`w4:p19`) |
+| ABI-STATE | P0 | ABI-SIG vocabulary | Cross-unit lowering isolation | ready | — |
 | CMP-1 | P1 | none | Compiler-process contracts | ready | — |
 | M0.1 | P0 | none | Failure ledger and focused reproducers | ready | — |
 | ASDL-CLOSURE | P1 | baseline stabilization | Closure state and leaf-method migration | planned | — |
