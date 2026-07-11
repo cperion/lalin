@@ -187,13 +187,18 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 
 ### ABI-STATE — Cross-unit lowering isolation
 
-**Failure cluster:** module-level signature/lowering state leaks declarations across alternating compilation units; this is separate from signature projection vocabulary.
+**Status:** integrated at `f7ba18a`; independently approved.
+**Root cause:** ambient module-level lowering state leaked signatures and generated facts across compilation units.
 
-- [ ] Replace mutable `module_sig_state` upvalue with narrow typed module/item/function inputs and results.
-- [ ] Preserve deterministic signature, registration, generated-data, and function ordering.
-- [ ] Add alternating A → B → A and repeated-unit tests.
-- [ ] Add failure-then-success isolation tests.
-- [ ] Prove no facts leak between public compile sessions.
+- [x] Replace mutable `module_sig_state` with immutable typed transitions.
+- [x] Split registration, ABI, emission, accumulation, and contract facts into narrow facets/results.
+- [x] Make compiler/frontend APIs consume one typed module-lowering result.
+- [x] Remove multi-return wrappers, lowering aliases, classof dispatch, and nil/`{}` contract protocols.
+- [x] Preserve deterministic signature, registration, generated-data, and function ordering.
+- [x] Add alternating A → B → A and repeated-unit tests.
+- [x] Add partial-lowering-failure → success isolation tests.
+- [x] Prove no facts leak between public compile sessions.
+- [x] Pass frontend 14/14, schema, ABI-SIG, isolation, and GCC checks.
 
 ### LJBC-STENCIL — Deferred / not for integration
 
@@ -383,7 +388,7 @@ Release-level gates:
 | TYP-1 | P0 | none | Typed frontend target projection | integrated | `1750e4ce5`; approved by `w4:p6` |
 | TYP-OWN | P0 | none | Canonical CHECK ownership | integrated | `ae2a8e164`; approved by `w4:p6` |
 | ABI-SIG | P0 | LAY-1 | Required code signature projection | integrated | `c95973fd5`; approved by `w4:p6` |
-| ABI-STATE | P0 | ABI-SIG vocabulary | Cross-unit lowering isolation | working | `pack/abi-state` (`w4:p1B`) |
+| ABI-STATE | P0 | ABI-SIG vocabulary | Cross-unit lowering isolation | integrated | `f7ba18a`; approved by `w4:p6` |
 | LJBC-STENCIL | deferred | — | Abandoned LuaTrace / low-priority LuaJIT work | stopped | branch not integrated |
 | CMP-1 | P1 | none | Compiler-process contracts | working | `pack/cmp-1` (`w4:p1E`) |
 | M0.1 | P0 | none | Failure ledger and focused reproducers | ready | — |
