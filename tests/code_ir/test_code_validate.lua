@@ -58,7 +58,15 @@ local function valid_module()
     )
 end
 
-local report = Validate.validate(valid_module())
+local valid = valid_module()
+local projection = valid:code_sig_projection()
+assert(asdl.classof(projection) == Code.CodeSigProjection)
+assert(projection.entries[1].sig_id == valid.sigs[1].id, "validation signature projection keys must remain typed")
+local found = projection:code_sig_lookup(valid.sigs[1].id)
+assert(asdl.classof(found) == Code.CodeSigLookupFound and found.sig == valid.sigs[1], "validation should return a typed found result")
+local missing_lookup = projection:code_sig_lookup(Code.CodeSigId("sig:absent"))
+assert(asdl.classof(missing_lookup) == Code.CodeSigLookupMissing, "missing signatures must remain an explicit typed result")
+local report = Validate.validate(valid)
 assert(#report.issues == 0, "valid module should have no LalinCode validation issues, got " .. tostring(#report.issues))
 
 local bad = valid_module()
@@ -119,6 +127,20 @@ bad.funcs[1].blocks[1].insts[#bad.funcs[1].blocks[1].insts + 1] = call
 bad.funcs[1].blocks[1].term = Code.CodeTerm(Code.CodeTermId("term:return_missing_sig"), Code.CodeTermReturn({ call_dst }), origin)
 report = Validate.validate(bad)
 assert(has_issue(report, Code.CodeIssueMissingSig))
+
+-- A data pointer owns recursive validation of its pointee; nested callable
+-- signatures must therefore retain explicit missing-signature diagnostics.
+bad = valid_module()
+bad.types = {
+    Code.CodeTypeDecl(
+        Code.CodeTypeId("type:nested_missing_sig"),
+        "nested_missing_sig",
+        Code.CodeTyDataPtr(Code.CodeTyCodePtr(missing_sig)),
+        origin
+    ),
+}
+report = Validate.validate(bad)
+assert(has_issue(report, Code.CodeIssueMissingSig), "nested CodeTyDataPtr(CodeTyCodePtr) must diagnose its missing signature")
 
 bad = valid_module()
 local other_sig = Code.CodeSigId("sig:other")

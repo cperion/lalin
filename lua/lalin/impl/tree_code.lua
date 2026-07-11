@@ -203,14 +203,14 @@ local function type_to_code_s(ty)
   return code_ty
 end
 
-local function ensure_type_sig_s(params, result)
-  local sig_id, ss = CodeType.ensure_type_sig(module_sig_state, params, result)
+local function ensure_type_sig_s(params, result, requirement)
+  local sig_id, ss = CodeType.ensure_type_sig_requirement(module_sig_state, params, result, requirement)
   module_sig_state = ss
   return sig_id
 end
 
-local function ensure_code_sig_s(params, results)
-  local sig_id, ss = CodeType.ensure_code_sig(module_sig_state, params, results)
+local function ensure_code_sig_s(params, results, requirement)
+  local sig_id, ss = CodeType.ensure_code_sig_requirement(module_sig_state, params, results, requirement)
   module_sig_state = ss
   return sig_id
 end
@@ -1360,17 +1360,21 @@ end
 
 function Tree.ExprCall:lower_tree_expr_to_code(input)
   local fn_ty = self.callee.h and self.callee.h:tree_code_expr_type()
-  local sig = fn_ty and fn_ty:tree_code_call_sig_id(input)
   local args = {}
   for i = 1, #(self.args or {}) do
     local arg_result = self.args[i]:lower_tree_expr_to_code(input:tree_code_expr_input()); input = input:tree_code_with_result_state(arg_result)
     args[i] = arg_result.value
   end
   local target = self.callee:tree_code_direct_call_target()
+  local call_target_result
   if target == nil then
     local callee_result = self.callee:lower_tree_expr_to_code(input:tree_code_expr_input()); input = input:tree_code_with_result_state(callee_result)
-    target = fn_ty and fn_ty:tree_code_indirect_call_target(callee_result.value, sig)
+    call_target_result = fn_ty:tree_code_indirect_call_target(callee_result.value)
+  else
+    call_target_result = target:tree_code_require_call_sig(fn_ty)
   end
+  target = call_target_result.target
+  local sig = call_target_result.sig
   local expr_ty = self.h and self.h:tree_code_expr_type(); local result_ty = input:tree_code_type(expr_ty)
   local dst = nil
   if result_ty ~= Code.CodeTyVoid then
@@ -1495,9 +1499,6 @@ function Tree.ExprView:lower_tree_expr_to_code(input)
 end
 
 -- call_sig_id helpers on Ty.Type
-function Ty.Type:tree_code_call_sig_id(input) unsupported(self, "non-callable type") end
-function Ty.TFunc:tree_code_call_sig_id(input) return ensure_type_sig_s(self.params, self.result) end
-function Ty.TClosure:tree_code_call_sig_id(input) return ensure_type_sig_s(self.params, self.result) end
 
 -- direct_call_target helpers
 function Tree.Expr:tree_code_direct_call_target() return nil end
@@ -1508,8 +1509,22 @@ function Bind.BindingRole:tree_code_direct_call_target(binding) return nil end
 function Bind.BindingRoleGlobalFunc:tree_code_direct_call_target(binding) return Code.CodeCallDirect(code_func_id(self.item_name)) end
 function Bind.BindingRoleExtern:tree_code_direct_call_target(binding) return Code.CodeCallExtern(code_extern_id(binding.name)) end
 
-function Ty.Type:tree_code_indirect_call_target(callee, sig) return Code.CodeCallIndirect(callee, sig) end
-function Ty.TClosure:tree_code_indirect_call_target(callee, sig) return Code.CodeCallClosure(callee, sig) end
+function Code.CodeCallDirect:tree_code_require_call_sig(fn_ty)
+  local sig = ensure_type_sig_s(fn_ty.params, fn_ty.result, TreeCode.TreeCodeDirectCallSigRequirement)
+  return TreeCode.TreeCodeCallTargetResult(self, sig)
+end
+function Code.CodeCallExtern:tree_code_require_call_sig(fn_ty)
+  local sig = ensure_type_sig_s(fn_ty.params, fn_ty.result, TreeCode.TreeCodeDirectCallSigRequirement)
+  return TreeCode.TreeCodeCallTargetResult(self, sig)
+end
+function Ty.Type:tree_code_indirect_call_target(callee)
+  local sig = ensure_type_sig_s(self.params, self.result, TreeCode.TreeCodeIndirectCallSigRequirement)
+  return TreeCode.TreeCodeCallTargetResult(Code.CodeCallIndirect(callee, sig), sig)
+end
+function Ty.TClosure:tree_code_indirect_call_target(callee)
+  local sig = ensure_type_sig_s(self.params, self.result, TreeCode.TreeCodeClosureSigRequirement)
+  return TreeCode.TreeCodeCallTargetResult(Code.CodeCallClosure(callee, sig), sig)
+end
 
 -- len lowering on Ty.Type
 function Ty.Type:lower_tree_len_to_code(input, expr) unsupported(expr, "len of non-array/view") end
@@ -2188,7 +2203,7 @@ function Tree.Func:lower_tree_func_to_code(input)
   local result = stmt_input:tree_code_type(parts.result)
   local sig_results = {}
   if result ~= Code.CodeTyVoid then sig_results[#sig_results+1] = result end
-  local sig = ensure_code_sig_s(sig_params, sig_results)
+  local sig = ensure_code_sig_s(sig_params, sig_results, TreeCode.TreeCodeFunctionSigRequirement)
   stmt_input = stmt_input:tree_code_lower_stmt_body(parts.body or {})
   if stmt_input:tree_code_state():tree_code_has_current_block() then
     if result == Code.CodeTyVoid then
@@ -2210,7 +2225,7 @@ function Tree.ConstItem:tree_code_add_const_entries(entries, mod_name) entries[#
 function Tree.Item:lower_tree_item_register_to_code(input) end
 function Tree.ItemFunc:lower_tree_item_register_to_code(input)
   local parts = self.func:lower_tree_func_parts_to_code()
-  local sig = ensure_type_sig_s(parts:tree_code_param_types(), parts.result)
+  local sig = ensure_type_sig_s(parts:tree_code_param_types(), parts.result, TreeCode.TreeCodeFunctionSigRequirement)
   local key = func_key(input.module_facts.module_name, parts.name)
   input.registrations.funcs[key] = TreeCode.TreeCodeFuncRegistrationEntry(key, TreeCode.TreeCodeFuncRegistration(code_func_id(parts.name), sig))
 end
@@ -2218,7 +2233,7 @@ function Tree.ItemExtern:lower_tree_item_register_to_code(input) self.func:tree_
 function Tree.ExternFunc:tree_code_register_extern(input)
   local param_tys = {}
   for j = 1, #(self.params or {}) do param_tys[j] = self.params[j].ty end
-  local sig = ensure_type_sig_s(param_tys, self.result)
+  local sig = ensure_type_sig_s(param_tys, self.result, TreeCode.TreeCodeExternSigRequirement)
   local ex = Code.CodeExtern(code_extern_id(self.name), self.name, self.symbol, sig, origin_generated("extern " .. self.name))
   input.registrations.externs[self.name] = TreeCode.TreeCodeExternEntry(self.name, ex)
   input.registrations.extern_order[#input.registrations.extern_order+1] = ex
@@ -2288,9 +2303,6 @@ end
 ----------------------------------------------------------------------
 -- Module lowering
 ----------------------------------------------------------------------
-function TreeCode.TreeCodeModuleSigState:tree_lower_sig_entry(sig)
-  return TreeCode.TreeCodeSigEntry(sig.id.text, sig)
-end
 function Tree.Module:tree_code_layout_env(target)
   local envs = self:tree_module_env(target)
   local layouts = (#envs > 0 and envs[1].layouts) or {}

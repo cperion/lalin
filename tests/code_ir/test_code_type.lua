@@ -49,7 +49,24 @@ assert(c_ptr.pointee == C.CBackendScalar(Core.ScalarU8))
 local fn_ty = Ty.TFunc({ i32, i32 }, i32)
 local code_fn_ptr, ss = CodeType.type_to_code(ss, fn_ty)
 assert(asdl.classof(code_fn_ptr) == Code.CodeTyCodePtr)
-assert(ss.code_sigs[1].sig.id.text == code_fn_ptr.sig.text)
+assert(ss.code_sigs[1].sig.id == code_fn_ptr.sig)
+assert(ss.code_sigs[1].sig_id == code_fn_ptr.sig, "signature projection keys must be typed CodeSigId values")
+assert(ss.code_sigs[1].requirement == T.LalinTreeLower.TreeLowerHelperSigRequirement, "callable type projection should record helper signature ownership")
+local requirements = {
+  T.LalinTreeLower.TreeLowerFunctionSigRequirement,
+  T.LalinTreeLower.TreeLowerExternSigRequirement,
+  T.LalinTreeLower.TreeLowerDirectCallSigRequirement,
+  T.LalinTreeLower.TreeLowerIndirectCallSigRequirement,
+  T.LalinTreeLower.TreeLowerClosureSigRequirement,
+}
+local requirement_state = ss
+for i = 1, #requirements do
+  local producer_sig
+  producer_sig, requirement_state = CodeType.ensure_type_sig_requirement(requirement_state, { i32, i32 }, i32, requirements[i])
+  assert(producer_sig == code_fn_ptr.sig)
+  assert(requirement_state.code_sigs[#requirement_state.code_sigs].requirement == requirements[i], "signature producer must retain its typed requirement leaf")
+end
+assert(#requirement_state.code_sig_order == #ss.code_sig_order, "producer requirements must not duplicate emitted CodeSig values")
 local c_fn_ptr = select(1, CodeType.code_type_to_c(dummy_machine, code_fn_ptr))
 assert(asdl.classof(c_fn_ptr) == C.CBackendCodePtr)
 local void_fn, ss = CodeType.type_to_code(ss, Ty.TFunc({}, Ty.TScalar(Core.ScalarVoid)))

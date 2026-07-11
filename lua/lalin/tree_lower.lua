@@ -43,13 +43,13 @@ local function bind_context(T)
         module_sig_state = ss
         return code_ty
     end
-    local function ensure_type_sig_s(params, result)
-        local sig_id, ss = CodeType.ensure_type_sig(module_sig_state, params, result)
+    local function ensure_type_sig_s(params, result, requirement)
+        local sig_id, ss = CodeType.ensure_type_sig_requirement(module_sig_state, params, result, requirement)
         module_sig_state = ss
         return sig_id
     end
-    local function ensure_code_sig_s(params, results)
-        local sig_id, ss = CodeType.ensure_code_sig(module_sig_state, params, results)
+    local function ensure_code_sig_s(params, results, requirement)
+        local sig_id, ss = CodeType.ensure_code_sig_requirement(module_sig_state, params, results, requirement)
         module_sig_state = ss
         return sig_id
     end
@@ -386,9 +386,6 @@ local function bind_context(T)
         return id, #decoded
     end
 
-    function TL.TreeLowerModuleSigState:tree_lower_sig_entry(sig)
-        return TL.TreeLowerSigEntry(sig.id.text, sig)
-    end
 
     function TL.TreeLowerInput:tree_code_value_id_for_binding(binding)
         return Code.CodeValueId("v:" .. sanitize(self:tree_code_func_name()) .. ":" .. sanitize(self:tree_code_state():tree_code_scoped_binding_key(binding)))
@@ -1123,15 +1120,6 @@ local function bind_context(T)
         return tree_code_input:tree_code_load_place(Code.CodePlaceGlobal(gid, tree_code_input:tree_code_type(binding.ty)), binding.ty, "load_global_" .. binding.name)
     end
 
-    function Ty.Type:tree_code_call_sig_id(tree_code_input)
-        unsupported(tree_code_input, self, "non-callable type " .. class_name(self))
-    end
-    function Ty.TFunc:tree_code_call_sig_id(tree_code_input)
-        return ensure_type_sig_s(self.params, self.result)
-    end
-    function Ty.TClosure:tree_code_call_sig_id(tree_code_input)
-        return ensure_type_sig_s(self.params, self.result)
-    end
 
     function Tr.Expr:tree_code_direct_call_target() return nil end
     function Tr.ExprRef:tree_code_direct_call_target()
@@ -1148,11 +1136,21 @@ local function bind_context(T)
     function Bind.BindingRoleExtern:tree_code_direct_call_target(binding)
         return Code.CodeCallExtern(code_extern_id(binding.name))
     end
-    function Ty.Type:tree_code_indirect_call_target(callee, sig)
-        return Code.CodeCallIndirect(callee, sig)
+    function Code.CodeCallDirect:tree_code_require_call_sig(fn_ty)
+        local sig = ensure_type_sig_s(fn_ty.params, fn_ty.result, TL.TreeLowerDirectCallSigRequirement)
+        return TL.TreeLowerCallTargetResult(self, sig)
     end
-    function Ty.TClosure:tree_code_indirect_call_target(callee, sig)
-        return Code.CodeCallClosure(callee, sig)
+    function Code.CodeCallExtern:tree_code_require_call_sig(fn_ty)
+        local sig = ensure_type_sig_s(fn_ty.params, fn_ty.result, TL.TreeLowerDirectCallSigRequirement)
+        return TL.TreeLowerCallTargetResult(self, sig)
+    end
+    function Ty.Type:tree_code_indirect_call_target(callee)
+        local sig = ensure_type_sig_s(self.params, self.result, TL.TreeLowerIndirectCallSigRequirement)
+        return TL.TreeLowerCallTargetResult(Code.CodeCallIndirect(callee, sig), sig)
+    end
+    function Ty.TClosure:tree_code_indirect_call_target(callee)
+        local sig = ensure_type_sig_s(self.params, self.result, TL.TreeLowerClosureSigRequirement)
+        return TL.TreeLowerCallTargetResult(Code.CodeCallClosure(callee, sig), sig)
     end
 
     function Ty.Type:tree_code_lower_field_base_place(tree_code_input, base)
@@ -1712,7 +1710,6 @@ local function bind_context(T)
     function Tr.ExprCall:lower_tree_expr_to_code(input)
         local tree_code_input = input
         local fn_ty = expr_type(self.callee)
-        local sig = fn_ty:tree_code_call_sig_id(tree_code_input)
         local args = {}
         for i = 1, #(self.args or {}) do
             local arg_result = self.args[i]:lower_tree_expr_to_code(tree_code_input:tree_code_expr_input())
@@ -1720,12 +1717,16 @@ local function bind_context(T)
             args[i] = arg_result.value
         end
         local target = self.callee:tree_code_direct_call_target()
+        local call_target_result
         if target == nil then
             local callee_result = self.callee:lower_tree_expr_to_code(tree_code_input:tree_code_expr_input())
             tree_code_input = tree_code_input:tree_code_with_result_state(callee_result)
-            local callee = callee_result.value
-            target = fn_ty:tree_code_indirect_call_target(callee, sig)
+            call_target_result = fn_ty:tree_code_indirect_call_target(callee_result.value)
+        else
+            call_target_result = target:tree_code_require_call_sig(fn_ty)
         end
+        target = call_target_result.target
+        local sig = call_target_result.sig
         local result_ty = tree_code_input:tree_code_type(expr_type(self))
         local dst = nil
         if result_ty ~= Code.CodeTyVoid then
@@ -2912,7 +2913,7 @@ local function bind_context(T)
 
     function Tr.ItemFunc:lower_tree_item_register_to_code(input)
         local parts = self.func:lower_tree_func_parts_to_code()
-        local sig = ensure_type_sig_s(parts:tree_code_param_types(), parts.result)
+        local sig = ensure_type_sig_s(parts:tree_code_param_types(), parts.result, TL.TreeLowerFunctionSigRequirement)
         local key = func_key(input.module_facts.module_name, parts.name)
         input.registrations.funcs[key] = TL.TreeLowerFunctionRegistrationEntry(key, TL.TreeLowerFunctionRegistration(code_func_id(parts.name), sig))
     end
@@ -2925,7 +2926,7 @@ local function bind_context(T)
     function Tr.ExternFunc:tree_code_register_extern(input)
         local param_tys = {}
         for j = 1, #(self.params or {}) do param_tys[j] = self.params[j].ty end
-        local sig = ensure_type_sig_s(param_tys, self.result)
+        local sig = ensure_type_sig_s(param_tys, self.result, TL.TreeLowerExternSigRequirement)
         local ex = Code.CodeExtern(code_extern_id(self.name), self.name, self.symbol, sig, origin_generated("extern " .. self.name))
         input.registrations.externs[self.name] = TL.TreeLowerExternEntry(self.name, ex)
         input.registrations.extern_order[#input.registrations.extern_order + 1] = ex
@@ -2977,7 +2978,7 @@ local function bind_context(T)
         local result = tree_code_input:tree_code_type(parts.result)
         local sig_results = {}
         if result ~= Code.CodeTyVoid then sig_results[#sig_results + 1] = result end
-        local sig = ensure_code_sig_s(sig_params, sig_results)
+        local sig = ensure_code_sig_s(sig_params, sig_results, TL.TreeLowerFunctionSigRequirement)
 
         tree_code_input = tree_code_input:tree_code_lower_stmt_body(parts.body or {})
         if tree_code_input:tree_code_state():tree_code_has_current_block() then

@@ -22,16 +22,41 @@ local function bind_context(T)
 
     local api = {}
 
-    -- Machine: wraps the validation accumulator as an immutable wrapper.
-    -- Each "mutation" returns a new Machine with the accumulated changes.
+    function Code.CodeModule:code_sig_projection()
+        local entries = {}
+        for i = 1, #(self.sigs or {}) do
+            local sig = self.sigs[i]
+            entries[#entries + 1] = Code.CodeSigProjectionEntry(sig.id, sig)
+        end
+        return Code.CodeSigProjection(entries)
+    end
+
+    function Code.CodeSigProjection:code_sig_lookup(id)
+        for i = 1, #self.entries do
+            local entry = self.entries[i]
+            if entry.sig_id == id then return Code.CodeSigLookupFound(entry.sig) end
+        end
+        return Code.CodeSigLookupMissing(id)
+    end
+
+    function Code.CodeSigLookupFound:code_sig_validate_ref(machine)
+        return machine
+    end
+
+    function Code.CodeSigLookupMissing:code_sig_validate_ref(machine)
+        return machine:with_issue(Code.CodeIssueMissingSig(self.sig_id))
+    end
+
+    -- Machine: wraps validation accumulation. Signature facts remain in the
+    -- typed projection; they are never copied into a string-keyed side table.
     local Machine = {}
     Machine.__index = Machine
 
-    function Machine.new(sigs, data, globals, funcs, externs)
+    function Machine.new(sig_projection, data, globals, funcs, externs)
         return setmetatable({
             _issues = {},
             _relocs = {},
-            _sigs = sigs,
+            _sig_projection = sig_projection,
             _data = data,
             _globals = globals,
             _funcs = funcs,
@@ -42,23 +67,22 @@ local function bind_context(T)
     function Machine:issues() return self._issues end
 
     function Machine:with_issue(issue)
-        local m = Machine.new(self._sigs, self._data, self._globals, self._funcs, self._externs)
+        local m = Machine.new(self._sig_projection, self._data, self._globals, self._funcs, self._externs)
         for i = 1, #self._issues do m._issues[i] = self._issues[i] end
         m._issues[#m._issues + 1] = issue
         for k, v in pairs(self._relocs) do m._relocs[k] = v end
         return m
     end
 
-    function Machine:sig(id) return self._sigs[id.text] end
+    function Machine:sig_lookup(id) return self._sig_projection:code_sig_lookup(id) end
     function Machine:data(id) return self._data[id.text] end
     function Machine:global(id) return self._globals[id.text] end
     function Machine:func(id) return self._funcs[id.text] end
     function Machine:extern(id) return self._externs[id.text] end
-
     function Machine:has_reloc(reloc_id) return self._relocs[reloc_id.text] end
 
     function Machine:with_reloc(reloc)
-        local m = Machine.new(self._sigs, self._data, self._globals, self._funcs, self._externs)
+        local m = Machine.new(self._sig_projection, self._data, self._globals, self._funcs, self._externs)
         for i = 1, #self._issues do m._issues[i] = self._issues[i] end
         for k, v in pairs(self._relocs) do m._relocs[k] = v end
         m._relocs[reloc.id.text] = true
@@ -105,18 +129,31 @@ local function bind_context(T)
         return ty == Code.CodeTyIndex or cls == Code.CodeTyInt
     end
 
-    local function type_uses_code_sig(ty, machine)
-        local cls = asdl.classof(ty)
-        if cls == Code.CodeTyCodePtr or cls == Code.CodeTyClosure then
-            if machine:sig(ty.sig) == nil then machine = machine:with_issue(Code.CodeIssueMissingSig(ty.sig)) end
-        elseif cls == Code.CodeTyDataPtr and ty.pointee ~= nil then
-            machine = type_uses_code_sig(ty.pointee, machine)
-        elseif cls == Code.CodeTyArray or cls == Code.CodeTySlice or cls == Code.CodeTyView or cls == Code.CodeTyVector then
-            machine = type_uses_code_sig(ty.elem, machine)
-        elseif cls == Code.CodeTyLease then
-            machine = type_uses_code_sig(ty.base, machine)
-        end
+    function Code.CodeType:code_sig_validate(machine)
         return machine
+    end
+
+    function Code.CodeTyCodePtr:code_sig_validate(machine)
+        return machine:sig_lookup(self.sig):code_sig_validate_ref(machine)
+    end
+
+    function Code.CodeTyClosure:code_sig_validate(machine)
+        return machine:sig_lookup(self.sig):code_sig_validate_ref(machine)
+    end
+
+    function Code.CodeTyDataPtr:code_sig_validate(machine)
+        if self.pointee == nil then return machine end
+        return self.pointee:code_sig_validate(machine)
+    end
+
+    function Code.CodeTyArray:code_sig_validate(machine) return self.elem:code_sig_validate(machine) end
+    function Code.CodeTySlice:code_sig_validate(machine) return self.elem:code_sig_validate(machine) end
+    function Code.CodeTyView:code_sig_validate(machine) return self.elem:code_sig_validate(machine) end
+    function Code.CodeTyVector:code_sig_validate(machine) return self.elem:code_sig_validate(machine) end
+    function Code.CodeTyLease:code_sig_validate(machine) return self.base:code_sig_validate(machine) end
+
+    local function type_uses_code_sig(ty, machine)
+        return ty:code_sig_validate(machine)
     end
 
     local function expect_type(machine, site, expected, actual)
@@ -164,9 +201,8 @@ local function bind_context(T)
     end
 
     local function check_sig_ref(machine, sig_id)
-        local sig = sig_id and machine:sig(sig_id) or nil
-        if sig_id and sig == nil then machine = machine:with_issue(Code.CodeIssueMissingSig(sig_id)) end
-        return machine, sig
+        local lookup = machine:sig_lookup(sig_id)
+        return lookup:code_sig_validate_ref(machine), lookup
     end
 
     local function check_memory_access(machine, site, access, expected_mode)
@@ -355,10 +391,42 @@ local function bind_context(T)
         end
         return machine
     end
+    function Code.CodeSigLookupMissing:code_sig_validate_call(machine, fctx, site, args, dst)
+        return machine
+    end
+
+    function Code.CodeSigLookupFound:code_sig_validate_call(machine, fctx, site, args, dst)
+        local sig = self.sig
+        if #args ~= #sig.params then machine = machine:with_issue(Code.CodeIssueCallArity(sig.id, #sig.params, #args)) end
+        local n = math.min(#args, #sig.params)
+        for i = 1, n do
+            local aty
+            machine, aty = value_type(fctx, machine, args[i])
+            if aty ~= nil then machine = expect_type(machine, site .. ":arg" .. tostring(i), sig.params[i], aty) end
+        end
+        if #sig.results == 0 then
+            if dst ~= nil then
+                local dty
+                machine, dty = value_type(fctx, machine, dst)
+                machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":result", Code.CodeTyVoid, dty or Code.CodeTyVoid))
+            end
+        elseif #sig.results == 1 then
+            if dst == nil then
+                machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":result", sig.results[1], Code.CodeTyVoid))
+            else
+                local dty
+                machine, dty = value_type(fctx, machine, dst)
+                if dty ~= nil then machine = expect_type(machine, site .. ":result", sig.results[1], dty) end
+            end
+        else
+            machine = machine:with_issue(Code.CodeIssueUnsupportedSource(site, "multi-result call cannot be represented by one dst"))
+        end
+        return machine
+    end
 
     local function check_call(machine, fctx, site, sig_id, target, args, dst)
-        local sig
-        machine, sig = check_sig_ref(machine, sig_id)
+        local sig_lookup
+        machine, sig_lookup = check_sig_ref(machine, sig_id)
         local tcls = asdl.classof(target)
         if tcls == Code.CodeCallDirect then
             local fn = machine:func(target.func)
@@ -397,32 +465,7 @@ local function bind_context(T)
         else
             machine = machine:with_issue(Code.CodeIssueUnsupportedSource(site, "unsupported call target " .. class_name(target)))
         end
-        if sig == nil then return machine end
-        if #args ~= #sig.params then machine = machine:with_issue(Code.CodeIssueCallArity(sig.id, #sig.params, #args)) end
-        local n = math.min(#args, #sig.params)
-        for i = 1, n do
-            local aty
-            machine, aty = value_type(fctx, machine, args[i])
-            if aty ~= nil then machine = expect_type(machine, site .. ":arg" .. tostring(i), sig.params[i], aty) end
-        end
-        if #sig.results == 0 then
-            if dst ~= nil then
-                local dty
-                machine, dty = value_type(fctx, machine, dst)
-                machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":result", Code.CodeTyVoid, dty or Code.CodeTyVoid))
-            end
-        elseif #sig.results == 1 then
-            if dst == nil then
-                machine = machine:with_issue(Code.CodeIssueTypeMismatch(site .. ":result", sig.results[1], Code.CodeTyVoid))
-            else
-                local dty
-                machine, dty = value_type(fctx, machine, dst)
-                if dty ~= nil then machine = expect_type(machine, site .. ":result", sig.results[1], dty) end
-            end
-        else
-            machine = machine:with_issue(Code.CodeIssueUnsupportedSource(site, "multi-result call cannot be represented by one dst"))
-        end
-        return machine
+        return sig_lookup:code_sig_validate_call(machine, fctx, site, args, dst)
     end
 
     local function register_dst(machine, fctx, id, ty)
@@ -487,6 +530,16 @@ local function bind_context(T)
         end
         return machine, by
     end
+    function Code.CodeSigLookupMissing:code_sig_register_call_dst(machine, fctx, inst)
+        return machine
+    end
+
+    function Code.CodeSigLookupFound:code_sig_register_call_dst(machine, fctx, inst)
+        if #self.sig.results == 1 and inst.op.dst ~= nil then
+            return register_dst(machine, fctx, inst.op.dst, self.sig.results[1])
+        end
+        return machine
+    end
 
     local function register_function_defs(machine, fctx, func)
         for i = 1, #(func.params or {}) do machine = register_dst(machine, fctx, func.params[i].value, func.params[i].ty) end
@@ -509,12 +562,12 @@ local function bind_context(T)
                 local inst = block.insts[j]
                 if fctx.insts[inst.id.text] ~= nil then machine = machine:with_issue(Code.CodeIssueDuplicateInst(inst.id)) end
                 fctx.insts[inst.id.text] = true
-                local dst, ty = inst_dst_type(fctx, machine, inst.op)
                 if asdl.classof(inst.op) == Code.CodeInstCall then
-                    local sig = inst.op.sig and machine:sig(inst.op.sig) or nil
-                    if sig ~= nil and #sig.results == 1 then dst, ty = rawget(inst.op, "dst"), sig.results[1] end
+                    machine = machine:sig_lookup(inst.op.sig):code_sig_register_call_dst(machine, fctx, inst)
+                else
+                    local dst, ty = inst_dst_type(fctx, machine, inst.op)
+                    if dst ~= nil then machine = register_dst(machine, fctx, dst, ty) end
                 end
-                if dst ~= nil then machine = register_dst(machine, fctx, dst, ty) end
             end
         end
         return machine
@@ -718,6 +771,22 @@ local function bind_context(T)
         end
         return machine
     end
+    function Code.CodeSigLookupMissing:code_sig_validate_return(machine, fctx, site, values)
+        for i = 1, #values do machine, _ = value_type(fctx, machine, values[i]) end
+        return machine
+    end
+
+    function Code.CodeSigLookupFound:code_sig_validate_return(machine, fctx, site, values)
+        local sig = self.sig
+        if #values ~= #sig.results then machine = machine:with_issue(Code.CodeIssueCallArity(sig.id, #sig.results, #values)) end
+        local n = math.min(#values, #sig.results)
+        for i = 1, n do
+            local vty
+            machine, vty = value_type(fctx, machine, values[i])
+            if vty ~= nil then machine = expect_type(machine, site .. ":return" .. tostring(i), sig.results[i], vty) end
+        end
+        return machine
+    end
 
     local function check_term(machine, fctx, func, block)
         local term = block.term
@@ -741,18 +810,7 @@ local function bind_context(T)
             for i = 1, #k.cases do machine = check_transfer(machine, fctx, site .. ":variant.case" .. tostring(i), k.cases[i].dest, k.cases[i].args) end
             machine = check_transfer(machine, fctx, site .. ":variant.default", k.default_dest, k.default_args)
         elseif cls == Code.CodeTermReturn then
-            local sig = fctx.sig
-            if sig ~= nil then
-                if #k.values ~= #sig.results then machine = machine:with_issue(Code.CodeIssueCallArity(sig.id, #sig.results, #k.values)) end
-                local n = math.min(#k.values, #sig.results)
-                for i = 1, n do
-                    local vty
-                    machine, vty = value_type(fctx, machine, k.values[i])
-                    if vty ~= nil then machine = expect_type(machine, site .. ":return" .. tostring(i), sig.results[i], vty) end
-                end
-            else
-                for i = 1, #k.values do machine, _ = value_type(fctx, machine, k.values[i]) end
-            end
+            machine = fctx.sig_lookup:code_sig_validate_return(machine, fctx, site, k.values)
         elseif cls == Code.CodeTermTrap or cls == Code.CodeTermUnreachable then
             -- valid terminal forms
         else
@@ -760,16 +818,23 @@ local function bind_context(T)
         end
         return machine
     end
+    function Code.CodeSigLookupMissing:code_sig_validate_func_params(machine, func)
+        return machine
+    end
+
+    function Code.CodeSigLookupFound:code_sig_validate_func_params(machine, func)
+        local sig = self.sig
+        if #func.params ~= #sig.params then machine = machine:with_issue(Code.CodeIssueCallArity(sig.id, #sig.params, #func.params)) end
+        local n = math.min(#func.params, #sig.params)
+        for i = 1, n do machine = expect_type(machine, "func:" .. func.name .. ":param" .. tostring(i), sig.params[i], func.params[i].ty) end
+        return machine
+    end
 
     local function validate_func(machine, func)
-        local sig
-        machine, sig = check_sig_ref(machine, func.sig)
-        local fctx = { func = func, sig = sig, values = {}, locals = {}, blocks = {}, insts = {}, terms = {} }
-        if sig ~= nil then
-            if #func.params ~= #sig.params then machine = machine:with_issue(Code.CodeIssueCallArity(sig.id, #sig.params, #func.params)) end
-            local n = math.min(#func.params, #sig.params)
-            for i = 1, n do machine = expect_type(machine, "func:" .. func.name .. ":param" .. tostring(i), sig.params[i], func.params[i].ty) end
-        end
+        local sig_lookup
+        machine, sig_lookup = check_sig_ref(machine, func.sig)
+        local fctx = { func = func, sig_lookup = sig_lookup, values = {}, locals = {}, blocks = {}, insts = {}, terms = {} }
+        machine = sig_lookup:code_sig_validate_func_params(machine, func)
         machine = register_function_defs(machine, fctx, func)
         if fctx.blocks[func.entry.text] == nil then machine = machine:with_issue(Code.CodeIssueMissingBlock(func.entry)) end
         for i = 1, #(func.blocks or {}) do
@@ -784,9 +849,16 @@ local function bind_context(T)
     local function validate(code_module, collector_or_opts)
         local collector = collector_or_opts
         if type(collector_or_opts) == "table" and collector_or_opts.collector ~= nil then collector = collector_or_opts.collector end
-        local machine = Machine.new({}, {}, {}, {}, {})
-
-        machine, machine._sigs = index_by(machine, code_module.sigs, function(s) return s.id.text, s.id end, function(id) return Code.CodeIssueDuplicateSig(id) end)
+        local sig_projection = code_module:code_sig_projection()
+        local machine = Machine.new(sig_projection, {}, {}, {}, {})
+        for i = 1, #sig_projection.entries do
+            for j = 1, i - 1 do
+                if sig_projection.entries[i].sig_id == sig_projection.entries[j].sig_id then
+                    machine = machine:with_issue(Code.CodeIssueDuplicateSig(sig_projection.entries[i].sig_id))
+                    break
+                end
+            end
+        end
         machine, machine._data = index_by(machine, code_module.data, function(d) return d.id.text, d.id end, function(id) return Code.CodeIssueDuplicateData(id) end)
         machine, machine._globals = index_by(machine, code_module.globals, function(g) return g.id.text, g.id end, function(id) return Code.CodeIssueDuplicateGlobal(id) end)
         machine, machine._externs = index_by(machine, code_module.externs, function(e) return e.id.text, e.id end, function(id) return Code.CodeIssueDuplicateExtern(id) end)

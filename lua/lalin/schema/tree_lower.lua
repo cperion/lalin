@@ -10,15 +10,28 @@ return schema. LalinTreeLower {
     const_env [LalinBind.ConstEnv],
     variant_defs [many [LalinTreeLower.TreeLowerVariantDefEntry]],
   },
+  sum. TreeLowerCodeSigRequirement {
+    TreeLowerFunctionSigRequirement,
+    TreeLowerExternSigRequirement,
+    TreeLowerDirectCallSigRequirement,
+    TreeLowerIndirectCallSigRequirement,
+    TreeLowerClosureSigRequirement,
+    TreeLowerHelperSigRequirement,
+  },
   product. TreeLowerSigEntry {
     interned,
-    sig_name [str],
+    sig_id [LalinCode.CodeSigId],
     sig [LalinCode.CodeSig],
+    requirement [LalinTreeLower.TreeLowerCodeSigRequirement],
   },
   product. TreeLowerModuleSigState {
     module_name [str],
     code_sigs [many [LalinTreeLower.TreeLowerSigEntry]],
     code_sig_order [many [LalinCode.CodeSig]],
+  },
+  product. TreeLowerCallTargetResult {
+    target [LalinCode.CodeCallTarget],
+    sig [LalinCode.CodeSigId],
   },
   product. TreeLowerFunctionRegistrationEntry {
     interned,

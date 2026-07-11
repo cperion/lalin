@@ -67,6 +67,22 @@ return schema. LalinCode {
     params [many [LalinCode.CodeType]],
     results [many [LalinCode.CodeType]],
   },
+  product. CodeSigProjectionEntry {
+    interned,
+    sig_id [LalinCode.CodeSigId],
+    sig [LalinCode.CodeSig],
+  },
+  product. CodeSigProjection {
+    entries [many [LalinCode.CodeSigProjectionEntry]],
+  },
+  sum. CodeSigLookupResult {
+    CodeSigLookupFound {
+      sig [LalinCode.CodeSig],
+    },
+    CodeSigLookupMissing {
+      sig_id [LalinCode.CodeSigId],
+    },
+  },
   sum. CodeResidence {
     CodeResidenceValue,
     CodeResidenceAddressed,

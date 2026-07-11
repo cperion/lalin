@@ -215,9 +215,6 @@ local function bind_context(T)
         return Code.CodeSigId(table.concat(parts, "_"))
     end
 
-    local function stored_code_sig(entry)
-        return entry and entry.sig or entry
-    end
 
     local function c_backend_sig_id(code_sig_id_value)
         return C.CBackendFuncSigId(code_sig_id_value.text)
@@ -228,26 +225,69 @@ local function bind_context(T)
     end
 
     -- =====================================================================
-    -- TreeLowerModuleSigState — sig accumulator for tree→code lowering
+    -- Typed CodeSig requirement projection for tree→Code lowering
     -- =====================================================================
 
-    local TL = T.LalinTreeLower or T.LalinTreeCode
-
-    local function sig_state_lookup(sig_state, key)
+    local function sig_state_lookup(sig_state, id)
         for _, entry in ipairs(sig_state.code_sigs or {}) do
-            if entry.sig_name == key then return entry.sig end
+            if entry.sig_id == id then return entry.sig end
         end
         return nil
     end
 
-    local function sig_state_with_sig(sig_state, sig)
-        local key = sig.id.text
-        if sig_state_lookup(sig_state, key) ~= nil then return sig_state end
-        local SigEntry = TL.TreeLowerSigEntry or TL.TreeCodeSigEntry
-        local SigState = TL.TreeLowerModuleSigState or TL.TreeCodeModuleSigState
-        local new_sigs = append(sig_state.code_sigs, SigEntry(key, sig))
-        local new_order = append(sig_state.code_sig_order, sig)
-        return SigState(sig_state.module_name, new_sigs, new_order)
+    local function sig_state_has_requirement(sig_state, sig, requirement)
+        for _, entry in ipairs(sig_state.code_sigs or {}) do
+            if entry.sig_id == sig.id and entry.requirement == requirement then return true end
+        end
+        return false
+    end
+
+    local function collect_sig_requirement(requirement, sig_state, sig)
+        local entries = sig_state.code_sigs
+        local order = sig_state.code_sig_order
+        if not sig_state_has_requirement(sig_state, sig, requirement) then
+            entries = append(entries, sig_state:tree_code_sig_entry(sig, requirement))
+        end
+        if sig_state_lookup(sig_state, sig.id) == nil then order = append(order, sig) end
+        return sig_state:tree_code_with_sig_projection(entries, order)
+    end
+
+    local TreeLowerSchema = T.LalinTreeLower
+    if TreeLowerSchema ~= nil then
+        function TreeLowerSchema.TreeLowerModuleSigState:tree_code_sig_entry(sig, requirement)
+            return TreeLowerSchema.TreeLowerSigEntry(sig.id, sig, requirement)
+        end
+        function TreeLowerSchema.TreeLowerModuleSigState:tree_code_with_sig_projection(entries, order)
+            return TreeLowerSchema.TreeLowerModuleSigState(self.module_name, entries, order)
+        end
+        function TreeLowerSchema.TreeLowerModuleSigState:tree_code_helper_sig_requirement()
+            return TreeLowerSchema.TreeLowerHelperSigRequirement
+        end
+        function TreeLowerSchema.TreeLowerFunctionSigRequirement:tree_lower_collect_code_sig(sig_state, sig) return collect_sig_requirement(self, sig_state, sig) end
+        function TreeLowerSchema.TreeLowerExternSigRequirement:tree_lower_collect_code_sig(sig_state, sig) return collect_sig_requirement(self, sig_state, sig) end
+        function TreeLowerSchema.TreeLowerDirectCallSigRequirement:tree_lower_collect_code_sig(sig_state, sig) return collect_sig_requirement(self, sig_state, sig) end
+        function TreeLowerSchema.TreeLowerIndirectCallSigRequirement:tree_lower_collect_code_sig(sig_state, sig) return collect_sig_requirement(self, sig_state, sig) end
+        function TreeLowerSchema.TreeLowerClosureSigRequirement:tree_lower_collect_code_sig(sig_state, sig) return collect_sig_requirement(self, sig_state, sig) end
+        function TreeLowerSchema.TreeLowerHelperSigRequirement:tree_lower_collect_code_sig(sig_state, sig) return collect_sig_requirement(self, sig_state, sig) end
+    end
+
+    local TreeCode = T.LalinTreeCode
+    if TreeCode ~= nil then
+        function TreeCode.TreeCodeModuleSigState:tree_code_sig_entry(sig, requirement)
+            return TreeCode.TreeCodeSigEntry(sig.id, sig, requirement)
+        end
+        function TreeCode.TreeCodeModuleSigState:tree_code_with_sig_projection(entries, order)
+            return TreeCode.TreeCodeModuleSigState(self.module_name, entries, order)
+        end
+        function TreeCode.TreeCodeModuleSigState:tree_code_helper_sig_requirement()
+            return TreeCode.TreeCodeHelperSigRequirement
+        end
+        function TreeCode.TreeCodeFunctionSigRequirement:tree_lower_collect_code_sig(sig_state, sig) return collect_sig_requirement(self, sig_state, sig) end
+        function TreeCode.TreeCodeExternSigRequirement:tree_lower_collect_code_sig(sig_state, sig) return collect_sig_requirement(self, sig_state, sig) end
+        function TreeCode.TreeCodeDirectCallSigRequirement:tree_lower_collect_code_sig(sig_state, sig) return collect_sig_requirement(self, sig_state, sig) end
+        function TreeCode.TreeCodeIndirectCallSigRequirement:tree_lower_collect_code_sig(sig_state, sig) return collect_sig_requirement(self, sig_state, sig) end
+        function TreeCode.TreeCodeClosureSigRequirement:tree_lower_collect_code_sig(sig_state, sig) return collect_sig_requirement(self, sig_state, sig) end
+        function TreeCode.TreeCodeHelperSigRequirement:tree_lower_collect_code_sig(sig_state, sig) return collect_sig_requirement(self, sig_state, sig) end
     end
 
     -- =====================================================================
@@ -313,12 +353,15 @@ local function bind_context(T)
     -- State-threading operations
     -- =====================================================================
 
-    local function ensure_code_sig_on(sig_state, params, results)
+    local function ensure_code_sig_requirement_on(sig_state, params, results, requirement)
         results = normalize_code_results(results)
         local id = code_sig_id(params or {}, results)
         local sig = Code.CodeSig(id, params or {}, results)
-        local new_sig_state = sig_state_with_sig(sig_state, sig)
-        return id, new_sig_state
+        return id, requirement:tree_lower_collect_code_sig(sig_state, sig)
+    end
+
+    local function ensure_code_sig_on(sig_state, params, results)
+        return ensure_code_sig_requirement_on(sig_state, params, results, sig_state:tree_code_helper_sig_requirement())
     end
 
     local type_to_code_on
@@ -508,8 +551,21 @@ local function bind_context(T)
         return ensure_code_sig_on(sig_state, params, results)
     end
 
+    api.ensure_code_sig_requirement = function(sig_state, params, results, requirement)
+        return ensure_code_sig_requirement_on(sig_state, params, results, requirement)
+    end
+
     api.ensure_type_sig = function(sig_state, params, result)
         return ensure_type_sig_on(sig_state, params, result)
+    end
+
+    api.ensure_type_sig_requirement = function(sig_state, params, result, requirement)
+        local code_params = {}
+        local ss = sig_state
+        for i = 1, #(params or {}) do code_params[i], ss = type_to_code_on(ss, params[i]) end
+        local code_result
+        code_result, ss = type_to_code_on(ss, result)
+        return ensure_code_sig_requirement_on(ss, code_params, { code_result }, requirement)
     end
 
     api.ensure_c_backend_sig = function(machine, sig_id)

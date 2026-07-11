@@ -10,15 +10,28 @@ return schema. LalinTreeCode {
     const_env [LalinBind.ConstEnv],
     variant_defs [many [LalinTreeCode.TreeCodeVariantDefEntry]],
   },
+  sum. TreeCodeSigRequirement {
+    TreeCodeFunctionSigRequirement,
+    TreeCodeExternSigRequirement,
+    TreeCodeDirectCallSigRequirement,
+    TreeCodeIndirectCallSigRequirement,
+    TreeCodeClosureSigRequirement,
+    TreeCodeHelperSigRequirement,
+  },
   product. TreeCodeSigEntry {
     interned,
-    sig_name [str],
+    sig_id [LalinCode.CodeSigId],
     sig [LalinCode.CodeSig],
+    requirement [LalinTreeCode.TreeCodeSigRequirement],
   },
   product. TreeCodeModuleSigState {
     module_name [str],
     code_sigs [many [LalinTreeCode.TreeCodeSigEntry]],
     code_sig_order [many [LalinCode.CodeSig]],
+  },
+  product. TreeCodeCallTargetResult {
+    target [LalinCode.CodeCallTarget],
+    sig [LalinCode.CodeSigId],
   },
   product. TreeCodeFuncRegistrationEntry {
     interned,
