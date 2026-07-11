@@ -44,6 +44,7 @@ local C = T.LalinCore
 local Ty = T.LalinType
 local B = T.LalinBind
 local Tr = T.LalinTree
+local Check = T.LalinCheck
 local Sem = T.LalinSem
 local TC = require("lalin.tree_typecheck")(T)
 
@@ -54,9 +55,9 @@ local ptr_instr = Ty.TPtr(instr_ty)
 local u16 = scalar(C.ScalarU16)
 local binding = B.Binding(C.Id("inst"), "inst", ptr_instr, B.BindingRoleLocalValue)
 local env = B.Env("", { B.ValueEntry("inst", binding) }, {}, {})
-local scope = Tr.TypeValueScope(env.module_name, env.values, env.types, env.layouts, Tr.TypeModuleFacts({}, {}, {}, {}, {}, {}, {}))
-local expr_input = Tr.TypeExprInput(scope)
-local place_input = Tr.TypePlaceInput(scope)
+local scope = Check.TypeValueScope(env.module_name, env.values, env.types, env.layouts, Check.TypeModuleFacts({}, {}, {}, {}, {}, {}, {}))
+local expr_input = Check.TypeExprInput(scope)
+local place_input = Check.TypePlaceInput(scope)
 
 -- This shape occurs after a typed fragment body is copied into a caller and
 -- re-typechecked in an environment that does not carry the fragment's layout

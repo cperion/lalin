@@ -13,7 +13,7 @@ local M = {}
 local SOURCE = [[
 return package "lalin.compiler" {
     world. tree [LalinTree.Module],
-    world. checked [LalinTree.TypeModuleResult],
+    world. checked [LalinCheck.TypeModuleResult],
     world. c_code [LalinCompiler.CodeResult],
     world. c [LalinC.CBackendUnit],
     world. diag [LalinDiag.Report],

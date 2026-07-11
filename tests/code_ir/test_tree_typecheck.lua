@@ -14,6 +14,7 @@ local Ty = T.LalinType
 local B = T.LalinBind
 local Tr = T.LalinTree
 
+local Check = T.LalinCheck
 local i32 = Ty.TScalar(C.ScalarI32)
 local bool = Ty.TScalar(C.ScalarBool)
 local function lit(raw) return Tr.ExprLit(Tr.ExprSurface, C.LitInt(raw)) end
@@ -69,9 +70,9 @@ local bad = Tr.Module(Tr.ModuleSurface, {
 })
 local bad_checked = TC.check_module(bad)
 assert(#bad_checked.issues >= 1)
-assert(bad_checked.issues[1] == Tr.TypeIssueExpected("return", i32, bool))
+assert(bad_checked.issues[1] == Check.TypeIssueExpected("return", i32, bool))
 
-local control_report = Typecheck.explain_type_issue(Tr.TypeIssueInvalidControl(
+local control_report = Typecheck.explain_type_issue(Check.TypeIssueInvalidControl(
     "rid",
     Tr.ControlRejectMissingJumpArg("rid", Tr.BlockLabel("err"), "code")
 ), { anchors = {} })

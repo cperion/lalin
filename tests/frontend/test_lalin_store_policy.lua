@@ -7,6 +7,7 @@ local T = asdl.context()
 require("lalin.schema_projection")(T)
 local Tr = T.LalinTree
 
+local Check = T.LalinCheck
 local decls, doc = assert(lalin.loadstring([=[
 struct Token
   kind [u32]
@@ -77,6 +78,6 @@ end
 ]=], "@bad-domain.lln"))
 local bad_module = lalin.syntax.to_module(bad_decls, "BadDomain", T)
 local bad_checked = bad_module:typecheck_tree_module()
-assert(#bad_checked.issues == 1 and asdl.classof(bad_checked.issues[1]) == Tr.TypeIssueDomainContract, "handle domain without resolver should fail at declaration")
+assert(#bad_checked.issues == 1 and asdl.classof(bad_checked.issues[1]) == Check.TypeIssueDomainContract, "handle domain without resolver should fail at declaration")
 
 io.write("lalin store policy ok\n")

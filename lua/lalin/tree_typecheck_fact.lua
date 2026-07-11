@@ -4,6 +4,7 @@ return function(T)
     local Ty = T.LalinType
     local Tr = T.LalinTree
 
+    local Check = T.LalinCheck
     local function void_ty()
         return Ty.TScalar(C.ScalarVoid)
     end
@@ -22,13 +23,13 @@ return function(T)
         return out
     end
 
-    function Tr.TypeValueScope:typecheck_tree_add_value(entry)
+    function Check.TypeValueScope:typecheck_tree_add_value(entry)
         local values = clone_values(self.values)
         values[#values + 1] = entry
-        return Tr.TypeValueScope(self.module_name, values, self.types, self.layouts, self.facts)
+        return Check.TypeValueScope(self.module_name, values, self.types, self.layouts, self.facts)
     end
 
-    function Tr.TypeValueScope:typecheck_tree_add_params(scope_name, params)
+    function Check.TypeValueScope:typecheck_tree_add_params(scope_name, params)
         local scope = self
         for i = 1, #(params or {}) do
             local p = params[i]
@@ -38,47 +39,47 @@ return function(T)
         return scope
     end
 
-    function Tr.TypeValueScope:typecheck_tree_with_layouts(layouts)
-        return Tr.TypeValueScope(self.module_name, self.values, self.types, layouts, self.facts)
+    function Check.TypeValueScope:typecheck_tree_with_layouts(layouts)
+        return Check.TypeValueScope(self.module_name, self.values, self.types, layouts, self.facts)
     end
 
-    function Tr.TypeValueScope:typecheck_tree_lookup_value(name)
+    function Check.TypeValueScope:typecheck_tree_lookup_value(name)
         for i = #self.values, 1, -1 do
             if self.values[i].name == name then return self.values[i].binding end
         end
         return nil
     end
 
-    function Tr.TypeValueScope:typecheck_tree_stmt_input(return_ty, yield)
-        return Tr.TypeStmtInput(self, return_ty, yield)
+    function Check.TypeValueScope:typecheck_tree_stmt_input(return_ty, yield)
+        return Check.TypeStmtInput(self, return_ty, yield)
     end
 
-    function Tr.TypeValueScope:typecheck_tree_expr_input()
-        return Tr.TypeExprInput(self)
+    function Check.TypeValueScope:typecheck_tree_expr_input()
+        return Check.TypeExprInput(self)
     end
 
-    function Tr.TypeValueScope:typecheck_tree_place_input()
-        return Tr.TypePlaceInput(self)
+    function Check.TypeValueScope:typecheck_tree_place_input()
+        return Check.TypePlaceInput(self)
     end
 
-    function Tr.TypeStmtInput:typecheck_tree_with_scope(scope)
-        return Tr.TypeStmtInput(scope, self.return_ty, self.yield)
+    function Check.TypeStmtInput:typecheck_tree_with_scope(scope)
+        return Check.TypeStmtInput(scope, self.return_ty, self.yield)
     end
 
-    function Tr.TypeStmtInput:typecheck_tree_with_yield(yield)
-        return Tr.TypeStmtInput(self.scope, self.return_ty, yield)
+    function Check.TypeStmtInput:typecheck_tree_with_yield(yield)
+        return Check.TypeStmtInput(self.scope, self.return_ty, yield)
     end
 
-    function Tr.TypeStmtInput:typecheck_tree_expr_input()
+    function Check.TypeStmtInput:typecheck_tree_expr_input()
         return self.scope:typecheck_tree_expr_input()
     end
 
-    function Tr.TypeStmtInput:typecheck_tree_place_input()
+    function Check.TypeStmtInput:typecheck_tree_place_input()
         return self.scope:typecheck_tree_place_input()
     end
 
-    function Tr.TypeStmtInput:typecheck_tree_expected_expr_input(expected)
-        return Tr.TypeExpectedExprInput(self.scope, expected)
+    function Check.TypeStmtInput:typecheck_tree_expected_expr_input(expected)
+        return Check.TypeExpectedExprInput(self.scope, expected)
     end
 
     function Ty.HandleFact:typecheck_tree_handle_domain()
@@ -105,18 +106,18 @@ return function(T)
         local variants = {}
         for i = 1, #self.variants do
             local name = variant_name_text(self.variants[i])
-            variants[#variants + 1] = Tr.TypeVariantCase(name, i - 1, void_ty(), {})
+            variants[#variants + 1] = Check.TypeVariantCase(name, i - 1, void_ty(), {})
         end
-        return { Tr.TypeVariantDef(self.name, Ty.TNamed(Ty.TypeRefGlobal(input.module_name, self.name)), variants) }
+        return { Check.TypeVariantDef(self.name, Ty.TNamed(Ty.TypeRefGlobal(input.module_name, self.name)), variants) }
     end
 
     function Tr.TypeDeclTaggedUnionSugar:typecheck_tree_variant_defs(input)
         local variants = {}
         for i = 1, #self.variants do
             local v = self.variants[i]
-            variants[#variants + 1] = Tr.TypeVariantCase(v.name, i - 1, v.payload, v.fields or {})
+            variants[#variants + 1] = Check.TypeVariantCase(v.name, i - 1, v.payload, v.fields or {})
         end
-        return { Tr.TypeVariantDef(self.name, Ty.TNamed(Ty.TypeRefGlobal(input.module_name, self.name)), variants) }
+        return { Check.TypeVariantDef(self.name, Ty.TNamed(Ty.TypeRefGlobal(input.module_name, self.name)), variants) }
     end
 
     function Tr.TypeDecl:typecheck_tree_handle_defs(input)
@@ -129,7 +130,7 @@ return function(T)
             domain = self.facts[i]:typecheck_tree_handle_domain() or domain
             target = self.facts[i]:typecheck_tree_handle_target() or target
         end
-        return { Tr.TypeHandleDef(self.name, Ty.THandle(Ty.TypeRefGlobal(input.module_name, self.name), self.repr), self.repr, self.invalid, domain, target) }
+        return { Check.TypeHandleDef(self.name, Ty.THandle(Ty.TypeRefGlobal(input.module_name, self.name), self.repr), self.repr, self.invalid, domain, target) }
     end
 
     function Tr.Func:typecheck_tree_effect_defs(input)
@@ -137,11 +138,11 @@ return function(T)
     end
 
     function Tr.FuncLocal:typecheck_tree_effect_defs(input)
-        return { Tr.TypeFuncEffect(self.name, self.params or {}, {}, {}, {}) }
+        return { Check.TypeFuncEffect(self.name, self.params or {}, {}, {}, {}) }
     end
 
     function Tr.FuncExport:typecheck_tree_effect_defs(input)
-        return { Tr.TypeFuncEffect(self.name, self.params or {}, {}, {}, {}) }
+        return { Check.TypeFuncEffect(self.name, self.params or {}, {}, {}, {}) }
     end
 
     local function contract_effect_names(contracts)
@@ -154,16 +155,16 @@ return function(T)
 
     function Tr.FuncLocalContract:typecheck_tree_effect_defs(input)
         local readonly, preserve, invalidate = contract_effect_names(self.contracts)
-        return { Tr.TypeFuncEffect(self.name, self.params or {}, readonly, preserve, invalidate) }
+        return { Check.TypeFuncEffect(self.name, self.params or {}, readonly, preserve, invalidate) }
     end
 
     function Tr.FuncExportContract:typecheck_tree_effect_defs(input)
         local readonly, preserve, invalidate = contract_effect_names(self.contracts)
-        return { Tr.TypeFuncEffect(self.name, self.params or {}, readonly, preserve, invalidate) }
+        return { Check.TypeFuncEffect(self.name, self.params or {}, readonly, preserve, invalidate) }
     end
 
     function Tr.FuncDecl:typecheck_tree_effect_defs(input)
-        return { Tr.TypeFuncEffect(self.name, self.params or {}, {}, {}, {}) }
+        return { Check.TypeFuncEffect(self.name, self.params or {}, {}, {}, {}) }
     end
 
     function Tr.FuncContract:typecheck_tree_append_effect_names(readonly, preserve, invalidate)
@@ -685,7 +686,7 @@ return function(T)
     end
 
     function Tr.ItemExtern:typecheck_tree_effect_defs(input)
-        return { Tr.TypeFuncEffect(self.func.name, self.func.params or {}, {}, {}, {}) }
+        return { Check.TypeFuncEffect(self.func.name, self.func.params or {}, {}, {}, {}) }
     end
 
     function Tr.Module:typecheck_tree_module_facts(input)
@@ -703,6 +704,6 @@ return function(T)
         end
         local region_protocols, region_seals = self:typecheck_tree_region_call_seals(input, regions)
         local region_bundles = self:typecheck_tree_region_bundles(input, regions, region_seals)
-        return Tr.TypeModuleFacts(variants, handles, effects, regions, region_protocols, region_seals, region_bundles)
+        return Check.TypeModuleFacts(variants, handles, effects, regions, region_protocols, region_seals, region_bundles)
     end
 end

@@ -19,6 +19,7 @@ local SCHEMA_MODULES = {
     "bind",
     "sem",
     "tree",
+    "check",
     "code",
     "code_backend",
     "code_validate_schema",

@@ -5,6 +5,7 @@ return function(T)
     local Ty = T.LalinType
     local Tr = T.LalinTree
 
+    local Check = T.LalinCheck
     local function append_all(out, values)
         for i = 1, #(values or {}) do out[#out + 1] = values[i] end
     end
@@ -14,7 +15,7 @@ return function(T)
     end
 
     local function check_expected(site, expected, actual, issues)
-        if not type_eq(expected, actual) then issues[#issues + 1] = Tr.TypeIssueExpected(site, expected, actual) end
+        if not type_eq(expected, actual) then issues[#issues + 1] = Check.TypeIssueExpected(site, expected, actual) end
     end
 
     local function type_expr_expect(expr, input, expected)
@@ -35,7 +36,7 @@ return function(T)
         return path_text(self.path) == path_text(other and other.path)
     end
 
-    function Tr.TypeModuleFacts:typecheck_tree_region_def_for(target)
+    function Check.TypeModuleFacts:typecheck_tree_region_def_for(target)
         for i = 1, #(self.regions or {}) do
             if self.regions[i].target:typecheck_tree_same_region_target(target) then return self.regions[i] end
         end
@@ -214,23 +215,23 @@ return function(T)
             and asdl.classof(value.expr) == Tr.ExprLit
             and asdl.isa(value.expr.value, C.LitNil)
         then
-            value = Tr.TypeExprResult(Tr.ExprLit(Tr.ExprTyped(input.return_ty), value.expr.value), input.return_ty, value.issues)
+            value = Check.TypeExprResult(Tr.ExprLit(Tr.ExprTyped(input.return_ty), value.expr.value), input.return_ty, value.issues)
         end
         local issues = {}
         append_all(issues, value.issues)
         check_expected("return", input.return_ty, value.ty, issues)
-        return Tr.TypeStmtResult(input, { Tr.StmtReturnValue(self.h, value.expr) }, issues)
+        return Check.TypeStmtResult(input, { Tr.StmtReturnValue(self.h, value.expr) }, issues)
     end
 
     function Tr.StmtReturnVoid:typecheck_tree_stmt(input)
         local issues = {}
         check_expected("return", input.return_ty, Ty.TScalar(C.ScalarVoid), issues)
-        return Tr.TypeStmtResult(input, { Tr.StmtReturnVoid(self.h) }, issues)
+        return Check.TypeStmtResult(input, { Tr.StmtReturnVoid(self.h) }, issues)
     end
 
     function Tr.StmtExpr:typecheck_tree_stmt(input)
         local expr = self.expr:typecheck_tree_expr(input:typecheck_tree_expr_input())
-        return Tr.TypeStmtResult(input, { Tr.StmtExpr(self.h, expr.expr) }, expr.issues)
+        return Check.TypeStmtResult(input, { Tr.StmtExpr(self.h, expr.expr) }, expr.issues)
     end
 
     function Tr.StmtLet:typecheck_tree_stmt(input)
@@ -241,7 +242,7 @@ return function(T)
         append_all(issues, init.issues)
         check_expected("let", ty, init.ty, issues)
         local scope = input.scope:typecheck_tree_add_value(B.ValueEntry(binding.name, binding))
-        return Tr.TypeStmtResult(input:typecheck_tree_with_scope(scope), { Tr.StmtLet(self.h, binding, init.expr) }, issues)
+        return Check.TypeStmtResult(input:typecheck_tree_with_scope(scope), { Tr.StmtLet(self.h, binding, init.expr) }, issues)
     end
 
     function Tr.StmtVar:typecheck_tree_stmt(input)
@@ -252,7 +253,7 @@ return function(T)
         append_all(issues, init.issues)
         check_expected("var", ty, init.ty, issues)
         local scope = input.scope:typecheck_tree_add_value(B.ValueEntry(binding.name, binding))
-        return Tr.TypeStmtResult(input:typecheck_tree_with_scope(scope), { Tr.StmtVar(self.h, binding, init.expr) }, issues)
+        return Check.TypeStmtResult(input:typecheck_tree_with_scope(scope), { Tr.StmtVar(self.h, binding, init.expr) }, issues)
     end
 
     function Tr.StmtSet:typecheck_tree_stmt(input)
@@ -262,7 +263,7 @@ return function(T)
         append_all(issues, place.issues)
         append_all(issues, value.issues)
         check_expected("set", place.ty, value.ty, issues)
-        return Tr.TypeStmtResult(input, { Tr.StmtSet(self.h, place.place, value.expr) }, issues)
+        return Check.TypeStmtResult(input, { Tr.StmtSet(self.h, place.place, value.expr) }, issues)
     end
 
     function Tr.StmtAtomicStore:typecheck_tree_stmt(input)
@@ -272,11 +273,11 @@ return function(T)
         append_all(issues, addr.issues)
         append_all(issues, value.issues)
         check_expected("atomic store", self.ty, value.ty, issues)
-        return Tr.TypeStmtResult(input, { Tr.StmtAtomicStore(self.h, self.ty, addr.expr, value.expr, self.ordering) }, issues)
+        return Check.TypeStmtResult(input, { Tr.StmtAtomicStore(self.h, self.ty, addr.expr, value.expr, self.ordering) }, issues)
     end
 
     function Tr.StmtAtomicFence:typecheck_tree_stmt(input)
-        return Tr.TypeStmtResult(input, { self }, {})
+        return Check.TypeStmtResult(input, { self }, {})
     end
 
     function Tr.StmtIf:typecheck_tree_stmt(input)
@@ -288,7 +289,7 @@ return function(T)
         local else_body = input:typecheck_tree_stmt_body(self.else_body)
         append_all(issues, then_body.issues)
         append_all(issues, else_body.issues)
-        return Tr.TypeStmtResult(input, { Tr.StmtIf(self.h, cond.expr, then_body.stmts, else_body.stmts) }, issues)
+        return Check.TypeStmtResult(input, { Tr.StmtIf(self.h, cond.expr, then_body.stmts, else_body.stmts) }, issues)
     end
 
     function Tr.StmtAssert:typecheck_tree_stmt(input)
@@ -296,7 +297,7 @@ return function(T)
         local issues = {}
         append_all(issues, cond.issues)
         check_expected("assert condition", Ty.TScalar(C.ScalarBool), cond.ty, issues)
-        return Tr.TypeStmtResult(input, { Tr.StmtAssert(self.h, cond.expr) }, issues)
+        return Check.TypeStmtResult(input, { Tr.StmtAssert(self.h, cond.expr) }, issues)
     end
 
     function Tr.SwitchStmtArm:typecheck_tree_stmt_arm(input)
@@ -332,7 +333,7 @@ return function(T)
         end
         local default_body = input:typecheck_tree_stmt_body(self.default_body)
         append_all(issues, default_body.issues)
-        return Tr.TypeStmtResult(input, { Tr.StmtSwitch(self.h, value.expr, arms, variant_arms, default_body.stmts) }, issues)
+        return Check.TypeStmtResult(input, { Tr.StmtSwitch(self.h, value.expr, arms, variant_arms, default_body.stmts) }, issues)
     end
 
     function Tr.StmtJump:typecheck_tree_stmt(input)
@@ -343,7 +344,7 @@ return function(T)
             args[#args + 1] = arg
             append_all(issues, arg_issues)
         end
-        return Tr.TypeStmtResult(input, { Tr.StmtJump(self.h, self.target, args) }, issues)
+        return Check.TypeStmtResult(input, { Tr.StmtJump(self.h, self.target, args) }, issues)
     end
 
     function Tr.StmtJumpCont:typecheck_tree_stmt(input)
@@ -354,7 +355,7 @@ return function(T)
             args[#args + 1] = arg
             append_all(issues, arg_issues)
         end
-        return Tr.TypeStmtResult(input, { Tr.StmtJumpCont(self.h, self.cont, args) }, issues)
+        return Check.TypeStmtResult(input, { Tr.StmtJumpCont(self.h, self.cont, args) }, issues)
     end
 
     local function typecheck_region_invoke_args(stmt, input)
@@ -411,14 +412,14 @@ return function(T)
         local args, issues = typecheck_region_invoke_args(self, input)
         local wiring, wire_issues = typecheck_region_wiring(self.wiring, input)
         append_all(issues, wire_issues)
-        return Tr.TypeStmtResult(input, { Tr.StmtRegionEmit(self.h, self.invoke_id, self.target, args, wiring) }, issues)
+        return Check.TypeStmtResult(input, { Tr.StmtRegionEmit(self.h, self.invoke_id, self.target, args, wiring) }, issues)
     end
 
     function Tr.StmtRegionCall:typecheck_tree_stmt(input)
         local args, issues = typecheck_region_invoke_args(self, input)
         local wiring, wire_issues = typecheck_region_wiring(self.wiring, input)
         append_all(issues, wire_issues)
-        return Tr.TypeStmtResult(input, { Tr.StmtRegionCall(self.h, self.invoke_id, self.target, args, wiring) }, issues)
+        return Check.TypeStmtResult(input, { Tr.StmtRegionCall(self.h, self.invoke_id, self.target, args, wiring) }, issues)
     end
 
     local function entry_param_from_region_param(param, arg)
@@ -632,28 +633,28 @@ return function(T)
         return seal:typecheck_tree_call_splice(self, input)
     end
 
-    function Tr.TypeYieldResult:typecheck_tree_yield_void(stmt, input)
-        return Tr.TypeStmtResult(input, { stmt }, { Tr.TypeIssueUnexpectedYield("yield") })
+    function Check.TypeYieldResult:typecheck_tree_yield_void(stmt, input)
+        return Check.TypeStmtResult(input, { stmt }, { Check.TypeIssueUnexpectedYield("yield") })
     end
 
-    function Tr.TypeYieldVoid:typecheck_tree_yield_void(stmt, input)
-        return Tr.TypeStmtResult(input, { stmt }, {})
+    function Check.TypeYieldVoid:typecheck_tree_yield_void(stmt, input)
+        return Check.TypeStmtResult(input, { stmt }, {})
     end
 
-    function Tr.TypeYieldResult:typecheck_tree_yield_value(stmt, input)
+    function Check.TypeYieldResult:typecheck_tree_yield_value(stmt, input)
         local value = stmt.value:typecheck_tree_expr(input:typecheck_tree_expr_input())
         local issues = {}
         append_all(issues, value.issues)
-        issues[#issues + 1] = Tr.TypeIssueUnexpectedYield("yield")
-        return Tr.TypeStmtResult(input, { Tr.StmtYieldValue(stmt.h, value.expr) }, issues)
+        issues[#issues + 1] = Check.TypeIssueUnexpectedYield("yield")
+        return Check.TypeStmtResult(input, { Tr.StmtYieldValue(stmt.h, value.expr) }, issues)
     end
 
-    function Tr.TypeYieldValue:typecheck_tree_yield_value(stmt, input)
+    function Check.TypeYieldValue:typecheck_tree_yield_value(stmt, input)
         local value = type_expr_expect(stmt.value, input, self.ty)
         local issues = {}
         append_all(issues, value.issues)
         check_expected("yield", self.ty, value.ty, issues)
-        return Tr.TypeStmtResult(input, { Tr.StmtYieldValue(stmt.h, value.expr) }, issues)
+        return Check.TypeStmtResult(input, { Tr.StmtYieldValue(stmt.h, value.expr) }, issues)
     end
 
     function Tr.StmtYieldVoid:typecheck_tree_stmt(input)
@@ -730,7 +731,7 @@ return function(T)
             append_splice_blocks(extra_blocks, r.splice, stmt_input, extra_blocks, issues, region_id)
             return r.splice.entry_stmt
         end
-        issues[#issues + 1] = Tr.TypeIssueRegionInvoke(r.reject)
+        issues[#issues + 1] = Check.TypeIssueRegionInvoke(r.reject)
         return Tr.StmtTrap(Tr.StmtSurface)
     end
 
@@ -740,7 +741,7 @@ return function(T)
             append_splice_blocks(extra_blocks, r.splice, stmt_input, extra_blocks, issues, region_id)
             return r.splice.entry_stmt
         end
-        issues[#issues + 1] = Tr.TypeIssueRegionInvoke(r.reject)
+        issues[#issues + 1] = Check.TypeIssueRegionInvoke(r.reject)
         return Tr.StmtTrap(Tr.StmtSurface)
     end
 
@@ -807,7 +808,7 @@ return function(T)
         return out
     end
     function Tr.ControlStmtRegion:typecheck_tree_control_stmt_region(input)
-        local stmt_input = input.stmt:typecheck_tree_with_yield(Tr.TypeYieldVoid)
+        local stmt_input = input.stmt:typecheck_tree_with_yield(Check.TypeYieldVoid)
         local expansion_issues = {}
         local expansion_blocks = {}
         local expanded_entry = Tr.EntryControlBlock(self.entry.label, self.entry.params, expand_control_body(self.entry.body or {}, expansion_input_for_entry(stmt_input, self.region_id, self.entry, expansion_issues), expansion_blocks, expansion_issues, self.region_id))
@@ -817,7 +818,7 @@ return function(T)
         end
         for i = 1, #expansion_blocks do expanded_blocks[#expanded_blocks + 1] = expansion_blocks[i] end
 
-        local control_input = Tr.TypeControlInput(stmt_input, self.region_id)
+        local control_input = Check.TypeControlInput(stmt_input, self.region_id)
         local entry, entry_issues = expanded_entry:typecheck_tree_control_entry(control_input)
         local issues = {}
         append_all(issues, expansion_issues)
@@ -828,11 +829,11 @@ return function(T)
             blocks[#blocks + 1] = block
             append_all(issues, block_issues)
         end
-        return Tr.TypeControlStmtRegionResult(Tr.ControlStmtRegion(self.region_id, entry, blocks), issues)
+        return Check.TypeControlStmtRegionResult(Tr.ControlStmtRegion(self.region_id, entry, blocks), issues)
     end
 
     function Tr.ControlExprRegion:typecheck_tree_control_expr_region(input)
-        local stmt_input = input.stmt:typecheck_tree_with_yield(Tr.TypeYieldValue(self.result_ty))
+        local stmt_input = input.stmt:typecheck_tree_with_yield(Check.TypeYieldValue(self.result_ty))
         local expansion_issues = {}
         local expansion_blocks = {}
         local expanded_entry = Tr.EntryControlBlock(self.entry.label, self.entry.params, expand_control_body(self.entry.body or {}, expansion_input_for_entry(stmt_input, self.region_id, self.entry, expansion_issues), expansion_blocks, expansion_issues, self.region_id))
@@ -842,7 +843,7 @@ return function(T)
         end
         for i = 1, #expansion_blocks do expanded_blocks[#expanded_blocks + 1] = expansion_blocks[i] end
 
-        local control_input = Tr.TypeControlInput(stmt_input, self.region_id)
+        local control_input = Check.TypeControlInput(stmt_input, self.region_id)
         local entry, entry_issues = expanded_entry:typecheck_tree_control_entry(control_input)
         local issues = {}
         append_all(issues, expansion_issues)
@@ -853,21 +854,21 @@ return function(T)
             blocks[#blocks + 1] = block
             append_all(issues, block_issues)
         end
-        return Tr.TypeControlExprRegionResult(Tr.ControlExprRegion(self.region_id, self.result_ty, entry, blocks), issues)
+        return Check.TypeControlExprRegionResult(Tr.ControlExprRegion(self.region_id, self.result_ty, entry, blocks), issues)
     end
 
     function Tr.StmtControl:typecheck_tree_stmt(input)
-        local region = self.region:typecheck_tree_control_stmt_region(Tr.TypeControlInput(input, self.region.region_id))
+        local region = self.region:typecheck_tree_control_stmt_region(Check.TypeControlInput(input, self.region.region_id))
         local issues = {}
         append_all(issues, region.issues)
-        return Tr.TypeStmtResult(input, { Tr.StmtControl(self.h, region.region) }, issues)
+        return Check.TypeStmtResult(input, { Tr.StmtControl(self.h, region.region) }, issues)
     end
 
     function Tr.StmtTrap:typecheck_tree_stmt(input)
-        return Tr.TypeStmtResult(input, { self }, {})
+        return Check.TypeStmtResult(input, { self }, {})
     end
 
-    function Tr.TypeStmtInput:typecheck_tree_stmt_body(stmts)
+    function Check.TypeStmtInput:typecheck_tree_stmt_body(stmts)
         local state = self
         local out = {}
         local issues = {}
@@ -877,6 +878,6 @@ return function(T)
             append_all(out, r.stmts)
             append_all(issues, r.issues)
         end
-        return Tr.TypeStmtResult(state, out, issues)
+        return Check.TypeStmtResult(state, out, issues)
     end
 end

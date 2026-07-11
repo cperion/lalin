@@ -8,6 +8,7 @@ require("lalin.schema_projection")(T)
 require("lalin.tree_typecheck")(T)
 local Tr = T.LalinTree
 
+local Check = T.LalinCheck
 local function check(src, name)
   local decls = assert(lalin.loadstring(src, "@" .. name .. ".lln"))
   local module = lalin.syntax.to_module(decls, name, T)
@@ -120,7 +121,7 @@ handle MissingStore.Ref [u32]
   target [MissingRecord]
 end
 ]=], "domain_missing")
-assert(#missing.issues == 1 and asdl.classof(missing.issues[1]) == Tr.TypeIssueDomainContract, "domain handle without resolver should fail at declaration")
+assert(#missing.issues == 1 and asdl.classof(missing.issues[1]) == Check.TypeIssueDomainContract, "domain handle without resolver should fail at declaration")
 
 local no_lease = check([=[
 struct NoLeaseRecord
@@ -143,6 +144,6 @@ region NoLeaseStore.resolve(self [readonly [ptr [NoLeaseStore]]], ref [NoLeaseSt
   end
 end
 ]=], "domain_no_lease")
-assert(#no_lease.issues == 1 and asdl.classof(no_lease.issues[1]) == Tr.TypeIssueDomainContract, "resolver without lease grant should fail")
+assert(#no_lease.issues == 1 and asdl.classof(no_lease.issues[1]) == Check.TypeIssueDomainContract, "resolver without lease grant should fail")
 
 io.write("lalin domain contract ok\n")

@@ -53,6 +53,7 @@ local function bind_context(T)
     local B = T.LalinBind
     local Sem = T.LalinSem
     local Tr = T.LalinTree
+    local Check = T.LalinCheck
     local H = T.LalinHost
 
     local module_type_api = require("lalin.tree_module_type")(T)
@@ -211,7 +212,7 @@ local function bind_context(T)
     end
 
     local function empty_type_module_facts()
-        return Tr.TypeModuleFacts({}, {}, {}, {}, {}, {}, {})
+        return Check.TypeModuleFacts({}, {}, {}, {}, {}, {}, {})
     end
 
     local function variant_name_text(v)
@@ -305,17 +306,17 @@ local function bind_context(T)
                     end
                 end
                 if matched == nil then
-                    issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryHandleTargetMismatch, info.lease)
+                    issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryHandleTargetMismatch, info.lease)
                 elseif matched.domain then
                     local key = type_ref_leaf(matched.domain) or ""
                     if #(domain_params[key] or {}) == 0 then
-                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryHandleDomainMissing, info.lease)
+                        issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryHandleDomainMissing, info.lease)
                     elseif #(preserving_domain_params[key] or {}) == 0 then
-                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryHandleDomainAccess, info.lease)
+                        issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryHandleDomainAccess, info.lease)
                     elseif info.origin == nil then
-                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryHandleLeaseOriginMissing, info.lease)
+                        issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryHandleLeaseOriginMissing, info.lease)
                     elseif not contains_name(preserving_domain_params[key], info.origin) then
-                        issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryHandleLeaseOriginMismatch, info.lease)
+                        issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryHandleLeaseOriginMismatch, info.lease)
                     end
                 end
             end
@@ -411,7 +412,7 @@ local function bind_context(T)
     end
 
     local function check_expected(site, expected, actual, issues)
-        if not type_eq(expected, actual) then issues[#issues + 1] = Tr.TypeIssueExpected(site, expected, actual) end
+        if not type_eq(expected, actual) then issues[#issues + 1] = Check.TypeIssueExpected(site, expected, actual) end
     end
 
     function type_view(node, ...)
@@ -466,7 +467,7 @@ local function bind_context(T)
     local function check_func_types(func, issues)
         for i = 1, #(func.params or {}) do check_type_policy(func.params[i].ty, issues, "param " .. tostring(func.params[i].name)) end
         check_type_policy(func.result, issues, "result")
-        if type_contains_lease(func.result) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryLeaseEscapeDurable, func.result) end
+        if type_contains_lease(func.result) then issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryLeaseEscapeDurable, func.result) end
     end
 
     function Tr.Region:typecheck_tree_signature_issues(input)
@@ -514,23 +515,23 @@ local function bind_context(T)
     local function type_plain_func(self, input)
         local func = canonical_func(self, input.scope)
         local func_scope = input.scope:typecheck_tree_add_params(func.name, func.params)
-        local stmt_input = func_scope:typecheck_tree_stmt_input(func.result, Tr.TypeYieldNone)
+        local stmt_input = func_scope:typecheck_tree_stmt_input(func.result, Check.TypeYieldNone)
         local body = stmt_input:typecheck_tree_stmt_body(func.body)
         local issues = {}; check_func_types(func, issues); append_all(issues, body.issues)
         check_owned_function(func.name, func.params, body.stmts, issues)
-        return Tr.TypeFuncResult(schema.with(func, { body = body.stmts }), issues)
+        return Check.TypeFuncResult(schema.with(func, { body = body.stmts }), issues)
     end
 
     local function type_contract_func(self, input)
         local func = canonical_func(self, input.scope)
         local func_scope = input.scope:typecheck_tree_add_params(func.name, func.params)
-        local stmt_input = func_scope:typecheck_tree_stmt_input(func.result, Tr.TypeYieldNone)
+        local stmt_input = func_scope:typecheck_tree_stmt_input(func.result, Check.TypeYieldNone)
         local contracts, issues = type_contracts(func.contracts, stmt_input)
         check_func_types(func, issues)
         local body = stmt_input:typecheck_tree_stmt_body(func.body)
         append_all(issues, body.issues)
         check_owned_function(func.name, func.params, body.stmts, issues)
-        return Tr.TypeFuncResult(schema.with(func, { contracts = contracts, body = body.stmts }), issues)
+        return Check.TypeFuncResult(schema.with(func, { contracts = contracts, body = body.stmts }), issues)
     end
 
     function Tr.FuncLocal:typecheck_tree_func(input)
@@ -554,8 +555,8 @@ local function bind_context(T)
     end
 
     function Tr.ItemFunc:typecheck_tree_item(input)
-        local r = type_func(self.func, Tr.TypeFuncInput(input.scope))
-        return Tr.TypeItemResult({ Tr.ItemFunc(r.func) }, r.issues)
+        local r = type_func(self.func, Check.TypeFuncInput(input.scope))
+        return Check.TypeItemResult({ Tr.ItemFunc(r.func) }, r.issues)
     end
 
     function Tr.ItemConst:typecheck_tree_item(input)
@@ -566,9 +567,9 @@ local function bind_context(T)
         check_type_policy(ty, issues, "const")
         append_all(issues, value.issues)
         check_expected("const", ty, value.ty, issues)
-        if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryLeaseEscapeDurable, ty) end
-        if type_contains_owned(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedCapturedDurable, ty) end
-        return Tr.TypeItemResult({ Tr.ItemConst(schema.with(self.c, { ty = ty, value = value.expr })) }, issues)
+        if type_contains_lease(ty) then issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryLeaseEscapeDurable, ty) end
+        if type_contains_owned(ty) then issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryOwnedCapturedDurable, ty) end
+        return Check.TypeItemResult({ Tr.ItemConst(schema.with(self.c, { ty = ty, value = value.expr })) }, issues)
     end
 
     function Tr.ItemStatic:typecheck_tree_item(input)
@@ -579,19 +580,19 @@ local function bind_context(T)
         check_type_policy(ty, issues, "static")
         append_all(issues, value.issues)
         check_expected("static", ty, value.ty, issues)
-        if type_contains_lease(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryLeaseEscapeDurable, ty) end
-        if type_contains_owned(ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedCapturedDurable, ty) end
-        return Tr.TypeItemResult({ Tr.ItemStatic(schema.with(self.s, { ty = ty, value = value.expr })) }, issues)
+        if type_contains_lease(ty) then issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryLeaseEscapeDurable, ty) end
+        if type_contains_owned(ty) then issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryOwnedCapturedDurable, ty) end
+        return Check.TypeItemResult({ Tr.ItemStatic(schema.with(self.s, { ty = ty, value = value.expr })) }, issues)
     end
 
     function Tr.ItemExtern:typecheck_tree_item()
         local issues = {}
         check_func_types(self.func, issues)
-        return Tr.TypeItemResult({ self }, issues)
+        return Check.TypeItemResult({ self }, issues)
     end
 
     function Tr.ItemImport:typecheck_tree_item()
-        return Tr.TypeItemResult({ self }, {})
+        return Check.TypeItemResult({ self }, {})
     end
 
     function Tr.TypeDecl:typecheck_tree_item_issues()
@@ -602,8 +603,8 @@ local function bind_context(T)
         local issues = {}
         for i = 1, #self.fields do
             check_type_policy(self.fields[i].ty, issues, "field " .. self.fields[i].field_name)
-            if type_contains_lease(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryLeaseEscapeDurable, self.fields[i].ty) end
-            if type_contains_owned(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedCapturedDurable, self.fields[i].ty) end
+            if type_contains_lease(self.fields[i].ty) then issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryLeaseEscapeDurable, self.fields[i].ty) end
+            if type_contains_owned(self.fields[i].ty) then issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryOwnedCapturedDurable, self.fields[i].ty) end
         end
         return issues
     end
@@ -612,8 +613,8 @@ local function bind_context(T)
         local issues = {}
         for i = 1, #self.fields do
             check_type_policy(self.fields[i].ty, issues, "field " .. self.fields[i].field_name)
-            if type_contains_lease(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryLeaseEscapeDurable, self.fields[i].ty) end
-            if type_contains_owned(self.fields[i].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedCapturedDurable, self.fields[i].ty) end
+            if type_contains_lease(self.fields[i].ty) then issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryLeaseEscapeDurable, self.fields[i].ty) end
+            if type_contains_owned(self.fields[i].ty) then issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryOwnedCapturedDurable, self.fields[i].ty) end
         end
         return issues
     end
@@ -623,7 +624,7 @@ local function bind_context(T)
         local seen = {}
         for i = 1, #self.variants do
             local name = variant_name_text(self.variants[i])
-            if seen[name] then issues[#issues + 1] = Tr.TypeIssueDuplicateVariant(self.name, name) end
+            if seen[name] then issues[#issues + 1] = Check.TypeIssueDuplicateVariant(self.name, name) end
             seen[name] = true
         end
         return issues
@@ -637,14 +638,14 @@ local function bind_context(T)
             local v = self.variants[i]
             local name = v.name
             check_type_policy(v.payload, issues, "variant " .. name)
-            if type_contains_lease(v.payload) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and Tr.TypeUnaryRegionCallLeasePayload or Tr.TypeUnaryLeaseEscapeDurable, v.payload) end
-            if type_contains_owned(v.payload) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and Tr.TypeUnaryOwnedRegionCallPayload or Tr.TypeUnaryOwnedCapturedDurable, v.payload) end
+            if type_contains_lease(v.payload) then issues[#issues + 1] = Check.TypeIssueInvalidUnary(is_region_call_result and Check.TypeUnaryRegionCallLeasePayload or Check.TypeUnaryLeaseEscapeDurable, v.payload) end
+            if type_contains_owned(v.payload) then issues[#issues + 1] = Check.TypeIssueInvalidUnary(is_region_call_result and Check.TypeUnaryOwnedRegionCallPayload or Check.TypeUnaryOwnedCapturedDurable, v.payload) end
             for j = 1, #(v.fields or {}) do
                 check_type_policy(v.fields[j].ty, issues, "variant field " .. v.fields[j].field_name)
-                if type_contains_lease(v.fields[j].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and Tr.TypeUnaryRegionCallLeasePayload or Tr.TypeUnaryLeaseEscapeDurable, v.fields[j].ty) end
-                if type_contains_owned(v.fields[j].ty) then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(is_region_call_result and Tr.TypeUnaryOwnedRegionCallPayload or Tr.TypeUnaryOwnedCapturedDurable, v.fields[j].ty) end
+                if type_contains_lease(v.fields[j].ty) then issues[#issues + 1] = Check.TypeIssueInvalidUnary(is_region_call_result and Check.TypeUnaryRegionCallLeasePayload or Check.TypeUnaryLeaseEscapeDurable, v.fields[j].ty) end
+                if type_contains_owned(v.fields[j].ty) then issues[#issues + 1] = Check.TypeIssueInvalidUnary(is_region_call_result and Check.TypeUnaryOwnedRegionCallPayload or Check.TypeUnaryOwnedCapturedDurable, v.fields[j].ty) end
             end
-            if seen[name] then issues[#issues + 1] = Tr.TypeIssueDuplicateVariant(self.name, name) end
+            if seen[name] then issues[#issues + 1] = Check.TypeIssueDuplicateVariant(self.name, name) end
             seen[name] = true
         end
         return issues
@@ -759,7 +760,7 @@ local function bind_context(T)
                         invalidating = is_invalidating_access(first.ty)
                     end
                     if preserving == invalidating then
-                        issues[#issues + 1] = Tr.TypeIssueDomainContract(effect.name, domain_name, "operation whose receiver is the domain must classify access as exactly preserving or invalidating")
+                        issues[#issues + 1] = Check.TypeIssueDomainContract(effect.name, domain_name, "operation whose receiver is the domain must classify access as exactly preserving or invalidating")
                     end
                 end
             end
@@ -778,7 +779,7 @@ local function bind_context(T)
         local handle_name = handle_decl.name:find(".", 1, true) and handle_decl.name or (domain_name .. "." .. handle_decl.name)
         local candidates = domain_regions_for(scope, domain_name, handle_name)
         if #candidates == 0 then
-            issues[#issues + 1] = Tr.TypeIssueDomainContract(handle_name, domain_name, "missing domain resolver region taking `(self, handle)`")
+            issues[#issues + 1] = Check.TypeIssueDomainContract(handle_name, domain_name, "missing domain resolver region taking `(self, handle)`")
             return
         end
         local grants = false
@@ -787,7 +788,7 @@ local function bind_context(T)
             grants = grants or ok
         end
         if not grants then
-            issues[#issues + 1] = Tr.TypeIssueDomainContract(handle_name, domain_name, "resolver region must grant `lease(\"self\", ptr(Target))` on a success continuation")
+            issues[#issues + 1] = Check.TypeIssueDomainContract(handle_name, domain_name, "resolver region must grant `lease(\"self\", ptr(Target))` on a success continuation")
         end
         check_domain_ops(scope, domain_name, issues)
     end
@@ -832,22 +833,22 @@ local function bind_context(T)
     function Tr.ItemType:typecheck_tree_item(input)
         local t = self.t:typecheck_tree_canonical_decl(input.scope)
         local issues = t:typecheck_tree_item_issues(input)
-        return Tr.TypeItemResult({ Tr.ItemType(t) }, issues)
+        return Check.TypeItemResult({ Tr.ItemType(t) }, issues)
     end
 
     function Tr.ItemRegion:typecheck_tree_item(input)
         local region = canonical_region(input.scope, self.region)
         local issues = region:typecheck_tree_signature_issues(input)
         if #(input.scope.facts.region_bundles or {}) > 0 then
-            return Tr.TypeItemResult({}, issues)
+            return Check.TypeItemResult({}, issues)
         end
         local region_scope = input.scope:typecheck_tree_add_params("region:" .. tostring(region.name), region.params)
-        local stmt_input = region_scope:typecheck_tree_stmt_input(Ty.TScalar(C.ScalarVoid), Tr.TypeYieldNone)
+        local stmt_input = region_scope:typecheck_tree_stmt_input(Ty.TScalar(C.ScalarVoid), Check.TypeYieldNone)
         local typed_contracts, contract_issues = type_contracts(region.contracts or {}, stmt_input)
         append_all(issues, contract_issues)
         region = schema.with(region, { contracts = typed_contracts })
         local region_id = "region:" .. tostring(region.name)
-        local typed_region = Tr.ControlStmtRegion(region_id, region.entry, region.blocks):typecheck_tree_control_stmt_region(Tr.TypeControlInput(stmt_input, region_id))
+        local typed_region = Tr.ControlStmtRegion(region_id, region.entry, region.blocks):typecheck_tree_control_stmt_region(Check.TypeControlInput(stmt_input, region_id))
         append_all(issues, typed_region.issues)
         local runtime_bindings = {}
         for i = 1, #region.params do
@@ -858,7 +859,7 @@ local function bind_context(T)
         local cont_targets = {}
         for i = 1, #(region.conts or {}) do cont_targets[region.conts[i].name] = true end
         check_owned_control_region(typed_region.region, issues, runtime_bindings, cont_targets)
-        return Tr.TypeItemResult({}, issues)
+        return Check.TypeItemResult({}, issues)
     end
 
     function type_item(node, ...)
@@ -993,7 +994,7 @@ local function bind_context(T)
         }, {})
     end
 
-    function Tr.TypeIssueInvalidControl:typecheck_tree_fallback_control_report(region)
+    function Check.TypeIssueInvalidControl:typecheck_tree_fallback_control_report(region)
         return Tr.ControlRejectExplanation("E0405", "irreducible control flow", {
             "region: " .. tostring(region),
             "irreducible cycle detected",
@@ -1003,15 +1004,15 @@ local function bind_context(T)
         })
     end
 
-    function Tr.TypeIssue:typecheck_tree_explanation()
-        return Tr.TypeIssueExplanation("E9999", "", tostring(self), {}, {})
+    function Check.TypeIssue:typecheck_tree_explanation()
+        return Check.TypeIssueExplanation("E9999", "", tostring(self), {}, {})
     end
 
-    function Tr.TypeIssueInvalidControl:typecheck_tree_explanation()
+    function Check.TypeIssueInvalidControl:typecheck_tree_explanation()
         local reject = self.reject
         local region = self.region_id or (reject and reject.region_id) or "?"
         local report = reject and reject:typecheck_tree_report(region) or self:typecheck_tree_fallback_control_report(region)
-        return Tr.TypeIssueExplanation(report.code, "while checking control flow", report.primary, report.notes, report.suggestions)
+        return Check.TypeIssueExplanation(report.code, "while checking control flow", report.primary, report.notes, report.suggestions)
     end
 
     local function invoke_target_name(target)
@@ -1022,89 +1023,89 @@ local function bind_context(T)
 
     function Tr.RegionInvokeMissingTarget:typecheck_tree_report()
         local name = invoke_target_name(self.target)
-        return Tr.TypeIssueExplanation("E0408", "while expanding region invocation", "unknown region `" .. name .. "`", {
+        return Check.TypeIssueExplanation("E0408", "while expanding region invocation", "unknown region `" .. name .. "`", {
             "region invocations must target a region declaration visible in the module",
         }, {})
     end
 
     function Tr.RegionInvokeArgCount:typecheck_tree_report()
-        return Tr.TypeIssueExplanation("E0408", "while expanding region invocation", "region argument count mismatch", {
+        return Check.TypeIssueExplanation("E0408", "while expanding region invocation", "region argument count mismatch", {
             "expected " .. tostring(self.expected) .. " data argument(s), got " .. tostring(self.actual),
         }, {})
     end
 
     function Tr.RegionInvokeMissingWire:typecheck_tree_report()
-        return Tr.TypeIssueExplanation("E0408", "while expanding region invocation", "missing continuation wiring `" .. tostring(self.cont and self.cont.name or "?") .. "`", {
+        return Check.TypeIssueExplanation("E0408", "while expanding region invocation", "missing continuation wiring `" .. tostring(self.cont and self.cont.name or "?") .. "`", {
             "every region continuation must be wired at the call site",
         }, {})
     end
 
     function Tr.RegionInvokeExtraWire:typecheck_tree_report()
-        return Tr.TypeIssueExplanation("E0408", "while expanding region invocation", "unknown continuation wiring `" .. tostring(self.name or "?") .. "`", {}, {})
+        return Check.TypeIssueExplanation("E0408", "while expanding region invocation", "unknown continuation wiring `" .. tostring(self.name or "?") .. "`", {}, {})
     end
 
     function Tr.RegionInvokeDuplicateWire:typecheck_tree_report()
-        return Tr.TypeIssueExplanation("E0203", "while expanding region invocation", "duplicate continuation wiring `" .. tostring(self.name or "?") .. "`", {}, {})
+        return Check.TypeIssueExplanation("E0203", "while expanding region invocation", "duplicate continuation wiring `" .. tostring(self.name or "?") .. "`", {}, {})
     end
 
     function Tr.RegionInvokeCallFrameUnsupported:typecheck_tree_report()
-        return Tr.TypeIssueExplanation("E0408", "while expanding region invocation", "region `call` frame expansion is not implemented yet", {
+        return Check.TypeIssueExplanation("E0408", "while expanding region invocation", "region `call` frame expansion is not implemented yet", {
             "use `emit` for CFG splicing until region call frames are implemented",
         }, {})
     end
 
-    function Tr.TypeIssueRegionInvoke:typecheck_tree_explanation()
+    function Check.TypeIssueRegionInvoke:typecheck_tree_explanation()
         return self.reject:typecheck_tree_report()
     end
 
-    function Tr.TypeIssueMissingJumpTarget:typecheck_tree_explanation()
+    function Check.TypeIssueMissingJumpTarget:typecheck_tree_explanation()
         local label = (self.label and self.label.name) or "?"
-        return Tr.TypeIssueExplanation("E0402", "while checking control flow", "missing jump target `" .. label .. "`", {
+        return Check.TypeIssueExplanation("E0402", "while checking control flow", "missing jump target `" .. label .. "`", {
             "block `" .. label .. "` is not defined in this region",
         }, {})
     end
 
-    function Tr.TypeIssueMissingJumpArg:typecheck_tree_explanation()
-        return Tr.TypeIssueExplanation("E0404", "while checking control flow", "jump argument count mismatch for `" .. tostring(self.name or "?") .. "`", {
+    function Check.TypeIssueMissingJumpArg:typecheck_tree_explanation()
+        return Check.TypeIssueExplanation("E0404", "while checking control flow", "jump argument count mismatch for `" .. tostring(self.name or "?") .. "`", {
             "check that the number of arguments passed to the jump matches the block parameters",
         }, {})
     end
 
-    function Tr.TypeIssueExtraJumpArg:typecheck_tree_explanation()
-        return Tr.TypeIssueExplanation("E0404", "while checking control flow", "jump argument count mismatch for `" .. tostring(self.name or "?") .. "`", {
+    function Check.TypeIssueExtraJumpArg:typecheck_tree_explanation()
+        return Check.TypeIssueExplanation("E0404", "while checking control flow", "jump argument count mismatch for `" .. tostring(self.name or "?") .. "`", {
             "check that the number of arguments passed to the jump matches the block parameters",
         }, {})
     end
 
-    function Tr.TypeIssueDuplicateJumpArg:typecheck_tree_explanation()
-        return Tr.TypeIssueExplanation("E0203", "while checking control flow", "duplicate jump argument `" .. tostring(self.name or "?") .. "`", {}, {
+    function Check.TypeIssueDuplicateJumpArg:typecheck_tree_explanation()
+        return Check.TypeIssueExplanation("E0203", "while checking control flow", "duplicate jump argument `" .. tostring(self.name or "?") .. "`", {}, {
             "remove the duplicate argument or rename one of them",
         })
     end
 
-    function Tr.TypeIssueUnexpectedYield:typecheck_tree_explanation()
-        return Tr.TypeIssueExplanation("E0407", "while type-checking", "`yield` used outside a region", {
+    function Check.TypeIssueUnexpectedYield:typecheck_tree_explanation()
+        return Check.TypeIssueExplanation("E0407", "while type-checking", "`yield` used outside a region", {
             "`yield` can only be used inside a `region` or a `return region: T` expression",
         }, {
             "did you mean `return`? Functions use `return`, not `yield`",
         })
     end
 
-    function Tr.TypeIssueUnknownVariant:typecheck_tree_explanation()
+    function Check.TypeIssueUnknownVariant:typecheck_tree_explanation()
         local Format = require("lalin.error.format")
-        return Tr.TypeIssueExplanation("E0201", "while resolving names", "unknown variant `" .. tostring(self.variant_name or "?") .. "` in type `" .. Format.type_name(self.type_name) .. "`", {}, {})
+        return Check.TypeIssueExplanation("E0201", "while resolving names", "unknown variant `" .. tostring(self.variant_name or "?") .. "` in type `" .. Format.type_name(self.type_name) .. "`", {}, {})
     end
 
-    function Tr.TypeIssueVariantPayloadMismatch:typecheck_tree_explanation()
-        return Tr.TypeIssueExplanation("E0301", "while type-checking", "variant payload mismatch for `" .. tostring(self.variant_name or "?") .. "`", {}, {})
+    function Check.TypeIssueVariantPayloadMismatch:typecheck_tree_explanation()
+        return Check.TypeIssueExplanation("E0301", "while type-checking", "variant payload mismatch for `" .. tostring(self.variant_name or "?") .. "`", {}, {})
     end
 
-    function Tr.TypeIssueDuplicateVariant:typecheck_tree_explanation()
-        return Tr.TypeIssueExplanation("E0203", "while checking declarations", "duplicate variant `" .. tostring(self.variant_name or "?") .. "`", {}, {})
+    function Check.TypeIssueDuplicateVariant:typecheck_tree_explanation()
+        return Check.TypeIssueExplanation("E0203", "while checking declarations", "duplicate variant `" .. tostring(self.variant_name or "?") .. "`", {}, {})
     end
 
-    function Tr.TypeIssueDomainContract:typecheck_tree_explanation()
-        return Tr.TypeIssueExplanation("E0410", "while checking handle domain contract", "handle `" .. tostring(self.handle or "?") .. "` declares domain `" .. tostring(self.domain or "?") .. "` but the domain contract is not satisfied", {
+    function Check.TypeIssueDomainContract:typecheck_tree_explanation()
+        return Check.TypeIssueExplanation("E0410", "while checking handle domain contract", "handle `" .. tostring(self.handle or "?") .. "` declares domain `" .. tostring(self.domain or "?") .. "` but the domain contract is not satisfied", {
             tostring(self.reason or "domain contract failed"),
         }, {
             "define a qualified resolver region on the domain taking `(self, handle)` and granting a `lease(\"self\", ptr(Target))` on its success exit",
@@ -1112,47 +1113,47 @@ local function bind_context(T)
         })
     end
 
-    function Tr.TypeIssueNotCallable:typecheck_tree_explanation()
+    function Check.TypeIssueNotCallable:typecheck_tree_explanation()
         local Format = require("lalin.error.format")
         local ty = Format.type_name(self.ty)
-        return Tr.TypeIssueExplanation("E0302", "while type-checking a call", "type `" .. ty .. "` is not callable", {
+        return Check.TypeIssueExplanation("E0302", "while type-checking a call", "type `" .. ty .. "` is not callable", {
             "only `func` and `closure` types can be called",
         }, {
             "did you mean to index? write `expr[idx]` for element access",
         })
     end
 
-    function Tr.TypeIssueNotIndexable:typecheck_tree_explanation()
+    function Check.TypeIssueNotIndexable:typecheck_tree_explanation()
         local Format = require("lalin.error.format")
         local ty = Format.type_name(self.ty)
-        return Tr.TypeIssueExplanation("E0303", "while type-checking an index", "type `" .. ty .. "` is not indexable", {
+        return Check.TypeIssueExplanation("E0303", "while type-checking an index", "type `" .. ty .. "` is not indexable", {
             "only `view`, `ptr`, and `array` types support indexing",
         }, {
             "if you meant to access a field, use `.` syntax: `expr.field`",
         })
     end
 
-    function Tr.TypeIssueNotPointer:typecheck_tree_explanation()
+    function Check.TypeIssueNotPointer:typecheck_tree_explanation()
         return self:typecheck_tree_explanation_not_indexable()
     end
 
-    function Tr.TypeIssueNotPointer:typecheck_tree_explanation_not_indexable()
+    function Check.TypeIssueNotPointer:typecheck_tree_explanation_not_indexable()
         local Format = require("lalin.error.format")
         local ty = Format.type_name(self.ty)
-        return Tr.TypeIssueExplanation("E0303", "while type-checking an index", "type `" .. ty .. "` is not indexable", {
+        return Check.TypeIssueExplanation("E0303", "while type-checking an index", "type `" .. ty .. "` is not indexable", {
             "only `view`, `ptr`, and `array` types support indexing",
         }, {
             "if you meant to access a field, use `.` syntax: `expr.field`",
         })
     end
 
-    function Tr.TypeIssueArgCount:typecheck_tree_explanation()
-        return Tr.TypeIssueExplanation("E0305", "while type-checking", (self.site or "call") .. " expected " .. tostring(self.expected) .. " arguments, got " .. tostring(self.actual), {}, {
+    function Check.TypeIssueArgCount:typecheck_tree_explanation()
+        return Check.TypeIssueExplanation("E0305", "while type-checking", (self.site or "call") .. " expected " .. tostring(self.expected) .. " arguments, got " .. tostring(self.actual), {}, {
             "check the function signature and add or remove arguments",
         })
     end
 
-    function Tr.TypeIssueInvalidBinary:typecheck_tree_explanation()
+    function Check.TypeIssueInvalidBinary:typecheck_tree_explanation()
         local Format = require("lalin.error.format")
         local op = Format.op_symbol(self.op)
         local lhs = Format.type_name(self.lhs)
@@ -1164,50 +1165,50 @@ local function bind_context(T)
             suggestions[#suggestions + 1] = "for boolean logic, use `and` / `or`: `a and b` or `a or b`"
         end
         if lhs ~= rhs then notes[#notes + 1] = "both operands must have the same type" end
-        return Tr.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid operator `" .. op .. "`", notes, suggestions)
+        return Check.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid operator `" .. op .. "`", notes, suggestions)
     end
 
-    function Tr.TypeIssueInvalidCompare:typecheck_tree_explanation()
+    function Check.TypeIssueInvalidCompare:typecheck_tree_explanation()
         local Format = require("lalin.error.format")
         local op = Format.op_symbol(self.op)
         local lhs = Format.type_name(self.lhs)
         local rhs = Format.type_name(self.rhs)
         local notes = { "operator `" .. op .. "` is not defined for `" .. lhs .. "` and `" .. rhs .. "`" }
         if lhs ~= rhs then notes[#notes + 1] = "both operands must have the same type" end
-        return Tr.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid operator `" .. op .. "`", notes, {})
+        return Check.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid operator `" .. op .. "`", notes, {})
     end
 
-    function Tr.TypeIssueInvalidLogic:typecheck_tree_explanation()
+    function Check.TypeIssueInvalidLogic:typecheck_tree_explanation()
         return self:typecheck_tree_explanation_compare_like()
     end
 
-    function Tr.TypeIssueInvalidLogic:typecheck_tree_explanation_compare_like()
+    function Check.TypeIssueInvalidLogic:typecheck_tree_explanation_compare_like()
         local Format = require("lalin.error.format")
         local op = Format.op_symbol(self.op)
         local lhs = Format.type_name(self.lhs)
         local rhs = Format.type_name(self.rhs)
         local notes = { "operator `" .. op .. "` is not defined for `" .. lhs .. "` and `" .. rhs .. "`" }
         if lhs ~= rhs then notes[#notes + 1] = "both operands must have the same type" end
-        return Tr.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid operator `" .. op .. "`", notes, {})
+        return Check.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid operator `" .. op .. "`", notes, {})
     end
 
-    function Tr.TypeIssueUnresolvedValue:typecheck_tree_explanation()
-        return Tr.TypeIssueExplanation("E0201", "while resolving names", "unresolved name `" .. tostring(self.name or "?") .. "`", {
+    function Check.TypeIssueUnresolvedValue:typecheck_tree_explanation()
+        return Check.TypeIssueExplanation("E0201", "while resolving names", "unresolved name `" .. tostring(self.name or "?") .. "`", {
             "`" .. tostring(self.name or "?") .. "` is not defined in this scope",
         }, {})
     end
 
-    function Tr.TypeIssueUnresolvedPath:typecheck_tree_explanation()
+    function Check.TypeIssueUnresolvedPath:typecheck_tree_explanation()
         local parts = {}
         for i = 1, #((self.path and self.path.parts) or {}) do parts[i] = self.path.parts[i].text end
         local path_text = #parts > 0 and table.concat(parts, ".") or "?"
         local first_segment = parts[1] or "?"
-        return Tr.TypeIssueExplanation("E0202", "while resolving names", "unresolved path `" .. path_text .. "`", {
+        return Check.TypeIssueExplanation("E0202", "while resolving names", "unresolved path `" .. path_text .. "`", {
             "the first segment `" .. first_segment .. "` could not be resolved",
         }, {})
     end
 
-    function Tr.TypeIssueExpected:typecheck_tree_explanation()
+    function Check.TypeIssueExpected:typecheck_tree_explanation()
         local Format = require("lalin.error.format")
         local site = self.site or "expression"
         local expected = Format.type_name(self.expected)
@@ -1269,20 +1270,20 @@ local function bind_context(T)
             suggestions[#suggestions + 1] = "to convert an integer to a float, use `as(f64, value)`"
         end
 
-        return Tr.TypeIssueExplanation("E0301", "while type-checking", "type mismatch", notes, suggestions)
+        return Check.TypeIssueExplanation("E0301", "while type-checking", "type mismatch", notes, suggestions)
     end
 
-    function Tr.TypeIssueInvalidUnary:typecheck_tree_explanation()
+    function Check.TypeIssueInvalidUnary:typecheck_tree_explanation()
         return self.reason:typecheck_tree_explanation(self.ty)
     end
 
-    function Tr.TypeUnaryIssueReason:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryIssueReason:typecheck_tree_explanation(ty)
         local Format = require("lalin.error.format")
         local ty_text = Format.type_name(ty)
-        return Tr.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid unary operator for type `" .. ty_text .. "`", {}, {})
+        return Check.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid unary operator for type `" .. ty_text .. "`", {}, {})
     end
 
-    function Tr.TypeUnaryInvalidOperator:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryInvalidOperator:typecheck_tree_explanation(ty)
         local Format = require("lalin.error.format")
         local op = Format.op_symbol(self.op)
         local ty_text = Format.type_name(ty)
@@ -1295,14 +1296,14 @@ local function bind_context(T)
             notes[#notes + 1] = "arithmetic operators require numeric types (i8, i16, i32, ...)"
         end
         if ty_text == "bool" and op ~= "not" then suggestions[#suggestions + 1] = "for boolean logic, use `not`: `not value`" end
-        return Tr.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid unary operator `" .. op .. "` for type `" .. ty_text .. "`", notes, suggestions)
+        return Check.TypeIssueExplanation("E0304", "while type-checking an expression", "invalid unary operator `" .. op .. "` for type `" .. ty_text .. "`", notes, suggestions)
     end
 
     local function unary_reason_report(primary, notes, suggestions)
-        return Tr.TypeIssueExplanation("E0304", "while type-checking an expression", primary, notes or {}, suggestions or {})
+        return Check.TypeIssueExplanation("E0304", "while type-checking an expression", primary, notes or {}, suggestions or {})
     end
 
-    function Tr.TypeUnaryLeaseEscapeReturn:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryLeaseEscapeReturn:typecheck_tree_explanation(ty)
         local ty_text = require("lalin.error.format").type_name(ty)
         return unary_reason_report("lease escapes through return", {
             "lease value `" .. ty_text .. "` is temporary access produced by a store or boundary",
@@ -1310,169 +1311,169 @@ local function bind_context(T)
         }, { "return a handle or copied scalar data instead, or keep the pointer parameter marked `noescape`" })
     end
 
-    function Tr.TypeUnaryLeaseEscapeYield:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryLeaseEscapeYield:typecheck_tree_explanation(ty)
         local ty_text = require("lalin.error.format").type_name(ty)
         return unary_reason_report("lease escapes through yield", {
             "yielding `" .. ty_text .. "` would move temporary access outside the granting region",
         }, { "yield a handle/status protocol, not the lease pointer/view" })
     end
 
-    function Tr.TypeUnaryLeaseEscapeStore:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryLeaseEscapeStore:typecheck_tree_explanation(ty)
         return unary_reason_report("lease escapes through store", {
             "storing `" .. require("lalin.error.format").type_name(ty) .. "` would make temporary access durable",
         }, { "store the handle, or copy the data through the lease instead" })
     end
 
-    function Tr.TypeUnaryLeaseEscapeCall:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryLeaseEscapeCall:typecheck_tree_explanation(ty)
         return unary_reason_report("lease passed to retaining parameter", {
             "a lease can only be passed to another `lease` or `noescape` parameter",
             "plain `ptr`/`view` parameters are treated as possibly retained",
         }, { "mark the callee parameter `noescape`, or change it to `lease ptr(T)` / `lease view(T)`" })
     end
 
-    function Tr.TypeUnaryLeaseInvalidatingCall:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryLeaseInvalidatingCall:typecheck_tree_explanation(ty)
         return unary_reason_report("call may invalidate store while lease is live", {
             "live lease `" .. require("lalin.error.format").type_name(ty) .. "` may refer to storage that this call can move, free, compact, clear, or reuse",
             "`readonly` and `preserve` parameters keep leases valid; unannotated pointer/view parameters are conservative invalidators",
         }, { "end the lease scope before the call, call a `preserve`/`readonly` API, or use `lease(store)` to associate the lease with the correct store" })
     end
 
-    function Tr.TypeUnaryLeaseEscapeAggregate:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryLeaseEscapeAggregate:typecheck_tree_explanation(ty)
         return unary_reason_report("lease captured in aggregate", {
             "aggregates can outlive the current access extent, so they cannot contain `" .. require("lalin.error.format").type_name(ty) .. "`",
         }, { "store a handle or copied data instead of the lease" })
     end
 
-    function Tr.TypeUnaryRegionCallLeasePayload:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryRegionCallLeasePayload:typecheck_tree_explanation(ty)
         return unary_reason_report("cannot call region because continuation payload contains a lease", {
             "continuation payload `" .. require("lalin.error.format").type_name(ty) .. "` is temporary access and cannot be packed into the generated region-call result",
         }, { "use `emit` so temporary access stays in control flow" })
     end
 
-    function Tr.TypeUnaryLeaseEscapeDurable:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryLeaseEscapeDurable:typecheck_tree_explanation(ty)
         return unary_reason_report("lease appears in durable type position", {
             "`" .. require("lalin.error.format").type_name(ty) .. "` is temporary access, not storable data",
             "leases may appear in function/block/continuation parameters, not durable fields/results/statics",
         }, { "use a handle type for durable identity, or a plain pointer only at an unchecked ABI boundary" })
     end
 
-    function Tr.TypeUnaryOwnedDropped:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryOwnedDropped:typecheck_tree_explanation(ty)
         return unary_reason_report("owned obligation is not discharged", {
             "`" .. require("lalin.error.format").type_name(ty) .. "` must be transferred to an owned parameter/result or consumed by a closing protocol",
             "owned values do not have destructors and cannot silently fall out of scope",
         }, { "jump/return/yield/pass the owner to an `owned` slot, or call the explicit close/retire region" })
     end
 
-    function Tr.TypeUnaryOwnedUseAfterMove:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryOwnedUseAfterMove:typecheck_tree_explanation(ty)
         return unary_reason_report("owned value used after transfer", {
             "`" .. require("lalin.error.format").type_name(ty) .. "` was already consumed by an ownership transfer",
         }, { "thread the returned/re-yielded owner forward if the protocol preserves the obligation" })
     end
 
-    function Tr.TypeUnaryOwnedObservedWithoutTransfer:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryOwnedObservedWithoutTransfer:typecheck_tree_explanation(ty)
         return unary_reason_report("owned value used without an ownership contract", {
             "`" .. require("lalin.error.format").type_name(ty) .. "` is linear authority and cannot be copied or borrowed as a plain value",
         }, { "make the callee parameter `owned`, or use a protocol that returns the owner on every preserving edge" })
     end
 
-    function Tr.TypeUnaryOwnedCapturedDurable:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryOwnedCapturedDurable:typecheck_tree_explanation(ty)
         return unary_reason_report("owned value captured in durable storage", {
             "`" .. require("lalin.error.format").type_name(ty) .. "` is a CFG obligation, not storable data",
         }, { "store the plain handle separately and keep the owned obligation in control flow" })
     end
 
-    function Tr.TypeUnaryOwnedBranchMismatch:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryOwnedBranchMismatch:typecheck_tree_explanation(ty)
         return unary_reason_report("branches leave different owned obligations live", {
             "all continuing paths must preserve the same live owned set",
         }, { "move the transfer before the branch, or return/jump/yield on the consuming path" })
     end
 
-    function Tr.TypeUnaryOwnedVarCellUnsupported:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryOwnedVarCellUnsupported:typecheck_tree_explanation(ty)
         return unary_reason_report("owned values cannot live in mutable cells", {
             "`var owned T` needs explicit take/put semantics and is rejected",
         }, { "use `let` ownership threading through CFG parameters" })
     end
 
-    function Tr.TypeUnaryOwnedRegionCallPayload:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryOwnedRegionCallPayload:typecheck_tree_explanation(ty)
         return unary_reason_report("owned payload cannot use expression-style region call", {
             "`" .. require("lalin.error.format").type_name(ty) .. "` cannot be packed into the generated region-call result aggregate",
         }, { "use `emit`/explicit continuations so ownership stays in CFG" })
     end
 
-    function Tr.TypeUnaryOwnedEmitTargetMismatch:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryOwnedEmitTargetMismatch:typecheck_tree_explanation(ty)
         return unary_reason_report("owned continuation payload has no matching target parameter", {
             "`" .. require("lalin.error.format").type_name(ty) .. "` must land in a target block/continuation parameter with the same owned type and name",
         }, { "add the owned parameter to the filled target, or consume the owner inside the emitted fragment" })
     end
 
-    function Tr.TypeUnaryOwnedInvalidComposition:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryOwnedInvalidComposition:typecheck_tree_explanation(ty)
         return unary_reason_report("invalid owned type composition", {
             "`" .. require("lalin.error.format").type_name(ty) .. "` mixes ownership authority with access modifiers or temporary leases",
         }, { "own the durable handle/resource token; borrow access through a protocol that returns the owner" })
     end
 
-    function Tr.TypeUnaryHandleCast:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryHandleCast:typecheck_tree_explanation(ty)
         return unary_reason_report("handle representation is opaque", {
             "handle `" .. require("lalin.error.format").type_name(ty) .. "` is not its integer representation in safe casts",
             "ordinary `as(...)` cannot convert handles to or from raw scalars",
         }, { "resolve the handle through a store region, or use trusted `repr(handle)` / `Handle.from_repr(raw)` inside store implementation code" })
     end
 
-    function Tr.TypeUnaryHandleRepr:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryHandleRepr:typecheck_tree_explanation(ty)
         return unary_reason_report("`repr` expects a handle", {
             "`repr(value)` is the explicit trusted handle-to-scalar boundary",
             "the value has type `" .. require("lalin.error.format").type_name(ty) .. "`, not a handle",
         })
     end
 
-    function Tr.TypeUnaryHandleTargetMismatch:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryHandleTargetMismatch:typecheck_tree_explanation(ty)
         return unary_reason_report("handle resolver returns a lease to the wrong target", {
             "a handle with a `target` fact may only grant leases to that target type",
             "the continuation payload has type `" .. require("lalin.error.format").type_name(ty) .. "`",
         }, { "change the lease payload target, or declare a different handle target fact" })
     end
 
-    function Tr.TypeUnaryHandleDomainMissing:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryHandleDomainMissing:typecheck_tree_explanation(ty)
         return unary_reason_report("handle resolver does not take the owning domain", {
             "a handle with a `domain` fact must be resolved through that store/domain parameter",
             "the continuation payload has type `" .. require("lalin.error.format").type_name(ty) .. "`",
         }, { "add a `readonly` or `preserve` `ptr(Store)` parameter matching the handle domain" })
     end
 
-    function Tr.TypeUnaryHandleDomainAccess:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryHandleDomainAccess:typecheck_tree_explanation(ty)
         return unary_reason_report("handle resolver domain parameter does not preserve leases", {
             "resolver regions that grant leases must take the owning domain as `readonly` or `preserve`",
             "bare pointer/view parameters are conservative invalidators",
         }, { "mark the domain parameter `readonly` or `preserve`" })
     end
 
-    function Tr.TypeUnaryHandleLeaseOriginMissing:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryHandleLeaseOriginMissing:typecheck_tree_explanation(ty)
         return unary_reason_report("handle resolver lease is not tied to its store parameter", {
             "a handle resolver must return `lease(store) ptr(Target)` or `lease(store) view(Target)`",
             "anonymous leases cannot participate in store invalidation checks",
         }, { "write the lease as `lease(store_param) ptr(T)`" })
     end
 
-    function Tr.TypeUnaryHandleLeaseOriginMismatch:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryHandleLeaseOriginMismatch:typecheck_tree_explanation(ty)
         return unary_reason_report("handle resolver lease is tied to the wrong store parameter", {
             "the lease origin must name the `readonly` or `preserve` domain parameter for the handle",
             "the continuation payload has type `" .. require("lalin.error.format").type_name(ty) .. "`",
         }, { "change the `lease(...)` origin to the matching store parameter" })
     end
 
-    function Tr.TypeUnaryAtomicRmwPointerOp:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryAtomicRmwPointerOp:typecheck_tree_explanation(ty)
         return unary_reason_report("invalid atomic read-modify-write operation", {
             "atomic read-modify-write arithmetic is not defined for pointer type `" .. require("lalin.error.format").type_name(ty) .. "`",
         }, {})
     end
 
-    function Tr.TypeUnaryAtomicRmwBoolAddSub:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryAtomicRmwBoolAddSub:typecheck_tree_explanation(ty)
         return unary_reason_report("invalid atomic read-modify-write operation", {
             "atomic add/sub is not defined for `bool`",
         }, {})
     end
 
-    function Tr.TypeUnaryAtomicInvalidValue:typecheck_tree_explanation(ty)
+    function Check.TypeUnaryAtomicInvalidValue:typecheck_tree_explanation(ty)
         return unary_reason_report("invalid atomic value type", {
             (self.site or "atomic") .. " requires an atomic scalar or pointer type, got `" .. require("lalin.error.format").type_name(ty) .. "`",
         }, {})
@@ -1860,7 +1861,7 @@ local function bind_context(T)
     end
 
     function Tr.Module:with_tree_region_seals(module_name)
-        local facts = self:typecheck_tree_module_facts(Tr.TypeModuleFactsInput(module_name or module_type_api.module_name(self.h)))
+        local facts = self:typecheck_tree_module_facts(Check.TypeModuleFactsInput(module_name or module_type_api.module_name(self.h)))
         if #(facts.region_seals or {}) == 0 then return self end
         local items = clone_values(self.items)
         for i, protocol in ipairs(facts.region_protocols or {}) do
@@ -1888,12 +1889,12 @@ local function bind_context(T)
         target = target or H.HostTargetModel(64, 64, H.HostEndianLittle)
         module = module:with_tree_region_seals(module_type_api.module_name(module.h))
         local base_env = module_type_api.env(module, target)
-        local facts = module:typecheck_tree_module_facts(Tr.TypeModuleFactsInput(base_env.module_name))
-        local module_scope = Tr.TypeValueScope(base_env.module_name, base_env.values, base_env.types, base_env.layouts, facts)
+        local facts = module:typecheck_tree_module_facts(Check.TypeModuleFactsInput(base_env.module_name))
+        local module_scope = Check.TypeValueScope(base_env.module_name, base_env.values, base_env.types, base_env.layouts, facts)
         module_scope = module_scope:typecheck_tree_with_layouts(merged_layouts(module_scope, extra_layout_env))
         local items = {}
         local issues = {}
-        local input = Tr.TypeItemInput(module_scope)
+        local input = Check.TypeItemInput(module_scope)
         for i = 1, #module.items do
             local item = module.items[i]
             local r = type_item(item, input)
@@ -1901,7 +1902,7 @@ local function bind_context(T)
             append_all(issues, r.issues)
             emit_item_issues(collector, analysis_ctx or {}, item, r.issues)
         end
-        return Tr.TypeModuleResult(Tr.Module(Tr.ModuleTyped(module_scope.module_name), items), issues, target)
+        return Check.TypeModuleResult(Tr.Module(Tr.ModuleTyped(module_scope.module_name), items), issues, target)
     end
 
     function Tr.Module:typecheck_tree_module(extra_layout_env, target, collector, analysis_ctx)

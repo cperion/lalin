@@ -157,10 +157,10 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 
 **Failure cluster:** `tree_typecheck_type.lua:556` still looks for `TypeIssue` under `LalinTree`; correcting that exposes missing `LalinTreeLower` / `TreeLowerInput` ownership at `tree_lower.lua:20,142`.
 
-- [ ] Move issue construction to canonical `LalinCheck.TypeIssue` ownership.
-- [ ] Define or use the canonical typed tree-lowering input/result vocabulary.
-- [ ] Remove duplicate old/new ownership assumptions without a compatibility alias.
-- [ ] Restore focused artifact/compiler reproductions.
+- [x] Move canonical check inputs/results/facts, issues, reasons, and explanations to `LalinCheck`.
+- [x] Preserve separate canonical `LalinTreeLower` and schema_v2 `LalinTreeCode` ownership.
+- [x] Remove duplicate `LalinTree` check ownership without compatibility aliases or probes.
+- [x] Pass direct context-load, focused canonical compiler, schema, and ownership tests.
 
 ### CMP-1 — Compiler process typed contracts
 

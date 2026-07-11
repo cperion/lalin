@@ -37,6 +37,7 @@ end
 
 local function bind_context(T)
     local Tr = T.LalinTree
+    local Check = T.LalinCheck
     local B = T.LalinBind
 
     local contract_fact
@@ -50,7 +51,7 @@ local function bind_context(T)
     end
 
     local function reject(name)
-        return Tr.ContractFactRejected(Tr.TypeIssueUnresolvedValue(name or "<contract>"))
+        return Tr.ContractFactRejected(Check.TypeIssueUnresolvedValue(name or "<contract>"))
     end
 
     function contract_fact(node, ...)

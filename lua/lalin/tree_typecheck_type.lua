@@ -3,6 +3,7 @@ return function(T)
     local Ty = T.LalinType
     local Tr = T.LalinTree
 
+    local Check = T.LalinCheck
     local function i32_ty() return Ty.TScalar(C.ScalarI32) end
     local function f64_ty() return Ty.TScalar(C.ScalarF64) end
     local function u8_ty() return Ty.TScalar(C.ScalarU8) end
@@ -100,7 +101,7 @@ return function(T)
     end
     function C.BinAdd:typecheck_tree_binary_rhs(expr, input, lhs_ty)
         if lhs_ty:typecheck_tree_is_integer_scalar() then
-            return expr:typecheck_tree_expr_expected(Tr.TypeExpectedExprInput(input.scope, lhs_ty))
+            return expr:typecheck_tree_expr_expected(Check.TypeExpectedExprInput(input.scope, lhs_ty))
         end
         return expr:typecheck_tree_expr(input)
     end
@@ -109,7 +110,7 @@ return function(T)
     end
     function C.BinSub:typecheck_tree_binary_rhs(expr, input, lhs_ty)
         if lhs_ty:typecheck_tree_is_integer_scalar() then
-            return expr:typecheck_tree_expr_expected(Tr.TypeExpectedExprInput(input.scope, lhs_ty))
+            return expr:typecheck_tree_expr_expected(Check.TypeExpectedExprInput(input.scope, lhs_ty))
         end
         return expr:typecheck_tree_expr(input)
     end
@@ -378,7 +379,7 @@ return function(T)
     function Ty.HandleRepr:typecheck_tree_repr_type() return nil end
     function Ty.HandleReprScalar:typecheck_tree_repr_type() return Ty.TScalar(self.scalar) end
     function Ty.HandleRepr:typecheck_tree_check_handle_decl(type_name, issues)
-        issues[#issues + 1] = Tr.TypeIssueExpected("handle repr", Ty.THandle(Ty.TypeRefPath(C.Path({ C.Name(type_name) })), Ty.HandleReprScalar(C.ScalarU32)), Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(type_name) }))))
+        issues[#issues + 1] = Check.TypeIssueExpected("handle repr", Ty.THandle(Ty.TypeRefPath(C.Path({ C.Name(type_name) })), Ty.HandleReprScalar(C.ScalarU32)), Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(type_name) }))))
     end
     function Ty.HandleReprScalar:typecheck_tree_check_handle_decl(type_name, issues) end
     function Ty.Type:typecheck_tree_handle_repr_type() return nil end
@@ -387,7 +388,7 @@ return function(T)
 
     function Ty.ArrayLen:typecheck_tree_check_policy(array_ty, issues, site) end
     function Ty.ArrayLenExpr:typecheck_tree_check_policy(array_ty, issues, site)
-        issues[#issues + 1] = Tr.TypeIssueExpected((site or "type") .. " array length", Ty.TArray(Ty.ArrayLenConst(0), array_ty.elem), array_ty)
+        issues[#issues + 1] = Check.TypeIssueExpected((site or "type") .. " array length", Ty.TArray(Ty.ArrayLenConst(0), array_ty.elem), array_ty)
     end
 
     function Ty.Type:typecheck_tree_valid_lease_base() return false end
@@ -402,7 +403,7 @@ return function(T)
     function Ty.TView:typecheck_tree_valid_owned_base() return false end
 
     function Ty.HandleRepr:typecheck_tree_check_policy(handle_ty, issues, site)
-        issues[#issues + 1] = Tr.TypeIssueExpected((site or "type") .. " handle repr", Ty.THandle(handle_ty.ref, Ty.HandleReprScalar(C.ScalarU32)), handle_ty)
+        issues[#issues + 1] = Check.TypeIssueExpected((site or "type") .. " handle repr", Ty.THandle(handle_ty.ref, Ty.HandleReprScalar(C.ScalarU32)), handle_ty)
     end
     function Ty.HandleReprScalar:typecheck_tree_check_policy(handle_ty, issues, site) end
 
@@ -423,18 +424,18 @@ return function(T)
     function Ty.TLease:typecheck_tree_check_policy(issues, site)
         self.base:typecheck_tree_check_policy(issues, site)
         if not self.base:typecheck_tree_valid_lease_base() then
-            issues[#issues + 1] = Tr.TypeIssueExpected((site or "type") .. " lease base", Ty.TPtr(Ty.TScalar(C.ScalarVoid)), self.base)
+            issues[#issues + 1] = Check.TypeIssueExpected((site or "type") .. " lease base", Ty.TPtr(Ty.TScalar(C.ScalarVoid)), self.base)
         end
-        if self.base:typecheck_tree_contains_owned() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedInvalidComposition, self) end
+        if self.base:typecheck_tree_contains_owned() then issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryOwnedInvalidComposition, self) end
     end
     function Ty.TOwned:typecheck_tree_check_policy(issues, site)
         self.base:typecheck_tree_check_policy(issues, site)
-        if not self.base:typecheck_tree_valid_owned_base() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedInvalidComposition, self) end
-        if self.base:typecheck_tree_contains_lease() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedInvalidComposition, self) end
+        if not self.base:typecheck_tree_valid_owned_base() then issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryOwnedInvalidComposition, self) end
+        if self.base:typecheck_tree_contains_lease() then issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryOwnedInvalidComposition, self) end
     end
     function Ty.TAccess:typecheck_tree_check_policy(issues, site)
         self.base:typecheck_tree_check_policy(issues, site)
-        if self.base:typecheck_tree_contains_owned() then issues[#issues + 1] = Tr.TypeIssueInvalidUnary(Tr.TypeUnaryOwnedInvalidComposition, self) end
+        if self.base:typecheck_tree_contains_owned() then issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryOwnedInvalidComposition, self) end
     end
     function Ty.THandle:typecheck_tree_check_policy(issues, site)
         self.repr:typecheck_tree_check_policy(self, issues, site)
@@ -553,8 +554,8 @@ return function(T)
     function T.LalinTree.ModuleTyped:typecheck_tree_is_typed_module() return true end
     function T.LalinTree.ExprHeader:typecheck_tree_is_typed_expr() return false end
     function T.LalinTree.ExprTyped:typecheck_tree_is_typed_expr() return true end
-    function T.LalinTree.TypeIssue:typecheck_tree_is_array_length_expected() return false end
-    function T.LalinTree.TypeIssueExpected:typecheck_tree_is_array_length_expected()
+    function T.LalinCheck.TypeIssue:typecheck_tree_is_array_length_expected() return false end
+    function T.LalinCheck.TypeIssueExpected:typecheck_tree_is_array_length_expected()
         return self.site ~= nil and self.site:match("array length") ~= nil
     end
 
