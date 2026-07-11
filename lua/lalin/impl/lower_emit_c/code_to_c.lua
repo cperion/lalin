@@ -419,8 +419,28 @@ function Code.CodeTyByteSpan:code_to_c_backend_type()
   return C.CBackendByteSpanDescriptor
 end
 
+function Code.CodeTyHandle:code_to_c_backend_type()
+  return self.repr:code_to_c_backend_type()
+end
+
+function Code.CodeTyLease:code_to_c_backend_type()
+  return self.base:code_to_c_backend_type()
+end
+
 function Code.CodeTyClosure:code_to_c_backend_type()
   return C.CBackendClosureDescriptor(C.CBackendFuncSigId(self.sig.text))
+end
+
+function Code.CodeTyImportedC:code_to_c_backend_type()
+  return C.CBackendNamed(self.id)
+end
+
+function Code.CodeTyImportedCFuncPtr:code_to_c_backend_type()
+  return C.CBackendImportedCodePtr(self.sig)
+end
+
+function Code.CodeTyVector:code_to_c_backend_type()
+  return C.CBackendVector(self.elem:code_to_c_backend_type(), self.lanes)
 end
 ----------------------------------------------------------------------
 -- CodeValueId / CodeParam → CBackendLocalId / CBackendLocal mapping

@@ -3,80 +3,169 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 assert(package.loaded["lalin.type_to_c"] == nil)
 
 local asdl = require("lalin.asdl")
-local Schema = require("lalin.schema")
-local T = asdl.context(); Schema(T)
+local T = require("lalin.schema_v2")
+require("lalin.impl.lower_emit_c.code_to_c")
 
 local Core = T.LalinCore
 local Ty = T.LalinType
 local C = T.LalinC
 local Code = T.LalinCode
-local api = require("lalin.code_type")(T)
+local Tree = T.LalinTree
+local CodeType = require("lalin.code_type")(T)
 
-local all_scalars = {
-    Core.ScalarVoid, Core.ScalarBool,
-    Core.ScalarI8, Core.ScalarI16, Core.ScalarI32, Core.ScalarI64,
-    Core.ScalarU8, Core.ScalarU16, Core.ScalarU32, Core.ScalarU64,
-    Core.ScalarF32, Core.ScalarF64,
-    Core.ScalarRawPtr, Core.ScalarIndex,
-}
-for i = 1, #all_scalars do
-    local code_ty = api.scalar_to_code(all_scalars[i])
-    local cty = api.code_type_to_c(code_ty, {})
-    assert(cty ~= nil, "scalar projects through CodeType: " .. tostring(all_scalars[i]))
+local function assert_class(value, class, message)
+    assert(asdl.classof(value) == class, message or ("expected " .. tostring(class) .. ", got " .. tostring(asdl.classof(value))))
 end
-assert(asdl.classof(api.code_type_to_c(Code.CodeTyVoid, {})) == asdl.classof(C.CBackendVoid))
-assert(asdl.classof(api.code_type_to_c(Code.CodeTyBool8, {})) == asdl.classof(C.CBackendBool8))
-assert(asdl.classof(api.code_type_to_c(Code.CodeTyIndex, {})) == asdl.classof(C.CBackendIndex))
-assert(asdl.classof(api.code_type_to_c(Code.CodeTyInt(32, Code.CodeSigned), {})) == C.CBackendScalar)
-assert(asdl.classof(api.code_type_to_c(Code.CodeTyDataPtr(nil), {})) == C.CBackendDataPtr)
 
 local i32 = Ty.TScalar(Core.ScalarI32)
-local ptr = api.type_to_c(Ty.TPtr(i32), {})
-assert(asdl.classof(ptr) == C.CBackendDataPtr)
-assert(asdl.classof(ptr.pointee) == C.CBackendScalar)
+local u8 = Ty.TScalar(Core.ScalarU8)
+local sig_state = T.LalinTreeCode.TreeCodeModuleSigState("test", {}, {})
 
-local arr = api.type_to_c(Ty.TArray(Ty.ArrayLenConst(4), i32), {})
-assert(asdl.classof(arr) == C.CBackendArray and arr.count == 4)
+-- Scalar and nullary CodeType leaves project directly when no C-emission
+-- registration is required.
+local scalar_cases = {
+    { Code.CodeTyVoid, C.CBackendVoid },
+    { Code.CodeTyBool8, C.CBackendBool8 },
+    { Code.CodeTyIndex, C.CBackendIndex },
+    { Code.CodeTyInt(8, Code.CodeSigned), C.CBackendScalar(Core.ScalarI8) },
+    { Code.CodeTyInt(16, Code.CodeSigned), C.CBackendScalar(Core.ScalarI16) },
+    { Code.CodeTyInt(32, Code.CodeSigned), C.CBackendScalar(Core.ScalarI32) },
+    { Code.CodeTyInt(64, Code.CodeSigned), C.CBackendScalar(Core.ScalarI64) },
+    { Code.CodeTyInt(8, Code.CodeUnsigned), C.CBackendScalar(Core.ScalarU8) },
+    { Code.CodeTyInt(16, Code.CodeUnsigned), C.CBackendScalar(Core.ScalarU16) },
+    { Code.CodeTyInt(32, Code.CodeUnsigned), C.CBackendScalar(Core.ScalarU32) },
+    { Code.CodeTyInt(64, Code.CodeUnsigned), C.CBackendScalar(Core.ScalarU64) },
+    { Code.CodeTyFloat(32), C.CBackendScalar(Core.ScalarF32) },
+    { Code.CodeTyFloat(64), C.CBackendScalar(Core.ScalarF64) },
+    { Code.CodeTyByteSpan, C.CBackendByteSpanDescriptor },
+}
+for i = 1, #scalar_cases do
+    assert(scalar_cases[i][1]:code_to_c_backend_type() == scalar_cases[i][2])
+end
 
-local desc_ctx = {}
-local slice = api.type_to_c(Ty.TSlice(i32), desc_ctx)
-assert(asdl.classof(slice) == C.CBackendSliceDescriptor, "slice projects through CodeType descriptor")
-local view = api.type_to_c(Ty.TView(i32), desc_ctx)
-assert(asdl.classof(view) == C.CBackendViewDescriptor, "view projects through CodeType descriptor")
+local code_i32 = Code.CodeTyInt(32, Code.CodeSigned)
+local code_u8 = Code.CodeTyInt(8, Code.CodeUnsigned)
+local opaque_ptr = Code.CodeTyDataPtr(nil):code_to_c_backend_type()
+assert_class(opaque_ptr, C.CBackendDataPtr)
+assert(opaque_ptr.pointee == nil)
+local data_ptr = Code.CodeTyDataPtr(code_u8):code_to_c_backend_type()
+assert(data_ptr == C.CBackendDataPtr(C.CBackendScalar(Core.ScalarU8)))
 
-local ctx = {}
+local array = Code.CodeTyArray(code_i32, 4):code_to_c_backend_type()
+assert(array == C.CBackendArray(C.CBackendScalar(Core.ScalarI32), 4))
+assert(Code.CodeTySlice(code_i32):code_to_c_backend_type() == C.CBackendSliceDescriptor(C.CBackendScalar(Core.ScalarI32)))
+assert(Code.CodeTyView(code_i32):code_to_c_backend_type() == C.CBackendViewDescriptor(C.CBackendScalar(Core.ScalarI32)))
+
+local named_source = Ty.TNamed(Ty.TypeRefGlobal("m", "Pair"))
+local named = Code.CodeTyNamed("m", "Pair", named_source):code_to_c_backend_type()
+assert(named == C.CBackendNamed(C.CTypeId("m", "Pair")))
+local imported_id = C.CTypeId("host", "uint128_t")
+assert(Code.CodeTyImportedC(imported_id):code_to_c_backend_type() == C.CBackendNamed(imported_id))
+
+local handle_source = Ty.THandle(
+    Ty.TypeRefGlobal("m", "Handle"),
+    Ty.HandleReprScalar(Core.ScalarU32)
+)
+local handle = Code.CodeTyHandle(Code.CodeTyInt(32, Code.CodeUnsigned), handle_source)
+assert(handle:code_to_c_backend_type() == C.CBackendScalar(Core.ScalarU32))
+local lease_source = Ty.TLease(i32, Ty.LeaseOriginParam("value"))
+local lease = Code.CodeTyLease(code_i32, lease_source)
+assert(lease:code_to_c_backend_type() == C.CBackendScalar(Core.ScalarI32))
+local vector = Code.CodeTyVector(code_i32, 8):code_to_c_backend_type()
+assert(vector == C.CBackendVector(C.CBackendScalar(Core.ScalarI32), 8))
+
+local imported_sig = C.CFuncSigId("host_sig")
+local imported_ptr = Code.CodeTyImportedCFuncPtr(imported_sig):code_to_c_backend_type()
+assert(imported_ptr == C.CBackendImportedCodePtr(imported_sig))
+
+-- Callable source types first project a typed CodeSig into the lowering state.
 local fn_ty = Ty.TFunc({ i32, i32 }, i32)
-local codeptr = api.type_to_c(fn_ty, ctx)
-assert(asdl.classof(codeptr) == C.CBackendCodePtr)
-assert(#ctx.code_sig_order == 1)
-local again = api.type_to_c(fn_ty, ctx)
-assert(again.sig.text == codeptr.sig.text)
-assert(#ctx.code_sig_order == 1, "ensure_sig deduplicates")
+local fn_code
+fn_code, sig_state = CodeType.type_to_code(sig_state, fn_ty)
+assert_class(fn_code, Code.CodeTyCodePtr)
+local closure_ty = Ty.TClosure({ i32 }, i32)
+local closure_code
+closure_code, sig_state = CodeType.type_to_code(sig_state, closure_ty)
+assert_class(closure_code, Code.CodeTyClosure)
+assert(#sig_state.code_sig_order == 2)
 
-local c_sig = C.CFuncSigId("host_sig")
-local c_func_ptr = api.type_to_c(Ty.TCFuncPtr(c_sig), {})
-assert(asdl.classof(c_func_ptr) == C.CBackendImportedCodePtr and c_func_ptr.sig.text == "host_sig")
+local code_module = Code.CodeModule(
+    Code.CodeModuleId("_test"),
+    sig_state.code_sig_order,
+    {},
+    {},
+    {},
+    {},
+    {},
+    Code.CodeOriginUnknown
+)
+local target = C.CBackendTarget(
+    C.CBackendC99,
+    C.CBackendHostedNative,
+    64,
+    64,
+    C.CBackendLittleEndian,
+    true
+)
+local spine = T.LalinLower.LowerBackSpine(
+    code_module,
+    T.LalinGraph.CodeGraph(code_module.id, {}),
+    target
+)
+local machine = T.LalinCEmit.CEmitMachine(spine, {}, {}, {}, {})
 
-local closure = api.type_to_c(Ty.TClosure({ i32 }, i32), {})
-assert(asdl.classof(closure) == C.CBackendClosureDescriptor)
+-- The canonical stateful contract is (machine, ty); it returns the projected
+-- C type and a new typed machine containing any callable signature.
+local code_ptr, machine_with_fn = CodeType.code_type_to_c(machine, fn_code)
+assert(code_ptr == C.CBackendCodePtr(C.CBackendFuncSigId(fn_code.sig.text)))
+assert_class(machine_with_fn, T.LalinCEmit.CEmitMachine)
+assert(#machine_with_fn.c_sig_order == 1)
+local fn_sig = machine_with_fn.c_sig_order[1]
+assert(fn_sig.id == code_ptr.sig)
+assert(#fn_sig.params == 2)
+assert(fn_sig.params[1] == C.CBackendScalar(Core.ScalarI32))
+assert(fn_sig.params[2] == C.CBackendScalar(Core.ScalarI32))
+assert(fn_sig.result == C.CBackendScalar(Core.ScalarI32))
 
-local named = api.type_to_c(Ty.TNamed(Ty.TypeRefGlobal("m", "Pair")), {})
-assert(asdl.classof(named) == C.CBackendNamed)
-assert(named.id.module_name == "m" and named.id.spelling == "Pair")
-local local_named = api.type_to_c(Ty.TNamed(Ty.TypeRefLocal(Core.TypeSym("k", "LocalPair"))), {})
-assert(asdl.classof(local_named) == C.CBackendNamed and local_named.id.module_name == "local" and local_named.id.spelling == "LocalPair")
+local code_ptr_again, same_machine = CodeType.code_type_to_c(machine_with_fn, fn_code)
+assert(code_ptr_again == code_ptr)
+assert(same_machine == machine_with_fn, "callable signature projection must deduplicate")
 
-local ctype = api.type_to_c(Ty.TCType(C.CTypeId("host", "uint128_t")), {})
-assert(asdl.classof(ctype) == C.CBackendNamed and ctype.id.module_name == "host" and ctype.id.spelling == "uint128_t")
+local closure, machine_with_closure = CodeType.code_type_to_c(machine_with_fn, closure_code)
+assert_class(closure, C.CBackendClosureDescriptor)
+assert(closure.sig == C.CBackendFuncSigId("closure_" .. closure_code.sig.text))
+assert(closure.ctx == C.CBackendDataPtr(nil))
+assert(#machine_with_closure.c_sig_order == 2)
+local closure_sig = machine_with_closure.c_sig_order[2]
+assert(closure_sig.id == closure.sig)
+assert(#closure_sig.params == 2)
+assert(closure_sig.params[1] == C.CBackendDataPtr(nil))
+assert(closure_sig.params[2] == C.CBackendScalar(Core.ScalarI32))
+assert(closure_sig.result == C.CBackendScalar(Core.ScalarI32))
 
-local ok_arr, err_arr = pcall(function() api.type_to_c(Ty.TArray(Ty.ArrayLenExpr(T.LalinTree.ExprLit(T.LalinTree.ExprTyped(i32), Core.LitInt("3"))), i32), {}) end)
-assert(not ok_arr and tostring(err_arr):match("typechecking must reject ArrayLenExpr"))
+-- Source Type projection covers the same canonical shapes and rejects dynamic
+-- array lengths before CodeType/C backend lowering.
+local projected_ptr = select(1, CodeType.type_to_code(sig_state, Ty.TPtr(u8)))
+assert(projected_ptr:code_to_c_backend_type() == C.CBackendDataPtr(C.CBackendScalar(Core.ScalarU8)))
+local projected_array = select(1, CodeType.type_to_code(sig_state, Ty.TArray(Ty.ArrayLenConst(4), i32)))
+assert(projected_array:code_to_c_backend_type() == C.CBackendArray(C.CBackendScalar(Core.ScalarI32), 4))
+assert_class(select(1, CodeType.type_to_code(sig_state, Ty.TSlice(i32))), Code.CodeTySlice)
+assert_class(select(1, CodeType.type_to_code(sig_state, Ty.TView(i32))), Code.CodeTyView)
+assert_class(select(1, CodeType.type_to_code(sig_state, handle_source)), Code.CodeTyHandle)
+assert_class(select(1, CodeType.type_to_code(sig_state, lease_source)), Code.CodeTyLease)
+assert_class(select(1, CodeType.type_to_code(sig_state, named_source)), Code.CodeTyNamed)
+assert_class(select(1, CodeType.type_to_code(sig_state, Ty.TCType(imported_id))), Code.CodeTyImportedC)
+assert_class(select(1, CodeType.type_to_code(sig_state, Ty.TCFuncPtr(imported_sig))), Code.CodeTyImportedCFuncPtr)
 
-local target = api.default_target({ pointer_bits = 32, endian = "big" })
-assert(target.pointer_bits == 32 and target.index_bits == 32)
-assert(asdl.classof(target.endian) == asdl.classof(C.CBackendBigEndian))
-local target2 = api.default_target({ pointer_bits = 64, index_bits = 32 })
-assert(target2.pointer_bits == 64 and target2.index_bits == 32)
+local dynamic_array = Ty.TArray(
+    Ty.ArrayLenExpr(Tree.ExprLit(Tree.ExprTyped(i32), Core.LitInt("3"))),
+    i32
+)
+local ok_array, err_array = pcall(function()
+    CodeType.type_to_code(sig_state, dynamic_array)
+end)
+assert(not ok_array)
+assert(tostring(err_array):match("typechecking must reject ArrayLenExpr"))
 
 assert(package.loaded["lalin.type_to_c"] == nil)
-io.write("lalin code_type C projection ok\n")
+io.write("lalin canonical CodeType C projection ok\n")
