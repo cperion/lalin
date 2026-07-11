@@ -11,8 +11,34 @@ Schema(T)
 local Core = T.LalinCore
 local Code = T.LalinCode
 local Value = T.LalinValue
+local Schedule = T.LalinSchedule
 local Stencil = T.LalinStencil
-local Plan = require("lalin.stencil_artifact_plan")(T)
+local ArtifactPlan = require("lalin.stencil_artifact_plan")(T)
+
+local function explicitly_scheduled(info)
+    local out = {}
+    for key, value in pairs(info) do out[key] = value end
+    out.schedule = Schedule.ScheduleScalarPointer
+    return out
+end
+
+local Plan = setmetatable({
+    store_n_artifact = function(info)
+        return ArtifactPlan.store_n_artifact(explicitly_scheduled(info))
+    end,
+    reduce_n_artifact = function(reduction, plan, info)
+        return ArtifactPlan.reduce_n_artifact(reduction, plan, explicitly_scheduled(info))
+    end,
+    scan_array_artifact = function(reduction, plan, info)
+        return ArtifactPlan.scan_array_artifact(reduction, plan, explicitly_scheduled(info))
+    end,
+    find_array_artifact = function(pred, info)
+        return ArtifactPlan.find_array_artifact(pred, explicitly_scheduled(info))
+    end,
+    scatter_reduce_n_artifact = function(reduction, plan, info)
+        return ArtifactPlan.scatter_reduce_n_artifact(reduction, plan, explicitly_scheduled(info))
+    end,
+}, { __index = ArtifactPlan })
 local ResidualLuaTrace = require("lalin.residual_luatrace")(T)
 local MC = require("tests.code_ir.bytecode_stencil_helper")
 

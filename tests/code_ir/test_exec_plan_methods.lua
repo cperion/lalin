@@ -28,7 +28,8 @@ local descriptor = Stencil.StencilDescriptor(
     producer,
     {},
     Stencil.StencilBodyPoint(Stencil.StencilPointConst(Value.ValueExprConst(Code.CodeConstLiteral(Code.CodeTyIndex, T.LalinCore.LitInt("0"))), Code.CodeTyIndex)),
-    Stencil.StencilSinkStore(access, Stencil.StencilStoreElementwise)
+    Stencil.StencilSinkStore(access, Stencil.StencilStoreElementwise),
+    Stencil.StencilDescriptorScheduleSelected(Stencil.StencilScheduleScalar(compiler()))
 )
 local instance = Stencil.StencilInstance(
     Stencil.StencilInstanceId("stencil:inst"),

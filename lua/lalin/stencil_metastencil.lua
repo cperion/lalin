@@ -533,6 +533,7 @@ local function bind_context(T)
             expr = store_desc.body.expr,
             step_num = store_shape.stride or 1,
             producer = Plan.descriptor_producer(store_desc),
+            schedule_selection = store_desc.schedule_selection,
             scope = scope,
             dst_layout = dst_layout,
         })
@@ -577,6 +578,7 @@ local function bind_context(T)
             expr = store_desc.body.expr,
             step_num = store_shape.stride or 1,
             producer = Plan.descriptor_producer(store_desc),
+            schedule_selection = store_desc.schedule_selection,
             dst_layout = dst_access and dst_access.layout or nil,
             axis = scan_desc.sink.axis,
             mode = scan_desc.sink.mode,
@@ -623,6 +625,7 @@ local function bind_context(T)
             expr = store_desc.body.expr,
             step_num = store_shape.stride or 1,
             producer = Plan.descriptor_producer(store_desc),
+            schedule_selection = store_desc.schedule_selection,
             dst_layout = dst_access and dst_access.layout or nil,
             index_ty = index_access and index_access.ty or out_access.ty,
             index_name = index_access and index_access.name or nil,

@@ -9,6 +9,7 @@ Schema(T)
 local Core = T.LalinCore
 local Code = T.LalinCode
 local Value = T.LalinValue
+local Schedule = T.LalinSchedule
 local Stencil = T.LalinStencil
 local Plan = require("lalin.stencil_artifact_plan")(T)
 local ReductionAlgebra = require("lalin.reduction_algebra")(T)
@@ -38,6 +39,7 @@ local add = Plan.reduce_array_artifact(reduction(Value.ReductionAdd, iconst(i32,
     elem_ty = i32,
     result_ty = i32,
     step_num = 1,
+    schedule = Schedule.ScheduleScalarPointer,
 })
 assert(raw_identity(add) == "0", "add identity should be derived as 0")
 assert(Plan.artifact_shape(add).identity == add.instance.descriptor.sink.semantics.reducer.identity, "shape should expose reducer identity")
@@ -46,6 +48,7 @@ local max_u8 = Plan.reduce_array_artifact(reduction(Value.ReductionMax, nil), ni
     elem_ty = u8,
     result_ty = u8,
     step_num = 1,
+    schedule = Schedule.ScheduleScalarPointer,
 })
 assert(raw_identity(max_u8) == "0", "unsigned max identity should be derived as 0")
 
@@ -53,6 +56,7 @@ local min_u8 = Plan.reduce_array_artifact(reduction(Value.ReductionMin, nil), ni
     elem_ty = u8,
     result_ty = u8,
     step_num = 1,
+    schedule = Schedule.ScheduleScalarPointer,
 })
 assert(raw_identity(min_u8) == "255", "unsigned min identity should be derived as max value")
 
@@ -60,6 +64,7 @@ local seeded_add = Plan.reduce_array_artifact(reduction(Value.ReductionAdd, icon
     elem_ty = i32,
     result_ty = i32,
     step_num = 1,
+    schedule = Schedule.ScheduleScalarPointer,
 })
 assert(raw_identity(seeded_add) == "0", "source reduction seed must not become the reducer identity")
 

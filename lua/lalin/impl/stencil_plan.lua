@@ -144,19 +144,19 @@ function Stencil.StencilSink:stencil_artifact_build_descriptor(producer, accesse
 end
 
 function Stencil.StencilSinkScatterReduce:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
-  return Stencil.StencilDescriptor(producer, accesses, body, self)
+  return Stencil.StencilDescriptor(producer, accesses, body, self, Stencil.StencilDescriptorExplicitlyUnscheduled("stencil plan has not selected a schedule"))
 end
 
 function Stencil.StencilSinkReduce:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
-  return Stencil.StencilDescriptor(producer, accesses, body, self)
+  return Stencil.StencilDescriptor(producer, accesses, body, self, Stencil.StencilDescriptorExplicitlyUnscheduled("stencil plan has not selected a schedule"))
 end
 
 function Stencil.StencilSinkStore:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
-  return Stencil.StencilDescriptor(producer, accesses, body, self)
+  return Stencil.StencilDescriptor(producer, accesses, body, self, Stencil.StencilDescriptorExplicitlyUnscheduled("stencil plan has not selected a schedule"))
 end
 
 function Stencil.StencilSinkScan:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
-  return Stencil.StencilDescriptor(producer, accesses, body, self)
+  return Stencil.StencilDescriptor(producer, accesses, body, self, Stencil.StencilDescriptorExplicitlyUnscheduled("stencil plan has not selected a schedule"))
 end
 
 ----------------------------------------------------------------------

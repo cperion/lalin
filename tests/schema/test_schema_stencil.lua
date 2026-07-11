@@ -106,7 +106,8 @@ local descriptor = Stencil.StencilDescriptor(
         ),
     },
     Stencil.StencilBodyPoint(Stencil.StencilPointInput(Stencil.StencilAccessRef("xs"))),
-    Stencil.StencilSinkReduce(i32, Stencil.StencilReduceScopeDomain, Stencil.StencilReduceFold(Stencil.StencilReducer(Value.ReductionAdd, i32, init, sem, nil)))
+    Stencil.StencilSinkReduce(i32, Stencil.StencilReduceScopeDomain, Stencil.StencilReduceFold(Stencil.StencilReducer(Value.ReductionAdd, i32, init, sem, nil))),
+    Stencil.StencilDescriptorScheduleSelected(schedule)
 )
 local instance = Stencil.StencilInstance(
     Stencil.StencilInstanceId("stencil:reduce_array:i32:add"),
@@ -287,7 +288,8 @@ local nd_descriptor = Stencil.StencilDescriptor(
         Stencil.StencilAccess("xs", Stencil.StencilAccessRead, i32, Stencil.StencilLayoutContiguous(1)),
     },
     Stencil.StencilBodyPoint(Stencil.StencilPointInput(Stencil.StencilAccessRef("xs"))),
-    Stencil.StencilSinkStore(Stencil.StencilAccessRef("dst"), Stencil.StencilStoreElementwise)
+    Stencil.StencilSinkStore(Stencil.StencilAccessRef("dst"), Stencil.StencilStoreElementwise),
+    Stencil.StencilDescriptorScheduleSelected(instance.schedule)
 )
 local nd_instance = Stencil.StencilInstance(instance.id, nd_descriptor, instance.schedule, instance.abi, instance.proofs)
 local nd_artifact = Stencil.StencilArtifact(nd_instance, artifact.provider, artifact.symbol, artifact.c_signature, artifact.fingerprint, nil, {}, {})

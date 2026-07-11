@@ -33,9 +33,11 @@ local point = Stencil.StencilPointBinary(
 )
 local body = Stencil.StencilBodyPoint(point)
 local sink = Stencil.StencilSinkStore(access_ref, Stencil.StencilStoreElementwise)
-local descriptor = Stencil.StencilDescriptor(producer, { access }, body, sink)
 local compiler = Stencil.StencilCompilerPolicy(Stencil.StencilCompilerGcc, Stencil.StencilOptO2, Stencil.StencilMachineNative, {})
 local schedule = Stencil.StencilScheduleScalar(compiler)
+local descriptor = Stencil.StencilDescriptor(
+    producer, { access }, body, sink, Stencil.StencilDescriptorScheduleSelected(schedule)
+)
 local abi = Stencil.StencilAbi({ i32 }, nil)
 local instance = Stencil.StencilInstance(Stencil.StencilInstanceId("native.stencil.contract"), descriptor, schedule, abi, {})
 

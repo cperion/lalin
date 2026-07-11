@@ -628,12 +628,38 @@ return schema. LalinStencil {
       result_ty [LalinCode.CodeType],
     },
   },
+  sum. StencilDescriptorScheduleSelection {
+    StencilDescriptorScheduleSelected {
+      variant_unique,
+      schedule [LalinStencil.StencilSchedule],
+    },
+    StencilDescriptorExplicitlyUnscheduled { variant_unique, reason [str], },
+    StencilDescriptorScheduleRejected {
+      variant_unique,
+      rejects [many [LalinStencil.StencilScheduleReject]],
+      reason [str],
+    },
+  },
+  product. StencilDescriptorShape {
+    interned,
+    producer [LalinStencil.StencilProducer],
+    accesses [many [LalinStencil.StencilAccess]],
+    body [LalinStencil.StencilBody],
+    sink [LalinStencil.StencilSink],
+  },
+  product. StencilScheduleResolutionInput {
+    interned,
+    descriptor [LalinStencil.StencilDescriptorShape],
+    compiler [LalinStencil.StencilCompilerPolicy],
+    facts [LalinStencil.StencilVectorizationFacts],
+  },
   product. StencilDescriptor {
     interned,
     producer [LalinStencil.StencilProducer],
     accesses [many [LalinStencil.StencilAccess]],
     body [LalinStencil.StencilBody],
     sink [LalinStencil.StencilSink],
+    schedule_selection [LalinStencil.StencilDescriptorScheduleSelection],
   },
   sum. StencilSinkOp {
     StencilSinkOpStore {
@@ -732,6 +758,27 @@ return schema. LalinStencil {
     schedule [LalinStencil.StencilSchedule],
     abi [LalinStencil.StencilAbi],
     proofs [many [LalinKernel.KernelProof]],
+  },
+  product. StencilInstanceBuildInput {
+    interned,
+    field. id [LalinStencil.StencilInstanceId],
+    descriptor [LalinStencil.StencilDescriptor],
+    abi [LalinStencil.StencilAbi],
+    proofs [many [LalinKernel.KernelProof]],
+  },
+  sum. StencilInstanceBuildOutcome {
+    StencilInstanceScheduled { variant_unique, instance [LalinStencil.StencilInstance], },
+    StencilInstanceExplicitlyUnscheduled {
+      variant_unique,
+      descriptor [LalinStencil.StencilDescriptor],
+      reason [str],
+    },
+    StencilInstanceScheduleRejected {
+      variant_unique,
+      descriptor [LalinStencil.StencilDescriptor],
+      rejects [many [LalinStencil.StencilScheduleReject]],
+      reason [str],
+    },
   },
   sum. StencilReject {
     StencilRejectUnsupportedVocab {

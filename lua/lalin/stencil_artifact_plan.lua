@@ -88,7 +88,7 @@ local function bind_context(T)
     local i32_ty, canonical_axis, producer_shape
     local axis_ref_invalid_reason, axis_set_invalid_reason
     local producer_axis_invalid_reason, producer_window_invalid_reason, producer_axes_forward
-    local producer_param_name, artifact_shape
+    local producer_param_name, artifact_shape, schedule_selection_for_descriptor_form
     -- CodeType leaf methods for stencil artifact naming
     function Code.CodeTyInt:stencil_artifact_type_name()
         return (self.signedness == Code.CodeSigned and "i" or "u") .. tostring(self.bits)
@@ -464,9 +464,66 @@ local function bind_context(T)
     function Stencil.StencilRealizedSchedule:stencil_artifact_is_realized_vector() return false end
     function Stencil.StencilRealizedVector:stencil_artifact_is_realized_vector() return true end
     function Stencil.StencilRealizedUnrolled:stencil_artifact_is_realized_vector() return false end
+    function Stencil.StencilRealizedSchedule:stencil_artifact_is_realized_unrolled() return false end
+    function Stencil.StencilRealizedUnrolled:stencil_artifact_is_realized_unrolled() return true end
     function Stencil.StencilRealizedSchedule:stencil_artifact_is_realized_unrolled_with_factor(factor) return false end
     function Stencil.StencilRealizedUnrolled:stencil_artifact_is_realized_unrolled_with_factor(factor)
         return tonumber(self.factor) == tonumber(factor)
+    end
+
+    function Stencil.StencilVectorFeatureNative:stencil_artifact_matches_realized_feature(realized)
+        return realized == Stencil.StencilVectorFeatureNative
+    end
+    function Stencil.StencilVectorFeatureSSE2:stencil_artifact_matches_realized_feature(realized)
+        return realized == Stencil.StencilVectorFeatureSSE2
+    end
+    function Stencil.StencilVectorFeatureAVX2:stencil_artifact_matches_realized_feature(realized)
+        return realized == Stencil.StencilVectorFeatureAVX2
+    end
+    function Stencil.StencilVectorFeatureAVX512F:stencil_artifact_matches_realized_feature(realized)
+        return realized == Stencil.StencilVectorFeatureAVX512F
+    end
+    function Stencil.StencilVectorFeatureNamed:stencil_artifact_matches_realized_feature(realized)
+        return realized == self
+    end
+
+    function Stencil.StencilLaneFromTarget:stencil_artifact_matches_realized_lanes(lanes)
+        return tonumber(lanes) ~= nil and tonumber(lanes) > 1
+    end
+    function Stencil.StencilLaneNative:stencil_artifact_matches_realized_lanes(lanes)
+        return tonumber(lanes) ~= nil and tonumber(lanes) > 1
+    end
+    function Stencil.StencilLaneFixed:stencil_artifact_matches_realized_lanes(lanes)
+        return tonumber(lanes) == tonumber(self.lanes)
+    end
+
+    function Stencil.StencilVectorScalarTail:stencil_artifact_matches_realized_tail(realized)
+        return realized == Stencil.StencilVectorScalarTail
+    end
+    function Stencil.StencilVectorMaskTail:stencil_artifact_matches_realized_tail(realized)
+        return realized == Stencil.StencilVectorMaskTail
+    end
+    function Stencil.StencilVectorOverreadProvenSafe:stencil_artifact_matches_realized_tail(realized)
+        return realized == Stencil.StencilVectorOverreadProvenSafe
+    end
+    function Stencil.StencilScheduleScalar:stencil_artifact_matches_realized(realized)
+        return realized:stencil_artifact_is_realized_scalar()
+    end
+    function Stencil.StencilScheduleAutoVector:stencil_artifact_matches_realized(realized)
+        return realized:stencil_artifact_is_realized_scalar()
+            or realized:stencil_artifact_is_realized_vector()
+            or realized:stencil_artifact_is_realized_unrolled()
+    end
+    function Stencil.StencilScheduleUnrolled:stencil_artifact_matches_realized(realized)
+        return realized:stencil_artifact_is_realized_unrolled_with_factor(self.factor)
+    end
+    function Stencil.StencilScheduleVector:stencil_artifact_matches_realized(realized)
+        if not realized:stencil_artifact_is_realized_vector() then return false end
+        return self.feature:stencil_artifact_matches_realized_feature(realized.feature)
+            and self.lane_policy:stencil_artifact_matches_realized_lanes(realized.lanes)
+            and tonumber(self.vector_unroll) == tonumber(realized.unroll)
+            and tonumber(self.interleave) == tonumber(realized.interleave)
+            and self.tail:stencil_artifact_matches_realized_tail(realized.tail)
     end
 
     -- StencilRealizedScheduleEvidence leaf methods
@@ -1146,23 +1203,34 @@ local function bind_context(T)
         attrs = attrs or {}
         local producer = producer_from_attrs(stride, attrs)
         local body = Stencil.StencilBodyPoint(expr or input_expr("xs"))
-        return sink:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
+        local shape = sink:stencil_artifact_build_descriptor_shape(producer, accesses, body, result_ty)
+        local selection = attrs.schedule_selection
+        if selection == nil then
+            if attrs.schedule == nil then
+                selection = Stencil.StencilDescriptorExplicitlyUnscheduled(
+                    "descriptor producer supplied no schedule selection"
+                )
+            else
+                selection = schedule_selection_for_descriptor_form(shape, attrs.schedule, attrs)
+            end
+        end
+        return Stencil.StencilDescriptor(shape.producer, shape.accesses, shape.body, shape.sink, selection)
     end
 
-    function Stencil.StencilSinkScatterReduce:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
-        return Stencil.StencilDescriptor(producer, accesses, body, self)
+    function Stencil.StencilSinkScatterReduce:stencil_artifact_build_descriptor_shape(producer, accesses, body, result_ty)
+        return Stencil.StencilDescriptorShape(producer, accesses, body, self)
     end
-    function Stencil.StencilSinkReduce:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
-        return Stencil.StencilDescriptor(producer, accesses, body, self)
+    function Stencil.StencilSinkReduce:stencil_artifact_build_descriptor_shape(producer, accesses, body, result_ty)
+        return Stencil.StencilDescriptorShape(producer, accesses, body, self)
     end
-    function Stencil.StencilSinkStore:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
-        return Stencil.StencilDescriptor(producer, accesses, body, self)
+    function Stencil.StencilSinkStore:stencil_artifact_build_descriptor_shape(producer, accesses, body, result_ty)
+        return Stencil.StencilDescriptorShape(producer, accesses, body, self)
     end
-    function Stencil.StencilSinkScan:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
-        return Stencil.StencilDescriptor(producer, accesses, body, self)
+    function Stencil.StencilSinkScan:stencil_artifact_build_descriptor_shape(producer, accesses, body, result_ty)
+        return Stencil.StencilDescriptorShape(producer, accesses, body, self)
     end
-    function Stencil.StencilSink:stencil_artifact_build_descriptor(producer, accesses, body, result_ty)
-        error("stencil_artifact_plan: unsupported sink type for build_descriptor", 3)
+    function Stencil.StencilSink:stencil_artifact_build_descriptor_shape(producer, accesses, body, result_ty)
+        error("stencil_artifact_plan: unsupported sink type for build_descriptor_shape", 3)
     end
 
     local function descriptor_reduction_semantics(desc)
@@ -1805,51 +1873,56 @@ local function bind_context(T)
         )
     end
 
-    local function auto_vector_descriptor(desc)
-        if desc == nil or desc.sink == nil then return false end
-        return desc.sink:stencil_artifact_is_auto_vector()
+
+    function Schedule.TailNone:stencil_artifact_stencil_tail() return Stencil.StencilVectorScalarTail end
+    function Schedule.TailScalar:stencil_artifact_stencil_tail() return Stencil.StencilVectorScalarTail end
+    function Schedule.TailMasked:stencil_artifact_stencil_tail() return Stencil.StencilVectorMaskTail end
+    function Schedule.TailPeel:stencil_artifact_stencil_tail() return Stencil.StencilVectorScalarTail end
+
+    local function selected_vector_schedule(form, input, lanes)
+        return Stencil.StencilDescriptorScheduleSelected(Stencil.StencilScheduleVector(
+            Stencil.StencilVectorFeatureNative,
+            Stencil.StencilLaneFixed(lanes),
+            Stencil.StencilVectorUnaligned,
+            form.tail:stencil_artifact_stencil_tail(),
+            Stencil.StencilVectorReductionHorizontal,
+            Stencil.StencilVectorCompilerCompiledStencil,
+            tonumber(form.unroll) or 1,
+            tonumber(form.interleave) or 1,
+            input.compiler,
+            input.facts
+        ))
     end
 
-    local function unroll_factor(info)
-        local n = tonumber(info and (info.unroll or info.unroll_factor) or 1) or 1
-        n = math.floor(n)
-        if n < 1 then return 1 end
-        if n > 16 then return 16 end
-        return n
+    function Schedule.LaneScalar:stencil_artifact_select_vector_schedule(form, input)
+        local reject = Stencil.StencilScheduleRejectIllegalLaneCount(1, "vector schedule requires more than one lane")
+        return Stencil.StencilDescriptorScheduleRejected({ reject }, reject.reason)
+    end
+    function Schedule.LaneVector:stencil_artifact_select_vector_schedule(form, input)
+        local lanes = tonumber(self.lanes) or 0
+        if lanes > 1 then return selected_vector_schedule(form, input, lanes) end
+        local reject = Stencil.StencilScheduleRejectIllegalLaneCount(lanes, "vector schedule requires more than one lane")
+        return Stencil.StencilDescriptorScheduleRejected({ reject }, reject.reason)
     end
 
-    local function schedule_vector_lanes(kind)
-        if Schedule == nil or not kind:stencil_artifact_is_vector() then return nil end
-        if not kind.lanes:stencil_artifact_is_fixed_lane() then return nil end
-        return tonumber(kind.lanes.lanes)
+    function Schedule.ScheduleVector:stencil_artifact_select_descriptor_schedule(input)
+        return self.lanes:stencil_artifact_select_vector_schedule(self, input)
+    end
+    function Schedule.ScheduleScalarIndex:stencil_artifact_select_descriptor_schedule(input)
+        return Stencil.StencilDescriptorScheduleSelected(Stencil.StencilScheduleScalar(input.compiler))
+    end
+    function Schedule.ScheduleScalarPointer:stencil_artifact_select_descriptor_schedule(input)
+        return Stencil.StencilDescriptorScheduleSelected(Stencil.StencilScheduleScalar(input.compiler))
+    end
+    function Schedule.ScheduleClosedForm:stencil_artifact_select_descriptor_schedule(input)
+        return Stencil.StencilDescriptorScheduleSelected(Stencil.StencilScheduleScalar(input.compiler))
     end
 
-    local function schedule_for_descriptor_with_info(desc, info)
+    schedule_selection_for_descriptor_form = function(desc, form, info)
         local policy = default_compiler_policy()
-        local sched = info and info.schedule or nil
-        if Schedule ~= nil and sched:stencil_artifact_is_vector() then
-            local lanes = schedule_vector_lanes(sched)
-            if lanes ~= nil and lanes > 1 then
-                return Stencil.StencilScheduleVector(
-                    Stencil.StencilVectorFeatureNative,
-                    Stencil.StencilLaneFixed(lanes),
-                    Stencil.StencilVectorUnaligned,
-                    sched.tail == Schedule.TailMasked and Stencil.StencilVectorMaskTail or Stencil.StencilVectorScalarTail,
-                    Stencil.StencilVectorReductionHorizontal,
-                    Stencil.StencilVectorCompilerCompiledStencil,
-                    tonumber(sched.unroll) or 1,
-                    tonumber(sched.interleave) or 1,
-                    policy,
-                    vectorization_facts(desc, info)
-                )
-            end
-        elseif Schedule ~= nil and (sched == Schedule.ScheduleScalarIndex or sched == Schedule.ScheduleScalarPointer or sched == Schedule.ScheduleClosedForm) then
-            return Stencil.StencilScheduleScalar(policy)
-        end
-        local unroll = unroll_factor(info)
-        if unroll > 1 and auto_vector_descriptor(desc) then return Stencil.StencilScheduleUnrolled(unroll, policy, vectorization_facts(desc, info)) end
-        if auto_vector_descriptor(desc) then return Stencil.StencilScheduleAutoVector(policy, vectorization_facts(desc, info)) end
-        return Stencil.StencilScheduleScalar(policy)
+        local facts = vectorization_facts(desc, info)
+        local input = Stencil.StencilScheduleResolutionInput(desc, policy, facts)
+        return form:stencil_artifact_select_descriptor_schedule(input)
     end
 
     local function schedule_suffix(schedule)
@@ -1922,8 +1995,33 @@ local function bind_context(T)
         )
     end
 
-    local function instance(id, desc, abi, proofs, info)
-        return Stencil.StencilInstance(id, desc, schedule_for_descriptor_with_info(desc, info), abi, proofs or {})
+    function Stencil.StencilDescriptorScheduleSelected:stencil_artifact_build_instance(input)
+        return Stencil.StencilInstanceScheduled(Stencil.StencilInstance(
+            input.id, input.descriptor, self.schedule, input.abi, input.proofs
+        ))
+    end
+    function Stencil.StencilDescriptorExplicitlyUnscheduled:stencil_artifact_build_instance(input)
+        return Stencil.StencilInstanceExplicitlyUnscheduled(input.descriptor, self.reason)
+    end
+    function Stencil.StencilDescriptorScheduleRejected:stencil_artifact_build_instance(input)
+        return Stencil.StencilInstanceScheduleRejected(input.descriptor, self.rejects, self.reason)
+    end
+
+    function Stencil.StencilInstanceScheduled:stencil_artifact_require_instance() return self.instance end
+    function Stencil.StencilInstanceExplicitlyUnscheduled:stencil_artifact_require_instance()
+        error("stencil_artifact_plan: descriptor is explicitly unscheduled: " .. self.reason, 3)
+    end
+    function Stencil.StencilInstanceScheduleRejected:stencil_artifact_require_instance()
+        error("stencil_artifact_plan: descriptor schedule was rejected: " .. self.reason, 3)
+    end
+
+    local function instance_outcome(id, desc, abi, proofs)
+        local input = Stencil.StencilInstanceBuildInput(id, desc, abi, proofs or {})
+        return desc.schedule_selection:stencil_artifact_build_instance(input)
+    end
+
+    local function instance(id, desc, abi, proofs)
+        return instance_outcome(id, desc, abi, proofs):stencil_artifact_require_instance()
     end
 
     local function layout_has_dynamic_stride(layout)
@@ -2053,11 +2151,13 @@ local function bind_context(T)
     end
 
     local function scheduled_instance(id, symbol, desc, abi, proofs, info)
-        local selected_schedule = schedule_for_descriptor_with_info(desc, info or {})
-        local suffix, symbol_suffix = schedule_suffix(selected_schedule)
+        local outcome = instance_outcome(id, desc, abi, proofs)
+        local inst = outcome:stencil_artifact_require_instance()
+        local suffix, symbol_suffix = schedule_suffix(inst.schedule)
         if suffix ~= "" then id = Stencil.StencilInstanceId(id.text .. suffix) end
         if symbol_suffix ~= "" then symbol = Stencil.StencilSymbolId(symbol.text .. symbol_suffix) end
-        return instance(id, desc, abi, proofs, info), symbol
+        if id ~= inst.id then inst = instance(id, desc, abi, proofs) end
+        return inst, symbol
     end
 
     local source_params
@@ -2120,13 +2220,13 @@ local function bind_context(T)
             info,
             result_ty
         )
-        local selected_schedule = schedule_for_descriptor_with_info(desc, info)
-        local suffix, symbol_suffix = schedule_suffix(selected_schedule)
-        local id = Stencil.StencilInstanceId(reduce_instance_id(elem_ty, result_ty, reduction.op, stride).text .. suffix)
-        local symbol = Stencil.StencilSymbolId(reduce_symbol_id(elem_ty, result_ty, reduction.op, stride).text .. symbol_suffix)
+        local id = reduce_instance_id(elem_ty, result_ty, reduction.op, stride)
+        local symbol = reduce_symbol_id(elem_ty, result_ty, reduction.op, stride)
         local abi, args = descriptor_abi_args(desc, { { ty = result_ty, decl = c_type(result_ty) .. " init" } })
-        local inst = instance(
+        local inst
+        inst, symbol = scheduled_instance(
             id,
+            symbol,
             desc,
             abi_with_dynamic_strides(desc, abi, result_ty),
             (plan and plan.body and plan.body.equivalence and plan.body.equivalence:stencil_artifact_proofs() or {}),
@@ -2146,14 +2246,15 @@ local function bind_context(T)
         local ptag = producer_tag(producer)
         local id = Stencil.StencilInstanceId("stencil:scan_array:" .. type_name(elem_ty) .. ":" .. reduction.op:stencil_artifact_name() .. ":to:" .. type_name(result_ty) .. ":" .. mode:stencil_artifact_name() .. ":" .. ptag)
         local symbol = Stencil.StencilSymbolId("ml_stencil_scan_array_" .. type_name(elem_ty) .. "_" .. reduction.op:stencil_artifact_name() .. "_to_" .. type_name(result_ty) .. "_" .. mode:stencil_artifact_name() .. "_" .. ptag)
-        local desc = descriptor(Stencil.StencilSinkScan(Stencil.StencilAccessRef("dst"), info.axis or info.scan_axis, reducer_desc(reduction, result_ty), mode, result_ty), stride,
+        local scan_axis = info.axis or info.scan_axis or Stencil.StencilAxisRef(1)
+        local desc = descriptor(Stencil.StencilSinkScan(Stencil.StencilAccessRef("dst"), scan_axis, reducer_desc(reduction, result_ty), mode, result_ty), stride,
             {
                 shaped("dst", Stencil.StencilAccessWrite, result_ty, info.dst_layout, stride),
                 shaped("xs", Stencil.StencilAccessRead, elem_ty, info.array_layout or info.src_layout, stride),
                 scalar("acc", Stencil.StencilAccessReduce, result_ty, reducer_identity(reduction, result_ty)),
             },
             nil,
-            { mode = mode, producer = producer, axis = info.axis or info.scan_axis },
+            attrs(info, { mode = mode, producer = producer, axis = scan_axis }),
             result_ty
         )
         local sink_reason = sink_materializer_reject_reason(desc)
@@ -2172,15 +2273,15 @@ local function bind_context(T)
         local elem_ty, stride = assert(info.elem_ty), assert(info.step_num or info.stride or 1)
         local id = Stencil.StencilInstanceId("stencil:find_array:" .. type_name(elem_ty) .. ":" .. pred:stencil_artifact_name() .. ":stride" .. tostring(stride))
         local symbol = Stencil.StencilSymbolId("ml_stencil_find_array_" .. type_name(elem_ty) .. "_" .. pred:stencil_artifact_name() .. "_s" .. tostring(stride))        local not_found = Value.ValueExprConst(Code.CodeConstLiteral(i32_ty(), Core.LitInt("-1")))
+        local checked_pred = predicate_checked(pred, elem_ty)
         local desc = descriptor(
-            "find",
+            Stencil.StencilSinkReduce(i32_ty(), domain_reduce_scope(), Stencil.StencilReduceFind(checked_pred, not_found)),
             stride,
             {
                 shaped("xs", Stencil.StencilAccessRead, elem_ty, info.array_layout or info.src_layout, stride),
                 scalar("index", Stencil.StencilAccessControlResult, i32_ty(), not_found),
             },
-            point_predicate_expr(predicate_checked(pred, elem_ty), input_expr("xs"), i32_ty()),
-            nil,
+            point_predicate_expr(checked_pred, input_expr("xs"), i32_ty()),
             attrs(info, { not_found = not_found }),
             i32_ty()
         )
@@ -2196,7 +2297,7 @@ local function bind_context(T)
         local id = Stencil.StencilInstanceId("stencil:partition_array:" .. type_name(elem_ty) .. ":" .. pred:stencil_artifact_name() .. ":" .. semantics:stencil_artifact_name() .. ":stride" .. tostring(stride))
         local symbol = Stencil.StencilSymbolId("ml_stencil_partition_array_" .. type_name(elem_ty) .. "_" .. pred:stencil_artifact_name() .. "_" .. semantics:stencil_artifact_name() .. "_s" .. tostring(stride))
         local desc = descriptor(
-            "partition",
+            Stencil.StencilSinkStore(Stencil.StencilAccessRef("dst"), Stencil.StencilStorePartition(semantics)),
             stride,
             {
                 shaped("dst", Stencil.StencilAccessWrite, elem_ty, info.dst_layout, stride),
@@ -2204,9 +2305,7 @@ local function bind_context(T)
                 scalar("split", Stencil.StencilAccessControlResult, i32_ty(), nil),
             },
             point_predicate_expr(predicate_checked(pred, elem_ty), input_expr("xs"), i32_ty()),
-            nil,
             attrs(info, { semantics = semantics }),
-            memory({ partition = semantics }),
             i32_ty()
         )
         local abi, args = descriptor_abi_args(desc)
@@ -2244,7 +2343,7 @@ local function bind_context(T)
         local id = Stencil.StencilInstanceId("stencil:scatter_reduce_n:" .. type_name(item_ty) .. ":" .. reduction.op:stencil_artifact_name() .. ":to:" .. type_name(result_ty) .. ":" .. conflict_tag .. ":" .. tag .. ":" .. ptag)
         local symbol = Stencil.StencilSymbolId("ml_stencil_scatter_reduce_n_" .. type_name(item_ty) .. "_" .. reduction.op:stencil_artifact_name() .. "_to_" .. type_name(result_ty) .. "_" .. conflict_tag .. "_" .. tag .. "_" .. ptag)
         local reducer = reducer_desc(reduction, result_ty)
-        local desc = descriptor(Stencil.StencilSinkScatterReduce(Stencil.StencilAccessRef(dst_name), reducer, conflicts or Stencil.StencilScatterReduceSequential, result_ty), stride, accesses, expr, { producer = producer }, result_ty)
+        local desc = descriptor(Stencil.StencilSinkScatterReduce(Stencil.StencilAccessRef(dst_name), reducer, conflicts or Stencil.StencilScatterReduceSequential, result_ty), stride, accesses, expr, attrs(info, { producer = producer }), result_ty)
         local sink_reason = sink_materializer_reject_reason(desc)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported scatter_reduce_n sink/body: " .. tostring(sink_reason), 2) end
         local abi, args = descriptor_abi_args(desc)
@@ -2381,7 +2480,7 @@ local function bind_context(T)
             abi[#abi + 1] = result_ty
             args[#args + 1] = c_type(result_ty) .. " init"
         end
-        local desc = descriptor(Stencil.StencilSinkReduce(result_ty, scope, Stencil.StencilReduceFold(reducer_desc(reduction, result_ty))), stride, accesses, expr, { producer = producer }, result_ty)
+        local desc = descriptor(Stencil.StencilSinkReduce(result_ty, scope, Stencil.StencilReduceFold(reducer_desc(reduction, result_ty))), stride, accesses, expr, attrs(info, { producer = producer }), result_ty)
         local sink_reason = sink_materializer_reject_reason(desc)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported reduce_n sink/body: " .. tostring(sink_reason), 2) end
         local tag = sanitize((info.tag or ("arity" .. tostring(#inputs))) .. "_" .. stable_hash128(descriptor_identity_repr(desc)))
@@ -2421,7 +2520,7 @@ local function bind_context(T)
         abi[#abi + 1] = result_ty
         args[#args + 1] = c_type(result_ty) .. " init"
         local reducer = reducer_desc(reduction, result_ty)
-        local desc = descriptor(Stencil.StencilSinkScan(Stencil.StencilAccessRef("dst"), info.axis or info.scan_axis, reducer, mode, result_ty), stride, accesses, expr, { producer = producer }, result_ty)
+        local desc = descriptor(Stencil.StencilSinkScan(Stencil.StencilAccessRef("dst"), info.axis or info.scan_axis, reducer, mode, result_ty), stride, accesses, expr, attrs(info, { producer = producer }), result_ty)
         local sink_reason = sink_materializer_reject_reason(desc)
         if sink_reason ~= nil then error("stencil_artifact_plan: unsupported scan_n sink/body: " .. tostring(sink_reason), 2) end
         local tag = sanitize((info.tag or ("arity" .. tostring(#inputs))) .. "_" .. stable_hash128(descriptor_identity_repr(desc)))
@@ -2779,6 +2878,7 @@ local function bind_context(T)
     api.domain_reduce_scope = domain_reduce_scope
     api.schedule_lane_count = schedule_lane_count
     api.selection_provenance_for_artifact = selection_provenance_for_artifact
+    api.instance_outcome = instance_outcome
     api.no_selection_provenance = no_selection_provenance
     api.schedule_rejects_for_realized = schedule_rejects_for_realized
     api.artifact_with_realized = artifact_with_realized

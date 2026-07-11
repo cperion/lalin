@@ -98,8 +98,14 @@ local point = Stencil.StencilPointBinary(
     nil,
     nil
 )
-local descriptor = Stencil.StencilDescriptor(producer, { access }, Stencil.StencilBodyPoint(point), Stencil.StencilSinkStore(access_ref, Stencil.StencilStoreElementwise))
 local schedule = Stencil.StencilScheduleScalar(Stencil.StencilCompilerPolicy(Stencil.StencilCompilerGcc, Stencil.StencilOptO2, Stencil.StencilMachineNative, {}))
+local descriptor = Stencil.StencilDescriptor(
+    producer,
+    { access },
+    Stencil.StencilBodyPoint(point),
+    Stencil.StencilSinkStore(access_ref, Stencil.StencilStoreElementwise),
+    Stencil.StencilDescriptorScheduleSelected(schedule)
+)
 local instance = Stencil.StencilInstance(Stencil.StencilInstanceId("native.kernel_stencil.stencil"), descriptor, schedule, Stencil.StencilAbi({ i32 }, nil), {})
 local empty_plan = Native.NativePlanInput(target, runtime, bank("native.kernel_stencil.stencil.empty"))
 local slowering = instance:native_stencil_lowering_input(empty_plan, type_layouts, addresses)
