@@ -123,15 +123,7 @@ return schema. LalinSem {
     FlowReturns,
     FlowTerminates,
   },
-  product. CaptureEntry { interned, field. name [str], ty [LalinType.Type], offset [number], size [number], },
-  product. ClosureScopeEntry { interned, field. name [str], ty [LalinType.Type], },
-  product. ClosureRewriteInput {
-    interned,
-    module_name [str],
-    owner [str],
-    counter [number],
-    helpers [many [LalinTree.Item]],
-  },
+  product. ClosureModuleInput { interned, target [LalinHost.HostTargetModel], },
   product. TreeModuleEntryInput { interned, mod_name [str], },
   product. TreeModuleLayoutInput {
     interned,

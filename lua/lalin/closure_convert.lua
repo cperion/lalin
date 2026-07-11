@@ -17,17 +17,24 @@ local function bind_context(T)
     function Ty.Type:closure_size_align()
         error("closure conversion cannot capture value with unsupported environment layout: " .. tostring(self), 2)
     end
-    function Ty.TScalar:closure_size_align()
+    local function closure_pointer_size(target)
+        return target.pointer_bits / 8
+    end
+    function Ty.TScalar:closure_size_align(target)
         if self.scalar == C.ScalarBool or self.scalar == C.ScalarI8 or self.scalar == C.ScalarU8 then return 1, 1 end
         if self.scalar == C.ScalarI16 or self.scalar == C.ScalarU16 then return 2, 2 end
         if self.scalar == C.ScalarI32 or self.scalar == C.ScalarU32 or self.scalar == C.ScalarF32 then return 4, 4 end
-        if self.scalar == C.ScalarI64 or self.scalar == C.ScalarU64 or self.scalar == C.ScalarF64 or self.scalar == C.ScalarIndex or self.scalar == C.ScalarRawPtr then return 8, 8 end
+        if self.scalar == C.ScalarI64 or self.scalar == C.ScalarU64 or self.scalar == C.ScalarF64 then return 8, 8 end
+        if self.scalar == C.ScalarIndex or self.scalar == C.ScalarRawPtr then
+            local size = closure_pointer_size(target)
+            return size, size
+        end
         if self.scalar == C.ScalarVoid then return 0, 1 end
         error("closure conversion cannot capture unsupported scalar: " .. tostring(self.scalar), 2)
     end
-    function Ty.TPtr:closure_size_align() return 8, 8 end
-    function Ty.TFunc:closure_size_align() return 8, 8 end
-    function Ty.TClosure:closure_size_align() return 8, 8 end
+    function Ty.TPtr:closure_size_align(target) local size = closure_pointer_size(target); return size, size end
+    function Ty.TFunc:closure_size_align(target) local size = closure_pointer_size(target); return size, size end
+    function Ty.TClosure:closure_size_align(target) local size = closure_pointer_size(target); return size, size end
 
     ------------------------------------------------------------------------
     -- B.ValueRef: closure leaf methods (no classof dispatch)
@@ -90,10 +97,10 @@ local function bind_context(T)
         input.scopes[#input.scopes] = nil
     end
 
-    local function capture_layout(captures)
+    local function capture_layout(captures, target)
         local offset, align = 0, 1
         for i = 1, #captures do
-            local size, a = captures[i].ty:closure_size_align()
+            local size, a = captures[i].ty:closure_size_align(target)
             if a > align then align = a end
             local rem = offset % a
             if rem ~= 0 then offset = offset + (a - rem) end
@@ -654,7 +661,7 @@ local function bind_context(T)
     _helper_for_escaping_closure = function(input, expr, captures)
         local name = fresh_helper_name(input)
         captures = captures or _closure_captures(expr, input)
-        capture_layout(captures)
+        capture_layout(captures, input.target)
         local helper_params = { Ty.Param("__lalin_ctx", Ty.TPtr(Ty.TScalar(C.ScalarU8))) }
         for i = 1, #expr.params do helper_params[#helper_params + 1] = expr.params[i] end
         local capture_env = {}
@@ -783,13 +790,14 @@ local function bind_context(T)
         return module.h:tree_module_name()
     end
 
-    local function rewrite_module(module)
+    local function rewrite_module(module, module_input)
         local input = {
             module_name = module_name(module),
             owner = "module",
             counter = 0,
             helpers = {},
             scopes = {},
+            target = module_input.target,
         }
         local items = {}
         for i = 1, #module.items do
@@ -802,13 +810,14 @@ local function bind_context(T)
         return asdl.with(module, { items = items })
     end
 
-    local function rewrite_func(func)
+    local function rewrite_func(func, module_input)
         local input = {
             module_name = "",
             owner = "func",
             counter = 0,
             helpers = {},
             scopes = {},
+            target = module_input.target,
         }
         local out, input = func:closure_rewrite(input)
         return out, input.helpers

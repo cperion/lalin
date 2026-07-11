@@ -16,7 +16,7 @@ function M.install_canonical(T)
     end
 
     function Compiler.TreeCodeCanonicalImplementation:closure_convert(module, input)
-        return require("lalin.closure_convert")(T).module(module)
+        return require("lalin.closure_convert")(T).module(module, input)
     end
 
     function Compiler.TreeCodeCanonicalImplementation:typecheck_module(module, input)

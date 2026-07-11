@@ -5,8 +5,9 @@ local A2 = require("lalin.schema_projection")
 local ClosureConvert = require("lalin.closure_convert")
 local T = asdl.context()
 A2(T)
-local C, Ty, B, Tr = T.LalinCore, T.LalinType, T.LalinBind, T.LalinTree
+local C, Ty, B, Sem, H, Tr = T.LalinCore, T.LalinType, T.LalinBind, T.LalinSem, T.LalinHost, T.LalinTree
 local i32 = Ty.TScalar(C.ScalarI32)
+local closure_input = Sem.ClosureModuleInput(H.HostTargetModel(64, 64, H.HostEndianLittle))
 
 local function name_ref(name)
     return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(name))
@@ -44,7 +45,7 @@ local closure_api = ClosureConvert(T)
 assert(Tr.ModuleSurface:tree_module_name() == "", "surface modules should have an empty module name")
 assert(Tr.ModuleTyped("TypedClosure"):tree_module_name() == "TypedClosure", "typed modules should preserve their module name")
 
-local converted = closure_api.module(module)
+local converted = closure_api.module(module, closure_input)
 assert(#converted.items == 4, "closure conversion should hoist two helpers")
 
 -- Helper names include the header name, owning function, and deterministic ordinal.
@@ -59,7 +60,7 @@ assert(helper_names[1] == "__lalin_closure__closure_direct_1", "unexpected surfa
 assert(helper_names[2] == "__lalin_closure__closure_capture_2", "unexpected surface helper name: " .. tostring(helper_names[2]))
 
 local typed_module = Tr.Module(Tr.ModuleTyped("TypedClosure"), module.items)
-local typed_converted = closure_api.module(typed_module)
+local typed_converted = closure_api.module(typed_module, closure_input)
 local typed_helper_names = {}
 for i = 1, #typed_converted.items do
     local item = typed_converted.items[i]
