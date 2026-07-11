@@ -52,11 +52,6 @@ local function bind_context(T)
         return only(phase(node, env, target))
     end
 
-    local function maybe_one(g, p, c)
-        local values = g
-        if #values == 0 then return nil end
-        return values[1]
-    end
 
     local function map_exprs(xs, env, target)
         local out = {}
@@ -82,62 +77,106 @@ local function bind_context(T)
         return out
     end
 
-    function Ty.TypeRef:sem_layout_resolve(env)
-        return {}
+    function Sem.TypeLayoutMissing:sem_layout_or_else(candidate)
+        return candidate
+    end
+
+    function Sem.TypeLayoutFound:sem_layout_or_else(candidate)
+        return self
+    end
+
+    function Ty.TypeRefGlobal:sem_layout_match_named(layout)
+        if layout.module_name == self.module_name and layout.type_name == self.type_name then
+            return Sem.TypeLayoutFound(layout)
+        end
+        return Sem.TypeLayoutMissing
+    end
+
+    function Ty.TypeRefGlobal:sem_layout_match_local(layout)
+        return Sem.TypeLayoutMissing
+    end
+
+    function Ty.TypeRefLocal:sem_layout_match_named(layout)
+        return Sem.TypeLayoutMissing
+    end
+
+    function Ty.TypeRefLocal:sem_layout_match_local(layout)
+        if layout.sym == self.sym then return Sem.TypeLayoutFound(layout) end
+        return Sem.TypeLayoutMissing
+    end
+
+    function Ty.TypeRefPath:sem_layout_match_named(layout)
+        if #self.path.parts == 1 and layout.type_name == self.path.parts[1].text then
+            return Sem.TypeLayoutFound(layout)
+        end
+        return Sem.TypeLayoutMissing
+    end
+
+    function Ty.TypeRefPath:sem_layout_match_local(layout)
+        return Sem.TypeLayoutMissing
+    end
+
+    function Sem.LayoutNamed:sem_layout_match_ref(ref)
+        return ref:sem_layout_match_named(self)
+    end
+
+    function Sem.LayoutLocal:sem_layout_match_ref(ref)
+        return ref:sem_layout_match_local(self)
+    end
+
+    local function resolve_type_layout(ref, env)
+        local result = Sem.TypeLayoutMissing
+        for i = 1, #env.layouts do
+            result = result:sem_layout_or_else(env.layouts[i]:sem_layout_match_ref(ref))
+        end
+        return result
     end
 
     function Ty.TypeRefGlobal:sem_layout_resolve(env)
-        for i = 1, #env.layouts do
-            local layout = env.layouts[i]
-            if schema.classof(layout) == Sem.LayoutNamed and layout.module_name == self.module_name and layout.type_name == self.type_name then
-                return { layout }
-            end
-        end
-        return {}
+        return resolve_type_layout(self, env)
     end
 
     function Ty.TypeRefLocal:sem_layout_resolve(env)
-        for i = 1, #env.layouts do
-            local layout = env.layouts[i]
-            if schema.classof(layout) == Sem.LayoutLocal and layout.sym == self.sym then
-                return { layout }
-            end
-        end
-        return {}
+        return resolve_type_layout(self, env)
     end
 
     function Ty.TypeRefPath:sem_layout_resolve(env)
-        if #self.path.parts == 1 then
-            local name = self.path.parts[1].text
-            for i = 1, #env.layouts do
-                local layout = env.layouts[i]
-                if schema.classof(layout) == Sem.LayoutNamed and layout.type_name == name then
-                    return { layout }
-                end
-            end
-        end
-        return {}
+        return resolve_type_layout(self, env)
     end
 
-
-
     function Ty.Type:sem_layout(env)
-        return {}
+        return Sem.TypeLayoutMissing
     end
 
     function Ty.TNamed:sem_layout(env)
         return self.ref:sem_layout_resolve(env)
     end
 
+    function Sem.FieldLayoutMissing:sem_layout_or_else(candidate)
+        return candidate
+    end
 
-    function Sem.FieldLayout:sem_layout_field(field_name)
-        for i = 1, #self.fields do
-            local field = self.fields[i]
-            if field.field_name == field_name then
-                return { field }
-            end
+    function Sem.FieldLayoutFound:sem_layout_or_else(candidate)
+        return self
+    end
+
+    local function find_layout_field(layout, field_name)
+        local result = Sem.FieldLayoutMissing
+        for i = 1, #layout.fields do
+            local field = layout.fields[i]
+            local candidate = Sem.FieldLayoutMissing
+            if field.field_name == field_name then candidate = Sem.FieldLayoutFound(field) end
+            result = result:sem_layout_or_else(candidate)
         end
-        return {}
+        return result
+    end
+
+    function Sem.LayoutNamed:sem_layout_field(field_name)
+        return find_layout_field(self, field_name)
+    end
+
+    function Sem.LayoutLocal:sem_layout_field(field_name)
+        return find_layout_field(self, field_name)
     end
 
 
@@ -161,47 +200,111 @@ local function bind_context(T)
         return self.base:sem_layout_storage()
     end
 
-    function Ty.Type:sem_layout_base_type()
+    function Ty.Type:sem_layout_field_base_type()
         return self
     end
 
-    function Ty.TAccess:sem_layout_base_type()
-        return self.base:sem_layout_base_type()
+    function Ty.TPtr:sem_layout_field_base_type()
+        return self.elem:sem_layout_field_base_type()
     end
 
-    function Ty.TLease:sem_layout_base_type()
-        return self.base:sem_layout_base_type()
+    function Ty.TAccess:sem_layout_field_base_type()
+        return self.base:sem_layout_field_base_type()
     end
 
+    function Ty.TLease:sem_layout_field_base_type()
+        return self.base:sem_layout_field_base_type()
+    end
 
-    function Sem.FieldRef:sem_resolve_field_ref(base_ty, env)
-        error("phase lalin_sem_resolve_field_ref: no handler for " .. tostring(schema.classof(self) or type(self)), 2)
+    function Sem.TypeLayoutMissing:sem_layout_resolve_field(field)
+        return field
+    end
+
+    function Sem.TypeLayoutFound:sem_layout_resolve_field(field)
+        return self.layout:sem_layout_field(field.field_name):sem_layout_resolve_field(field)
+    end
+
+    function Sem.FieldLayoutMissing:sem_layout_resolve_field(field)
+        return field
+    end
+
+    function Sem.FieldLayoutFound:sem_layout_resolve_field(field)
+        local resolved = self.layout
+        return Sem.FieldByOffset(resolved.field_name, resolved.offset, resolved.ty, resolved.ty:sem_layout_storage())
     end
 
     function Sem.FieldByOffset:sem_resolve_field_ref(base_ty, env)
-        return { self }
+        return self
     end
 
     function Sem.FieldByName:sem_resolve_field_ref(base_ty, env)
-        local layout = maybe_one(base_ty:sem_layout(env))
-        if layout == nil then return { self } end
-        local resolved = maybe_one(layout:sem_layout_field(self.field_name))
-        if resolved == nil then return { self } end
-        return { Sem.FieldByOffset(resolved.field_name, resolved.offset, resolved.ty, resolved.ty:sem_layout_storage()) }
+        return base_ty:sem_layout(env):sem_layout_resolve_field(self)
+    end
+
+    function Tr.PlaceSurface:sem_layout_value_type()
+        return Sem.LayoutValueUntyped
+    end
+
+    function Tr.PlaceTyped:sem_layout_value_type()
+        return Sem.LayoutValueTyped(self.ty)
+    end
+
+    function Tr.ExprSurface:sem_layout_value_type()
+        return Sem.LayoutValueUntyped
+    end
+
+    function Tr.ExprTyped:sem_layout_value_type()
+        return Sem.LayoutValueTyped(self.ty)
+    end
+
+    function Sem.LayoutValueUntyped:sem_layout_resolve_field(field, env)
+        return field
+    end
+
+    function Sem.LayoutValueTyped:sem_layout_resolve_field(field, env)
+        return field:sem_resolve_field_ref(self.ty:sem_layout_field_base_type(), env)
     end
 
 
-    local function type_of_place(place)
-        local h = place.h
-        local cls = schema.classof(h)
-        if cls == Tr.PlaceTyped then return h.ty end
-        return nil
+    function Sem.LayoutValueUntyped:sem_layout_place_dot(dot, base, env)
+        return { schema.with(dot, { base = base }) }
+    end
+
+    function Sem.LayoutValueTyped:sem_layout_place_dot(dot, base, env)
+        local base_ty = self.ty:sem_layout_field_base_type()
+        local field = Sem.FieldByName(dot.name, base_ty):sem_resolve_field_ref(base_ty, env)
+        return field:sem_layout_place_dot(dot, base)
+    end
+
+    function Sem.LayoutValueUntyped:sem_layout_expr_dot(dot, base, env)
+        return { schema.with(dot, { base = base }) }
+    end
+
+    function Sem.LayoutValueTyped:sem_layout_expr_dot(dot, base, env)
+        local base_ty = self.ty:sem_layout_field_base_type()
+        local field = Sem.FieldByName(dot.name, base_ty):sem_resolve_field_ref(base_ty, env)
+        return field:sem_layout_expr_dot(dot, base)
+    end
+
+    function Sem.FieldByName:sem_layout_place_dot(dot, base)
+        return { schema.with(dot, { base = base }) }
+    end
+
+    function Sem.FieldByOffset:sem_layout_place_dot(dot, base)
+        return { Tr.PlaceField(Tr.PlaceTyped(self.ty), base, self) }
+    end
+
+    function Sem.FieldByName:sem_layout_expr_dot(dot, base)
+        return { schema.with(dot, { base = base }) }
+    end
+
+    function Sem.FieldByOffset:sem_layout_expr_dot(dot, base)
+        return { Tr.ExprField(Tr.ExprTyped(self.ty), base, self) }
     end
 
     function Tr.TypeDecl:sem_layout_resolve()
         return { self }
     end
-
 
     function Tr.Place:sem_layout_resolve(env, target)
         return { self }
@@ -213,28 +316,29 @@ local function bind_context(T)
 
     function Tr.PlaceDot:sem_layout_resolve(env, target)
         local base = only(self.base:sem_layout_resolve(env, target))
-        local base_ty = type_of_place(base)
-        local lookup_ty = base_ty:sem_layout_base_type()
-        if lookup_ty ~= nil and schema.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
-        if lookup_ty ~= nil then
-            local field = only(Sem.FieldByName(self.name, lookup_ty):sem_resolve_field_ref(lookup_ty, env))
-            if schema.classof(field) == Sem.FieldByOffset then return { Tr.PlaceField(Tr.PlaceTyped(field.ty), base, field) } end
-        end
-        return { schema.with(self, { base = base }) }
+        return base.h:sem_layout_value_type():sem_layout_place_dot(self, base, env)
     end
 
     function Tr.PlaceField:sem_layout_resolve(env, target)
         local base = only(self.base:sem_layout_resolve(env, target))
-        local base_ty = type_of_place(base)
-        base_ty = base_ty:sem_layout_base_type()
-        if base_ty ~= nil and schema.classof(base_ty) == Ty.TPtr then base_ty = base_ty.elem end
-        local field = self.field
-        if base_ty ~= nil then field = only(self.field:sem_resolve_field_ref(base_ty, env)) end
+        local field = base.h:sem_layout_value_type():sem_layout_resolve_field(self.field, env)
         return { schema.with(self, { base = base, field = field }) }
     end
 
+    function Tr.IndexBaseExpr:sem_layout_resolve(env, target)
+        return schema.with(self, { base = one(resolve_expr, self.base, env, target) })
+    end
+
+    function Tr.IndexBasePlace:sem_layout_resolve(env, target)
+        return schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)) })
+    end
+
+    function Tr.IndexBaseView:sem_layout_resolve(env, target)
+        return schema.with(self, { view = only(self.view:sem_layout_resolve(env, target)) })
+    end
+
     function Tr.PlaceIndex:sem_layout_resolve(env, target)
-        return { schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)), index = one(resolve_expr, self.index, env, target) }) }
+        return { schema.with(self, { base = self.base:sem_layout_resolve(env, target), index = one(resolve_expr, self.index, env, target) }) }
     end
 
 
@@ -298,7 +402,7 @@ local function bind_context(T)
     end
 
 
-    local function resolve_expr(node, ...)
+    resolve_expr = function(node, ...)
         return node:sem_layout_resolve(...)
     end
 
@@ -408,24 +512,28 @@ local function bind_context(T)
         return { schema.with(self, { addr = one(resolve_expr, self.addr, env, target), expected = one(resolve_expr, self.expected, env, target), replacement = one(resolve_expr, self.replacement, env, target) }) }
     end
 
-    function Tr.ExprSizeOf:sem_layout_resolve(env, target)
-        local layout_api = require("lalin.type_size_align")(T)
-        local result = layout_api.result(self.ty, env, target)
-        if schema.classof(result) == Ty.TypeMemLayoutKnown then
-            local size = tostring(result.layout.size)
-            return { Tr.ExprLit(Tr.ExprTyped(index_ty()), C.LitInt(size)) }
-        end
+    function Ty.TypeMemLayoutKnown:sem_layout_size_expr()
+        return { Tr.ExprLit(Tr.ExprTyped(index_ty()), C.LitInt(tostring(self.layout.size))) }
+    end
+
+    function Ty.TypeMemLayoutUnknown:sem_layout_size_expr()
         return { Tr.ExprLit(Tr.ExprTyped(index_ty()), C.LitInt("0")) }
     end
 
-    function Tr.ExprAlignOf:sem_layout_resolve(env, target)
-        local layout_api = require("lalin.type_size_align")(T)
-        local result = layout_api.result(self.ty, env, target)
-        if schema.classof(result) == Ty.TypeMemLayoutKnown then
-            local align = tostring(result.layout.align)
-            return { Tr.ExprLit(Tr.ExprTyped(index_ty()), C.LitInt(align)) }
-        end
+    function Ty.TypeMemLayoutKnown:sem_layout_align_expr()
+        return { Tr.ExprLit(Tr.ExprTyped(index_ty()), C.LitInt(tostring(self.layout.align))) }
+    end
+
+    function Ty.TypeMemLayoutUnknown:sem_layout_align_expr()
         return { Tr.ExprLit(Tr.ExprTyped(index_ty()), C.LitInt("1")) }
+    end
+
+    function Tr.ExprSizeOf:sem_layout_resolve(env, target)
+        return require("lalin.type_size_align")(T).result(self.ty, env, target):sem_layout_size_expr()
+    end
+
+    function Tr.ExprAlignOf:sem_layout_resolve(env, target)
+        return require("lalin.type_size_align")(T).result(self.ty, env, target):sem_layout_align_expr()
     end
 
     function Tr.ExprIsNull:sem_layout_resolve(env, target)
@@ -438,34 +546,17 @@ local function bind_context(T)
 
     function Tr.ExprDot:sem_layout_resolve(env, target)
         local base = one(resolve_expr, self.base, env, target)
-        local h = base.h
-        local base_ty = nil
-        local h_cls = schema.classof(h)
-        if h_cls == Tr.ExprTyped then base_ty = h.ty end
-        local lookup_ty = base_ty:sem_layout_base_type()
-        if lookup_ty ~= nil and schema.classof(lookup_ty) == Ty.TPtr then lookup_ty = lookup_ty.elem end
-        if lookup_ty ~= nil then
-            local field = only(Sem.FieldByName(self.name, lookup_ty):sem_resolve_field_ref(lookup_ty, env))
-            if schema.classof(field) == Sem.FieldByOffset then return { Tr.ExprField(Tr.ExprTyped(field.ty), base, field) } end
-        end
-        return { schema.with(self, { base = base }) }
+        return base.h:sem_layout_value_type():sem_layout_expr_dot(self, base, env)
     end
 
     function Tr.ExprField:sem_layout_resolve(env, target)
         local base = one(resolve_expr, self.base, env, target)
-        local h = base.h
-        local base_ty = nil
-        local h_cls = schema.classof(h)
-        if h_cls == Tr.ExprTyped then base_ty = h.ty end
-        base_ty = base_ty:sem_layout_base_type()
-        if base_ty ~= nil and schema.classof(base_ty) == Ty.TPtr then base_ty = base_ty.elem end
-        local field = self.field
-        if base_ty ~= nil then field = only(self.field:sem_resolve_field_ref(base_ty, env)) end
+        local field = base.h:sem_layout_value_type():sem_layout_resolve_field(self.field, env)
         return { schema.with(self, { base = base, field = field }) }
     end
 
     function Tr.ExprIndex:sem_layout_resolve(env, target)
-        return { schema.with(self, { base = only(self.base:sem_layout_resolve(env, target)), index = one(resolve_expr, self.index, env, target) }) }
+        return { schema.with(self, { base = self.base:sem_layout_resolve(env, target), index = one(resolve_expr, self.index, env, target) }) }
     end
 
 
@@ -668,7 +759,7 @@ local function bind_context(T)
         resolve_expr = resolve_expr,
         resolve_place = resolve_place,
         resolve_module = resolve_module,
-        field = function(field, base_ty, env) return only(field:sem_resolve_field_ref(base_ty, env or empty_env())) end,
+        field = function(field, base_ty, env) return field:sem_resolve_field_ref(base_ty, env or empty_env()) end,
         expr = function(expr, env, target) return one(resolve_expr, expr, env or empty_env(), target) end,
         place = function(place, env, target) return only(place:sem_layout_resolve(env or empty_env(), target)) end,
         module = function(module, env, target) return only(module:sem_layout_resolve(env, target)) end,

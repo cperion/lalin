@@ -37,6 +37,18 @@ return schema. LalinSem {
     },
   },
   product. LayoutEnv { interned, layouts [many [LalinSem.TypeLayout]], },
+  sum. TypeLayoutLookup {
+    TypeLayoutMissing,
+    TypeLayoutFound { variant_unique, layout [LalinSem.TypeLayout], },
+  },
+  sum. FieldLayoutLookup {
+    FieldLayoutMissing,
+    FieldLayoutFound { variant_unique, layout [LalinSem.FieldLayout], },
+  },
+  sum. LayoutValueType {
+    LayoutValueUntyped,
+    LayoutValueTyped { variant_unique, field. ty [LalinType.Type], },
+  },
   product. ConstFieldValue {
     interned,
     field. name [str],
