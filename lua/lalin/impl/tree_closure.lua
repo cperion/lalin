@@ -1,792 +1,701 @@
--- impl/tree_closure.lua
---
--- Closure conversion — free variable detection, capture layout, and
--- reference rewriting for scalar functions.  ExprClosure (nested lambdas)
--- is deferred as UNSUPPORTED until the full port is complete.
---
--- Ported from lua/lalin/closure_convert.lua (819 lines) — scalar subset.
-
-require("lalin.schema_v2")
-local C   = require("lalin.schema_v2.core")
-local Ty  = require("lalin.schema_v2.type")
-local B   = require("lalin.schema_v2.bind")
+-- Typed closure capture collection and layout methods.
+local T = require("lalin.schema_v2")
+local C = require("lalin.schema_v2.core")
+local Ty = require("lalin.schema_v2.type")
+local B = require("lalin.schema_v2.bind")
 local Sem = require("lalin.schema_v2.sem")
-local Tr  = require("lalin.schema_v2.tree")
+local Tr = require("lalin.schema_v2.tree")
 local asdl = require("lalin.asdl")
+local TypeSizeAlign = require("lalin.type_size_align")
 
-----------------------------------------------------------------------
--- ValueRef closure helper methods (installed once on schema classes)
-----------------------------------------------------------------------
-function B.ValueRef:closure_is_name_ref() return false end
-function B.ValueRefName:closure_is_name_ref() return true end
-function B.ValueRefName:closure_captured_name() return self.name end
-
-----------------------------------------------------------------------
--- Internal mutable input table (replaces old mutation-pattern input)
--- The schema ClosureRewriteInput is immutable; we track state here.
-----------------------------------------------------------------------
-local function new_input(module_name)
-  return {
-    module_name = module_name,
-    owner = "module",
-    counter = 0,
-    helpers = {},
-    scopes = {},
-    capture_env = nil,
-  }
-end
-
-local function fresh_helper_name(input)
-  input.counter = input.counter + 1
-  return "__lalin_closure_" .. (input.module_name or "mod")
-    .. "_" .. (input.owner or "anon")
-    .. "_" .. tostring(input.counter)
-end
-
-local function push_scope(input, entries)
-  input.scopes[#input.scopes + 1] = entries or {}
-end
-
-local function pop_scope(input)
-  input.scopes[#input.scopes] = nil
-end
-
-local function scope_get(input, name)
-  for i = #input.scopes, 1, -1 do
-    local ty = input.scopes[i][name]
-    if ty ~= nil then return ty end
-  end
-  return nil
-end
-
-local function params_scope(params)
+local function copy(xs)
   local out = {}
-  for _, p in ipairs(params or {}) do out[p.name] = p.ty end
+  for i = 1, #xs do out[i] = xs[i] end
   return out
 end
 
-----------------------------------------------------------------------
--- Capture layout: compute offsets for each captured variable
-----------------------------------------------------------------------
-local function compute_capture_layout(captures)
-  local offset = 0
-  for i = 1, #captures do
-    local size = 8  -- all captures are ptr-sized in scalar impl
-    captures[i].offset = offset
-    captures[i].size = size
-    offset = offset + size
-  end
-  return offset
+local function collected(input) return Sem.ClosureCollected(input) end
+
+function Sem.ClosureScopeStack:closure_push(frame)
+  local frames = copy(self.frames)
+  frames[#frames + 1] = frame
+  return Sem.ClosureScopeStack(frames)
 end
 
-----------------------------------------------------------------------
--- Helper: build a load expression for a captured variable via env ptr
-----------------------------------------------------------------------
-local function captured_load(cap)
-  local ctx = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName("__lalin_ctx"))
-  local addr = ctx
-  if cap.offset ~= 0 then
-    addr = Tr.ExprBinary(Tr.ExprSurface, C.BinAdd, ctx,
-      Tr.ExprLit(Tr.ExprSurface, C.LitInt(tostring(cap.offset))))
-  end
-  return Tr.ExprLoad(Tr.ExprSurface, cap.ty,
-    Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, Ty.TPtr(cap.ty), addr))
+function Sem.ClosureScopeStack:closure_pop()
+  local frames = {}
+  for i = 1, #self.frames - 1 do frames[i] = self.frames[i] end
+  return Sem.ClosureScopeStack(frames)
 end
 
-----------------------------------------------------------------------
--- Free variable collection: walk body and collect names not in locals
-----------------------------------------------------------------------
-local _collect_stmts  -- forward
-
-local function collect_expr(expr, input, locals, out, seen)
-  local k = asdl.classof(expr)
-  if k == Tr.ExprRef then
-    if not expr.ref:closure_is_name_ref() then return end
-    local name = expr.ref:closure_captured_name()
-    if locals[name] or seen[name] then return end
-    local ty = scope_get(input, name)
-    if ty ~= nil then
-      seen[name] = true
-      out[#out + 1] = { name = name, ty = ty, offset = 0, size = 0 }
-    end
-  elseif k == Tr.ExprLit then
-    -- no capture
-  elseif k == Tr.ExprUnary or k == Tr.ExprCast or k == Tr.ExprMachineCast
-    or k == Tr.ExprDeref or k == Tr.ExprLen
-    or k == Tr.ExprAddrOf or k == Tr.ExprLoad then
-    if expr.value then collect_expr(expr.value, input, locals, out, seen) end
-    if expr.place then collect_place(expr.place, input, locals, out, seen) end
-    if expr.addr then collect_expr(expr.addr, input, locals, out, seen) end
-  elseif k == Tr.ExprBinary or k == Tr.ExprCompare or k == Tr.ExprLogic then
-    if expr.lhs then collect_expr(expr.lhs, input, locals, out, seen) end
-    if expr.rhs then collect_expr(expr.rhs, input, locals, out, seen) end
-  elseif k == Tr.ExprIntrinsic then
-    for _, a in ipairs(expr.args or {}) do collect_expr(a, input, locals, out, seen) end
-  elseif k == Tr.ExprCall then
-    collect_expr(expr.callee, input, locals, out, seen)
-    for _, a in ipairs(expr.args or {}) do collect_expr(a, input, locals, out, seen) end
-  elseif k == Tr.ExprField or k == Tr.ExprDot then
-    if expr.base then collect_expr(expr.base, input, locals, out, seen) end
-  elseif k == Tr.ExprIndex then
-    if expr.base then collect_index_base(expr.base, input, locals, out, seen) end
-    if expr.index then collect_expr(expr.index, input, locals, out, seen) end
-  elseif k == Tr.ExprAgg then
-    for _, f in ipairs(expr.fields or {}) do
-      if f.value then collect_expr(f.value, input, locals, out, seen) end
-    end
-  elseif k == Tr.ExprCtor then
-    for _, a in ipairs(expr.args or {}) do collect_expr(a, input, locals, out, seen) end
-  elseif k == Tr.ExprArray then
-    for _, e in ipairs(expr.elems or {}) do collect_expr(e, input, locals, out, seen) end
-  elseif k == Tr.ExprIf or k == Tr.ExprSelect then
-    if expr.cond then collect_expr(expr.cond, input, locals, out, seen) end
-    if expr.then_expr then collect_expr(expr.then_expr, input, locals, out, seen) end
-    if expr.else_expr then collect_expr(expr.else_expr, input, locals, out, seen) end
-  elseif k == Tr.ExprSwitch then
-    if expr.value then collect_expr(expr.value, input, locals, out, seen) end
-    for _, arm in ipairs(expr.arms or {}) do
-      local inner = {}; for kk, vv in pairs(locals) do inner[kk] = vv end
-      _collect_stmts(arm.body, input, inner, out, seen)
-      if arm.result then collect_expr(arm.result, input, inner, out, seen) end
-    end
-    if expr.default_body then
-      local inner = {}; for kk, vv in pairs(locals) do inner[kk] = vv end
-      _collect_stmts(expr.default_body, input, inner, out, seen)
-    end
-    if expr.default_expr then
-      local inner = {}; for kk, vv in pairs(locals) do inner[kk] = vv end
-      collect_expr(expr.default_expr, input, inner, out, seen)
-    end
-  elseif k == Tr.ExprBlock then
-    local inner = {}; for kk, vv in pairs(locals) do inner[kk] = vv end
-    _collect_stmts(expr.stmts, input, inner, out, seen)
-    if expr.result then collect_expr(expr.result, input, inner, out, seen) end
-  elseif k == Tr.ExprView then
-    if expr.view then collect_view(expr.view, input, locals, out, seen) end
-  elseif k == Tr.ExprAtomicLoad then
-    if expr.addr then collect_expr(expr.addr, input, locals, out, seen) end
-  elseif k == Tr.ExprAtomicRmw then
-    if expr.addr then collect_expr(expr.addr, input, locals, out, seen) end
-    if expr.value then collect_expr(expr.value, input, locals, out, seen) end
-  elseif k == Tr.ExprAtomicCas then
-    if expr.addr then collect_expr(expr.addr, input, locals, out, seen) end
-    if expr.expected then collect_expr(expr.expected, input, locals, out, seen) end
-    if expr.replacement then collect_expr(expr.replacement, input, locals, out, seen) end
-  elseif k == Tr.ExprClosure then
-    -- Nested closures: record as unsupported later
-  elseif k == Tr.ExprNull or k == Tr.ExprSizeOf or k == Tr.ExprAlignOf or k == Tr.ExprIsNull then
-    -- no captures
-  end
+function Sem.ClosureScopeStack:closure_bind(binding)
+  local frames = copy(self.frames)
+  local top = frames[#frames] or Sem.ClosureScopeFrame({})
+  local bindings = copy(top.bindings)
+  bindings[#bindings + 1] = Sem.ClosureBinding(binding)
+  frames[#frames > 0 and #frames or 1] = Sem.ClosureScopeFrame(bindings)
+  return Sem.ClosureScopeStack(frames)
 end
 
-local function collect_place(place, input, locals, out, seen)
-  local k = asdl.classof(place)
-  if k == Tr.PlaceRef then
-    if place.ref:closure_is_name_ref() then
-      local fake_expr = Tr.ExprRef(Tr.ExprSurface, place.ref)
-      collect_expr(fake_expr, input, locals, out, seen)
-    end
-  elseif k == Tr.PlaceDeref or k == Tr.PlaceDot or k == Tr.PlaceField then
-    if place.base then collect_place(place.base, input, locals, out, seen) end
-  elseif k == Tr.PlaceIndex then
-    if place.base then collect_index_base(place.base, input, locals, out, seen) end
-    if place.index then collect_expr(place.index, input, locals, out, seen) end
-  end
-end
-
-local function collect_index_base(ib, input, locals, out, seen)
-  local k = asdl.classof(ib)
-  if k == Tr.IndexBaseExpr then
-    if ib.base then collect_expr(ib.base, input, locals, out, seen) end
-  elseif k == Tr.IndexBasePlace then
-    if ib.base then collect_place(ib.base, input, locals, out, seen) end
-  elseif k == Tr.IndexBaseView then
-    if ib.view then collect_view(ib.view, input, locals, out, seen) end
-  end
-end
-
-local function collect_view(view, input, locals, out, seen)
-  local k = asdl.classof(view)
-  if k == Tr.ViewFromExpr then
-    if view.base then collect_expr(view.base, input, locals, out, seen) end
-  elseif k == Tr.ViewContiguous then
-    if view.data then collect_expr(view.data, input, locals, out, seen) end
-    if view.len then collect_expr(view.len, input, locals, out, seen) end
-  elseif k == Tr.ViewStrided then
-    if view.data then collect_expr(view.data, input, locals, out, seen) end
-    if view.len then collect_expr(view.len, input, locals, out, seen) end
-    if view.stride then collect_expr(view.stride, input, locals, out, seen) end
-  elseif k == Tr.ViewRestrided or k == Tr.ViewRowBase then
-    if view.base then collect_view(view.base, input, locals, out, seen) end
-    if view.stride then collect_expr(view.stride, input, locals, out, seen) end
-    if view.row_offset then collect_expr(view.row_offset, input, locals, out, seen) end
-  elseif k == Tr.ViewWindow then
-    if view.base then collect_view(view.base, input, locals, out, seen) end
-    if view.start then collect_expr(view.start, input, locals, out, seen) end
-    if view.len then collect_expr(view.len, input, locals, out, seen) end
-  elseif k == Tr.ViewInterleaved then
-    if view.data then collect_expr(view.data, input, locals, out, seen) end
-    if view.len then collect_expr(view.len, input, locals, out, seen) end
-    if view.stride then collect_expr(view.stride, input, locals, out, seen) end
-    if view.lane then collect_expr(view.lane, input, locals, out, seen) end
-  elseif k == Tr.ViewInterleavedView then
-    if view.base then collect_view(view.base, input, locals, out, seen) end
-    if view.stride then collect_expr(view.stride, input, locals, out, seen) end
-    if view.lane then collect_expr(view.lane, input, locals, out, seen) end
-  end
-end
-
-local function collect_stmt(stmt, input, locals, out, seen)
-  local k = asdl.classof(stmt)
-  if k == Tr.StmtLet or k == Tr.StmtVar then
-    if stmt.init then collect_expr(stmt.init, input, locals, out, seen) end
-    locals[stmt.binding.name] = stmt.binding.ty
-  elseif k == Tr.StmtSet then
-    if stmt.place then collect_place(stmt.place, input, locals, out, seen) end
-    if stmt.value then collect_expr(stmt.value, input, locals, out, seen) end
-  elseif k == Tr.StmtExpr then
-    if stmt.expr then collect_expr(stmt.expr, input, locals, out, seen) end
-  elseif k == Tr.StmtAssert then
-    if stmt.cond then collect_expr(stmt.cond, input, locals, out, seen) end
-  elseif k == Tr.StmtReturnValue then
-    if stmt.value then collect_expr(stmt.value, input, locals, out, seen) end
-  elseif k == Tr.StmtYieldValue then
-    if stmt.value then collect_expr(stmt.value, input, locals, out, seen) end
-  elseif k == Tr.StmtIf then
-    if stmt.cond then collect_expr(stmt.cond, input, locals, out, seen) end
-    local a = {}; for kk, vv in pairs(locals) do a[kk] = vv end
-    _collect_stmts(stmt.then_body, input, a, out, seen)
-    local b = {}; for kk, vv in pairs(locals) do b[kk] = vv end
-    _collect_stmts(stmt.else_body, input, b, out, seen)
-  elseif k == Tr.StmtSwitch then
-    if stmt.value then collect_expr(stmt.value, input, locals, out, seen) end
-    for _, arm in ipairs(stmt.arms or {}) do
-      local inner = {}; for kk, vv in pairs(locals) do inner[kk] = vv end
-      _collect_stmts(arm.body, input, inner, out, seen)
-    end
-    if stmt.default_body then
-      local inner = {}; for kk, vv in pairs(locals) do inner[kk] = vv end
-      _collect_stmts(stmt.default_body, input, inner, out, seen)
-    end
-  elseif k == Tr.StmtJump or k == Tr.StmtJumpCont then
-    for _, a in ipairs(stmt.args or {}) do
-      if a.value then collect_expr(a.value, input, locals, out, seen) end
-    end
-  elseif k == Tr.StmtAtomicStore then
-    if stmt.addr then collect_expr(stmt.addr, input, locals, out, seen) end
-    if stmt.value then collect_expr(stmt.value, input, locals, out, seen) end
-  elseif k == Tr.StmtControl then
-    if stmt.region then
-      for _, blk in ipairs(stmt.region.blocks or {}) do
-        local inner = {}; for kk, vv in pairs(locals) do inner[kk] = vv end
-        _collect_stmts(blk.body, input, inner, out, seen)
-      end
+function Sem.ClosureScopeStack:closure_lookup_name(name)
+  for i = #self.frames, 1, -1 do
+    local bindings = self.frames[i].bindings
+    for j = #bindings, 1, -1 do
+      if bindings[j].binding.name == name then return Sem.ClosureLookupFound(bindings[j]) end
     end
   end
+  return Sem.ClosureLookupMissing
 end
 
-_collect_stmts = function(stmts, input, locals, out, seen)
-  for _, s in ipairs(stmts or {}) do
-    collect_stmt(s, input, locals, out, seen)
+function Sem.ClosureScopeStack:closure_lookup_capture(name)
+  local local_frame = self.frames[#self.frames]
+  if local_frame then
+    for j = #local_frame.bindings, 1, -1 do
+      if local_frame.bindings[j].binding.name == name then return Sem.ClosureLookupMissing end
+    end
   end
-end
-
-----------------------------------------------------------------------
--- Rewrite helpers: produce new nodes with captured refs rewritten
-----------------------------------------------------------------------
-local _rewrite_stmts  -- forward
-
-local function rewrite_expr(expr, input)
-  local k = asdl.classof(expr)
-  if k == Tr.ExprRef then
-    if expr.ref:closure_is_name_ref() and input.capture_env ~= nil then
-      local name = expr.ref:closure_captured_name()
-      local cap = input.capture_env[name]
-      if cap ~= nil and scope_get(input, name) == nil then
-        return captured_load(cap)
-      end
+  for i = #self.frames - 1, 1, -1 do
+    local bindings = self.frames[i].bindings
+    for j = #bindings, 1, -1 do
+      if bindings[j].binding.name == name then return Sem.ClosureLookupFound(bindings[j]) end
     end
-    return expr
-  elseif k == Tr.ExprLit or k == Tr.ExprNull
-    or k == Tr.ExprSizeOf or k == Tr.ExprAlignOf or k == Tr.ExprIsNull then
-    return expr
-  elseif k == Tr.ExprUnary then
-    local v = rewrite_expr(expr.value, input)
-    if v == expr.value then return expr end
-    return asdl.with(expr, { value = v })
-  elseif k == Tr.ExprBinary or k == Tr.ExprCompare or k == Tr.ExprLogic then
-    local lhs = rewrite_expr(expr.lhs, input)
-    local rhs = rewrite_expr(expr.rhs, input)
-    if lhs == expr.lhs and rhs == expr.rhs then return expr end
-    return asdl.with(expr, { lhs = lhs, rhs = rhs })
-  elseif k == Tr.ExprCast or k == Tr.ExprMachineCast
-    or k == Tr.ExprDeref or k == Tr.ExprLen or k == Tr.ExprLoad then
-    local v = rewrite_expr(expr.value or expr.addr, input)
-    if v == (expr.value or expr.addr) then return expr end
-    if expr.value ~= nil then return asdl.with(expr, { value = v }) end
-    return asdl.with(expr, { addr = v })
-  elseif k == Tr.ExprIntrinsic then
-    local changed = false
-    local args = {}
-    for i, a in ipairs(expr.args or {}) do
-      args[i] = rewrite_expr(a, input)
-      if args[i] ~= expr.args[i] then changed = true end
-    end
-    if not changed then return expr end
-    return asdl.with(expr, { args = args })
-  elseif k == Tr.ExprCall then
-    local callee = rewrite_expr(expr.callee, input)
-    local changed = callee ~= expr.callee
-    local args = {}
-    for i, a in ipairs(expr.args or {}) do
-      args[i] = rewrite_expr(a, input)
-      if args[i] ~= expr.args[i] then changed = true end
-    end
-    if not changed then return expr end
-    return asdl.with(expr, { callee = callee, args = args })
-  elseif k == Tr.ExprField or k == Tr.ExprDot then
-    local base = rewrite_expr(expr.base, input)
-    if base == expr.base then return expr end
-    return asdl.with(expr, { base = base })
-  elseif k == Tr.ExprIndex then
-    local base = rewrite_index_base(expr.base, input)
-    local idx = rewrite_expr(expr.index, input)
-    if base == expr.base and idx == expr.index then return expr end
-    return asdl.with(expr, { base = base, index = idx })
-  elseif k == Tr.ExprAgg then
-    local changed = false
-    local fields = {}
-    for i, f in ipairs(expr.fields or {}) do
-      local v = rewrite_expr(f.value, input)
-      if v ~= f.value then changed = true end
-      fields[i] = changed and asdl.with(f, { value = v }) or f
-    end
-    if not changed then return expr end
-    return asdl.with(expr, { fields = fields })
-  elseif k == Tr.ExprCtor then
-    local changed = false
-    local args = {}
-    for i, a in ipairs(expr.args or {}) do
-      args[i] = rewrite_expr(a, input)
-      if args[i] ~= expr.args[i] then changed = true end
-    end
-    if not changed then return expr end
-    return asdl.with(expr, { args = args })
-  elseif k == Tr.ExprArray then
-    local changed = false
-    local elems = {}
-    for i, e in ipairs(expr.elems or {}) do
-      elems[i] = rewrite_expr(e, input)
-      if elems[i] ~= expr.elems[i] then changed = true end
-    end
-    if not changed then return expr end
-    return asdl.with(expr, { elems = elems })
-  elseif k == Tr.ExprIf or k == Tr.ExprSelect then
-    local cond = rewrite_expr(expr.cond, input)
-    local then_e = rewrite_expr(expr.then_expr, input)
-    local else_e = rewrite_expr(expr.else_expr, input)
-    if cond == expr.cond and then_e == expr.then_expr and else_e == expr.else_expr then
-      return expr
-    end
-    return asdl.with(expr, { cond = cond, then_expr = then_e, else_expr = else_e })
-  elseif k == Tr.ExprSwitch then
-    local val = rewrite_expr(expr.value, input)
-    local arms = {}
-    for i, arm in ipairs(expr.arms or {}) do
-      local body, _ = _rewrite_stmts(arm.body, input)
-      local r = arm.result and rewrite_expr(arm.result, input) or nil
-      arms[i] = asdl.with(arm, { body = body, result = r })
-    end
-    local default_body, _ = _rewrite_stmts(expr.default_body or {}, input)
-    local default_expr = expr.default_expr and rewrite_expr(expr.default_expr, input) or nil
-    return asdl.with(expr, { value = val, arms = arms, default_body = default_body, default_expr = default_expr })
-  elseif k == Tr.ExprBlock then
-    local stmts, _ = _rewrite_stmts(expr.stmts, input)
-    local result = rewrite_expr(expr.result, input)
-    return asdl.with(expr, { stmts = stmts, result = result })
-  elseif k == Tr.ExprView then
-    local view = rewrite_view(expr.view, input)
-    if view == expr.view then return expr end
-    return asdl.with(expr, { view = view })
-  elseif k == Tr.ExprAddrOf then
-    local place = rewrite_place(expr.place, input)
-    if place == expr.place then return expr end
-    return asdl.with(expr, { place = place })
-  elseif k == Tr.ExprAtomicLoad then
-    local addr = rewrite_expr(expr.addr, input)
-    if addr == expr.addr then return expr end
-    return asdl.with(expr, { addr = addr })
-  elseif k == Tr.ExprAtomicRmw then
-    local addr = rewrite_expr(expr.addr, input)
-    local val = rewrite_expr(expr.value, input)
-    if addr == expr.addr and val == expr.value then return expr end
-    return asdl.with(expr, { addr = addr, value = val })
-  elseif k == Tr.ExprAtomicCas then
-    local addr = rewrite_expr(expr.addr, input)
-    local expected = rewrite_expr(expr.expected, input)
-    local replacement = rewrite_expr(expr.replacement, input)
-    if addr == expr.addr and expected == expr.expected and replacement == expr.replacement then
-      return expr
-    end
-    return asdl.with(expr, { addr = addr, expected = expected, replacement = replacement })
-  elseif k == Tr.ExprClosure then
-    error("UNSUPPORTED: nested closures (ExprClosure) not yet implemented in closure_convert", 2)
-  elseif k == Tr.ExprControl then
-    local blocks = {}
-    for i, blk in ipairs(expr.region.blocks or {}) do
-      local body, _ = _rewrite_stmts(blk.body, input)
-      blocks[i] = asdl.with(blk, { body = body })
-    end
-    return asdl.with(expr, { region = asdl.with(expr.region, { blocks = blocks }) })
   end
-  return expr
+  return Sem.ClosureLookupMissing
 end
 
-local function rewrite_place(place, input)
-  local k = asdl.classof(place)
-  if k == Tr.PlaceRef then
-    if place.ref:closure_is_name_ref() and input.capture_env ~= nil then
-      local name = place.ref:closure_captured_name()
-      local cap = input.capture_env[name]
-      -- Places can't be captured as l-values in this scalar impl;
-      -- we report via expr rewrite. For now pass-through.
-    end
-    return place
-  elseif k == Tr.PlaceDeref or k == Tr.PlaceDot or k == Tr.PlaceField then
-    local base = rewrite_place(place.base, input)
-    if base == place.base then return place end
-    return asdl.with(place, { base = base })
-  elseif k == Tr.PlaceIndex then
-    local base = rewrite_index_base(place.base, input)
-    local idx = rewrite_expr(place.index, input)
-    if base == place.base and idx == place.index then return place end
-    return asdl.with(place, { base = base, index = idx })
+function Sem.ClosureCaptureSet:closure_add(binding)
+  for i = 1, #self.candidates do
+    if self.candidates[i].binding.binding == binding.binding then return self end
   end
-  return place
+  local candidates = copy(self.candidates)
+  candidates[#candidates + 1] = Sem.ClosureCaptureCandidate(binding)
+  return Sem.ClosureCaptureSet(candidates)
 end
 
-local function rewrite_index_base(ib, input)
-  local k = asdl.classof(ib)
-  if k == Tr.IndexBaseExpr then
-    local base = rewrite_expr(ib.base, input)
-    if base == ib.base then return ib end
-    return asdl.with(ib, { base = base })
-  elseif k == Tr.IndexBasePlace then
-    local base = rewrite_place(ib.base, input)
-    if base == ib.base then return ib end
-    return asdl.with(ib, { base = base })
-  elseif k == Tr.IndexBaseView then
-    local view = rewrite_view(ib.view, input)
-    if view == ib.view then return ib end
-    return asdl.with(ib, { view = view })
-  end
-  return ib
+function Sem.ClosureCollected:closure_continue(node) return node:closure_collect(self.input) end
+function Sem.ClosureCollectTransitioned:closure_continue(node) return node:closure_collect(self.input) end
+function Sem.ClosureCollectUnsupported:closure_continue() return self end
+function Sem.ClosureCollected:closure_input() return self.input end
+function Sem.ClosureCollectTransitioned:closure_input() return self.input end
+function Sem.ClosureCollectUnsupported:closure_input() return self.input end
+
+local function collect_many(nodes, input)
+  local result = collected(input)
+  for i = 1, #nodes do result = result:closure_continue(nodes[i]) end
+  return result
 end
 
-local function rewrite_view(view, input)
-  local k = asdl.classof(view)
-  if k == Tr.ViewFromExpr then
-    local base = rewrite_expr(view.base, input)
-    if base == view.base then return view end
-    return asdl.with(view, { base = base })
-  elseif k == Tr.ViewContiguous then
-    local data = rewrite_expr(view.data, input)
-    local len = rewrite_expr(view.len, input)
-    if data == view.data and len == view.len then return view end
-    return asdl.with(view, { data = data, len = len })
-  elseif k == Tr.ViewStrided then
-    local data = rewrite_expr(view.data, input)
-    local len = rewrite_expr(view.len, input)
-    local stride = rewrite_expr(view.stride, input)
-    if data == view.data and len == view.len and stride == view.stride then return view end
-    return asdl.with(view, { data = data, len = len, stride = stride })
-  elseif k == Tr.ViewRestrided or k == Tr.ViewRowBase then
-    local base = rewrite_view(view.base, input)
-    local extra = view.stride or view.row_offset
-    local extra2 = rewrite_expr(extra, input)
-    if base == view.base and extra2 == extra then return view end
-    if view.stride then return asdl.with(view, { base = base, stride = extra2 }) end
-    return asdl.with(view, { base = base, row_offset = extra2 })
-  elseif k == Tr.ViewWindow then
-    local base = rewrite_view(view.base, input)
-    local start = rewrite_expr(view.start, input)
-    local len = rewrite_expr(view.len, input)
-    if base == view.base and start == view.start and len == view.len then return view end
-    return asdl.with(view, { base = base, start = start, len = len })
-  elseif k == Tr.ViewInterleaved then
-    local data = rewrite_expr(view.data, input)
-    local len = rewrite_expr(view.len, input)
-    local stride = rewrite_expr(view.stride, input)
-    local lane = rewrite_expr(view.lane, input)
-    if data == view.data and len == view.len and stride == view.stride and lane == view.lane then
-      return view
-    end
-    return asdl.with(view, { data = data, len = len, stride = stride, lane = lane })
-  elseif k == Tr.ViewInterleavedView then
-    local base = rewrite_view(view.base, input)
-    local stride = rewrite_expr(view.stride, input)
-    local lane = rewrite_expr(view.lane, input)
-    if base == view.base and stride == view.stride and lane == view.lane then return view end
-    return asdl.with(view, { base = base, stride = stride, lane = lane })
-  end
-  return view
+local function collect_exprs(nodes, input) return collect_many(nodes, input) end
+local function collect_stmts(nodes, input) return collect_many(nodes, input) end
+
+local function isolated_input(input, captures)
+  return Sem.ClosureCollectInput(input.scopes, captures)
+end
+function Sem.ClosureCollected:closure_collect_isolated(nodes)
+  local branch = collect_many(nodes, self.input)
+  return branch:closure_restore_collect_scopes(self.input.scopes)
+end
+function Sem.ClosureCollectTransitioned:closure_collect_isolated(nodes)
+  local branch = collect_many(nodes, self.input)
+  return branch:closure_restore_collect_scopes(self.input.scopes)
+end
+function Sem.ClosureCollectUnsupported:closure_collect_isolated() return self end
+function Sem.ClosureCollected:closure_collect_scoped(nodes,scopes) local branch=collect_many(nodes,Sem.ClosureCollectInput(scopes,self.input.captures)); return branch:closure_restore_collect_scopes(self.input.scopes) end
+function Sem.ClosureCollectTransitioned:closure_collect_scoped(nodes,scopes) local branch=collect_many(nodes,Sem.ClosureCollectInput(scopes,self.input.captures)); return branch:closure_restore_collect_scopes(self.input.scopes) end
+function Sem.ClosureCollectUnsupported:closure_collect_scoped() return self end
+function Sem.ClosureCollected:closure_collect_default(stmts,expr) local outer=self.input.scopes; local result=collect_stmts(stmts,self.input):closure_continue(expr); return result:closure_restore_collect_scopes(outer) end
+function Sem.ClosureCollectTransitioned:closure_collect_default(stmts,expr) local outer=self.input.scopes; local result=collect_stmts(stmts,self.input):closure_continue(expr); return result:closure_restore_collect_scopes(outer) end
+function Sem.ClosureCollectUnsupported:closure_collect_default() return self end
+function Sem.ClosureCollected:closure_restore_collect_scopes(scopes) return collected(isolated_input(Sem.ClosureCollectInput(scopes, self.input.captures), self.input.captures)) end
+function Sem.ClosureCollectTransitioned:closure_restore_collect_scopes(scopes) return collected(Sem.ClosureCollectInput(scopes, self.input.captures)) end
+function Sem.ClosureCollectUnsupported:closure_restore_collect_scopes() return self end
+
+function B.ValueRefName:closure_lookup(input) return input.scopes:closure_lookup_capture(self.name) end
+function B.ValueRefPath:closure_lookup() return Sem.ClosureLookupMissing end
+function B.ValueRefBinding:closure_lookup() return Sem.ClosureLookupMissing end
+function Sem.ClosureLookupMissing:closure_collect_reference(input) return collected(input) end
+function Sem.ClosureLookupFound:closure_collect_reference(input)
+  return collected(Sem.ClosureCollectInput(input.scopes, input.captures:closure_add(self.binding)))
 end
 
-local function rewrite_stmt(stmt, input)
-  local k = asdl.classof(stmt)
-  if k == Tr.StmtLet or k == Tr.StmtVar then
-    local init = rewrite_expr(stmt.init, input)
-    if #input.scopes > 0 then input.scopes[#input.scopes][stmt.binding.name] = stmt.binding.ty end
-    if init == stmt.init then return stmt end
-    return asdl.with(stmt, { init = init })
-  elseif k == Tr.StmtSet then
-    local place = rewrite_place(stmt.place, input)
-    local val = rewrite_expr(stmt.value, input)
-    if place == stmt.place and val == stmt.value then return stmt end
-    return asdl.with(stmt, { place = place, value = val })
-  elseif k == Tr.StmtExpr then
-    local expr = rewrite_expr(stmt.expr, input)
-    if expr == stmt.expr then return stmt end
-    return asdl.with(stmt, { expr = expr })
-  elseif k == Tr.StmtAssert then
-    local cond = rewrite_expr(stmt.cond, input)
-    if cond == stmt.cond then return stmt end
-    return asdl.with(stmt, { cond = cond })
-  elseif k == Tr.StmtReturnValue then
-    local val = rewrite_expr(stmt.value, input)
-    if val == stmt.value then return stmt end
-    return asdl.with(stmt, { value = val })
-  elseif k == Tr.StmtYieldValue then
-    local val = rewrite_expr(stmt.value, input)
-    if val == stmt.value then return stmt end
-    return asdl.with(stmt, { value = val })
-  elseif k == Tr.StmtIf then
-    local cond = rewrite_expr(stmt.cond, input)
-    local then_body, _ = _rewrite_stmts(stmt.then_body, input)
-    local else_body, _ = _rewrite_stmts(stmt.else_body, input)
-    return asdl.with(stmt, { cond = cond, then_body = then_body, else_body = else_body })
-  elseif k == Tr.StmtSwitch then
-    local val = rewrite_expr(stmt.value, input)
-    local arms = {}
-    for i, arm in ipairs(stmt.arms or {}) do
-      local body, _ = _rewrite_stmts(arm.body, input)
-      arms[i] = asdl.with(arm, { body = body })
-    end
-    local default_body, _ = _rewrite_stmts(stmt.default_body or {}, input)
-    return asdl.with(stmt, { value = val, arms = arms, default_body = default_body })
-  elseif k == Tr.StmtJump or k == Tr.StmtJumpCont then
-    local changed = false
-    local args = {}
-    for i, a in ipairs(stmt.args or {}) do
-      local v = rewrite_expr(a.value, input)
-      if v ~= a.value then changed = true end
-      args[i] = changed and asdl.with(a, { value = v }) or a
-    end
-    if not changed then return stmt end
-    return asdl.with(stmt, { args = args })
-  elseif k == Tr.StmtAtomicStore then
-    local addr = rewrite_expr(stmt.addr, input)
-    local val = rewrite_expr(stmt.value, input)
-    if addr == stmt.addr and val == stmt.value then return stmt end
-    return asdl.with(stmt, { addr = addr, value = val })
-  elseif k == Tr.StmtControl then
-    local blocks = {}
-    for i, blk in ipairs(stmt.region.blocks or {}) do
-      local body, _ = _rewrite_stmts(blk.body, input)
-      blocks[i] = asdl.with(blk, { body = body })
-    end
-    return asdl.with(stmt, { region = asdl.with(stmt.region, { blocks = blocks }) })
-  end
-  return stmt
+function Tr.ExprLit:closure_collect(input) return collected(input) end
+function Tr.ExprRef:closure_collect(input) return self.ref:closure_lookup(input):closure_collect_reference(input) end
+function Tr.ExprDot:closure_collect(input) return self.base:closure_collect(input) end
+function Tr.ExprUnary:closure_collect(input) return self.value:closure_collect(input) end
+function Tr.ExprBinary:closure_collect(input) return self.lhs:closure_collect(input):closure_continue(self.rhs) end
+function Tr.ExprCompare:closure_collect(input) return self.lhs:closure_collect(input):closure_continue(self.rhs) end
+function Tr.ExprLogic:closure_collect(input) return self.lhs:closure_collect(input):closure_continue(self.rhs) end
+function Tr.ExprCast:closure_collect(input) return self.value:closure_collect(input) end
+function Tr.ExprMachineCast:closure_collect(input) return self.value:closure_collect(input) end
+function Tr.ExprIntrinsic:closure_collect(input) return collect_exprs(self.args, input) end
+function Tr.ExprAddrOf:closure_collect(input) return self.place:closure_collect(input) end
+function Tr.ExprDeref:closure_collect(input) return self.value:closure_collect(input) end
+function Tr.ExprCall:closure_collect(input) return self.callee:closure_collect(input):closure_continue_many(self.args) end
+function Tr.ExprLen:closure_collect(input) return self.value:closure_collect(input) end
+function Tr.ExprField:closure_collect(input) return self.base:closure_collect(input) end
+function Tr.ExprIndex:closure_collect(input) return self.base:closure_collect(input):closure_continue(self.index) end
+function Tr.ExprAgg:closure_collect(input) return collect_many(self.fields, input) end
+function Tr.ExprArray:closure_collect(input) return collect_exprs(self.elems, input) end
+function Tr.ExprIf:closure_collect(input) return self.cond:closure_collect(input):closure_continue(self.then_expr):closure_continue(self.else_expr) end
+function Tr.ExprSelect:closure_collect(input) return self.cond:closure_collect(input):closure_continue(self.then_expr):closure_continue(self.else_expr) end
+function Tr.ExprSwitch:closure_collect(input)
+  local result = self.value:closure_collect(input)
+  for i = 1, #self.arms do result = result:closure_collect_isolated({ self.arms[i] }) end
+  for i = 1, #self.variant_arms do result = result:closure_collect_isolated({ self.variant_arms[i] }) end
+  return result:closure_collect_default(self.default_body,self.default_expr)
+end
+function Tr.ExprControl:closure_collect(input) return self.region:closure_collect(input) end
+function Tr.ExprBlock:closure_collect(input) local result=collect_stmts(self.stmts,input):closure_continue(self.result); return result:closure_restore_collect_scopes(input.scopes) end
+function Tr.ExprClosure:closure_collect(input) return Sem.ClosureCollectUnsupported(input, "nested ExprClosure capture collection is unsupported") end
+function Tr.ExprView:closure_collect(input) return self.view:closure_collect(input) end
+function Tr.ExprLoad:closure_collect(input) return self.addr:closure_collect(input) end
+function Tr.ExprAtomicLoad:closure_collect(input) return self.addr:closure_collect(input) end
+function Tr.ExprAtomicRmw:closure_collect(input) return self.addr:closure_collect(input):closure_continue(self.value) end
+function Tr.ExprAtomicCas:closure_collect(input) return self.addr:closure_collect(input):closure_continue(self.expected):closure_continue(self.replacement) end
+function Tr.ExprCtor:closure_collect(input) return collect_exprs(self.args, input) end
+function Tr.ExprNull:closure_collect(input) return collected(input) end
+function Tr.ExprSizeOf:closure_collect(input) return collected(input) end
+function Tr.ExprAlignOf:closure_collect(input) return collected(input) end
+function Tr.ExprIsNull:closure_collect(input) return self.value:closure_collect(input) end
+
+function Sem.ClosureCollectResult:closure_continue_many(nodes)
+  local result = self
+  for i = 1, #nodes do result = result:closure_continue(nodes[i]) end
+  return result
 end
 
-_rewrite_stmts = function(stmts, input)
-  local out = {}
-  for i, s in ipairs(stmts or {}) do
-    out[i] = rewrite_stmt(s, input)
-  end
-  return out
+function Tr.FieldInit:closure_collect(input) return self.value:closure_collect(input) end
+function Tr.SwitchKeyInt:closure_collect(input) return collected(input) end
+function Tr.SwitchKeyBool:closure_collect(input) return collected(input) end
+function Tr.SwitchKeyName:closure_collect(input) return collected(input) end
+function Tr.SwitchKeyExpr:closure_collect(input) return self.expr:closure_collect(input) end
+local function collect_bind_values(scopes,values,site)
+  local bound=scopes
+  for i=1,#values do local value=values[i]; bound=bound:closure_bind(B.Binding(C.Id("closure:"..site..":"..value.name..":"..tostring(i)),value.name,value.ty,B.BindingRoleLocalValue)) end
+  return bound
 end
+function Tr.SwitchStmtArm:closure_collect(input) return self.key:closure_collect(input):closure_continue_many(self.body) end
+function Tr.SwitchExprArm:closure_collect(input) return self.key:closure_collect(input):closure_continue_many(self.body):closure_continue(self.result) end
+function Tr.SwitchVariantStmtArm:closure_collect(input) return collect_stmts(self.body,Sem.ClosureCollectInput(collect_bind_values(input.scopes,self.binds,"switch-stmt"),input.captures)) end
+function Tr.SwitchVariantExprArm:closure_collect(input) return collect_stmts(self.body,Sem.ClosureCollectInput(collect_bind_values(input.scopes,self.binds,"switch-expr"),input.captures)):closure_continue(self.result) end
+
+function Tr.PlaceRef:closure_collect(input) return self.ref:closure_lookup(input):closure_collect_reference(input) end
+function Tr.PlaceDeref:closure_collect(input) return self.base:closure_collect(input) end
+function Tr.PlaceDot:closure_collect(input) return self.base:closure_collect(input) end
+function Tr.PlaceField:closure_collect(input) return self.base:closure_collect(input) end
+function Tr.PlaceIndex:closure_collect(input) return self.base:closure_collect(input):closure_continue(self.index) end
+
+function Tr.IndexBaseExpr:closure_collect(input) return self.base:closure_collect(input) end
+function Tr.IndexBasePlace:closure_collect(input) return self.base:closure_collect(input) end
+function Tr.IndexBaseView:closure_collect(input) return self.view:closure_collect(input) end
+
+function Tr.ViewFromExpr:closure_collect(input) return self.base:closure_collect(input) end
+function Tr.ViewContiguous:closure_collect(input) return self.data:closure_collect(input):closure_continue(self.len) end
+function Tr.ViewStrided:closure_collect(input) return self.data:closure_collect(input):closure_continue(self.len):closure_continue(self.stride) end
+function Tr.ViewRestrided:closure_collect(input) return self.base:closure_collect(input):closure_continue(self.stride) end
+function Tr.ViewWindow:closure_collect(input) return self.base:closure_collect(input):closure_continue(self.start):closure_continue(self.len) end
+function Tr.ViewRowBase:closure_collect(input) return self.base:closure_collect(input):closure_continue(self.row_offset) end
+function Tr.ViewInterleaved:closure_collect(input) return self.data:closure_collect(input):closure_continue(self.len):closure_continue(self.stride):closure_continue(self.lane) end
+function Tr.ViewInterleavedView:closure_collect(input) return self.base:closure_collect(input):closure_continue(self.stride):closure_continue(self.lane) end
+
+local function bind_after_init(stmt, input)
+  local init_result = stmt.init:closure_collect(input)
+  local next_input = init_result:closure_input()
+  local scopes = next_input.scopes:closure_bind(stmt.binding)
+  local transitioned = Sem.ClosureCollectInput(scopes, next_input.captures)
+  return Sem.ClosureCollectTransitioned(transitioned, Sem.ClosureScopeTransition(scopes))
+end
+
+function Tr.StmtLet:closure_collect(input) return bind_after_init(self, input) end
+function Tr.StmtVar:closure_collect(input) return bind_after_init(self, input) end
+function Tr.StmtSet:closure_collect(input) return self.place:closure_collect(input):closure_continue(self.value) end
+function Tr.StmtAtomicStore:closure_collect(input) return self.addr:closure_collect(input):closure_continue(self.value) end
+function Tr.StmtAtomicFence:closure_collect(input) return collected(input) end
+function Tr.StmtExpr:closure_collect(input) return self.expr:closure_collect(input) end
+function Tr.StmtAssert:closure_collect(input) return self.cond:closure_collect(input) end
+function Tr.StmtIf:closure_collect(input)
+  local result = self.cond:closure_collect(input)
+  result = result:closure_collect_isolated(self.then_body)
+  return result:closure_collect_isolated(self.else_body)
+end
+function Tr.StmtSwitch:closure_collect(input)
+  local result = self.value:closure_collect(input)
+  for i = 1, #self.arms do result = result:closure_collect_isolated({ self.arms[i] }) end
+  for i = 1, #self.variant_arms do result = result:closure_collect_isolated({ self.variant_arms[i] }) end
+  return result:closure_collect_isolated(self.default_body)
+end
+function Tr.StmtJump:closure_collect(input) return collect_many(self.args, input) end
+function Tr.StmtJumpCont:closure_collect(input) return collect_many(self.args, input) end
+function Tr.StmtRegionEmit:closure_collect(input) return collect_exprs(self.args, input) end
+function Tr.StmtRegionCall:closure_collect(input) return collect_exprs(self.args, input) end
+function Tr.StmtYieldVoid:closure_collect(input) return collected(input) end
+function Tr.StmtYieldValue:closure_collect(input) return self.value:closure_collect(input) end
+function Tr.StmtReturnVoid:closure_collect(input) return collected(input) end
+function Tr.StmtReturnValue:closure_collect(input) return self.value:closure_collect(input) end
+function Tr.StmtControl:closure_collect(input) return self.region:closure_collect(input) end
+function Tr.StmtTrap:closure_collect(input) return collected(input) end
+
+function Tr.JumpArg:closure_collect(input) return self.value:closure_collect(input) end
+function Tr.EntryBlockParam:closure_collect(input) return self.init:closure_collect(input) end
+local function collect_param_scopes(scopes,params,site) return collect_bind_values(scopes,params,site) end
+function Tr.EntryControlBlock:closure_collect(input) local result=collect_many(self.params,input); return result:closure_collect_scoped(self.body,collect_param_scopes(input.scopes,self.params,"entry")) end
+function Tr.ControlBlock:closure_collect(input) return collected(input):closure_collect_scoped(self.body,collect_param_scopes(input.scopes,self.params,"block")) end
+local function collect_control(region,input)
+  local result=region.entry:closure_collect(input)
+  for i=1,#region.blocks do result=result:closure_collect_isolated({region.blocks[i]}) end
+  return result
+end
+function Tr.ControlStmtRegion:closure_collect(input) return collect_control(self,input) end
+function Tr.ControlExprRegion:closure_collect(input) return collect_control(self,input) end
+
+local function type_capture_layout(ty, input)
+  return TypeSizeAlign.result(ty, input.env, input.target):closure_capture_layout(input)
+end
+function Ty.TypeMemLayoutKnown:closure_capture_layout(input)
+  local align = self.layout.align
+  local offset = math.floor((input.offset + align - 1) / align) * align
+  return Sem.ClosureCaptureLaidOut(Sem.ClosureCaptureSlot(input.candidate, offset, self.layout.size, align))
+end
+function Ty.TypeMemLayoutUnknown:closure_capture_layout(input)
+  return Sem.ClosureCaptureLayoutUnsupported(input.candidate, "capture type has no known memory layout")
+end
+function Ty.TScalar:closure_capture_layout(input) return type_capture_layout(self, input) end
+function Ty.TPtr:closure_capture_layout(input) return type_capture_layout(self, input) end
+function Ty.TArray:closure_capture_layout(input) return type_capture_layout(self, input) end
+function Ty.TSlice:closure_capture_layout(input) return type_capture_layout(self, input) end
+function Ty.TView:closure_capture_layout(input) return type_capture_layout(self, input) end
+function Ty.TLease:closure_capture_layout(input) return type_capture_layout(self, input) end
+function Ty.TOwned:closure_capture_layout(input) return type_capture_layout(self, input) end
+function Ty.TAccess:closure_capture_layout(input) return type_capture_layout(self, input) end
+function Ty.THandle:closure_capture_layout(input) return type_capture_layout(self, input) end
+function Ty.TFunc:closure_capture_layout(input) return type_capture_layout(self, input) end
+function Ty.TClosure:closure_capture_layout(input) return type_capture_layout(self, input) end
+function Ty.TNamed:closure_capture_layout(input) return type_capture_layout(self, input) end
+function Ty.TCType:closure_capture_layout(input) return type_capture_layout(self, input) end
+function Ty.TCFuncPtr:closure_capture_layout(input) return type_capture_layout(self, input) end
 
 ----------------------------------------------------------------------
--- Closure conversion for a single function
+-- Typed closure rewriting
 ----------------------------------------------------------------------
-local function closure_convert_func(func, input)
-  local saved_owner = input.owner
-  input.owner = func.name
-  push_scope(input, params_scope(func.params or {}))
+function Sem.ClosureRewriteReady:closure_merge(status) return status end
+function Sem.ClosureRewriteBlocked:closure_merge() return self end
+function Sem.ClosureRewriteReady:closure_expr_result(old, new, input)
+  if old == new then return Sem.ClosureExprUnchanged(old, input) end
+  return Sem.ClosureExprConverted(new, input)
+end
+function Sem.ClosureRewriteBlocked:closure_expr_result(old, new, input) return Sem.ClosureExprUnsupported(old, input, self.reason) end
+function Sem.ClosureRewriteReady:closure_place_result(old, new, input)
+  if old == new then return Sem.ClosurePlaceUnchanged(old, input) end
+  return Sem.ClosurePlaceConverted(new, input)
+end
+function Sem.ClosureRewriteBlocked:closure_place_result(old, new, input) return Sem.ClosurePlaceUnsupported(old, input, self.reason) end
+function Sem.ClosureRewriteReady:closure_index_result(old, new, input)
+  if old == new then return Sem.ClosureIndexBaseUnchanged(old, input) end
+  return Sem.ClosureIndexBaseConverted(new, input)
+end
+function Sem.ClosureRewriteBlocked:closure_index_result(old, new, input) return Sem.ClosureIndexBaseUnsupported(old, input, self.reason) end
+function Sem.ClosureRewriteReady:closure_view_result(old, new, input)
+  if old == new then return Sem.ClosureViewUnchanged(old, input) end
+  return Sem.ClosureViewConverted(new, input)
+end
+function Sem.ClosureRewriteBlocked:closure_view_result(old, new, input) return Sem.ClosureViewUnsupported(old, input, self.reason) end
+function Sem.ClosureRewriteReady:closure_stmt_result(old, new, input)
+  if old == new then return Sem.ClosureStmtUnchanged(old, input) end
+  return Sem.ClosureStmtConverted(new, input)
+end
+function Sem.ClosureRewriteBlocked:closure_stmt_result(old, new, input) return Sem.ClosureStmtUnsupported(old, input, self.reason) end
 
-  -- Phase A: detect free variables
-  local locals = params_scope(func.params or {})
-  local captures, seen = {}, {}
-  _collect_stmts(func.body, input, locals, captures, seen)
+function Sem.ClosureExprRewriteResult:closure_value() return self.expr end
+function Sem.ClosureExprRewriteResult:closure_status() return Sem.ClosureRewriteReady end
+function Sem.ClosureExprUnsupported:closure_status() return Sem.ClosureRewriteBlocked(self.reason) end
+function Sem.ClosurePlaceRewriteResult:closure_value() return self.place end
+function Sem.ClosurePlaceRewriteResult:closure_status() return Sem.ClosureRewriteReady end
+function Sem.ClosurePlaceUnsupported:closure_status() return Sem.ClosureRewriteBlocked(self.reason) end
+function Sem.ClosureIndexBaseRewriteResult:closure_value() return self.base end
+function Sem.ClosureIndexBaseRewriteResult:closure_status() return Sem.ClosureRewriteReady end
+function Sem.ClosureIndexBaseUnsupported:closure_status() return Sem.ClosureRewriteBlocked(self.reason) end
+function Sem.ClosureViewRewriteResult:closure_value() return self.view end
+function Sem.ClosureViewRewriteResult:closure_status() return Sem.ClosureRewriteReady end
+function Sem.ClosureViewUnsupported:closure_status() return Sem.ClosureRewriteBlocked(self.reason) end
+function Sem.ClosureStmtRewriteResult:closure_value() return self.stmt end
+function Sem.ClosureStmtRewriteResult:closure_status() return Sem.ClosureRewriteReady end
+function Sem.ClosureStmtUnsupported:closure_status() return Sem.ClosureRewriteBlocked(self.reason) end
 
-  if #captures == 0 then
-    -- No free vars: pass-through rewrite (identity)
-    local body, _ = _rewrite_stmts(func.body, input)
-    pop_scope(input)
-    input.owner = saved_owner
-    return asdl.with(func, { body = body }), input
+local function rewrite_exprs(exprs, input)
+  local out, status, next_input = {}, Sem.ClosureRewriteReady, input
+  for i = 1, #exprs do
+    local result = exprs[i]:closure_rewrite(next_input)
+    out[i] = result:closure_value()
+    next_input = result.input
+    status = status:closure_merge(result:closure_status())
   end
-
-  -- Has free vars: create capture layout and helper
-  local helper_name = fresh_helper_name(input)
-  compute_capture_layout(captures)
-
-  -- Build helper params: ctx ptr + original params
-  local helper_params = {
-    Ty.Param("__lalin_ctx", Ty.TPtr(Ty.TScalar(C.ScalarU8))),
-  }
-  for _, p in ipairs(func.params or {}) do
-    helper_params[#helper_params + 1] = p
-  end
-
-  -- Build capture_env for rewrite
-  local capture_env = {}
-  for _, cap in ipairs(captures) do
-    capture_env[cap.name] = cap
-  end
-
-  -- Rewrite body with capture_env active
-  local saved_capture_env = input.capture_env
-  local saved_scopes = input.scopes
-  input.capture_env = capture_env
-  input.scopes = {}
-  input.owner = helper_name
-  push_scope(input, params_scope(helper_params))
-  local body, _ = _rewrite_stmts(func.body, input)
-  pop_scope(input)
-  input.scopes = saved_scopes
-  input.capture_env = saved_capture_env
-
-  -- Create helper function item
-  local helper = Tr.FuncLocal(helper_name, helper_params, func.result, body)
-  input.helpers[#input.helpers + 1] = Tr.ItemFunc(helper)
-
-  -- Original function body becomes a call to the helper with captures loaded
-  local call_args = { Tr.ExprRef(Tr.ExprSurface, B.ValueRefName("__lalin_ctx")) }
-  for _, p in ipairs(func.params or {}) do
-    call_args[#call_args + 1] = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(p.name))
-  end
-  local call = Tr.ExprCall(Tr.ExprSurface,
-    Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(helper_name)),
-    call_args)
-
-  pop_scope(input)
-  input.owner = saved_owner
-
-  if func.result and asdl.classof(func.result) == Ty.TScalar and func.result.scalar == C.ScalarVoid then
-    local new_body = { Tr.StmtExpr(Tr.StmtSurface, call), Tr.StmtReturnVoid(Tr.StmtSurface) }
-    return asdl.with(func, { body = new_body }), input
-  end
-
-  local new_body = { Tr.StmtReturnValue(Tr.StmtSurface, call) }
-  return asdl.with(func, { body = new_body }), input
+  return Sem.ClosureExprListRewriteResult(out, next_input, status)
 end
 
-----------------------------------------------------------------------
--- Module-level entry point — the public API
-----------------------------------------------------------------------
-function Tr.Module:closure_convert()
-  local input = new_input(self:tree_code_module_name())
+local function rewrite_stmts(stmts, input)
+  local out, status, next_input = {}, Sem.ClosureRewriteReady, input
+  for i = 1, #stmts do
+    local result = stmts[i]:closure_rewrite(next_input)
+    out[i] = result:closure_value()
+    next_input = result.input
+    status = status:closure_merge(result:closure_status())
+  end
+  return Sem.ClosureStmtListRewriteResult(out, next_input, status)
+end
 
-  local items = {}
-  for _, item in ipairs(self.items or {}) do
-    local before = #input.helpers
-    local rewritten
-    rewritten, input = item:closure_convert_item(input)
-    for j = before + 1, #input.helpers do
-      items[#items + 1] = input.helpers[j]
+local function rewrite_with_scopes(input, scopes)
+  return Sem.ClosureRewriteInput(scopes, input.environment, input.supply, input.helpers, input.layouts, input.target)
+end
+local function rewrite_isolated(stmts, input, scopes)
+  local result = rewrite_stmts(stmts, rewrite_with_scopes(input, scopes))
+  return Sem.ClosureStmtListRewriteResult(result.stmts, rewrite_with_scopes(result.input, scopes), result.status)
+end
+local function local_frame(values, site)
+  local bindings = {}
+  for i = 1, #values do
+    local value = values[i]
+    bindings[i] = Sem.ClosureBinding(B.Binding(C.Id("closure:" .. site .. ":" .. value.name .. ":" .. tostring(i)), value.name, value.ty, B.BindingRoleLocalValue))
+  end
+  return Sem.ClosureScopeFrame(bindings)
+end
+
+function Sem.ClosureScopeStack:closure_lookup_local(name)
+  local top = self.frames[#self.frames]
+  if top then
+    for i = #top.bindings, 1, -1 do
+      if top.bindings[i].binding.name == name then return Sem.ClosureLookupFound(top.bindings[i]) end
     end
-    items[#items + 1] = rewritten
   end
-
-  return Tr.Module(self.h, items)
+  return Sem.ClosureLookupMissing
+end
+function Sem.ClosureEnvironment:closure_lookup_name(name)
+  for i = #self.entries, 1, -1 do
+    if self.entries[i].binding.binding.name == name then return Sem.ClosureEnvironmentFound(self.entries[i]) end
+  end
+  return Sem.ClosureEnvironmentMissing
 end
 
-function Tr.Item:closure_convert_item(input)
-  return self, input
+local function captured_address(entry)
+  local slot, ty = entry.slot, entry.binding.binding.ty
+  local context = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName("__lalin_ctx"))
+  local address = context
+  if slot.offset ~= 0 then address = Tr.ExprBinary(Tr.ExprSurface, C.BinAdd, context, Tr.ExprLit(Tr.ExprSurface, C.LitInt(tostring(slot.offset)))) end
+  return Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, Ty.TPtr(ty), address)
 end
+local function captured_load(entry) return Tr.ExprLoad(Tr.ExprSurface, entry.binding.binding.ty, captured_address(entry)) end
+function Sem.ClosureEnvironmentFound:closure_rewrite_reference(original, input) return Sem.ClosureExprConverted(captured_load(self.entry), input) end
+function Sem.ClosureEnvironmentMissing:closure_rewrite_reference(original, input) return Sem.ClosureExprUnchanged(original, input) end
+function Sem.ClosureLookupFound:closure_rewrite_reference(original, input) return Sem.ClosureExprUnchanged(original, input) end
+function Sem.ClosureLookupMissing:closure_rewrite_reference(original, input, name)
+  return input.environment:closure_lookup_name(name):closure_rewrite_reference(original, input)
+end
+function B.ValueRefName:closure_rewrite_reference(original, input)
+  return input.scopes:closure_lookup_local(self.name):closure_rewrite_reference(original, input, self.name)
+end
+function B.ValueRefPath:closure_rewrite_reference(original, input) return Sem.ClosureExprUnchanged(original, input) end
+function B.ValueRefBinding:closure_rewrite_reference(original, input) return Sem.ClosureExprUnchanged(original, input) end
 
-function Tr.ItemFunc:closure_convert_item(input)
-  local func, input = self.func:closure_convert(input)
-  if func == self.func then return self, input end
-  return Tr.ItemFunc(func), input
+local function unchanged_expr(self, input) return Sem.ClosureExprUnchanged(self, input) end
+function Tr.ExprLit:closure_rewrite(input) return unchanged_expr(self, input) end
+function Tr.ExprRef:closure_rewrite(input) return self.ref:closure_rewrite_reference(self, input) end
+function Tr.ExprDot:closure_rewrite(input) local r=self.base:closure_rewrite(input); return r:closure_status():closure_expr_result(self, asdl.with(self,{base=r:closure_value()}), r.input) end
+function Tr.ExprUnary:closure_rewrite(input) local r=self.value:closure_rewrite(input); return r:closure_status():closure_expr_result(self, asdl.with(self,{value=r:closure_value()}),r.input) end
+local function rewrite_binary(self,input) local a=self.lhs:closure_rewrite(input); local b=self.rhs:closure_rewrite(a.input); local s=a:closure_status():closure_merge(b:closure_status()); return s:closure_expr_result(self,asdl.with(self,{lhs=a:closure_value(),rhs=b:closure_value()}),b.input) end
+function Tr.ExprBinary:closure_rewrite(input) return rewrite_binary(self,input) end
+function Tr.ExprCompare:closure_rewrite(input) return rewrite_binary(self,input) end
+function Tr.ExprLogic:closure_rewrite(input) return rewrite_binary(self,input) end
+function Tr.ExprCast:closure_rewrite(input) local r=self.value:closure_rewrite(input); return r:closure_status():closure_expr_result(self,asdl.with(self,{value=r:closure_value()}),r.input) end
+function Tr.ExprMachineCast:closure_rewrite(input) local r=self.value:closure_rewrite(input); return r:closure_status():closure_expr_result(self,asdl.with(self,{value=r:closure_value()}),r.input) end
+function Tr.ExprIntrinsic:closure_rewrite(input) local r=rewrite_exprs(self.args,input); return r.status:closure_expr_result(self,asdl.with(self,{args=r.exprs}),r.input) end
+function Tr.ExprAddrOf:closure_rewrite(input) local r=self.place:closure_rewrite(input); return r:closure_status():closure_expr_result(self,asdl.with(self,{place=r:closure_value()}),r.input) end
+function Tr.ExprDeref:closure_rewrite(input) local r=self.value:closure_rewrite(input); return r:closure_status():closure_expr_result(self,asdl.with(self,{value=r:closure_value()}),r.input) end
+function Tr.ExprCall:closure_rewrite(input) local c=self.callee:closure_rewrite(input); local a=rewrite_exprs(self.args,c.input); return c:closure_status():closure_merge(a.status):closure_expr_result(self,asdl.with(self,{callee=c:closure_value(),args=a.exprs}),a.input) end
+function Tr.ExprLen:closure_rewrite(input) local r=self.value:closure_rewrite(input); return r:closure_status():closure_expr_result(self,asdl.with(self,{value=r:closure_value()}),r.input) end
+function Tr.ExprField:closure_rewrite(input) local r=self.base:closure_rewrite(input); return r:closure_status():closure_expr_result(self,asdl.with(self,{base=r:closure_value()}),r.input) end
+function Tr.ExprIndex:closure_rewrite(input) local b=self.base:closure_rewrite(input); local i=self.index:closure_rewrite(b.input); return b:closure_status():closure_merge(i:closure_status()):closure_expr_result(self,asdl.with(self,{base=b:closure_value(),index=i:closure_value()}),i.input) end
+function Tr.ExprAgg:closure_rewrite(input)
+  local fields, status, next_input = {}, Sem.ClosureRewriteReady, input
+  for i=1,#self.fields do local r=self.fields[i].value:closure_rewrite(next_input); fields[i]=asdl.with(self.fields[i],{value=r:closure_value()}); next_input=r.input; status=status:closure_merge(r:closure_status()) end
+  return status:closure_expr_result(self,asdl.with(self,{fields=fields}),next_input)
 end
+function Tr.ExprArray:closure_rewrite(input) local r=rewrite_exprs(self.elems,input); return r.status:closure_expr_result(self,asdl.with(self,{elems=r.exprs}),r.input) end
+local function rewrite_conditional(self,input) local c=self.cond:closure_rewrite(input); local a=self.then_expr:closure_rewrite(c.input); local b=self.else_expr:closure_rewrite(a.input); return c:closure_status():closure_merge(a:closure_status()):closure_merge(b:closure_status()):closure_expr_result(self,asdl.with(self,{cond=c:closure_value(),then_expr=a:closure_value(),else_expr=b:closure_value()}),b.input) end
+function Tr.ExprIf:closure_rewrite(input) return rewrite_conditional(self,input) end
+function Tr.ExprSelect:closure_rewrite(input) return rewrite_conditional(self,input) end
+function Tr.SwitchKeyInt:closure_rewrite(input) return Sem.ClosureSwitchKeyRewriteResult(self,input,Sem.ClosureRewriteReady) end
+function Tr.SwitchKeyBool:closure_rewrite(input) return Sem.ClosureSwitchKeyRewriteResult(self,input,Sem.ClosureRewriteReady) end
+function Tr.SwitchKeyName:closure_rewrite(input) return Sem.ClosureSwitchKeyRewriteResult(self,input,Sem.ClosureRewriteReady) end
+function Tr.SwitchKeyExpr:closure_rewrite(input) local r=self.expr:closure_rewrite(input); return Sem.ClosureSwitchKeyRewriteResult(asdl.with(self,{expr=r:closure_value()}),r.input,r:closure_status()) end
+function Tr.ExprSwitch:closure_rewrite(input)
+  local value=self.value:closure_rewrite(input); local next_input=value.input; local status=value:closure_status(); local scopes=next_input.scopes
+  local arms={}
+  for i=1,#self.arms do local arm=self.arms[i]; local key=arm.key:closure_rewrite(next_input); local branch_scopes=scopes:closure_push(Sem.ClosureScopeFrame({})); local body=rewrite_stmts(arm.body,rewrite_with_scopes(key.input,branch_scopes)); local result=arm.result:closure_rewrite(body.input); arms[i]=asdl.with(arm,{key=key.key,body=body.stmts,result=result:closure_value()}); next_input=rewrite_with_scopes(result.input,scopes); status=status:closure_merge(key.status):closure_merge(body.status):closure_merge(result:closure_status()) end
+  local variant_arms={}
+  for i=1,#self.variant_arms do local arm=self.variant_arms[i]; local arm_scopes=scopes:closure_push(local_frame(arm.binds,"switch-expr")); local body=rewrite_stmts(arm.body,rewrite_with_scopes(next_input,arm_scopes)); local result=arm.result:closure_rewrite(body.input); variant_arms[i]=asdl.with(arm,{body=body.stmts,result=result:closure_value()}); next_input=rewrite_with_scopes(result.input,scopes); status=status:closure_merge(body.status):closure_merge(result:closure_status()) end
+  local default_scopes=scopes:closure_push(Sem.ClosureScopeFrame({})); local default_body=rewrite_stmts(self.default_body,rewrite_with_scopes(next_input,default_scopes)); local default_expr=self.default_expr:closure_rewrite(default_body.input); next_input=rewrite_with_scopes(default_expr.input,scopes); status=status:closure_merge(default_body.status):closure_merge(default_expr:closure_status())
+  return status:closure_expr_result(self,asdl.with(self,{value=value:closure_value(),arms=arms,variant_arms=variant_arms,default_body=default_body.stmts,default_expr=default_expr:closure_value()}),next_input)
+end
+local function rewrite_control_children(region,input)
+  local scopes=input.scopes; local params={} ; local next_input=input; local status=Sem.ClosureRewriteReady
+  for i=1,#region.entry.params do local p=region.entry.params[i]; local r=p.init:closure_rewrite(next_input); params[i]=asdl.with(p,{init=r:closure_value()}); next_input=r.input; status=status:closure_merge(r:closure_status()) end
+  local entry_scopes=scopes:closure_push(local_frame(region.entry.params,"control-entry")); local entry_body=rewrite_isolated(region.entry.body,next_input,entry_scopes); next_input=rewrite_with_scopes(entry_body.input,scopes); status=status:closure_merge(entry_body.status)
+  local blocks={}
+  for i=1,#region.blocks do local block=region.blocks[i]; local block_scopes=scopes:closure_push(local_frame(block.params,"control-block")); local body=rewrite_isolated(block.body,next_input,block_scopes); blocks[i]=asdl.with(block,{body=body.stmts}); next_input=rewrite_with_scopes(body.input,scopes); status=status:closure_merge(body.status) end
+  return Sem.ClosureControlChildrenRewriteResult(asdl.with(region.entry,{params=params,body=entry_body.stmts}),blocks,next_input,status)
+end
+function Tr.ExprControl:closure_rewrite(input) local r=rewrite_control_children(self.region,input); return r.status:closure_expr_result(self,asdl.with(self,{region=asdl.with(self.region,{entry=r.entry,blocks=r.blocks})}),r.input) end
+function Tr.ExprBlock:closure_rewrite(input) local scopes=input.scopes:closure_push(Sem.ClosureScopeFrame({})); local s=rewrite_stmts(self.stmts,rewrite_with_scopes(input,scopes)); local r=self.result:closure_rewrite(s.input); return s.status:closure_merge(r:closure_status()):closure_expr_result(self,asdl.with(self,{stmts=s.stmts,result=r:closure_value()}),rewrite_with_scopes(r.input,input.scopes)) end
+function Tr.ExprClosure:closure_rewrite(input) return self:closure_convert(input) end
+function Tr.ExprView:closure_rewrite(input) local r=self.view:closure_rewrite(input); return r:closure_status():closure_expr_result(self,asdl.with(self,{view=r:closure_value()}),r.input) end
+function Tr.ExprLoad:closure_rewrite(input) local r=self.addr:closure_rewrite(input); return r:closure_status():closure_expr_result(self,asdl.with(self,{addr=r:closure_value()}),r.input) end
+function Tr.ExprAtomicLoad:closure_rewrite(input) local r=self.addr:closure_rewrite(input); return r:closure_status():closure_expr_result(self,asdl.with(self,{addr=r:closure_value()}),r.input) end
+function Tr.ExprAtomicRmw:closure_rewrite(input) local a=self.addr:closure_rewrite(input); local v=self.value:closure_rewrite(a.input); return a:closure_status():closure_merge(v:closure_status()):closure_expr_result(self,asdl.with(self,{addr=a:closure_value(),value=v:closure_value()}),v.input) end
+function Tr.ExprAtomicCas:closure_rewrite(input) local a=self.addr:closure_rewrite(input); local e=self.expected:closure_rewrite(a.input); local r=self.replacement:closure_rewrite(e.input); return a:closure_status():closure_merge(e:closure_status()):closure_merge(r:closure_status()):closure_expr_result(self,asdl.with(self,{addr=a:closure_value(),expected=e:closure_value(),replacement=r:closure_value()}),r.input) end
+function Tr.ExprCtor:closure_rewrite(input) local r=rewrite_exprs(self.args,input); return r.status:closure_expr_result(self,asdl.with(self,{args=r.exprs}),r.input) end
+function Tr.ExprNull:closure_rewrite(input) return unchanged_expr(self,input) end
+function Tr.ExprSizeOf:closure_rewrite(input) return unchanged_expr(self,input) end
+function Tr.ExprAlignOf:closure_rewrite(input) return unchanged_expr(self,input) end
+function Tr.ExprIsNull:closure_rewrite(input) local r=self.value:closure_rewrite(input); return r:closure_status():closure_expr_result(self,asdl.with(self,{value=r:closure_value()}),r.input) end
 
-function Tr.ItemExtern:closure_convert_item(input)
-  return self, input
-end
+function Sem.ClosureEnvironmentFound:closure_rewrite_place(original,input) return Sem.ClosurePlaceConverted(Tr.PlaceDeref(Tr.PlaceSurface,captured_address(self.entry)),input) end
+function Sem.ClosureEnvironmentMissing:closure_rewrite_place(original,input) return Sem.ClosurePlaceUnchanged(original,input) end
+function Sem.ClosureLookupFound:closure_rewrite_place(original,input) return Sem.ClosurePlaceUnchanged(original,input) end
+function Sem.ClosureLookupMissing:closure_rewrite_place(original,input,name) return input.environment:closure_lookup_name(name):closure_rewrite_place(original,input) end
+function B.ValueRefName:closure_rewrite_place(original,input) return input.scopes:closure_lookup_local(self.name):closure_rewrite_place(original,input,self.name) end
+function B.ValueRefPath:closure_rewrite_place(original,input) return Sem.ClosurePlaceUnchanged(original,input) end
+function B.ValueRefBinding:closure_rewrite_place(original,input) return Sem.ClosurePlaceUnchanged(original,input) end
+function Tr.PlaceRef:closure_rewrite(input) return self.ref:closure_rewrite_place(self,input) end
+function Tr.PlaceDeref:closure_rewrite(input) local r=self.base:closure_rewrite(input); return r:closure_status():closure_place_result(self,asdl.with(self,{base=r:closure_value()}),r.input) end
+function Tr.PlaceDot:closure_rewrite(input) local r=self.base:closure_rewrite(input); return r:closure_status():closure_place_result(self,asdl.with(self,{base=r:closure_value()}),r.input) end
+function Tr.PlaceField:closure_rewrite(input) local r=self.base:closure_rewrite(input); return r:closure_status():closure_place_result(self,asdl.with(self,{base=r:closure_value()}),r.input) end
+function Tr.PlaceIndex:closure_rewrite(input) local b=self.base:closure_rewrite(input); local i=self.index:closure_rewrite(b.input); return b:closure_status():closure_merge(i:closure_status()):closure_place_result(self,asdl.with(self,{base=b:closure_value(),index=i:closure_value()}),i.input) end
+function Tr.IndexBaseExpr:closure_rewrite(input) local r=self.base:closure_rewrite(input); return r:closure_status():closure_index_result(self,asdl.with(self,{base=r:closure_value()}),r.input) end
+function Tr.IndexBasePlace:closure_rewrite(input) local r=self.base:closure_rewrite(input); return r:closure_status():closure_index_result(self,asdl.with(self,{base=r:closure_value()}),r.input) end
+function Tr.IndexBaseView:closure_rewrite(input) local r=self.view:closure_rewrite(input); return r:closure_status():closure_index_result(self,asdl.with(self,{view=r:closure_value()}),r.input) end
 
-function Tr.ItemType:closure_convert_item(input)
-  return self, input
-end
+function Tr.ViewFromExpr:closure_rewrite(input) local r=self.base:closure_rewrite(input); return r:closure_status():closure_view_result(self,asdl.with(self,{base=r:closure_value()}),r.input) end
+function Tr.ViewContiguous:closure_rewrite(input) local d=self.data:closure_rewrite(input); local l=self.len:closure_rewrite(d.input); return d:closure_status():closure_merge(l:closure_status()):closure_view_result(self,asdl.with(self,{data=d:closure_value(),len=l:closure_value()}),l.input) end
+function Tr.ViewStrided:closure_rewrite(input) local d=self.data:closure_rewrite(input); local l=self.len:closure_rewrite(d.input); local s=self.stride:closure_rewrite(l.input); return d:closure_status():closure_merge(l:closure_status()):closure_merge(s:closure_status()):closure_view_result(self,asdl.with(self,{data=d:closure_value(),len=l:closure_value(),stride=s:closure_value()}),s.input) end
+function Tr.ViewRestrided:closure_rewrite(input) local b=self.base:closure_rewrite(input); local s=self.stride:closure_rewrite(b.input); return b:closure_status():closure_merge(s:closure_status()):closure_view_result(self,asdl.with(self,{base=b:closure_value(),stride=s:closure_value()}),s.input) end
+function Tr.ViewWindow:closure_rewrite(input) local b=self.base:closure_rewrite(input); local s=self.start:closure_rewrite(b.input); local l=self.len:closure_rewrite(s.input); return b:closure_status():closure_merge(s:closure_status()):closure_merge(l:closure_status()):closure_view_result(self,asdl.with(self,{base=b:closure_value(),start=s:closure_value(),len=l:closure_value()}),l.input) end
+function Tr.ViewRowBase:closure_rewrite(input) local b=self.base:closure_rewrite(input); local r=self.row_offset:closure_rewrite(b.input); return b:closure_status():closure_merge(r:closure_status()):closure_view_result(self,asdl.with(self,{base=b:closure_value(),row_offset=r:closure_value()}),r.input) end
+function Tr.ViewInterleaved:closure_rewrite(input) local r=rewrite_exprs({self.data,self.len,self.stride,self.lane},input); return r.status:closure_view_result(self,asdl.with(self,{data=r.exprs[1],len=r.exprs[2],stride=r.exprs[3],lane=r.exprs[4]}),r.input) end
+function Tr.ViewInterleavedView:closure_rewrite(input) local b=self.base:closure_rewrite(input); local r=rewrite_exprs({self.stride,self.lane},b.input); return b:closure_status():closure_merge(r.status):closure_view_result(self,asdl.with(self,{base=b:closure_value(),stride=r.exprs[1],lane=r.exprs[2]}),r.input) end
 
-function Tr.ItemConst:closure_convert_item(input)
-  return self, input
+local function unchanged_stmt(self,input) return Sem.ClosureStmtUnchanged(self,input) end
+function Tr.StmtLet:closure_rewrite(input) local r=self.init:closure_rewrite(input); local scopes=r.input.scopes:closure_bind(self.binding); local next_input=rewrite_with_scopes(r.input,scopes); return r:closure_status():closure_stmt_result(self,asdl.with(self,{init=r:closure_value()}),next_input) end
+function Tr.StmtVar:closure_rewrite(input) local r=self.init:closure_rewrite(input); local scopes=r.input.scopes:closure_bind(self.binding); local next_input=rewrite_with_scopes(r.input,scopes); return r:closure_status():closure_stmt_result(self,asdl.with(self,{init=r:closure_value()}),next_input) end
+function Tr.StmtSet:closure_rewrite(input) local p=self.place:closure_rewrite(input); local v=self.value:closure_rewrite(p.input); return p:closure_status():closure_merge(v:closure_status()):closure_stmt_result(self,asdl.with(self,{place=p:closure_value(),value=v:closure_value()}),v.input) end
+function Tr.StmtAtomicStore:closure_rewrite(input) local a=self.addr:closure_rewrite(input); local v=self.value:closure_rewrite(a.input); return a:closure_status():closure_merge(v:closure_status()):closure_stmt_result(self,asdl.with(self,{addr=a:closure_value(),value=v:closure_value()}),v.input) end
+function Tr.StmtAtomicFence:closure_rewrite(input) return unchanged_stmt(self,input) end
+function Tr.StmtExpr:closure_rewrite(input) local r=self.expr:closure_rewrite(input); return r:closure_status():closure_stmt_result(self,asdl.with(self,{expr=r:closure_value()}),r.input) end
+function Tr.StmtAssert:closure_rewrite(input) local r=self.cond:closure_rewrite(input); return r:closure_status():closure_stmt_result(self,asdl.with(self,{cond=r:closure_value()}),r.input) end
+function Tr.StmtIf:closure_rewrite(input) local c=self.cond:closure_rewrite(input); local scopes=c.input.scopes; local a=rewrite_isolated(self.then_body,c.input,scopes); local b=rewrite_isolated(self.else_body,a.input,scopes); return c:closure_status():closure_merge(a.status):closure_merge(b.status):closure_stmt_result(self,asdl.with(self,{cond=c:closure_value(),then_body=a.stmts,else_body=b.stmts}),b.input) end
+function Tr.StmtSwitch:closure_rewrite(input)
+  local value=self.value:closure_rewrite(input); local next_input=value.input; local scopes=next_input.scopes; local status=value:closure_status(); local arms={}
+  for i=1,#self.arms do local arm=self.arms[i]; local key=arm.key:closure_rewrite(next_input); local body=rewrite_isolated(arm.body,key.input,scopes); arms[i]=asdl.with(arm,{key=key.key,body=body.stmts}); next_input=body.input; status=status:closure_merge(key.status):closure_merge(body.status) end
+  local variant_arms={}
+  for i=1,#self.variant_arms do local arm=self.variant_arms[i]; local arm_scopes=scopes:closure_push(local_frame(arm.binds,"switch-stmt")); local body=rewrite_isolated(arm.body,next_input,arm_scopes); variant_arms[i]=asdl.with(arm,{body=body.stmts}); next_input=rewrite_with_scopes(body.input,scopes); status=status:closure_merge(body.status) end
+  local default_body=rewrite_isolated(self.default_body,next_input,scopes); status=status:closure_merge(default_body.status)
+  return status:closure_stmt_result(self,asdl.with(self,{value=value:closure_value(),arms=arms,variant_arms=variant_arms,default_body=default_body.stmts}),default_body.input)
 end
-
-function Tr.ItemStatic:closure_convert_item(input)
-  return self, input
+local function rewrite_jump_args(args,input)
+  local out={}; local status=Sem.ClosureRewriteReady; local next_input=input
+  for i=1,#args do local r=args[i].value:closure_rewrite(next_input); out[i]=asdl.with(args[i],{value=r:closure_value()}); next_input=r.input; status=status:closure_merge(r:closure_status()) end
+  return Sem.ClosureJumpArgsRewriteResult(out,next_input,status)
 end
-
-function Tr.ItemImport:closure_convert_item(input)
-  return self, input
-end
-
-function Tr.ItemRegion:closure_convert_item(input)
-  return self, input
-end
-
-function Tr.ItemData:closure_convert_item(input)
-  return self, input
-end
+function Tr.StmtJump:closure_rewrite(input) local r=rewrite_jump_args(self.args,input); return r.status:closure_stmt_result(self,asdl.with(self,{args=r.args}),r.input) end
+function Tr.StmtJumpCont:closure_rewrite(input) local r=rewrite_jump_args(self.args,input); return r.status:closure_stmt_result(self,asdl.with(self,{args=r.args}),r.input) end
+function Tr.StmtRegionEmit:closure_rewrite(input) local r=rewrite_exprs(self.args,input); return r.status:closure_stmt_result(self,asdl.with(self,{args=r.exprs}),r.input) end
+function Tr.StmtRegionCall:closure_rewrite(input) local r=rewrite_exprs(self.args,input); return r.status:closure_stmt_result(self,asdl.with(self,{args=r.exprs}),r.input) end
+function Tr.StmtYieldVoid:closure_rewrite(input) return unchanged_stmt(self,input) end
+function Tr.StmtYieldValue:closure_rewrite(input) local r=self.value:closure_rewrite(input); return r:closure_status():closure_stmt_result(self,asdl.with(self,{value=r:closure_value()}),r.input) end
+function Tr.StmtReturnVoid:closure_rewrite(input) return unchanged_stmt(self,input) end
+function Tr.StmtReturnValue:closure_rewrite(input) local r=self.value:closure_rewrite(input); return r:closure_status():closure_stmt_result(self,asdl.with(self,{value=r:closure_value()}),r.input) end
+function Tr.StmtControl:closure_rewrite(input) local r=rewrite_control_children(self.region,input); return r.status:closure_stmt_result(self,asdl.with(self,{region=asdl.with(self.region,{entry=r.entry,blocks=r.blocks})}),r.input) end
+function Tr.StmtTrap:closure_rewrite(input) return unchanged_stmt(self,input) end
 
 ----------------------------------------------------------------------
--- Func leaf methods
+-- Typed function/item/module transitions
 ----------------------------------------------------------------------
-function Tr.Func:closure_convert(input)
-  local saved_owner = input.owner
-  push_scope(input, params_scope(self.params or {}))
-  local body, _ = _rewrite_stmts(self.body, input)
-  pop_scope(input)
-  input.owner = saved_owner
-  return asdl.with(self, { body = body }), input
+function Sem.ClosureNameSupply:closure_fresh()
+  local name = "__lalin_closure_" .. self.module_name .. "_" .. self.owner_name .. "_" .. tostring(self.next_index)
+  return Sem.ClosureFreshName(name, Sem.ClosureNameSupply(self.module_name, self.owner_name, self.next_index + 1))
 end
 
-function Tr.FuncLocal:closure_convert(input)
-  input.owner = self.name
-  return closure_convert_func(self, input)
+function Sem.ClosureCaptureLaidOut:closure_build_advance(state)
+  local slots = copy(state.slots)
+  slots[#slots + 1] = self.slot
+  local finish = self.slot.offset + self.slot.size
+  local align = state.align
+  if self.slot.align > align then align = self.slot.align end
+  return Sem.ClosureLayoutBuilding(Sem.ClosureLayoutBuildState(slots, finish, align))
+end
+function Sem.ClosureCaptureLayoutUnsupported:closure_build_advance() return Sem.ClosureLayoutBuildFailed(self.reason) end
+function Sem.ClosureLayoutBuilding:closure_add_candidate(candidate, input)
+  local layout_input = Sem.ClosureCaptureLayoutInput(candidate, input.layouts, input.target, self.state.offset)
+  return candidate.binding.binding.ty:closure_capture_layout(layout_input):closure_build_advance(self.state)
+end
+function Sem.ClosureLayoutBuildFailed:closure_add_candidate() return self end
+
+local function params_frame(params)
+  local bindings = {}
+  for i = 1, #params do
+    local p = params[i]
+    bindings[i] = Sem.ClosureBinding(B.Binding(C.Id("closure:param:" .. p.name .. ":" .. tostring(i)), p.name, p.ty, B.BindingRoleArg(i)))
+  end
+  return Sem.ClosureScopeFrame(bindings)
 end
 
-function Tr.FuncExport:closure_convert(input)
-  input.owner = self.name
-  return closure_convert_func(self, input)
+local function same_list(a, b)
+  if #a ~= #b then return false end
+  for i = 1, #a do if a[i] ~= b[i] then return false end end
+  return true
 end
 
-function Tr.FuncLocalContract:closure_convert(input)
-  input.owner = self.name
-  return closure_convert_func(self, input)
+function Sem.ClosureRewriteReady:closure_func_body_result(original, body, rewrite_input)
+  local rewritten = asdl.with(original, { body = body })
+  if same_list(original.body, body) and #rewrite_input.helpers.items == 0 then return Sem.ClosureFuncUnchanged(original, rewrite_input.supply) end
+  return Sem.ClosureFuncConverted(rewritten, rewrite_input.helpers, rewrite_input.supply)
+end
+function Sem.ClosureRewriteBlocked:closure_func_body_result(original, body, rewrite_input)
+  return Sem.ClosureFuncUnsupported(original, rewrite_input.supply, self.reason)
 end
 
-function Tr.FuncExportContract:closure_convert(input)
-  input.owner = self.name
-  return closure_convert_func(self, input)
+local function append_helpers(input, items, supply)
+  local helpers = copy(input.helpers.items)
+  for i=1,#items do helpers[#helpers+1]=items[i] end
+  return Sem.ClosureRewriteInput(input.scopes,input.environment,supply,Sem.ClosureHelperInsertion(helpers),input.layouts,input.target)
 end
-
-function Tr.FuncDecl:closure_convert(input)
-  return self, input
+local function closure_param_types(params)
+  local types={}
+  for i=1,#params do types[i]=params[i].ty end
+  return types
 end
-
-----------------------------------------------------------------------
--- ExprClosure is deferred
-----------------------------------------------------------------------
+local function closure_entries(slots)
+  local entries={}
+  for i=1,#slots do entries[i]=Sem.ClosureEnvironmentEntry(slots[i].candidate.binding,slots[i]) end
+  return Sem.ClosureEnvironment(entries)
+end
+local function closure_descriptor(expr, input, fresh, slots, helper_body)
+  local u8=Ty.TScalar(C.ScalarU8); local ctx_ty=Ty.TPtr(u8); local helper_params={Ty.Param("__lalin_ctx",ctx_ty)}
+  for i=1,#expr.params do helper_params[#helper_params+1]=expr.params[i] end
+  local helper=Tr.ItemFunc(Tr.FuncLocal(fresh.name,helper_params,expr.result,helper_body))
+  local helper_ref=Tr.ExprRef(Tr.ExprSurface,B.ValueRefName(fresh.name)); local ctx_expr; local items={}
+  if #slots == 0 then
+    ctx_expr=Tr.ExprNull(Tr.ExprSurface,u8)
+  else
+    local env_name=fresh.name .. "__env"; local env_local=env_name .. "__value"; local fields={}; local decl_fields={}
+    for i=1,#slots do local slot=slots[i]; local name="__lalin_cap_" .. slot.candidate.binding.binding.name; fields[i]=Tr.FieldInit(name,Tr.ExprRef(Tr.ExprSurface,B.ValueRefName(slot.candidate.binding.binding.name)),slot.offset); decl_fields[i]=Ty.FieldDecl(name,slot.candidate.binding.binding.ty) end
+    local env_ty=Ty.TNamed(Ty.TypeRefGlobal(input.supply.module_name,env_name)); local env_binding=B.Binding(C.Id("closure:environment:" .. fresh.name),env_local,env_ty,B.BindingRoleLocalValue)
+    items[1]=Tr.ItemType(Tr.TypeDeclStruct(env_name,decl_fields))
+    local init=Tr.ExprAgg(Tr.ExprSurface,env_ty,fields); local addr=Tr.ExprAddrOf(Tr.ExprSurface,Tr.PlaceRef(Tr.PlaceSurface,B.ValueRefName(env_local)))
+    ctx_expr=Tr.ExprCast(Tr.ExprSurface,C.SurfaceCast,ctx_ty,addr)
+    local closure_ty=Ty.TClosure(closure_param_types(expr.params),expr.result); local descriptor=Tr.ExprAgg(Tr.ExprSurface,closure_ty,{Tr.FieldInit("__lalin_fn",helper_ref,0),Tr.FieldInit("__lalin_ctx",ctx_expr,input.target.pointer_bits/8)})
+    items[#items+1]=helper
+    local next_input=append_helpers(input,items,input.supply)
+    return Sem.ClosureExprConverted(Tr.ExprBlock(Tr.ExprSurface,{Tr.StmtLet(Tr.StmtSurface,env_binding,init)},descriptor),next_input)
+  end
+  items[1]=helper
+  local closure_ty=Ty.TClosure(closure_param_types(expr.params),expr.result); local descriptor=Tr.ExprAgg(Tr.ExprSurface,closure_ty,{Tr.FieldInit("__lalin_fn",helper_ref,0),Tr.FieldInit("__lalin_ctx",ctx_expr,input.target.pointer_bits/8)})
+  return Sem.ClosureExprConverted(descriptor,append_helpers(input,items,input.supply))
+end
+function Sem.ClosureLayoutBuildFailed:closure_materialize_expr(expr,input) return Sem.ClosureExprUnsupported(expr,input,self.reason) end
+function Sem.ClosureLayoutBuilding:closure_materialize_expr(expr,input,body_scopes)
+  local fresh=input.supply:closure_fresh(); local env=closure_entries(self.state.slots)
+  local helper_input=Sem.ClosureRewriteInput(Sem.ClosureScopeStack({params_frame(expr.params)}),env,fresh.supply,input.helpers,input.layouts,input.target)
+  local body=rewrite_stmts(expr.body,helper_input)
+  return body.status:closure_finish_expr(expr,input,fresh,self.state.slots,body)
+end
+function Sem.ClosureRewriteBlocked:closure_finish_expr(expr,input,fresh,slots,body) return Sem.ClosureExprUnsupported(expr,rewrite_with_scopes(body.input,input.scopes),self.reason) end
+function Sem.ClosureRewriteReady:closure_finish_expr(expr,input,fresh,slots,body)
+  local state_input=rewrite_with_scopes(body.input,input.scopes)
+  return closure_descriptor(expr,state_input,fresh,slots,body.stmts)
+end
+local function convert_collected_expr(result,expr,input)
+  local build=Sem.ClosureLayoutBuilding(Sem.ClosureLayoutBuildState({},0,1))
+  for i=1,#result.input.captures.candidates do build=build:closure_add_candidate(result.input.captures.candidates[i],input) end
+  return build:closure_materialize_expr(expr,input,result.input.scopes)
+end
+function Sem.ClosureCollected:closure_convert_expr(expr,input) return convert_collected_expr(self,expr,input) end
+function Sem.ClosureCollectTransitioned:closure_convert_expr(expr,input) return convert_collected_expr(self,expr,input) end
+function Sem.ClosureCollectUnsupported:closure_convert_expr(expr,input) return Sem.ClosureExprUnsupported(expr,input,self.reason) end
 function Tr.ExprClosure:closure_convert(input)
-  error("UNSUPPORTED: ExprClosure (nested closure) not yet implemented. "
-    .. "Scalar closure conversion only; nested lambdas are deferred.", 2)
+  local scopes=input.scopes:closure_push(params_frame(self.params)); local captures=collect_stmts(self.body,Sem.ClosureCollectInput(scopes,Sem.ClosureCaptureSet({})))
+  return captures:closure_convert_expr(self,input)
 end
 
-function Tr.ExprClosure:closure_convert_item(input)
-  error("UNSUPPORTED: ExprClosure (nested closure) not yet implemented. "
-    .. "Scalar closure conversion only; nested lambdas are deferred.", 2)
+local function convert_func(func, input)
+  local scopes=input.outer_scopes:closure_push(params_frame(func.params))
+  local rewrite_input=Sem.ClosureRewriteInput(scopes,Sem.ClosureEnvironment({}),input.supply,Sem.ClosureHelperInsertion({}),input.layouts,input.target)
+  local body=rewrite_stmts(func.body,rewrite_input)
+  return body.status:closure_func_body_result(func,body.stmts,body.input)
 end
+function Tr.FuncLocal:closure_convert(input) return convert_func(self, input) end
+function Tr.FuncExport:closure_convert(input) return convert_func(self, input) end
+function Tr.FuncLocalContract:closure_convert(input) return convert_func(self, input) end
+function Tr.FuncExportContract:closure_convert(input) return convert_func(self, input) end
+function Tr.FuncDecl:closure_convert(input) return Sem.ClosureFuncUnchanged(self, input.supply) end
+
+function Sem.ClosureFuncConverted:closure_item_result()
+  local items = copy(self.helpers.items)
+  items[#items + 1] = Tr.ItemFunc(self.func)
+  return Sem.ClosureItemConverted(items, self.supply)
+end
+function Sem.ClosureFuncUnchanged:closure_item_result(original) return Sem.ClosureItemUnchanged(original, self.supply) end
+function Sem.ClosureFuncUnsupported:closure_item_result(original) return Sem.ClosureItemRejected(original, self.supply, self.reason) end
+function Tr.ItemFunc:closure_convert_item(input)
+  local finput = Sem.ClosureFuncInput(input.module_name, input.supply, input.scopes, input.layouts, input.target)
+  return self.func:closure_convert(finput):closure_item_result(self)
+end
+function Tr.ItemExtern:closure_convert_item(input) return Sem.ClosureItemUnchanged(self, input.supply) end
+function Tr.ItemConst:closure_convert_item(input) return Sem.ClosureItemUnchanged(self, input.supply) end
+function Tr.ItemStatic:closure_convert_item(input) return Sem.ClosureItemUnchanged(self, input.supply) end
+function Tr.ItemImport:closure_convert_item(input) return Sem.ClosureItemUnchanged(self, input.supply) end
+function Tr.ItemType:closure_convert_item(input) return Sem.ClosureItemUnchanged(self, input.supply) end
+function Tr.ItemRegion:closure_convert_item(input) return Sem.ClosureItemUnchanged(self, input.supply) end
+function Tr.ItemData:closure_convert_item(input) return Sem.ClosureItemUnchanged(self, input.supply) end
+
+function Sem.ClosureItemConverted:closure_compose(composition)
+  local items = copy(composition.items)
+  for i = 1, #self.items do items[#items + 1] = self.items[i] end
+  return Sem.ClosureModuleComposing(Sem.ClosureModuleComposition(items, self.supply, composition.layouts, composition.target))
+end
+function Sem.ClosureItemUnchanged:closure_compose(composition)
+  local items = copy(composition.items)
+  items[#items + 1] = self.item
+  return Sem.ClosureModuleComposing(Sem.ClosureModuleComposition(items, self.supply, composition.layouts, composition.target))
+end
+function Sem.ClosureItemRejected:closure_compose() return Sem.ClosureModuleRejected(self.reason) end
+function Sem.ClosureModuleComposing:closure_continue_item(item, module_name)
+  local c = self.composition
+  local input = Sem.ClosureItemInput(module_name, c.supply, Sem.ClosureScopeStack({}), c.layouts, c.target)
+  return item:closure_convert_item(input):closure_compose(c)
+end
+function Sem.ClosureModuleRejected:closure_continue_item() return self end
+function Sem.ClosureModuleComposing:closure_finish(module)
+  local rewritten = Tr.Module(module.h, self.composition.items)
+  if same_list(module.items, self.composition.items) then return Sem.ClosureUnchanged(module) end
+  return Sem.ClosureConverted(rewritten)
+end
+function Sem.ClosureModuleRejected:closure_finish(module) return Sem.ClosureUnsupported(module, self.reason) end
+
+-- Explicit delegation for the generic frontend pipeline's next typed phase.
+function Sem.ClosureConverted:typecheck(input) return self.module:typecheck(input) end
+function Sem.ClosureUnchanged:typecheck(input) return self.module:typecheck(input) end
+
+function Tr.ModuleSurface:closure_module_name() return "module" end
+function Tr.ModuleTyped:closure_module_name() return self.module_name end
+function Tr.ModuleSem:closure_module_name() return self.module_name end
+function Tr.ModuleCode:closure_module_name() return self.module_name end
+function Tr.Module:closure_convert(input)
+  local module_name = self.h:closure_module_name()
+  local ModuleType = require("lalin.tree_module_type")(T)
+  local layouts = Sem.LayoutEnv(ModuleType.env(self,input.target).layouts)
+  local supply = Sem.ClosureNameSupply(module_name, "module", 1)
+  local result = Sem.ClosureModuleComposing(Sem.ClosureModuleComposition({}, supply, layouts, input.target))
+  for i = 1, #self.items do result = result:closure_continue_item(self.items[i], module_name) end
+  return result:closure_finish(self)
+end
+
+return Sem

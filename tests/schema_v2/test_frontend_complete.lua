@@ -2,7 +2,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local asdl = require("lalin.asdl")
 
-require("lalin.schema_v2")
+local T = require("lalin.schema_v2")
 require("lalin.impl.tree_surface")
 require("lalin.impl.tree_closure")
 require("lalin.impl.tree_check.init")
@@ -16,9 +16,10 @@ local function typecheck_source(name, source)
   if not ok2 then return nil, "to_module: " .. tostring(m) end
   local ok3, m2 = pcall(function() return m:surface_resolve() end)
   if not ok3 then return nil, "surface_resolve: " .. tostring(m2) end
-  local ok4, m3 = pcall(function() return m2:closure_convert() end)
+  local target = T.LalinHost.HostTargetModel(64, 64, T.LalinHost.HostEndianLittle)
+  local ok4, m3 = pcall(function() return m2:closure_convert(T.LalinSem.ClosureModuleInput(target)) end)
   if not ok4 then return nil, "closure_convert: " .. tostring(m3) end
-  local ok5, checked = pcall(function() return m3:typecheck({}) end)
+  local ok5, checked = pcall(function() return m3.module:typecheck({}) end)
   if not ok5 then return nil, "typecheck: " .. tostring(checked) end
   return checked, nil
 end

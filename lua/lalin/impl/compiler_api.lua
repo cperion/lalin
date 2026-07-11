@@ -1,8 +1,9 @@
 -- impl/compiler_api.lua
 -- Root compiler API. CompilerSession:compile() is the public entry point.
 
-require("lalin.schema_v2")
+local T = require("lalin.schema_v2")
 local Compiler = require("lalin.schema_v2.compiler")
+local Sem = require("lalin.schema_v2.sem")
 
 -- Ensure all phase methods are installed
 require("lalin.impl.tree_surface")
@@ -58,6 +59,33 @@ function CodeValidation.CodeValidateFailed:compiler_compile(input)
   return Compiler.CompilerArtifactError("code_validate: " .. #msgs .. " issue(s): " .. table.concat(msgs, "; "))
 end
 
+local function compile_after_closure(m)
+  local check_ok, checked = pcall(function() return m:typecheck({}) end)
+  if not check_ok then return Compiler.CompilerArtifactError("typecheck: " .. tostring(checked)) end
+
+  local T = require("lalin.schema_v2")
+  local backend_target = require("lalin.backend_target_model")(T)
+  local back_target = backend_target.default_native()
+  local host_target = backend_target.host_target(back_target)
+  local lower_ok, lowering = pcall(function()
+    return checked:lower_tree_module_result_to_code({ target = host_target })
+  end)
+  if not lower_ok then return Compiler.CompilerArtifactError("lower_to_code: " .. tostring(lowering)) end
+  local code_module = lowering.code_module
+  local contracts = lowering.contracts.facts
+
+  local validate_mod = require("lalin.impl.code_validate")
+  local validate_ok, validate_result = pcall(function() return validate_mod.validate(code_module) end)
+  if not validate_ok then return Compiler.CompilerArtifactError("code_validate crashed: " .. tostring(validate_result)) end
+  return validate_result:compiler_compile(Compiler.CompilerCodeGenerationInput(code_module, contracts))
+end
+
+function Sem.ClosureConverted:compiler_compile_after_closure() return compile_after_closure(self.module) end
+function Sem.ClosureUnchanged:compiler_compile_after_closure() return compile_after_closure(self.module) end
+function Sem.ClosureUnsupported:compiler_compile_after_closure()
+  return Compiler.CompilerArtifactError("closure_convert: " .. self.reason)
+end
+
 function Compiler.CompilerSession:compile()
 
   -- Parse source → LalinTree Module
@@ -78,42 +106,12 @@ function Compiler.CompilerSession:compile()
     return Compiler.CompilerArtifactError("surface_resolve: " .. tostring(m))
   end
 
-  -- Phase 2: Closure convert
-  local cc_ok, m2 = pcall(function() return m:closure_convert() end)
-  if not cc_ok then
-    return Compiler.CompilerArtifactError("closure_convert: " .. tostring(m2))
-  end
-  m = m2
-
-  -- Phase 3: Typecheck
-  local check_ok, checked = pcall(function() return m:typecheck({}) end)
-  if not check_ok then
-    return Compiler.CompilerArtifactError("typecheck: " .. tostring(checked))
-  end
-
-  -- Phase 4: Lower to code
-  local T = require("lalin.schema_v2")
+  -- Phase 2: typed closure conversion with the selected host target.
   local backend_target = require("lalin.backend_target_model")(T)
-  local back_target = backend_target.default_native()
-  local host_target = backend_target.host_target(back_target)
-  local lower_ok, lowering = pcall(function()
-    return checked:lower_tree_module_result_to_code({ target = host_target })
-  end)
-  if not lower_ok then
-    return Compiler.CompilerArtifactError("lower_to_code: " .. tostring(lowering))
-  end
-  local code_module = lowering.code_module
-  local contracts = lowering.contracts.facts
-
-  -- Code validation gate
-  local validate_mod = require("lalin.impl.code_validate")
-  local validate_ok, validate_result = pcall(function()
-    return validate_mod.validate(code_module)
-  end)
-  if not validate_ok then
-    return Compiler.CompilerArtifactError("code_validate crashed: " .. tostring(validate_result))
-  end
-  return validate_result:compiler_compile(Compiler.CompilerCodeGenerationInput(code_module, contracts))
+  local host_target = backend_target.host_target(backend_target.default_native())
+  local cc_ok, closure_result = pcall(function() return m:closure_convert(Sem.ClosureModuleInput(host_target)) end)
+  if not cc_ok then return Compiler.CompilerArtifactError("closure_convert crashed: " .. tostring(closure_result)) end
+  return closure_result:compiler_compile_after_closure()
 end
 
 

@@ -3,7 +3,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local asdl = require("lalin.asdl")
 
 -- Initialize schema context
-require("lalin.schema_v2")
+local T = require("lalin.schema_v2")
 require("lalin.impl.compiler_api")
 local Compiler = require("lalin.schema_v2.compiler")
 
@@ -62,6 +62,7 @@ local Tr = require("lalin.schema_v2.tree")
 local Ty = require("lalin.schema_v2.type")
 local C = require("lalin.schema_v2.core")
 local LCheck = require("lalin.schema_v2.check")
+local closure_input = T.LalinSem.ClosureModuleInput(T.LalinHost.HostTargetModel(64, 64, T.LalinHost.HostEndianLittle))
 
 -- Build and typecheck manually for precise assertions
 local func = Tr.FuncLocal("add",
@@ -77,7 +78,7 @@ local mod = Tr.Module(Tr.ModuleSurface, {item})
 
 -- Surface resolve (needed to convert FuncExport → FuncLocal, etc.)
 mod = mod:surface_resolve()
-mod = mod:closure_convert()
+mod = mod:closure_convert(closure_input).module
 
 -- Typecheck
 local checked = mod:typecheck({})
@@ -142,7 +143,7 @@ local set_func = Tr.FuncLocal("set_x",
 local set_item = Tr.ItemFunc(set_func)
 local set_mod = Tr.Module(Tr.ModuleSurface, {set_item})
 set_mod = set_mod:surface_resolve()
-set_mod = set_mod:closure_convert()
+set_mod = set_mod:closure_convert(closure_input).module
 local set_checked = set_mod:typecheck({})
 
 local set_body = set_checked.items[1].func.body
@@ -165,7 +166,7 @@ local bad_func = Tr.FuncLocal("bad",
 local bad_item = Tr.ItemFunc(bad_func)
 local bad_mod = Tr.Module(Tr.ModuleSurface, {bad_item})
 bad_mod = bad_mod:surface_resolve()
-bad_mod = bad_mod:closure_convert()
+bad_mod = bad_mod:closure_convert(closure_input).module
 local bad_checked = bad_mod:typecheck({})
 
 local bad_body = bad_checked.items[1].func.body

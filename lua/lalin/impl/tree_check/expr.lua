@@ -592,6 +592,17 @@ function C.IntrinsicRound:typecheck_tree_intrinsic_result(args) return Ty.TScala
 function C.IntrinsicTrap:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarVoid) end
 function C.IntrinsicAssume:typecheck_tree_intrinsic_result(args) return Ty.TScalar(C.ScalarVoid) end
 
+-- ExprBlock: statements introduce a lexical scope used by the result.
+function Tr.ExprBlock:typecheck_tree_expr(input)
+  local stmt_input = LCheck.TypeStmtInput(input.scope, Ty.TScalar(C.ScalarVoid), LCheck.TypeYieldNone)
+  local body = stmt_input:typecheck_tree_stmt_body(self.stmts)
+  local result = self.result:typecheck_tree_expr(LCheck.TypeExprInput(body.state.scope))
+  local issues = {}
+  for i=1,#body.issues do issues[#issues+1]=body.issues[i] end
+  for i=1,#result.issues do issues[#issues+1]=result.issues[i] end
+  return LCheck.TypeExprResult(Tr.ExprBlock(Tr.ExprTyped(result.ty),body.stmts,result.expr),result.ty,issues)
+end
+
 -- ExprClosure: build closure type from params and result
 function Tr.ExprClosure:typecheck_tree_expr(input)
   -- Typecheck the body with local scope
@@ -602,7 +613,9 @@ function Tr.ExprClosure:typecheck_tree_expr(input)
   end
   local stmt_input = LCheck.TypeStmtInput(scope, self.result, LCheck.TypeYieldNone)
   local body = stmt_input:typecheck_tree_stmt_body(self.body or {})
-  local closure_ty = Ty.TClosure(self.params, self.result)
+  local param_types = {}
+  for i = 1, #self.params do param_types[i] = self.params[i].ty end
+  local closure_ty = Ty.TClosure(param_types, self.result)
   return LCheck.TypeExprResult(Tr.ExprClosure(Tr.ExprTyped(closure_ty), self.params, self.result, body.stmts), closure_ty, {})
 end
 

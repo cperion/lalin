@@ -4,7 +4,7 @@
 -- Also: type helpers on Core.Scalar, Code.CodeType, Ty.Type leaves.
 
 -- Bootstrap: ensure schema_v2 init runs first, so direct requires return instantiated types
-require("lalin.schema_v2")
+local SchemaV2 = require("lalin.schema_v2")
 
 local Tree     = require("lalin.schema_v2.tree")
 local Code     = require("lalin.schema_v2.code")
@@ -12,6 +12,7 @@ local TreeCode = require("lalin.schema_v2.tree_code")
 local Core     = require("lalin.schema_v2.core")
 local Sem      = require("lalin.schema_v2.sem")
 local Ty       = require("lalin.schema_v2.type")
+local Host     = SchemaV2.LalinHost
 local Bind     = require("lalin.schema_v2.bind")
 local asdl     = require("lalin.asdl")
 local TypeSizeAlign = require("lalin.type_size_align")
@@ -645,6 +646,13 @@ function Bind.BindingRoleGlobalFunc:tree_code_lookup_value(input, binding, ref)
       Code.CodeInstGlobalRef(dst, Code.CodeGlobalRefFunc(code_func_id(self.item_name)), ptr_ty),
       origin_binding(binding)))
   return input:tree_code_expr_result(dst, ptr_ty)
+end
+function Tree.ExprRef:lower_tree_closure_fn_to_code(input,ptr_ty) return self.ref:lower_tree_closure_fn_to_code(input,ptr_ty) end
+function Bind.ValueRefBinding:lower_tree_closure_fn_to_code(input,ptr_ty) return self.binding.role:lower_tree_closure_fn_to_code(input,self.binding,ptr_ty) end
+function Bind.BindingRoleGlobalFunc:lower_tree_closure_fn_to_code(input,binding,ptr_ty)
+  local dst_result=input:tree_code_new_value("closure_fn"); input=input:tree_code_with_result_state(dst_result)
+  input=input:tree_code_with_result_state(input:tree_code_append_inst(Code.CodeInstGlobalRef(dst_result.value,Code.CodeGlobalRefFunc(code_func_id(self.item_name)),ptr_ty),origin_binding(binding)))
+  return input:tree_code_expr_result(dst_result.value,ptr_ty)
 end
 function Bind.BindingRoleExtern:tree_code_lookup_value(input, binding, ref)
   local ptr_ty = input:tree_code_type(binding.ty)
@@ -1574,18 +1582,34 @@ function Tree.ExprIntrinsic:lower_tree_expr_to_code(input)
   return input:tree_code_expr_result(dst, ty)
 end
 
-function Tree.ExprAgg:lower_tree_expr_to_code(input)
-  local expr_ty = self.h and self.h:tree_code_expr_type(); local ty = input:tree_code_type(self.ty or expr_ty)
+function Ty.Type:lower_tree_aggregate_to_code(expr,input)
+  local ty = input:tree_code_type(expr.ty)
   local fields = {}
-  for i = 1, #(self.fields or {}) do
-    local fi = self.fields[i]
+  for i = 1, #expr.fields do
+    local fi = expr.fields[i]
     local val_r = fi.value:lower_tree_expr_to_code(input:tree_code_expr_input()); input = input:tree_code_with_result_state(val_r)
     local fi_ty = fi.value.h and fi.value.h:tree_code_expr_type()
-    fields[#fields + 1] = Code.CodeFieldValue(Sem.FieldByOffset(fi.name, fi.offset or 0, fi_ty or fi.ty, nil), val_r.value)
+    fields[#fields + 1] = Code.CodeFieldValue(Sem.FieldByOffset(fi.name, fi.offset or 0, fi_ty or fi.ty, Host.HostRepOpaque(fi.name)), val_r.value)
   end
   local dst_r = input:tree_code_new_value("agg"); input = input:tree_code_with_result_state(dst_r)
   input = input:tree_code_with_result_state(input:tree_code_append_inst(Code.CodeInstAggregate(dst_r.value, ty, fields), origin_generated("aggregate")))
   return input:tree_code_expr_result(dst_r.value, ty)
+end
+function Ty.TClosure:lower_tree_aggregate_to_code(expr,input)
+  local fn_ty=expr.fields[1].value.h:tree_code_expr_type()
+  local fn_code_ty,fn_sigs=CodeType.type_to_code(input.state.abi.sigs,fn_ty)
+  input=input:tree_code_with_state(state_with(input.state,{abi=TreeCode.TreeCodeFunctionAbiFacet(fn_sigs)}))
+  local fn = expr.fields[1].value:lower_tree_closure_fn_to_code(input:tree_code_expr_input(),fn_code_ty); input=input:tree_code_with_result_state(fn)
+  local ctx = expr.fields[2].value:lower_tree_expr_to_code(input:tree_code_expr_input()); input=input:tree_code_with_result_state(ctx)
+  local ty,sigs=CodeType.type_to_code(input.state.abi.sigs,self)
+  input=input:tree_code_with_state(state_with(input.state,{abi=TreeCode.TreeCodeFunctionAbiFacet(sigs)}))
+  local dst=input:tree_code_new_value("closure"); input=input:tree_code_with_result_state(dst)
+  input=input:tree_code_with_result_state(input:tree_code_append_inst(Code.CodeInstClosure(dst.value,ty,fn.value,ctx.value,ty.sig),origin_generated("closure descriptor")))
+  return input:tree_code_expr_result(dst.value,ty)
+end
+function Tree.ExprAgg:lower_tree_expr_to_code(input)
+  local expr_ty=self.ty or (self.h and self.h:tree_code_expr_type())
+  return expr_ty:lower_tree_aggregate_to_code(self,input)
 end
 
 function Tree.ExprArray:lower_tree_expr_to_code(input)

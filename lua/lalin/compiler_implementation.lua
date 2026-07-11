@@ -15,7 +15,7 @@ function M.install_canonical(T)
         return require("lalin.surface_resolve")(T).module(module)
     end
 
-    function Compiler.TreeCodeCanonicalImplementation:closure_convert(module)
+    function Compiler.TreeCodeCanonicalImplementation:closure_convert(module, input)
         return require("lalin.closure_convert")(T).module(module)
     end
 
@@ -52,10 +52,10 @@ function M.install_schema_v2(T)
         return module:surface_resolve()
     end
 
-    function Compiler.TreeCodeSchemaV2Implementation:closure_convert(module)
+    function Compiler.TreeCodeSchemaV2Implementation:closure_convert(module, input)
         require("lalin.impl.tree_check.module")
         require("lalin.impl.tree_closure")
-        return module:closure_convert()
+        return module:closure_convert(input)
     end
 
     function Compiler.TreeCodeSchemaV2Implementation:typecheck_module(module, input)
