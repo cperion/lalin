@@ -2,11 +2,9 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local asdl = require("lalin.asdl")
 local A2 = require("lalin.schema_projection")
-local TreeModuleType = require("lalin.tree_module_type")
 local ClosureConvert = require("lalin.closure_convert")
 local T = asdl.context()
 A2(T)
-TreeModuleType(T)
 local C, Ty, B, Tr = T.LalinCore, T.LalinType, T.LalinBind, T.LalinTree
 local i32 = Ty.TScalar(C.ScalarI32)
 
@@ -40,25 +38,37 @@ local capture_main = Tr.FuncExport("closure_capture", {}, i32, {
 })
 
 local module = Tr.Module(Tr.ModuleSurface, { Tr.ItemFunc(main), Tr.ItemFunc(capture_main) })
-local converted = ClosureConvert(T).module(module)
+local closure_api = ClosureConvert(T)
+
+-- Closure conversion installs the canonical backend-neutral module-name contract.
+assert(Tr.ModuleSurface:tree_module_name() == "", "surface modules should have an empty module name")
+assert(Tr.ModuleTyped("TypedClosure"):tree_module_name() == "TypedClosure", "typed modules should preserve their module name")
+
+local converted = closure_api.module(module)
 assert(#converted.items == 4, "closure conversion should hoist two helpers")
 
--- Verify hoisted helpers are properly named
-local has_direct = false
-local has_capture = false
+-- Helper names include the header name, owning function, and deterministic ordinal.
+local helper_names = {}
 for i = 1, #converted.items do
     local item = converted.items[i]
-    local cls = asdl.classof(item)
-    if cls == Tr.ItemFunc then
-        local func_cls = asdl.classof(item.func)
-        if func_cls == Tr.FuncLocal then
-            if item.func.name:find("closure_direct") then has_direct = true end
-            if item.func.name:find("closure_capture") then has_capture = true end
-        end
+    if asdl.classof(item) == Tr.ItemFunc and asdl.classof(item.func) == Tr.FuncLocal then
+        helper_names[#helper_names + 1] = item.func.name
     end
 end
-assert(has_direct, "should hoist a helper for direct closure")
-assert(has_capture, "should hoist a helper for capture closure")
+assert(helper_names[1] == "__lalin_closure__closure_direct_1", "unexpected surface helper name: " .. tostring(helper_names[1]))
+assert(helper_names[2] == "__lalin_closure__closure_capture_2", "unexpected surface helper name: " .. tostring(helper_names[2]))
+
+local typed_module = Tr.Module(Tr.ModuleTyped("TypedClosure"), module.items)
+local typed_converted = closure_api.module(typed_module)
+local typed_helper_names = {}
+for i = 1, #typed_converted.items do
+    local item = typed_converted.items[i]
+    if asdl.classof(item) == Tr.ItemFunc and asdl.classof(item.func) == Tr.FuncLocal then
+        typed_helper_names[#typed_helper_names + 1] = item.func.name
+    end
+end
+assert(typed_helper_names[1] == "__lalin_closure_TypedClosure_closure_direct_1", "unexpected typed helper name: " .. tostring(typed_helper_names[1]))
+assert(typed_helper_names[2] == "__lalin_closure_TypedClosure_closure_capture_2", "unexpected typed helper name: " .. tostring(typed_helper_names[2]))
 
 -- Verify main function has descriptor references instead of closure expressions
 for i = 1, #converted.items do

@@ -7,6 +7,10 @@ local function bind_context(T)
     local Sem = T.LalinSem
     local Tr = T.LalinTree
 
+    -- Closure conversion owns this canonical header-name dependency. Install the
+    -- existing concrete ModuleHeader leaf methods before the module API uses them.
+    require("lalin.tree_module_type")(T)
+
     ------------------------------------------------------------------------
     -- Ty.Type: closure_size_align leaf methods (no classof dispatch)
     ------------------------------------------------------------------------
