@@ -1,10 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local expected_names = {
-  "bind", "check", "c", "code", "compiler", "core", "effect", "exec",
-  "flow", "graph", "init", "kernel", "lower", "mem", "parse", "phase",
-  "project", "schedule", "sem", "source", "stencil", "stencil_machine",
-  "tree", "type", "value",
+  "bind", "check", "c", "c_materialize", "code", "compiler", "core", "effect",
+  "exec", "flow", "graph", "init", "kernel", "lower", "mem", "parse",
+  "phase", "project", "schedule", "sem", "source", "stencil",
+  "stencil_machine", "tree", "type", "value",
 }
 table.sort(expected_names)
 
@@ -12,6 +12,7 @@ local ownership = {
   bind = { namespace = "LalinBind", owner = "lua/lalin/schema_v2/bind.lua" },
   check = { namespace = "LalinCheck", owner = "lua/lalin/schema_v2/check.lua" },
   c = { namespace = "LalinC", owner = "lua/lalin/schema_v2/c.lua" },
+  c_materialize = { namespace = "LalinCMat", owner = "lua/lalin/schema_v2/c_materialize.lua" },
   code = { namespace = "LalinCode", owner = "lua/lalin/schema_v2/code.lua" },
   compiler = { namespace = "LalinCompiler", owner = "lua/lalin/schema_v2/compiler.lua" },
   core = { namespace = "LalinCore", owner = "lua/lalin/schema_v2/core.lua" },
@@ -59,8 +60,8 @@ for name in pairs(old_names) do
 end
 table.sort(duplicates)
 
-assert(#duplicates == 25, "schema ownership inventory must contain exactly 25 duplicate names, got " .. tostring(#duplicates))
-assert(#expected_names == 25)
+assert(#duplicates == 26, "schema ownership inventory must contain exactly 26 duplicate names, got " .. tostring(#duplicates))
+assert(#expected_names == 26)
 for i = 1, #expected_names do
   assert(duplicates[i] == expected_names[i], "schema ambiguity changed at slot " .. tostring(i) .. ": expected " .. expected_names[i] .. ", got " .. tostring(duplicates[i]))
 end
@@ -111,5 +112,5 @@ assert(v2_init:find('require("lalin.schema.luajit")', 1, true), "legacy stencil-
 assert(not v2_init:find('require("lalin.schema.luatrace")', 1, true), "LuaTrace must remain excluded from schema-v2")
 assert(not v2_init:find('require("lalin.schema.native")', 1, true), "native copy-patch must remain excluded from schema-v2")
 
-io.write("schema ownership inventory ok: 25 duplicate names, one intended owner each\n")
+io.write("schema ownership inventory ok: 26 duplicate names, one intended owner each\n")
 

@@ -5,7 +5,7 @@ This inventory is the OWN-0 ambiguity guard. It records intended ownership durin
 ## Rules
 
 - A compiler namespace has exactly one intended schema owner.
-- The duplicate filename set is closed at **25**. A new duplicate is a failing test, not an implicit migration decision.
+- The duplicate filename set is closed at **26**, including the intentional temporary `c_materialize` duplicate introduced by CMAT-1. A new duplicate is a failing test, not an implicit migration decision.
 - Except for the already-canonical `LalinPhase`, schema-v2 is the intended owner for duplicated compiler namespaces. The old files remain only until their dependent OWN-* cutover package reaches zero consumers.
 - `init.lua` is bootstrap ownership rather than an ASDL namespace. `lua/lalin/schema_v2/init.lua` is its intended owner.
 - The inventory describes target ownership. It does not make the old and schema-v2 constructor identities interchangeable.
@@ -17,6 +17,7 @@ This inventory is the OWN-0 ambiguity guard. It records intended ownership durin
 | `bind` | `LalinBind` | `lua/lalin/schema_v2/bind.lua` | OWN-FRONT |
 | `check` | `LalinCheck` | `lua/lalin/schema_v2/check.lua` | OWN-FRONT |
 | `c` | `LalinC` | `lua/lalin/schema_v2/c.lua` | OWN-C |
+| `c_materialize` | `LalinCMat` | `lua/lalin/schema_v2/c_materialize.lua` | OWN-STENCIL |
 | `code` | `LalinCode` | `lua/lalin/schema_v2/code.lua` | OWN-ANALYSIS / OWN-C |
 | `compiler` | `LalinCompiler` | `lua/lalin/schema_v2/compiler.lua` | OWN-C |
 | `core` | `LalinCore` | `lua/lalin/schema_v2/core.lua` | OWN-FRONT |
@@ -54,7 +55,9 @@ The main ownership cutover is for the neutral GCC-over-`emit_c` path. These back
 
 No schema-v2 counterpart may be added for these names under OWN-0. Existing `LalinLuaJIT` references in `schema_v2/stencil_machine.lua` are quarantined backend debt for OWN-STENCIL, not permission to pull LuaJIT values into neutral C materialization. Backend cutover requires an explicit package outside this inventory.
 
+CMAT-1 intentionally added the canonical `lua/lalin/schema_v2/c_materialize.lua` before consumers of the old `lua/lalin/schema/c_materialize.lua` have been migrated. `LalinCMat` is owned by the schema-v2 file now; CMAT/OWN-STENCIL moves all planning, materialization, and emission consumers to that identity and then removes the old file. The duplicate is therefore explicit and temporary, not filtered from ambiguity detection.
+
 ## Executable guard
 
-`tests/schema/test_schema_ownership_inventory.lua` computes the basename intersection of `lua/lalin/schema` and `lua/lalin/schema_v2`, asserts the exact 25-name set, verifies each namespace and intended owner, checks the Host boundary, and checks the excluded backend set. `tests/run.lua schema` executes both `tests/schema` and `tests/schema_v2`; modules are not moved or deleted by OWN-0.
+`tests/schema/test_schema_ownership_inventory.lua` computes the basename intersection of `lua/lalin/schema` and `lua/lalin/schema_v2`, asserts the exact 26-name set (including `c_materialize`), verifies each namespace and intended owner, checks the Host boundary, and checks the excluded backend set. `tests/run.lua schema` executes both `tests/schema` and `tests/schema_v2`; modules are not moved or deleted by OWN-0.
 

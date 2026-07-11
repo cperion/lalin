@@ -424,7 +424,7 @@ Orders 1–6 may run concurrently where owned files do not overlap. Serialize `L
 
 ## Milestone 3 — Bounded ASDL and Leaf-Method Migration Packages
 
-**Planning corrections:** there are **25** duplicate schema module names, not 24. Ad hoc C helper signatures are in `lua/lalin/impl/cemit_emit.lua:734-770`. The active schema-v2 C path lacks `LalinCMat`; `schema_v2/stencil_machine.lua` contains `LalinLuaJIT.LJExpr` and is excluded from the neutral main-C design.
+**Planning corrections:** after CMAT-1 there are **26** duplicate schema module names, not the pre-CMAT count of 25; the added `c_materialize` duplicate is intentional and temporary, with `schema_v2/c_materialize.lua` as the canonical `LalinCMat` owner. Ad hoc C helper signatures are in `lua/lalin/impl/cemit_emit.lua:734-770`. `schema_v2/stencil_machine.lua` contains `LalinLuaJIT.LJExpr` and is excluded from the neutral main-C design.
 
 ### Dependency graph
 
@@ -679,11 +679,11 @@ This ID deliberately replaces the planning report's `STN-1`; `STN-1` is already 
 
 ### OWN-0 — Ownership inventory and ambiguity guard
 
-**Evidence:** old/v2 bootstraps coexist; public facades route separate compilers; `tests/run.lua` omits schema-v2. Exactly **25** names are duplicated: `bind check c code compiler core effect exec flow graph init kernel lower mem parse phase project schedule sem source stencil stencil_machine tree type value`.
+**Evidence:** old/v2 bootstraps coexist; public facades route separate compilers; `tests/run.lua` previously omitted schema-v2. Exactly **26** names are currently duplicated: `bind check c c_materialize code compiler core effect exec flow graph init kernel lower mem parse phase project schedule sem source stencil stencil_machine tree type value`. The `c_materialize` duplicate was introduced intentionally by CMAT-1 and is not exempt from the guard.
 
 **Define/ownership:** repository ownership metadata, not semantic ASDL. Own new `docs/SCHEMA_OWNERSHIP.md`, inventory test, and `tests/run.lua`. **Dependencies:** none; start immediately. **Out of scope:** moving/deleting modules.
 
-**Checks/acceptance:** ownership inventory and schema suite; assert 25, one intended owner per namespace, legitimate Host boundary, explicit LuaJIT/LuaTrace exclusion, and failure on new ambiguity.
+**Checks/acceptance:** ownership inventory and schema suite; assert the exact current set of 26, one intended owner per namespace, legitimate Host boundary, explicit LuaJIT/LuaTrace exclusion, and failure on new ambiguity.
 
 ### OWN-FRONT — Canonical frontend/closure ownership
 
@@ -703,7 +703,7 @@ This ID deliberately replaces the planning report's `STN-1`; `STN-1` is already 
 
 ### OWN-STENCIL — Canonical stencil/CMat ownership
 
-**Evidence/target:** the old schema alone owns `LalinCMat`, schema-v2 materialization returns a parallel untyped model, and `stencil_machine` mixes excluded LuaJIT values with semantic descriptors. Canonical target is `schema_v2/stencil.lua`, neutral DESC-2, and `schema_v2/c_materialize.lua`; planning/materialization/emission methods attach only there.
+**Evidence/target:** CMAT-1 added canonical `schema_v2/c_materialize.lua` while the old `LalinCMat` declaration remains for unmigrated consumers, creating an intentional temporary duplicate. `schema_v2/c_materialize.lua` is the intended `LalinCMat` owner alongside canonical `schema_v2/stencil.lua` and neutral DESC-2; planning/materialization/emission methods attach only there. CMAT/OWN-STENCIL migrates remaining consumers and removes the old `schema/c_materialize.lua` ownership rather than hiding the ambiguity. `stencil_machine` still mixes excluded LuaJIT values with semantic descriptors.
 
 **Owned files:** old/new stencil/CMat schemas, C-facing implementations/tests, ownership manifest. **Dependencies:** STN-PLAN, DESC-1, DESC-2, CMAT-3, OWN-0. **Out of scope:** LuaJIT/LuaTrace adapters.
 
@@ -872,6 +872,6 @@ After integration, all active implementation branches must merge or rebase the i
 - **2026-07-10:** This file, not `.pi/workflows/*`, is the tracking authority.
 - **2026-07-11:** LuaTrace is abandoned. LuaJIT bytecode remains explicit but low priority; do not invest in LuaJIT stencil work ahead of the C compiler.
 - **2026-07-11:** Milestones 2–4 are assigned as bounded packages with explicit ASDL vocabulary, leaf ownership, files, dependencies, exclusions, and tests; the planned stencil package is `STN-PLAN` because `STN-1` is completed history.
-- **2026-07-11:** Schema ownership inventory counts 25 duplicate names. C helper signature evidence is `impl/cemit_emit.lua:734-770`.
+- **2026-07-11:** After CMAT-1, schema ownership inventory counts 26 duplicate names; `c_materialize` is intentionally temporary and schema-v2 is its intended owner until CMAT/OWN-STENCIL removes the old declaration. C helper signature evidence is `impl/cemit_emit.lua:734-770`.
 - **2026-07-11:** After CMP-1, M0 baseline refresh is the next gate. Until M0 is green, package gates require focused tests, the relevant suite, and no default-suite regression—not repair of unrelated failures.
 
