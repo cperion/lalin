@@ -42,31 +42,53 @@ This file is the distribution and tracking authority for all pack work.
 - [x] Capture default, slow, frontend, schema, code-IR, compiler-process, and C-backend baselines.
 - [x] Identify the region expansion constructor crash root cause.
 
-### Test baseline at `8630bc808`
+### Refreshed test baseline at `af80ae43`
 
-| Profile | Result |
-|---|---|
-| `luajit tests/run.lua` | 89 passed, 1 skipped, 46 failed |
-| `LALIN_RUN_SLOW=1 luajit tests/run.lua` | 89 passed, 47 failed |
-| `luajit tests/run.lua frontend` | 12 passed, 1 failed |
-| `luajit tests/run.lua schema` | 9 passed, 1 failed |
-| `luajit tests/run.lua code_ir` | 31 passed, 1 skipped, 26 failed |
-| `luajit tests/run.lua compiler_process` | 4 passed, 3 failed |
-| C backend | 9 passed, 12 failed |
+The tested compiler source is identical through the subsequent documentation-only commits.
 
-Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.lua`, `test_emit_c_validate.lua`, `test_emit_c_tcc.lua`, parsed extern, and parsed union emission.
+| Profile | Refreshed result | Baseline `8630bc808` |
+|---|---:|---:|
+| `luajit tests/run.lua` | 112 passed, 1 skipped, 28 failed | 89 passed, 1 skipped, 46 failed |
+| `LALIN_RUN_SLOW=1 luajit tests/run.lua` | 112 passed, 29 failed | 89 passed, 47 failed |
+| `luajit tests/run.lua frontend` | 13 passed, 1 failed | 12 passed, 1 failed |
+| `luajit tests/run.lua schema` | 11 passed, 0 failed | 9 passed, 1 failed |
+| `luajit tests/run.lua schema_v2` | 14 passed, 0 failed | 12 passed, 0 failed |
+| `luajit tests/run.lua compiler_process` | 7 passed, 0 failed | 4 passed, 3 failed |
+| `luajit tests/run.lua c_backend` | 20 passed, 1 failed | 9 passed, 12 failed |
+| `luajit tests/run.lua code_ir` | 36 passed, 1 skipped, 24 failed | 31 passed, 1 skipped, 26 failed |
+| `luajit tests/run.lua core` | 16 passed, 2 failed | 16 passed, 2 failed |
+| `luajit tests/run.lua runtime` | 4 passed, 0 failed | 3 passed, 1 failed |
+
+The default suite gained 23 passes and removed 18 failures. No previously passing test regressed. Scalar GCC, region main/call, and inline CMat copy/reduce/scan/SOAC runtime checks pass.
+
+### Refreshed failure clusters
+
+| Count | Class | Cluster | Owner |
+|---:|---|---|---|
+| 1 | stale harness | C helper registration test passes loose `{helpers={}}` instead of typed `CEmitMachine` | CLOW-1 |
+| 1 | main compiler | closure module-name methods are not installed at conversion entry | AUX-CLOSURE-NAME |
+| 17 | excluded LuaJIT | removed `StencilMachineSkeletonInput` | deferred |
+| 3 | excluded LuaJIT | stale `CodeInstIntrinsic` schema | deferred |
+| 1 | excluded LuaJIT | fixture omits typed schedule selection | deferred |
+| 1 | experimental native | removed readonly projection | deferred |
+| 1 | abandoned LuaTrace | stale stencil payload | stopped |
+| 1 | stale harness | `Back`/`Backend` typo in function ABI test | AUX-FUNC-ABI |
+| 1 | stale harness | reversed canonical type-to-C test arguments | AUX-TYPE-C |
+| 1 | main compiler | builder/compiler-driver binding role identity mismatch | LNG-EXT-C |
+
+The slow profile adds one deferred embedded-binary module-name collision. Excluded LuaTrace/LuaJIT/native failures are not main-C release priorities.
 
 ## Milestone 0 — Failure Ledger and Reproducible Baseline
 
-**Next gate:** after `CMP-1` integrates, refresh the complete baseline at the integration head before assigning later repair or migration packages. Until that refresh is green, package acceptance means focused checks + the relevant category suite + no new default-suite failures; it does not require a package to repair unrelated baseline failures.
+**Status:** complete at the refreshed integration baseline.
 
 ### M0.1 Failure classification
 
-- [ ] Record every baseline failure under exactly one root-cause cluster.
-- [ ] Classify each cluster as main compiler regression, incomplete advertised feature, experimental backend, obsolete test, or harness defect.
-- [ ] Give every cluster one minimal focused reproducer.
-- [ ] Record tests unblocked when a cluster lands.
-- [ ] Ensure experimental native work is not described as the default backend.
+- [x] Record every baseline failure under exactly one root-cause cluster.
+- [x] Classify each cluster as main compiler, excluded backend, stale harness, or deferred packaging work.
+- [x] Give every active cluster a minimal focused reproducer.
+- [x] Record the 18 previously failing tests and five new tests now passing.
+- [x] Keep experimental native and abandoned LuaTrace work outside the main backend.
 
 ### M0.2 Regression gates
 
@@ -809,10 +831,10 @@ Release-level gates:
 | history | ABI-SIG | P0 | LAY-1 | Required signatures | integrated `c95973fd5`; approved |
 | history | ABI-STATE | P0 | ABI-SIG | Cross-unit isolation | integrated `f7ba18a`; approved |
 | history | CMP-1 | P1 | none | Compiler-process contracts | integrated `7b983824`; approved |
-| current | M0.1 | P0 | CMP-1 | Refresh failure ledger/baseline | working `w4:p1E` |
-| 1 | AUX-FUNC-ABI | P1 | M0 refresh | ABI harness classification | planned |
-| 2 | AUX-TYPE-C | P1 | M0 refresh | Canonical type-to-C test | planned |
-| 3 | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | planned |
+| history | M0.1 | P0 | CMP-1 | Refreshed failure ledger/baseline | complete at `af80ae43` source |
+| current-A | AUX-FUNC-ABI | P1 | M0 refresh | ABI harness classification | ready |
+| current-B | AUX-TYPE-C | P1 | M0 refresh | Canonical type-to-C test | ready |
+| current-C | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | ready |
 | 4 | LNG-DIAG | P1 | M0 refresh | Unsupported control diagnostics | planned |
 | 5 | LNG-LOOP-C | P1 | integrated stencil/layout | Parsed loop GCC matrix | planned |
 | 6 | LNG-EXT-C | P1 | AUX ABI/type | Extern/builder/HostEval GCC | planned |
