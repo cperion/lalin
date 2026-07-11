@@ -831,10 +831,10 @@ Release-level gates:
 | history | AUX-FUNC-ABI | P1 | M0 refresh | ABI harness classification | integrated `b9a40cd`; approved |
 | history | AUX-TYPE-C | P1 | M0 refresh | Canonical type-to-C projection | integrated `d94df76ae`; approved |
 | history | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | integrated `549e74a`; approved |
-| current-A | SURFACE-C batch | P1/P2 | M0 refresh | `LNG-DIAG → LNG-EXPR-C → LNG-VAR-C`, serialized parser ownership | rereview `b84b23c16`,`83001676c`,`a0e32dd79` |
-| current-B | RUNTIME-C batch | P1 | integrated foundations | `LNG-LOOP-C → LNG-EXT-C → LNG-REG-C`, serialized runtime integration | rereview `5f371c45e`,`29ca840dc`,`a637f7363` |
+| history | SURFACE-C batch | P1/P2 | M0 refresh | `LNG-DIAG → LNG-EXPR-C → LNG-VAR-C` | integrated `1102b742a`; focused gates pass |
+| history | RUNTIME-C batch | P1 | integrated foundations | `LNG-LOOP-C → LNG-EXT-C → LNG-REG-C` | integrated `882fdcbd7`; canonical-stage fix `3d96ecd5` |
 | 10 | LNG-OWN-C | P2 | optional LNG-REG-C | Ownership/domain runtime | planned |
-| current-C | CLO-1→3 | P1 | M0 refresh | Closure vocabulary → collection → rewrite, serialized | rereview `87061ab29`,`1571cd529`,`76ed50ebd` |
+| history | CLO-1→3 | P1 | M0 refresh | Closure vocabulary → collection → rewrite | integrated `d424017`; canonical-input fix `a61918a` |
 | M3-B | MEM-1→4→EFF-1→2 | P1 | M0 refresh | Memory/effect facets and leaves | planned |
 | M3-C | KRN-1→SCH-1→2 | P1 | MEM/EFF | Kernel/schedule leaves | planned |
 | M3-D | CMAT-1→STN-PLAN/DESC-1→DESC-2→CMAT-2→3 | P1 | M0 refresh | Neutral stencil/CMat C path | planned |
