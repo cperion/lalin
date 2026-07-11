@@ -47,11 +47,19 @@ return schema. LalinKernel {
     KernelProofEffect { variant_unique, effect [LalinEffect.OpEffect], reason [str], },
     KernelProofFunctionEquivalence { variant_unique, reason [str], },
   },
+  sum. KernelTripEvidence {
+    KernelTripKnown { variant_unique, trip_count [LalinFlow.FlowTripCount], },
+    KernelTripUnavailable {
+      variant_unique,
+      trip_count [LalinFlow.FlowTripCount],
+      reject [LalinKernel.KernelReject],
+    },
+  },
   sum. KernelDomain {
     KernelDomainFlow {
       variant_unique,
       domain [LalinFlow.FlowDomain],
-      trip_count [LalinFlow.FlowTripCount],
+      trip [LalinKernel.KernelTripEvidence],
       counter [optional [LalinCode.CodeValueId]],
     },
   },
@@ -208,29 +216,98 @@ return schema. LalinKernel {
     KernelEquivalenceProof { variant_unique, proofs [many [LalinKernel.KernelProof]], },
     KernelEquivalenceRejected { variant_unique, failures [many [LalinKernel.KernelEquivalenceFailure]], },
   },
+  product. KernelReductionByLoopEntry {
+    interned,
+    loop [LalinGraph.GraphLoopId],
+    reduction [LalinValue.ReductionFact],
+  },
+  product. KernelClosedFormByLoopEntry {
+    interned,
+    loop [LalinGraph.GraphLoopId],
+    closed_form [LalinValue.ClosedFormFact],
+  },
+  product. KernelTripByLoopEntry {
+    interned,
+    loop [LalinGraph.GraphLoopId],
+    trip_count [LalinFlow.FlowTripCount],
+  },
+  product. KernelTripProjection { entries [many [LalinKernel.KernelTripByLoopEntry]], },
+  sum. KernelTripLookup {
+    KernelTripFound { variant_unique, entry [LalinKernel.KernelTripByLoopEntry], },
+    KernelTripMissing { variant_unique, loop [LalinGraph.GraphLoopId], },
+  },
+  sum. KernelLoopCountEvidence {
+    KernelLoopCounted { variant_unique, domain [LalinFlow.FlowCountedDomain], },
+    KernelLoopNotCountedEvidence { variant_unique, reject [LalinKernel.KernelReject], },
+  },
+  product. KernelLoopFactEntry {
+    interned,
+    loop [LalinGraph.GraphLoopId],
+    domain [LalinFlow.FlowDomain],
+    count [LalinKernel.KernelLoopCountEvidence],
+    trip [LalinKernel.KernelTripEvidence],
+  },
+  product. KernelLoopFactProjection {
+    loops [many [LalinKernel.KernelLoopFactEntry]],
+    reductions [many [LalinKernel.KernelReductionByLoopEntry]],
+    closed_forms [many [LalinKernel.KernelClosedFormByLoopEntry]],
+  },
+  sum. KernelReductionContribution {
+    KernelReductionForLoop { variant_unique, entry [LalinKernel.KernelReductionByLoopEntry], },
+    KernelReductionOutsideLoop { variant_unique, reduction [LalinValue.ReductionFact], },
+  },
+  sum. KernelClosedFormContribution {
+    KernelClosedFormForLoop { variant_unique, entry [LalinKernel.KernelClosedFormByLoopEntry], },
+    KernelClosedFormOutsideLoop { variant_unique, closed_form [LalinValue.ClosedFormFact], },
+  },
+  sum. KernelReductionLookup {
+    KernelReductionFound { variant_unique, entries [many [LalinKernel.KernelReductionByLoopEntry]], },
+    KernelReductionMissing { variant_unique, loop [LalinGraph.GraphLoopId], },
+  },
+  sum. KernelClosedFormLookup {
+    KernelClosedFormFound { variant_unique, entries [many [LalinKernel.KernelClosedFormByLoopEntry]], },
+    KernelClosedFormMissing { variant_unique, loop [LalinGraph.GraphLoopId], },
+  },
+  product. KernelLoopPlanRequest {
+    interned,
+    fact [LalinKernel.KernelLoopFactEntry],
+    candidate [LalinKernel.KernelLoopCandidate],
+    lanes [many [LalinKernel.KernelLane]],
+    bindings [many [LalinKernel.KernelBinding]],
+    effects [many [LalinKernel.KernelEffect]],
+    proofs [many [LalinKernel.KernelProof]],
+  },
+  product. KernelModulePlanRequest {
+    interned,
+    flow [LalinFlow.FlowFactSet],
+    values [LalinValue.ValueFactSet],
+    mem [LalinMem.MemSemanticFactSet],
+    effects [LalinEffect.EffectFactSet],
+    trips [LalinKernel.KernelTripProjection],
+  },
   sum. KernelLoopCandidate {
     KernelLoopNotCounted { variant_unique, rejects [many [LalinKernel.KernelReject]], },
     KernelLoopMissingOwner { variant_unique, rejects [many [LalinKernel.KernelReject]], },
     KernelLoopRejectedFacts { variant_unique, rejects [many [LalinKernel.KernelReject]], },
-    KernelLoopClosedFormCandidate {
-      variant_unique,
-      closed_form [LalinValue.ClosedFormFact],
-      trip_count [LalinFlow.FlowTripCount],
-    },
+    KernelLoopClosedFormCandidate { variant_unique, closed_form [LalinValue.ClosedFormFact], },
     KernelLoopReductionCandidate { variant_unique, reduction [LalinValue.ReductionFact], },
     KernelLoopSkeletonCandidate { variant_unique, result [LalinKernel.KernelResult], },
-    KernelLoopOriginalControlCandidate,
+    KernelLoopOriginalControlCandidate { variant_unique, rejects [many [LalinKernel.KernelReject]], },
   },
   sum. KernelLoopPlanSelection {
     KernelLoopNoPlan { variant_unique, rejects [many [LalinKernel.KernelReject]], },
-    KernelLoopPlanClosedForm {
-      variant_unique,
-      closed_form [LalinValue.ClosedFormFact],
-      add_trip_unknown_proof [bool],
-    },
+    KernelLoopPlanClosedForm { variant_unique, closed_form [LalinValue.ClosedFormFact], },
     KernelLoopPlanReduction { variant_unique, reduction [LalinValue.ReductionFact], },
     KernelLoopPlanSkeleton { variant_unique, result [LalinKernel.KernelResult], },
-    KernelLoopPlanOriginalControl,
+    KernelLoopPlanOriginalControl { variant_unique, rejects [many [LalinKernel.KernelReject]], },
+  },
+  sum. KernelScheduleEligibility {
+    KernelScheduleEligible { variant_unique, plan [LalinKernel.KernelPlanned], },
+    KernelScheduleIneligible {
+      variant_unique,
+      subject [LalinKernel.KernelSubject],
+      rejects [many [LalinKernel.KernelReject]],
+    },
   },
   sum. KernelRewriteKind {
     KernelRewriteClosedForm {
@@ -281,7 +358,7 @@ return schema. LalinKernel {
   product. KernelLoopPlanBuild {
     interned,
     domain [LalinFlow.FlowDomain],
-    trip_count [LalinFlow.FlowTripCount],
+    trip [LalinKernel.KernelTripEvidence],
     counter [optional [LalinCode.CodeValueId]],
     lanes [many [LalinKernel.KernelLane]],
     bindings [many [LalinKernel.KernelBinding]],

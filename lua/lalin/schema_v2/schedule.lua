@@ -44,34 +44,91 @@ return schema. LalinSchedule {
     EmitterFallbackUnsupportedOp { op_description [str] },
     EmitterFallbackTargetMissing { feature [LalinStencil.StencilVectorFeatureRequirement] },
   },
-  product. ScheduleEmitterCapability {
+  sum. ScheduleEmitterCapability {
+    ScheduleEmitterExecutable {
+      variant_unique,
+      kind [LalinSchedule.ScheduleEmitterKind],
+      reason [str],
+      proofs [many [LalinSchedule.ScheduleProof]],
+    },
+    ScheduleEmitterRejected {
+      variant_unique,
+      kind [LalinSchedule.ScheduleEmitterKind],
+      rejects [many [LalinSchedule.ScheduleReject]],
+    },
+  },
+  sum. ScheduleCandidate {
+    ScheduleVectorCandidate {
+      variant_unique,
+      form [LalinSchedule.ScheduleForm],
+      capability [LalinSchedule.ScheduleEmitterCapability],
+    },
+    ScheduleScalarCandidate {
+      variant_unique,
+      form [LalinSchedule.ScheduleForm],
+      capability [LalinSchedule.ScheduleEmitterCapability],
+    },
+    ScheduleClosedFormCandidate {
+      variant_unique,
+      capability [LalinSchedule.ScheduleEmitterCapability],
+    },
+  },
+  product. ScheduleCandidateCursor {
     interned,
-    kind [LalinSchedule.ScheduleEmitterKind],
-    executable [bool],
-    reason [str],
+    candidates [many [LalinSchedule.ScheduleCandidate]],
+    ordinal [number],
     rejects [many [LalinSchedule.ScheduleReject]],
+  },
+  sum. ScheduleCandidateDecision {
+    ScheduleCandidateSelected {
+      variant_unique,
+      form [LalinSchedule.ScheduleForm],
+      capability [LalinSchedule.ScheduleEmitterExecutable],
+      rejected_alternatives [many [LalinSchedule.ScheduleReject]],
+    },
+    ScheduleCandidateRejected {
+      variant_unique,
+      rejects [many [LalinSchedule.ScheduleReject]],
+    },
   },
   product. SchedulePlanInput {
     interned,
-    vector_form [optional [LalinSchedule.ScheduleForm]],
-    vector_capability [optional [LalinSchedule.ScheduleEmitterCapability]],
-    scalar_form [LalinSchedule.ScheduleForm],
-    scalar_capability [optional [LalinSchedule.ScheduleEmitterCapability]],
+    kernel [LalinKernel.KernelPlanned],
+    candidates [many [LalinSchedule.ScheduleCandidate]],
   },
   sum. SchedulePlanSelection {
     ScheduleSelectionNoPlan { variant_unique, rejects [many [LalinSchedule.ScheduleReject]], },
     ScheduleSelectionPlanned {
       variant_unique,
       form [LalinSchedule.ScheduleForm],
-      capability [LalinSchedule.ScheduleEmitterCapability],
+      capability [LalinSchedule.ScheduleEmitterExecutable],
       rejected_alternatives [many [LalinSchedule.ScheduleReject]],
     },
+  },
+  sum. ScheduleTargetFactContribution {
+    ScheduleTargetFactIgnored,
+    ScheduleTargetVectorShape { variant_unique, shape [LalinBackend.BackShape], },
+    ScheduleTargetUnrollPreference { variant_unique, unroll [number], },
+  },
+  product. ScheduleTargetProjection { contributions [many [LalinSchedule.ScheduleTargetFactContribution]], },
+  sum. ScheduleVectorLaneEvidence {
+    ScheduleVectorLaneAvailable { variant_unique, lane [LalinKernel.KernelLane], },
+    ScheduleVectorLaneUnavailable { variant_unique, reason [str], },
+  },
+  sum. ScheduleCandidateContribution {
+    ScheduleCandidateContributed { variant_unique, candidate [LalinSchedule.ScheduleCandidate], },
+    ScheduleCandidateNotContributed,
   },
   sum. KernelSchedule {
     ScheduleNoPlan {
       variant_unique,
       kernel [LalinKernel.KernelId],
       rejects [many [LalinSchedule.ScheduleReject]],
+    },
+    ScheduleKernelRejected {
+      variant_unique,
+      subject [LalinKernel.KernelSubject],
+      rejects [many [LalinKernel.KernelReject]],
     },
     SchedulePlanned {
       variant_unique,

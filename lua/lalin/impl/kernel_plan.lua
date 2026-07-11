@@ -1,259 +1,179 @@
--- impl/kernel_plan.lua — plan_kernels methods on LalinMem, LalinKernel,
--- LalinFlow, LalinValue, LalinCode, LalinEffect types.
--- Produces LalinKernel.KernelModulePlan from MemSemanticFactSet.
--- Entry: Mem.MemSemanticFactSet:plan_kernels(flow, values, mem, effects)
--- Heavy classof refactored from code_kernel_plan.lua, kernel_validate.lua,
--- kernel_emit_support.lua.
-
+-- impl/kernel_plan.lua — typed kernel loop-fact projection and planning.
 require("lalin.schema_v2")
-local Core    = require("lalin.schema_v2.core")
-local Code    = require("lalin.schema_v2.code")
-local Graph   = require("lalin.schema_v2.graph")
-local Flow    = require("lalin.schema_v2.flow")
-local Value   = require("lalin.schema_v2.value")
-local Mem     = require("lalin.schema_v2.mem")
-local Effect  = require("lalin.schema_v2.effect")
-local Kernel  = require("lalin.schema_v2.kernel")
-local Schedule = require("lalin.schema_v2.schedule")
+local Code = require("lalin.schema_v2.code")
+local Flow = require("lalin.schema_v2.flow")
+local Value = require("lalin.schema_v2.value")
+local Mem = require("lalin.schema_v2.mem")
+local Effect = require("lalin.schema_v2.effect")
+local Kernel = require("lalin.schema_v2.kernel")
 
 local function sanitize(s)
-  s = tostring(s or "x"):gsub("[^%w_]", "_")
+  s = tostring(s):gsub("[^%w_]", "_")
   if s:match("^%d") then s = "_" .. s end
-  if s == "" then s = "x" end
-  return s
+  return s ~= "" and s or "x"
 end
 
-----------------------------------------------------------------------
--- KernelPlan leaf methods: kernel_plan_rejects
-----------------------------------------------------------------------
-
-function Kernel.KernelPlan:kernel_plan_rejects() return nil end
-function Kernel.KernelNoPlan:kernel_plan_rejects() return self.rejects end
-
-----------------------------------------------------------------------
--- KernelSkeletonSelection leaf methods
-----------------------------------------------------------------------
-
-function Kernel.KernelSkeletonSelection:kernel_skeleton_effects()
-  return self.effects or {}
-end
-
-function Kernel.KernelSkeletonSelection:kernel_skeleton_result()
-  return self.result
-end
-
-function Kernel.KernelSkeletonSelection:kernel_skeleton_handles_dependences()
-  return false
-end
-
--- Stencil.KernelSkeletonCopy/ScatterReduce handle dependences
--- (These are in the Stencil module, referenced by SkeletonSelection effects)
-
-----------------------------------------------------------------------
--- KernelFunctionSkeletonSelection leaf methods
-----------------------------------------------------------------------
-
-function Kernel.KernelFunctionSkeletonSelection:add_function_skeleton_plan(plans)
-end
-
-function Kernel.KernelFunctionSkeletonPartition:add_function_skeleton_plan(plans)
-  plans[#plans + 1] = self.plan
-end
-
-function Kernel.KernelFunctionSkeletonNoSelection:add_function_skeleton_plan(plans)
-  plans[#plans + 1] = Kernel.KernelNoPlan(self.subject, self.rejects)
-end
-
-----------------------------------------------------------------------
--- FlowTripCount leaf methods
-----------------------------------------------------------------------
-
-function Flow.FlowTripCount:kernel_plan_closed_form_trip_unknown_proof() return false end
-function Flow.FlowTripCountRejected:kernel_plan_closed_form_trip_unknown_proof() return true end
-
-----------------------------------------------------------------------
--- KernelLoopCandidate leaf methods
-----------------------------------------------------------------------
-
-function Kernel.KernelLoopCandidate:select_kernel_loop_plan()
-  return Kernel.KernelLoopPlanOriginalControl
-end
-
-function Kernel.KernelLoopNotCounted:select_kernel_loop_plan()
-  return Kernel.KernelLoopNoPlan(self.rejects)
-end
-
-function Kernel.KernelLoopMissingOwner:select_kernel_loop_plan()
-  return Kernel.KernelLoopNoPlan(self.rejects)
-end
-
-function Kernel.KernelLoopRejectedFacts:select_kernel_loop_plan()
-  return Kernel.KernelLoopNoPlan(self.rejects)
-end
-
-function Kernel.KernelLoopClosedFormCandidate:select_kernel_loop_plan()
-  return Kernel.KernelLoopPlanClosedForm(self.closed_form, self.trip_count:kernel_plan_closed_form_trip_unknown_proof())
-end
-
-function Kernel.KernelLoopReductionCandidate:select_kernel_loop_plan()
-  return Kernel.KernelLoopPlanReduction(self.reduction)
-end
-
-function Kernel.KernelLoopSkeletonCandidate:select_kernel_loop_plan()
-  return Kernel.KernelLoopPlanSkeleton(self.result)
-end
-
-----------------------------------------------------------------------
--- is_scalar_code_ty helper
-----------------------------------------------------------------------
-
-local function is_scalar_code_ty(ty)
-  if ty == Code.CodeTyVoid or ty == Code.CodeTyBool8 or ty == Code.CodeTyIndex then return true end
-  if rawget(ty, "bits") ~= nil and rawget(ty, "signedness") ~= nil then return true end
-  if rawget(ty, "bits") ~= nil and rawget(ty, "signedness") == nil then return true end
-  if rawget(ty, "pointee") ~= nil then return true end
-  if rawget(ty, "sig") ~= nil then return true end
-  if ty == Code.CodeTyDataPtr or ty == Code.CodeTyCodePtr or ty == Code.CodeTyImportedCFuncPtr then return true end
-  if rawget(ty, "id") ~= nil and rawget(ty, "source_ty") ~= nil then return true end  -- Handle/Lease
-  return false
-end
-
-----------------------------------------------------------------------
--- value_expr_supported: check if a ValueExpr is kernel-lowerable
-----------------------------------------------------------------------
-
-local function value_expr_supported(expr, seen)
-  if expr == nil then return false, "missing ValueExpr" end
-  seen = seen or {}
-  if seen[expr] then return true end
-  seen[expr] = true
-  if rawget(expr, "const") ~= nil then return true end
-  if rawget(expr, "value") ~= nil and rawget(expr, "a") == nil and rawget(expr, "op") == nil then return true end
-  if rawget(expr, "op") ~= nil and rawget(expr, "from") ~= nil then
-    if not is_scalar_code_ty(expr.to) then return false, "non-scalar cast target type" end
-    return value_expr_supported(expr.value, seen)
-  end
-  if rawget(expr, "a") ~= nil and rawget(expr, "b") ~= nil then
-    if not is_scalar_code_ty(expr.ty) then return false, "non-scalar arithmetic type" end
-    local ok, reason = value_expr_supported(expr.a, seen); if not ok then return false, reason end
-    return value_expr_supported(expr.b, seen)
-  end
-  return false, "unsupported ValueExpr for kernel lowering"
-end
-
-----------------------------------------------------------------------
--- reject helpers
-----------------------------------------------------------------------
-
-local function reject_target(reason) return Schedule.ScheduleRejectTarget(reason) end
-local function reject_memory(reason) return Schedule.ScheduleRejectMemory(reason) end
-local function reject_algebra(reason) return Schedule.ScheduleRejectAlgebra(reason) end
-local function reject_profit(reason) return Schedule.ScheduleRejectProfit(reason) end
-
-----------------------------------------------------------------------
--- summarize_rejects
-----------------------------------------------------------------------
-
-local function summarize_rejects(rejects)
-  if #(rejects or {}) == 0 then return "no reject reasons" end
+local function append_all(left, right)
   local out = {}
-  for i = 1, math.min(4, #rejects) do
-    local r = rejects[i]
-    out[#out + 1] = tostring(r and (r.reason or r) or r)
-  end
-  if #rejects > #out then
-    out[#out + 1] = tostring(#rejects - #out) .. " additional reject(s)"
-  end
-  return table.concat(out, "; ")
+  for i = 1, #left do out[#out + 1] = left[i] end
+  for i = 1, #right do out[#out + 1] = right[i] end
+  return out
 end
 
-----------------------------------------------------------------------
--- plan_kernels: entry point
-----------------------------------------------------------------------
+function Flow.FlowTripCountExact:kernel_trip_evidence() return Kernel.KernelTripKnown(self) end
+function Flow.FlowTripCountNonNegative:kernel_trip_evidence() return Kernel.KernelTripKnown(self) end
+function Flow.FlowTripCountRejected:kernel_trip_evidence(subject)
+  return Kernel.KernelTripUnavailable(self, Kernel.KernelRejectNoFacts(subject, "flow trip count rejected: " .. tostring(self.reject)))
+end
 
-function Mem.MemSemanticFactSet:plan_kernels(flow, values, mem, effects)
-  -- Build kernel module plan from loop facts and memory/value analysis.
-  -- For each counted loop detected in flow facts, evaluate candidates:
-  --   closed-form, reduction, skeleton, or original control.
-  -- Produce a KernelModulePlan with the best plan for each loop.
+function Kernel.KernelTripProjection:merged(other) return Kernel.KernelTripProjection(append_all(self.entries, other.entries)) end
+function Flow.FlowLoopNormalizedCounted:kernel_trip_projection() return Kernel.KernelTripProjection({ Kernel.KernelTripByLoopEntry(self.loop, self.trip_count) }) end
+function Flow.FlowLoopInductionRange:kernel_trip_projection() return Kernel.KernelTripProjection({}) end
+function Flow.FlowLoopInductionNoWrap:kernel_trip_projection() return Kernel.KernelTripProjection({}) end
+function Flow.FlowSemanticFactSet:project_kernel_trips()
+  local projection = Kernel.KernelTripProjection({})
+  for _, fact in ipairs(self.facts) do projection = projection:merged(fact:kernel_trip_projection()) end
+  return projection
+end
+function Kernel.KernelTripProjection:lookup(loop)
+  for _, entry in ipairs(self.entries) do if entry.loop == loop then return Kernel.KernelTripFound(entry) end end
+  return Kernel.KernelTripMissing(loop)
+end
+function Kernel.KernelTripFound:kernel_trip_evidence(subject) return self.entry.trip_count:kernel_trip_evidence(subject) end
+function Kernel.KernelTripMissing:kernel_trip_evidence(subject)
+  local trip = Flow.FlowTripCountRejected(Flow.FlowTripCountNotLoop("semantic trip evidence is unavailable for " .. self.loop.text), nil)
+  return Kernel.KernelTripUnavailable(trip, Kernel.KernelRejectNoFacts(subject, "semantic trip evidence unavailable"))
+end
+
+function Flow.FlowDomainLoop:kernel_trip_projection(trip_count) return Kernel.KernelTripProjection({ Kernel.KernelTripByLoopEntry(self.loop, trip_count) }) end
+function Flow.FlowDomainBlockRange:kernel_trip_projection(trip_count) return Kernel.KernelTripProjection({}) end
+function Flow.FlowDomainFunction:kernel_trip_projection(trip_count) return Kernel.KernelTripProjection({}) end
+function Value.AlgebraFlowCounted:kernel_trip_projection(domain) return domain:kernel_trip_projection(self.trip_count) end
+function Value.AlgebraFlowMonotonic:kernel_trip_projection(domain) return Kernel.KernelTripProjection({}) end
+function Value.AlgebraFlowUnrolled:kernel_trip_projection(domain) return Kernel.KernelTripProjection({}) end
+function Value.AlgebraProofFlow:kernel_trip_projection() return self.guarantee:kernel_trip_projection(self.domain) end
+function Value.AlgebraProofNoWrap:kernel_trip_projection() return Kernel.KernelTripProjection({}) end
+function Value.AlgebraProofIdentity:kernel_trip_projection() return Kernel.KernelTripProjection({}) end
+function Value.AlgebraProofReduction:kernel_trip_projection() return Kernel.KernelTripProjection({}) end
+function Value.AlgebraProofComposite:kernel_trip_projection()
+  local projection = Kernel.KernelTripProjection({})
+  for _, proof in ipairs(self.proofs) do projection = projection:merged(proof:kernel_trip_projection()) end
+  return projection
+end
+function Value.ReductionFact:kernel_trip_projection() return self.proof:kernel_trip_projection() end
+function Value.ClosedFormFact:kernel_trip_projection() return self.proof:kernel_trip_projection() end
+function Value.ValueFactSet:project_kernel_trips()
+  local projection = Kernel.KernelTripProjection({})
+  for _, reduction in ipairs(self.reductions) do projection = projection:merged(reduction:kernel_trip_projection()) end
+  for _, closed_form in ipairs(self.closed_forms) do projection = projection:merged(closed_form:kernel_trip_projection()) end
+  return projection
+end
+
+function Flow.FlowDomainLoop:kernel_reduction_contribution(reduction)
+  return Kernel.KernelReductionForLoop(Kernel.KernelReductionByLoopEntry(self.loop, reduction))
+end
+function Flow.FlowDomainBlockRange:kernel_reduction_contribution(reduction) return Kernel.KernelReductionOutsideLoop(reduction) end
+function Flow.FlowDomainFunction:kernel_reduction_contribution(reduction) return Kernel.KernelReductionOutsideLoop(reduction) end
+function Kernel.KernelReductionForLoop:kernel_reduction_entries() return { self.entry } end
+function Kernel.KernelReductionOutsideLoop:kernel_reduction_entries() return {} end
+function Value.ReductionFact:kernel_reduction_entries() return self.domain:kernel_reduction_contribution(self):kernel_reduction_entries() end
+
+function Flow.FlowDomainLoop:kernel_closed_form_contribution(closed_form)
+  return Kernel.KernelClosedFormForLoop(Kernel.KernelClosedFormByLoopEntry(self.loop, closed_form))
+end
+function Flow.FlowDomainBlockRange:kernel_closed_form_contribution(closed_form) return Kernel.KernelClosedFormOutsideLoop(closed_form) end
+function Flow.FlowDomainFunction:kernel_closed_form_contribution(closed_form) return Kernel.KernelClosedFormOutsideLoop(closed_form) end
+function Kernel.KernelClosedFormForLoop:kernel_closed_form_entries() return { self.entry } end
+function Kernel.KernelClosedFormOutsideLoop:kernel_closed_form_entries() return {} end
+function Value.ClosedFormFact:kernel_closed_form_entries() return self.reduction.domain:kernel_closed_form_contribution(self):kernel_closed_form_entries() end
+
+function Kernel.KernelLoopFactProjection:lookup_reductions(loop)
+  local found = {}
+  for _, entry in ipairs(self.reductions) do if entry.loop == loop then found[#found + 1] = entry end end
+  if #found > 0 then return Kernel.KernelReductionFound(found) end
+  return Kernel.KernelReductionMissing(loop)
+end
+function Kernel.KernelLoopFactProjection:lookup_closed_forms(loop)
+  local found = {}
+  for _, entry in ipairs(self.closed_forms) do if entry.loop == loop then found[#found + 1] = entry end end
+  if #found > 0 then return Kernel.KernelClosedFormFound(found) end
+  return Kernel.KernelClosedFormMissing(loop)
+end
+function Kernel.KernelClosedFormFound:kernel_candidate(projection, fact)
+  return Kernel.KernelLoopClosedFormCandidate(self.entries[1].closed_form)
+end
+function Kernel.KernelClosedFormMissing:kernel_candidate(projection, fact)
+  return projection:lookup_reductions(fact.loop):kernel_candidate(fact)
+end
+function Kernel.KernelReductionFound:kernel_candidate(fact) return Kernel.KernelLoopReductionCandidate(self.entries[1].reduction) end
+function Kernel.KernelReductionMissing:kernel_candidate(fact)
+  return Kernel.KernelLoopOriginalControlCandidate({ Kernel.KernelRejectNoFacts(Kernel.KernelSubjectLoop(fact.loop), "no closed-form, reduction, or skeleton candidate") })
+end
+function Kernel.KernelLoopCounted:kernel_candidate(projection, fact) return projection:lookup_closed_forms(fact.loop):kernel_candidate(projection, fact) end
+function Kernel.KernelLoopNotCountedEvidence:kernel_candidate(projection, fact) return Kernel.KernelLoopNotCounted({ self.reject }) end
+function Kernel.KernelLoopFactEntry:kernel_candidate(projection) return self.count:kernel_candidate(projection, self) end
+function Flow.FlowLoopFacts:kernel_count_evidence(subject)
+  if self.counted ~= nil then return Kernel.KernelLoopCounted(self.counted) end
+  return Kernel.KernelLoopNotCountedEvidence(Kernel.KernelRejectNoFacts(subject, "loop is not counted"))
+end
+
+function Flow.FlowFactSet:project_kernel_loop_facts(values, trips)
+  local loops, reductions, closed_forms = {}, {}, {}
+  for _, reduction in ipairs(values.reductions) do reductions = append_all(reductions, reduction:kernel_reduction_entries()) end
+  for _, closed_form in ipairs(values.closed_forms) do closed_forms = append_all(closed_forms, closed_form:kernel_closed_form_entries()) end
+  for _, loop in ipairs(self.loops) do
+    local subject = Kernel.KernelSubjectLoop(loop.loop)
+    loops[#loops + 1] = Kernel.KernelLoopFactEntry(loop.loop, loop.domain, loop:kernel_count_evidence(subject), trips:lookup(loop.loop):kernel_trip_evidence(subject))
+  end
+  return Kernel.KernelLoopFactProjection(loops, reductions, closed_forms)
+end
+
+function Kernel.KernelLoopNotCounted:select_kernel_loop_plan() return Kernel.KernelLoopNoPlan(self.rejects) end
+function Kernel.KernelLoopMissingOwner:select_kernel_loop_plan() return Kernel.KernelLoopNoPlan(self.rejects) end
+function Kernel.KernelLoopRejectedFacts:select_kernel_loop_plan() return Kernel.KernelLoopNoPlan(self.rejects) end
+function Kernel.KernelLoopClosedFormCandidate:select_kernel_loop_plan() return Kernel.KernelLoopPlanClosedForm(self.closed_form) end
+function Kernel.KernelLoopReductionCandidate:select_kernel_loop_plan() return Kernel.KernelLoopPlanReduction(self.reduction) end
+function Kernel.KernelLoopSkeletonCandidate:select_kernel_loop_plan() return Kernel.KernelLoopPlanSkeleton(self.result) end
+function Kernel.KernelLoopOriginalControlCandidate:select_kernel_loop_plan() return Kernel.KernelLoopPlanOriginalControl(self.rejects) end
+
+function Kernel.KernelTripKnown:kernel_trip_count() return self.trip_count end
+function Kernel.KernelTripUnavailable:kernel_trip_count() return self.trip_count end
+function Kernel.KernelTripKnown:kernel_trip_proofs(domain, proofs)
+  return append_all(proofs, { Kernel.KernelProofFlow(domain, "real flow trip-count evidence retained") })
+end
+function Kernel.KernelTripUnavailable:kernel_trip_proofs(domain, proofs) return proofs end
+
+local function planned(request, result, proofs)
+  local fact = request.fact
+  local body = Kernel.KernelBody(
+    Kernel.KernelDomainFlow(fact.domain, fact.trip, nil),
+    request.lanes, request.bindings, request.effects, result,
+    Kernel.KernelEquivalenceProof(fact.trip:kernel_trip_proofs(fact.domain, proofs)))
+  return Kernel.KernelPlanned(Kernel.KernelId("kernel:" .. sanitize(fact.loop.text)), Kernel.KernelSubjectLoop(fact.loop), body)
+end
+function Kernel.KernelLoopNoPlan:materialize_kernel_loop(request) return Kernel.KernelNoPlan(Kernel.KernelSubjectLoop(request.fact.loop), self.rejects) end
+function Kernel.KernelLoopPlanOriginalControl:materialize_kernel_loop(request) return Kernel.KernelNoPlan(Kernel.KernelSubjectLoop(request.fact.loop), self.rejects) end
+function Kernel.KernelLoopPlanClosedForm:materialize_kernel_loop(request)
+  return planned(request, Kernel.KernelResultClosedForm(self.closed_form), append_all(request.proofs, { Kernel.KernelProofValue(self.closed_form.proof, "closed-form fact") }))
+end
+function Kernel.KernelLoopPlanReduction:materialize_kernel_loop(request)
+  return planned(request, Kernel.KernelResultReduction(self.reduction), append_all(request.proofs, { Kernel.KernelProofValue(self.reduction.proof, "reduction fact") }))
+end
+function Kernel.KernelLoopPlanSkeleton:materialize_kernel_loop(request) return planned(request, self.result, request.proofs) end
+
+function Kernel.KernelNoPlan:schedule_eligibility() return Kernel.KernelScheduleIneligible(self.subject, self.rejects) end
+function Kernel.KernelPlanned:schedule_eligibility() return Kernel.KernelScheduleEligible(self) end
+
+function Kernel.KernelModulePlanRequest:plan_kernels()
+  local projection = self.flow:project_kernel_loop_facts(self.values, self.trips)
   local plans = {}
-
-  -- Index flow facts by loop
-  local flow_loops = {}
-  for _, lf in ipairs(flow and flow.loops or {}) do
-    if lf.counted ~= nil then flow_loops[lf.loop.text] = lf end
+  for _, fact in ipairs(projection.loops) do
+    local candidate = fact:kernel_candidate(projection)
+    local request = Kernel.KernelLoopPlanRequest(fact, candidate, {}, {}, {}, {})
+    plans[#plans + 1] = candidate:select_kernel_loop_plan():materialize_kernel_loop(request)
   end
-
-  -- Index reductions and closed forms from value facts
-  local reductions = {}
-  for _, r in ipairs(values and values.reductions or {}) do
-    local domain_text = r.domain and r.domain.loop and r.domain.loop.text or tostring(r)
-    reductions[domain_text] = reductions[domain_text] or {}
-    reductions[domain_text][#reductions[domain_text] + 1] = r
-  end
-
-  local closed_forms = {}
-  for _, cf in ipairs(values and values.closed_forms or {}) do
-    local loop_text = cf.reduction and cf.reduction.domain and cf.reduction.domain.loop and cf.reduction.domain.loop.text or tostring(cf)
-    closed_forms[loop_text] = cf
-  end
-
-  -- Evaluate each loop
-  for _, lf in ipairs(flow and flow.loops or {}) do
-    if lf.counted ~= nil then
-      local loop_text = lf.loop.text
-      -- closed-form candidate
-      if closed_forms[loop_text] ~= nil then
-        local cf = closed_forms[loop_text]
-        candidates[#candidates + 1] = Kernel.KernelLoopClosedFormCandidate(cf, Flow.FlowTripCountRejected(Flow.FlowTripCountNotLoop("using flow trip count"), nil))
-      end
-      -- reduction candidates
-      for _, r in ipairs(reductions[loop_text] or {}) do
-        candidates[#candidates + 1] = Kernel.KernelLoopReductionCandidate(r)
-      end
-      -- always original control as fallback
-      candidates[#candidates + 1] = Kernel.KernelLoopOriginalControlCandidate
-
-      -- Select best plan
-      local selection = nil
-      for _, c in ipairs(candidates) do
-        selection = c:select_kernel_loop_plan()
-        -- prefer first non-original-control plan
-        if rawget(selection, "reason") ~= nil or rawget(selection, "rejects") ~= nil then
-          -- this is a no-plan or fallback; keep trying
-        else
-          break
-        end
-      end
-
-      if selection == Kernel.KernelLoopPlanOriginalControl then
-        plans[#plans + 1] = Kernel.KernelNoPlan(Kernel.KernelSubjectLoop(lf.loop), {})
-      elseif rawget(selection, "rejects") ~= nil then
-        plans[#plans + 1] = Kernel.KernelNoPlan(Kernel.KernelSubjectLoop(lf.loop), selection.rejects or {})
-      elseif rawget(selection, "closed_form") ~= nil then
-        -- Build a planned kernel for closed form
-        local tid = Kernel.KernelId("kernel:closed_form:" .. sanitize(loop_text))
-        local body = Kernel.KernelBody(
-          Kernel.KernelDomainFlow(Flow.FlowDomainLoop(lf.loop), lf.counted, lf.counted.counter),
-          {}, {}, {},
-          Kernel.KernelResultClosedForm(selection.closed_form),
-          Kernel.KernelEquivalenceProof({ Kernel.KernelProofFlow(Flow.FlowDomainLoop(lf.loop), "closed-form equivalence") })
-        )
-        plans[#plans + 1] = Kernel.KernelPlanned(tid, Kernel.KernelSubjectLoop(lf.loop), body)
-      elseif rawget(selection, "reduction") ~= nil then
-        local tid = Kernel.KernelId("kernel:reduction:" .. sanitize(loop_text))
-        local body = Kernel.KernelBody(
-          Kernel.KernelDomainFlow(Flow.FlowDomainLoop(lf.loop), lf.counted, lf.counted.counter),
-          {}, {}, {},
-          Kernel.KernelResultReduction(selection.reduction),
-          Kernel.KernelEquivalenceProof({ Kernel.KernelProofValue(Value.AlgebraProofComposite({}, "reduction equivalence")) })
-        )
-        plans[#plans + 1] = Kernel.KernelPlanned(tid, Kernel.KernelSubjectLoop(lf.loop), body)
-      end
-    else
-      plans[#plans + 1] = Kernel.KernelNoPlan(Kernel.KernelSubjectLoop(lf.loop), { Kernel.KernelRejectIncompleteFunction(Kernel.KernelSubjectLoop(lf.loop), "loop not counted") })
-    end
-  end
-
-  return Kernel.KernelModulePlan(self.module, flow, values, mem or self, effects or Effect.EffectFactSet(self.module, {}, {}, {}), plans)
+  return Kernel.KernelModulePlan(self.mem.module, self.flow, self.values, self.mem, self.effects, plans)
+end
+function Mem.MemSemanticFactSet:plan_kernels(flow, values, mem, effects)
+  return Kernel.KernelModulePlanRequest(flow, values, mem, effects, values:project_kernel_trips()):plan_kernels()
 end

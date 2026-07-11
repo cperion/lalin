@@ -8,126 +8,31 @@ local Lower    = require("lalin.schema_v2.lower")
 local Schedule = require("lalin.schema_v2.schedule")
 
 ----------------------------------------------------------------------
--- Schedule.ScheduleForm → lower_emit_kernel_selection
--- Maps schedule forms to LowerEmit* kernel selections.
+-- Typed schedule-form and lower-strategy selection
 ----------------------------------------------------------------------
 
-function Schedule.ScheduleForm:lower_emit_kernel_selection()
-  return Lower.LowerEmitScalarKernel
-end
+function Schedule.ScheduleScalarIndex:lower_emit_kernel_selection() return Lower.LowerEmitScalarKernel end
+function Schedule.ScheduleScalarPointer:lower_emit_kernel_selection() return Lower.LowerEmitScalarKernel end
+function Schedule.ScheduleVector:lower_emit_kernel_selection() return Lower.LowerEmitVectorKernel end
+function Schedule.ScheduleClosedForm:lower_emit_kernel_selection() return Lower.LowerEmitClosedForm end
+function Schedule.ScheduleNoPlan:lower_emit_kernel_selection() return Lower.LowerEmitUnsupported("scheduled kernel was rejected: " .. tostring(self.rejects[1])) end
+function Schedule.SchedulePlanned:lower_emit_kernel_selection() return self.form:lower_emit_kernel_selection() end
 
-function Schedule.ScheduleVector:lower_emit_kernel_selection()
-  return Lower.LowerEmitVectorKernel
-end
+function Lower.LowerStrategyCode:lower_emit_candidate(projection) return Lower.LowerEmitCodeCandidate end
+function Lower.LowerStrategyClosedForm:lower_emit_candidate(projection) return Lower.LowerEmitClosedFormCandidate end
+function Lower.LowerStrategyKernel:lower_emit_candidate(projection) return projection:lookup(self.kernel):lower_emit_candidate(self) end
+function Lower.LowerScheduleByKernelFound:lower_emit_candidate(strategy) return Lower.LowerEmitKernelCandidate(self.entry.schedule) end
+function Lower.LowerScheduleByKernelMissing:lower_emit_candidate(strategy) return Lower.LowerEmitMissingScheduleCandidate("missing schedule for kernel " .. self.kernel.text) end
 
-function Schedule.KernelSchedule:lower_emit_kernel_selection()
-  return Lower.LowerEmitScalarKernel
-end
+function Lower.LowerEmitCodeCandidate:select_lower_emit() return Lower.LowerEmitCode end
+function Lower.LowerEmitClosedFormCandidate:select_lower_emit() return Lower.LowerEmitClosedForm end
+function Lower.LowerEmitKernelCandidate:select_lower_emit() return self.schedule:lower_emit_kernel_selection() end
+function Lower.LowerEmitMissingScheduleCandidate:select_lower_emit() return Lower.LowerEmitMissingSchedule(self.reason) end
+function Lower.LowerEmitUnsupportedCandidate:select_lower_emit() return Lower.LowerEmitUnsupported(self.reason) end
 
-function Schedule.SchedulePlanned:lower_emit_kernel_selection()
-  return self.form:lower_emit_kernel_selection()
-end
-
-----------------------------------------------------------------------
--- LowerStrategy → lower_emit_candidate
--- Each strategy type maps itself to a LowerEmitCandidate leaf.
-----------------------------------------------------------------------
-
-function Lower.LowerStrategy:lower_emit_candidate(schedule)
-  return Lower.LowerEmitUnsupportedCandidate("unsupported LowerStrategy for C emission " .. tostring(self))
-end
-
-function Lower.LowerStrategyCode:lower_emit_candidate(schedule)
-  return Lower.LowerEmitCodeCandidate
-end
-
-function Lower.LowerStrategyClosedForm:lower_emit_candidate(schedule)
-  return Lower.LowerEmitClosedFormCandidate
-end
-
-function Lower.LowerStrategyKernel:lower_emit_candidate(schedule)
-  if schedule == nil then
-    return Lower.LowerEmitMissingScheduleCandidate(self:lower_emit_missing_schedule_reason())
-  end
-  return Lower.LowerEmitKernelCandidate(schedule)
-end
-
-----------------------------------------------------------------------
--- LowerEmitCandidate → select_lower_emit
--- Maps emit candidates to concrete LowerEmit* leaves.
-----------------------------------------------------------------------
-
-function Lower.LowerEmitCandidate:select_lower_emit()
-  return Lower.LowerEmitUnsupported("unsupported lower emit candidate " .. tostring(self))
-end
-
-function Lower.LowerEmitCodeCandidate:select_lower_emit()
-  return Lower.LowerEmitCode
-end
-
-function Lower.LowerEmitClosedFormCandidate:select_lower_emit()
-  return Lower.LowerEmitClosedForm
-end
-
-function Lower.LowerEmitKernelCandidate:select_lower_emit()
-  return self.schedule:lower_emit_kernel_selection()
-end
-
-function Lower.LowerEmitMissingScheduleCandidate:select_lower_emit()
-  return Lower.LowerEmitUnsupported(self.reason)
-end
-
-function Lower.LowerEmitUnsupportedCandidate:select_lower_emit()
-  return Lower.LowerEmitUnsupported(self.reason)
-end
-
-----------------------------------------------------------------------
--- LowerStrategy → lower_emit_schedule / lower_emit_missing_schedule_reason
-----------------------------------------------------------------------
-
-function Lower.LowerStrategy:lower_emit_schedule(schedules_by_id)
-  return nil
-end
-
-function Lower.LowerStrategyKernel:lower_emit_schedule(schedules_by_id)
-  -- The kernel plan carries a kernel id; look up the schedule by kernel id text.
-  return schedules_by_id[self.kernel.text]
-end
-
-function Lower.LowerStrategy:lower_emit_missing_schedule_reason()
-  return ""
-end
-function Lower.LowerStrategyKernel:lower_emit_missing_schedule_reason()
-  return "missing schedule for kernel " .. tostring(self.kernel.text)
-end
-
-----------------------------------------------------------------------
--- LowerStrategy → lower_c_is_semantic_strategy
-----------------------------------------------------------------------
-
-function Lower.LowerStrategy:lower_c_is_semantic_strategy()
-  return false
-end
-
-function Lower.LowerStrategyKernel:lower_c_is_semantic_strategy()
-  return true
-end
-
-function Lower.LowerStrategyClosedForm:lower_c_is_semantic_strategy()
-  return true
-end
-
-----------------------------------------------------------------------
--- Schedule → lower_c_index_schedule
-----------------------------------------------------------------------
-
-function Schedule.KernelSchedule:lower_c_index_schedule(out)
-  -- no-op default
-end
-
-function Schedule.SchedulePlanned:lower_c_index_schedule(out)
-  out[self.id.text] = self
-end
+function Lower.LowerStrategyCode:lower_c_is_semantic_strategy() return false end
+function Lower.LowerStrategyKernel:lower_c_is_semantic_strategy() return true end
+function Lower.LowerStrategyClosedForm:lower_c_is_semantic_strategy() return true end
 
 ----------------------------------------------------------------------
 -- LowerAddress → lower_c_serves_lane / lower_c_matches_block / lower_c_block_param_for
@@ -216,9 +121,6 @@ end
 -- LowerCover → lower_c_cover_blocks
 ----------------------------------------------------------------------
 
-function Lower.LowerCover:lower_c_cover_blocks(func, graph_loops, add)
-  -- no-op default
-end
 
 function Lower.LowerCoverFunction:lower_c_cover_blocks(func, graph_loops, add)
   for _, b in ipairs(func.blocks or {}) do add(b) end
@@ -231,11 +133,12 @@ function Lower.LowerCoverBlock:lower_c_cover_blocks(func, graph_loops, add)
 end
 
 function Lower.LowerCoverLoop:lower_c_cover_blocks(func, graph_loops, add)
-  local loop = graph_loops[self.loop.text]
-  local body = {}
-  for _, gb in ipairs(loop and loop.body or {}) do body[gb.block.text] = true end
-  for _, b in ipairs(func.blocks or {}) do
-    if body[b.id.text] then add(b) end
+  graph_loops:lookup(self.loop):lower_c_cover_loop(func, add)
+end
+function Lower.LowerLoopByIdMissing:lower_c_cover_loop(func, add) end
+function Lower.LowerLoopByIdFound:lower_c_cover_loop(func, add)
+  for _, b in ipairs(func.blocks) do
+    for _, graph_block in ipairs(self.entry.loop.body) do if graph_block.block == b.id then add(b) end end
   end
 end
 

@@ -1,171 +1,125 @@
--- impl/schedule_plan.lua — plan_schedules methods on LalinKernel, LalinSchedule,
--- LalinBackend types. Produces LalinSchedule.ScheduleModulePlan.
--- Entry: Kernel.KernelModulePlan:plan_schedules(code_module, flow, values, mem, effects, target)
-
+-- impl/schedule_plan.lua — typed schedule candidates and capabilities.
 require("lalin.schema_v2")
-local Backend  = require("lalin.schema_v2.backend")
-local Code     = require("lalin.schema_v2.code")
-local Flow     = require("lalin.schema_v2.flow")
-local Value    = require("lalin.schema_v2.value")
-local Mem      = require("lalin.schema_v2.mem")
-local Kernel   = require("lalin.schema_v2.kernel")
+local Backend = require("lalin.schema_v2.backend")
+local Kernel = require("lalin.schema_v2.kernel")
 local Schedule = require("lalin.schema_v2.schedule")
 
 local function sanitize(s)
-  s = tostring(s or "x"):gsub("[^%w_]", "_")
+  s = tostring(s):gsub("[^%w_]", "_")
   if s:match("^%d") then s = "_" .. s end
-  if s == "" then s = "x" end
-  return s
+  return s ~= "" and s or "x"
+end
+local function append_all(left, right)
+  local out = {}
+  for i = 1, #left do out[#out + 1] = left[i] end
+  for i = 1, #right do out[#out + 1] = right[i] end
+  return out
 end
 
-local function capability_executable(capability)
-  return capability ~= nil and capability.executable == true
+function Schedule.ScheduleEmitterScalar:schedule_emitter_name() return "scalar" end
+function Schedule.ScheduleEmitterVector:schedule_emitter_name() return "vector" end
+function Schedule.ScheduleEmitterClosedForm:schedule_emitter_name() return "closed_form" end
+function Schedule.ScheduleEmitterFallback:schedule_emitter_name() return "fallback" end
+
+function Schedule.ScheduleEmitterExecutable:schedule_candidate_decision(form, cursor)
+  return Schedule.ScheduleCandidateSelected(form, self, cursor.rejects)
 end
-
-local function capability_rejects(capability)
-  return capability and capability.rejects or {}
+function Schedule.ScheduleEmitterRejected:schedule_candidate_decision(form, cursor)
+  return Schedule.ScheduleCandidateRejected(self.rejects)
 end
-
-----------------------------------------------------------------------
--- SchedulePlanInput: select kernel schedule
-----------------------------------------------------------------------
-
+function Schedule.ScheduleVectorCandidate:attempt_schedule(cursor) return self.capability:schedule_candidate_decision(self.form, cursor) end
+function Schedule.ScheduleScalarCandidate:attempt_schedule(cursor) return self.capability:schedule_candidate_decision(self.form, cursor) end
+function Schedule.ScheduleClosedFormCandidate:attempt_schedule(cursor) return self.capability:schedule_candidate_decision(Schedule.ScheduleClosedForm, cursor) end
+function Schedule.ScheduleCandidateSelected:continue_schedule_selection(cursor)
+  return Schedule.ScheduleSelectionPlanned(self.form, self.capability, self.rejected_alternatives)
+end
+function Schedule.ScheduleCandidateRejected:continue_schedule_selection(cursor)
+  return cursor:select_kernel_schedule_from(cursor.ordinal + 1, append_all(cursor.rejects, self.rejects))
+end
+function Schedule.ScheduleCandidateCursor:select_kernel_schedule_from(ordinal, rejects)
+  if ordinal > #self.candidates then return Schedule.ScheduleSelectionNoPlan(rejects) end
+  local cursor = Schedule.ScheduleCandidateCursor(self.candidates, ordinal, rejects)
+  return self.candidates[ordinal]:attempt_schedule(cursor):continue_schedule_selection(cursor)
+end
 function Schedule.SchedulePlanInput:select_kernel_schedule()
-  if self.vector_form ~= nil and capability_executable(self.vector_capability) then
-    return Schedule.ScheduleSelectionPlanned(self.vector_form, self.vector_capability, {})
-  end
-  if self.vector_form ~= nil and (not capability_executable(self.vector_capability)) and capability_executable(self.scalar_capability) then
-    return Schedule.ScheduleSelectionPlanned(self.scalar_form, self.scalar_capability, capability_rejects(self.vector_capability))
-  end
-  if self.vector_form == nil and capability_executable(self.scalar_capability) then
-    return Schedule.ScheduleSelectionPlanned(self.scalar_form, self.scalar_capability, {})
-  end
-  return Schedule.ScheduleSelectionNoPlan(capability_rejects(self.scalar_capability))
+  return Schedule.ScheduleCandidateCursor(self.candidates, 1, {}):select_kernel_schedule_from(1, {})
 end
 
-----------------------------------------------------------------------
--- SchedulePlanSelection leaf methods
-----------------------------------------------------------------------
-
-function Schedule.SchedulePlanSelection:to_kernel_schedule(kid, plan, proofs_for_selection)
-  error("code_schedule_plan: unsupported schedule selection", 2)
-end
-
-function Schedule.ScheduleSelectionNoPlan:to_kernel_schedule(kid, plan, proofs_for_selection)
-  return Schedule.ScheduleNoPlan(kid, self.rejects)
-end
-
-function Schedule.ScheduleSelectionPlanned:to_kernel_schedule(kid, plan, proofs_for_selection)
-  local capability = assert(self.capability, "planned schedule selection has no emitter capability")
+function Schedule.ScheduleSelectionNoPlan:to_kernel_schedule(plan) return Schedule.ScheduleNoPlan(plan.id, self.rejects) end
+function Schedule.ScheduleSelectionPlanned:to_kernel_schedule(plan)
+  local name = self.capability.kind:schedule_emitter_name()
   return Schedule.SchedulePlanned(
-    Schedule.ScheduleId("schedule:" .. sanitize(kid.text) .. ":" .. sanitize(capability.kind)),
-    kid, self.form,
-    proofs_for_selection(plan, capability),
-    self.rejected_alternatives or {}
-  )
+    Schedule.ScheduleId("schedule:" .. sanitize(plan.id.text) .. ":" .. name),
+    plan.id, self.form, self.capability.proofs, self.rejected_alternatives)
 end
 
-----------------------------------------------------------------------
--- helpers
-----------------------------------------------------------------------
+local function scalar_capability()
+  return Schedule.ScheduleEmitterExecutable(
+    Schedule.ScheduleEmitterScalar, "scalar lowering available",
+    { Schedule.ScheduleProofTarget("scalar semantic emitter is available"), Schedule.ScheduleProofProfit("scalar schedule is the deterministic fallback") })
+end
+local function closed_capability()
+  return Schedule.ScheduleEmitterExecutable(
+    Schedule.ScheduleEmitterClosedForm, "closed-form lowering available",
+    { Schedule.ScheduleProofTarget("closed-form semantic emitter is available"), Schedule.ScheduleProofProfit("closed form removes loop control") })
+end
+function Kernel.KernelResultVoid:schedule_base_candidates() return { Schedule.ScheduleScalarCandidate(Schedule.ScheduleScalarIndex, scalar_capability()) } end
+function Kernel.KernelResultValue:schedule_base_candidates() return { Schedule.ScheduleScalarCandidate(Schedule.ScheduleScalarIndex, scalar_capability()) } end
+function Kernel.KernelResultFind:schedule_base_candidates() return { Schedule.ScheduleScalarCandidate(Schedule.ScheduleScalarIndex, scalar_capability()) } end
+function Kernel.KernelResultAll:schedule_base_candidates() return { Schedule.ScheduleScalarCandidate(Schedule.ScheduleScalarIndex, scalar_capability()) } end
+function Kernel.KernelResultAllCompare:schedule_base_candidates() return { Schedule.ScheduleScalarCandidate(Schedule.ScheduleScalarIndex, scalar_capability()) } end
+function Kernel.KernelResultAny:schedule_base_candidates() return { Schedule.ScheduleScalarCandidate(Schedule.ScheduleScalarIndex, scalar_capability()) } end
+function Kernel.KernelResultReduction:schedule_base_candidates() return { Schedule.ScheduleScalarCandidate(Schedule.ScheduleScalarIndex, scalar_capability()) } end
+function Kernel.KernelResultClosedForm:schedule_base_candidates() return { Schedule.ScheduleClosedFormCandidate(closed_capability()) } end
+function Kernel.KernelResultOriginalControl:schedule_base_candidates() return { Schedule.ScheduleScalarCandidate(Schedule.ScheduleScalarIndex, scalar_capability()) } end
 
-local function default_target()
-  return Backend.BackTargetModel(Backend.BackTargetNative, {})
+function Backend.BackTargetPointerBits:schedule_target_fact() return Schedule.ScheduleTargetFactIgnored end
+function Backend.BackTargetIndexBits:schedule_target_fact() return Schedule.ScheduleTargetFactIgnored end
+function Backend.BackTargetEndian:schedule_target_fact() return Schedule.ScheduleTargetFactIgnored end
+function Backend.BackTargetCacheLineBytes:schedule_target_fact() return Schedule.ScheduleTargetFactIgnored end
+function Backend.BackTargetFeature:schedule_target_fact() return Schedule.ScheduleTargetFactIgnored end
+function Backend.BackTargetSupportsShape:schedule_target_fact() return Schedule.ScheduleTargetVectorShape(self.shape) end
+function Backend.BackTargetSupportsVectorOp:schedule_target_fact() return Schedule.ScheduleTargetVectorShape(Backend.BackShapeVec(self.vec)) end
+function Backend.BackTargetSupportsMaskedTail:schedule_target_fact() return Schedule.ScheduleTargetFactIgnored end
+function Backend.BackTargetPrefersUnroll:schedule_target_fact() return Schedule.ScheduleTargetUnrollPreference(self.unroll) end
+function Backend.BackTargetModel:project_schedule_target()
+  local contributions = {}
+  for _, fact in ipairs(self.facts) do contributions = append_all(contributions, { fact:schedule_target_fact() }) end
+  return Schedule.ScheduleTargetProjection(contributions)
 end
 
-local function target_prefers_unroll(target)
-  for _, fact in ipairs(target and target.facts or {}) do
-    if rawget(fact, "unroll") ~= nil then return fact.unroll end
-  end
-  return 1
+function Kernel.KernelPlanned:schedule_vector_lane_evidence()
+  if #self.body.lanes > 0 then return Schedule.ScheduleVectorLaneAvailable(self.body.lanes[1]) end
+  return Schedule.ScheduleVectorLaneUnavailable("kernel has no vectorizable lane")
+end
+function Schedule.ScheduleVectorLaneUnavailable:vector_candidate(vec) return Schedule.ScheduleCandidateNotContributed end
+function Schedule.ScheduleVectorLaneAvailable:vector_candidate(vec)
+  local form = Schedule.ScheduleVector(Schedule.LaneVector(self.lane.elem_ty, vec.lanes), 1, 1, Schedule.TailScalar)
+  local capability = Schedule.ScheduleEmitterRejected(Schedule.ScheduleEmitterVector(require("lalin.schema_v2.stencil").StencilVectorFeatureNative), { Schedule.ScheduleRejectTarget("vector emitter is outside SCH-1") })
+  return Schedule.ScheduleCandidateContributed(Schedule.ScheduleVectorCandidate(form, capability))
+end
+function Backend.BackShapeScalar:schedule_vector_candidate(plan) return Schedule.ScheduleCandidateNotContributed end
+function Backend.BackShapeVec:schedule_vector_candidate(plan) return plan:schedule_vector_lane_evidence():vector_candidate(self.vec) end
+function Schedule.ScheduleTargetFactIgnored:vector_candidate(plan) return Schedule.ScheduleCandidateNotContributed end
+function Schedule.ScheduleTargetUnrollPreference:vector_candidate(plan) return Schedule.ScheduleCandidateNotContributed end
+function Schedule.ScheduleTargetVectorShape:vector_candidate(plan) return self.shape:schedule_vector_candidate(plan) end
+function Schedule.ScheduleCandidateContributed:candidate_entries() return { self.candidate } end
+function Schedule.ScheduleCandidateNotContributed:candidate_entries() return {} end
+function Schedule.ScheduleTargetProjection:vector_candidates(plan)
+  local candidates = {}
+  for _, contribution in ipairs(self.contributions) do candidates = append_all(candidates, contribution:vector_candidate(plan):candidate_entries()) end
+  return candidates
 end
 
-local function proofs_for(plan, capability)
-  local proofs = { Schedule.ScheduleProofTarget(capability.reason or "kernel emitter support classified executable") }
-  local eq = plan.body and plan.body.equivalence or nil
-  if rawget(eq, "proofs") ~= nil then
-    for _, proof in ipairs(eq.proofs or {}) do
-      if rawget(proof, "proof") ~= nil then
-        if rawget(proof, "reason") ~= nil then
-          proofs[#proofs + 1] = Schedule.ScheduleProofMemory(proof.proof)
-        else
-          proofs[#proofs + 1] = Schedule.ScheduleProofAlgebra(proof.proof)
-        end
-      end
-    end
-  end
-  proofs[#proofs + 1] = Schedule.ScheduleProofProfit("selected because semantic lowering has an emitter for " .. tostring(capability.kind))
-  return proofs
+function Kernel.KernelScheduleIneligible:schedule_contribution(target) return Schedule.ScheduleKernelRejected(self.subject, self.rejects) end
+function Kernel.KernelScheduleEligible:schedule_contribution(target)
+  local target_projection = target:project_schedule_target()
+  local candidates = append_all(target_projection:vector_candidates(self.plan), self.plan.body.result:schedule_base_candidates())
+  return Schedule.SchedulePlanInput(self.plan, candidates):select_kernel_schedule():to_kernel_schedule(self.plan)
 end
-
-local function scalar_for_code_ty(ty)
-  if ty == Code.CodeTyBool8 then return Backend.BackBool end
-  if ty == Code.CodeTyIndex then return Backend.BackIndex end
-  local bits = rawget(ty, "bits")
-  local signedness = rawget(ty, "signedness")
-  if bits ~= nil and signedness ~= nil then
-    if bits == 8 then return signedness == Code.CodeSigned and Backend.BackI8 or Backend.BackU8 end
-    if bits == 16 then return signedness == Code.CodeSigned and Backend.BackI16 or Backend.BackU16 end
-    if bits == 32 then return signedness == Code.CodeSigned and Backend.BackI32 or Backend.BackU32 end
-    if bits == 64 then return signedness == Code.CodeSigned and Backend.BackI64 or Backend.BackU64 end
-  elseif bits ~= nil then
-    if bits == 32 then return Backend.BackF32 end
-    if bits == 64 then return Backend.BackF64 end
-  end
-  return nil
-end
-
-local function vector_schedule_form(plan, target)
-  local body = plan.body
-  if body == nil or #(body.lanes or {}) == 0 then return nil end
-  if rawget(body.result, "closed_form") ~= nil then return nil end
-  local elem_ty = nil
-  for _, lane in ipairs(body.lanes or {}) do
-    if lane.pattern ~= Mem.MemAccessContiguous then return nil end
-    elem_ty = elem_ty or lane.elem_ty
-    if scalar_for_code_ty(lane.elem_ty) ~= scalar_for_code_ty(elem_ty) then return nil end
-  end
-  local elem = scalar_for_code_ty(elem_ty)
-  if elem == nil then return nil end
-  for _, fact in ipairs(target and target.facts or {}) do
-    local shape = rawget(fact, "shape")
-    if shape ~= nil and rawget(shape, "vec") ~= nil and shape.vec.elem == elem then
-      return Schedule.ScheduleVector(Schedule.LaneVector(elem_ty, shape.vec.lanes), target_prefers_unroll(target), 1, Schedule.TailScalar)
-    end
-  end
-  return nil
-end
-
-local function scalar_or_closed_form_for(plan)
-  if rawget(plan.body and plan.body.result, "closed_form") ~= nil then return Schedule.ScheduleClosedForm end
-  return Schedule.ScheduleScalarIndex
-end
-
-local function schedule_for_plan(plan, target, flow)
-  local kid = plan.id
-  local vector_form = vector_schedule_form(plan, target)
-  local vector_cap = nil
-  if vector_form ~= nil then
-    -- classify via kernel_emit_support — simplified: assume scalar fallback
-    vector_cap = Schedule.ScheduleEmitterCapability(Schedule.ScheduleEmitterVector(nil), false, "vector classification deferred", { Schedule.ScheduleRejectTarget("vector lowering not yet classified") })
-  end
-  local scalar_form = scalar_or_closed_form_for(plan)
-  local scalar_cap = (vector_cap and not vector_cap.executable) and Schedule.ScheduleEmitterCapability(Schedule.ScheduleEmitterScalar, true, "scalar fallback", {}) or Schedule.ScheduleEmitterCapability(Schedule.ScheduleEmitterScalar, true, "scalar lowering available", {})
-  local selection = Schedule.SchedulePlanInput(vector_form, vector_cap, scalar_form, scalar_cap):select_kernel_schedule()
-  return selection:to_kernel_schedule(kid, plan, proofs_for)
-end
-
-----------------------------------------------------------------------
--- plan_schedules: entry point
-----------------------------------------------------------------------
-
 function Kernel.KernelModulePlan:plan_schedules(code_module, flow, values, mem, effects, target)
-  target = target or default_target()
+  local selected_target = target or Backend.BackTargetModel(Backend.BackTargetNative, {})
   local schedules = {}
-  for _, kernel_plan in ipairs(self.plans or {}) do
-    if rawget(kernel_plan, "body") ~= nil then
-      schedules[#schedules + 1] = schedule_for_plan(kernel_plan, target, flow)
-    end
-  end
-  return Schedule.ScheduleModulePlan(code_module.id, Schedule.ScheduleTarget(target), schedules)
+  for _, plan in ipairs(self.plans) do schedules = append_all(schedules, { plan:schedule_eligibility():schedule_contribution(selected_target) }) end
+  return Schedule.ScheduleModulePlan(code_module.id, Schedule.ScheduleTarget(selected_target), schedules)
 end
