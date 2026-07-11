@@ -194,14 +194,13 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 - [ ] Add failure-then-success isolation tests.
 - [ ] Prove no facts leak between public compile sessions.
 
-### LJBC-STENCIL — LuaJIT stencil artifact payload
+### LJBC-STENCIL — Deferred / not for integration
 
-**Failure cluster:** schedule selection now completes, then LuaJIT stencil construction rejects an `LJBCStencilEntry` payload shape.
+**Status:** stopped by project-owner decision. LuaTrace is abandoned; LuaJIT bytecode remains explicit and low priority rather than a main compiler milestone.
 
-- [ ] Identify the canonical ASDL payload owner and producer.
-- [ ] Replace stale constructor arguments without a compatibility wrapper.
-- [ ] Add focused store/reduce/scan artifact payload tests.
-- [ ] Restore LuaJIT stencil artifact construction.
+- Branch `pack/ljbc-stencil` is intentionally not integrated.
+- Do not schedule LuaTrace or LuaJIT stencil work while main C compiler milestones remain.
+- Reopen only on an explicit project-owner request.
 
 ### AUX-1 — Remaining baseline clusters
 
@@ -384,7 +383,7 @@ Release-level gates:
 | TYP-OWN | P0 | none | Check/lower schema ownership | working | `pack/typ-own` (`w4:p1C`) |
 | ABI-SIG | P0 | LAY-1 | Required code signature projection | integrated | `c95973fd5`; approved by `w4:p6` |
 | ABI-STATE | P0 | ABI-SIG vocabulary | Cross-unit lowering isolation | working | `pack/abi-state` (`w4:p1B`) |
-| LJBC-STENCIL | P1 | STN-SCHED | LuaJIT stencil artifact payload | working | `pack/ljbc-stencil` (`w4:p1D`) |
+| LJBC-STENCIL | deferred | — | Abandoned LuaTrace / low-priority LuaJIT work | stopped | branch not integrated |
 | CMP-1 | P1 | none | Compiler-process contracts | ready | — |
 | M0.1 | P0 | none | Failure ledger and focused reproducers | ready | — |
 | ASDL-CLOSURE | P1 | baseline stabilization | Closure state and leaf-method migration | planned | — |
@@ -419,4 +418,5 @@ After integration, all active implementation branches must merge or rebase the i
 - **2026-07-10:** Restore the failing main path before broad semantic migrations, while designing each repair under the ASDL doctrine.
 - **2026-07-10:** Closure conversion is the smallest high-impact migration laboratory; memory analysis is the most central larger migration.
 - **2026-07-10:** This file, not `.pi/workflows/*`, is the tracking authority.
+- **2026-07-11:** LuaTrace is abandoned. LuaJIT bytecode remains explicit but low priority; do not invest in LuaJIT stencil work ahead of the C compiler.
 
