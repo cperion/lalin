@@ -118,9 +118,7 @@ end
 
 function M.registry(T)
     if T ~= nil then install_methods(T) end
-    local executor = setmetatable({ bindings = {}, context = T }, Executor)
-    if T ~= nil then require("lalin.compiler_machines").register_capabilities(executor, T) end
-    return executor
+    return setmetatable({ bindings = {}, context = T }, Executor)
 end
 
 function Executor:register(capability, fn)

@@ -22,17 +22,20 @@ local decl = session:loadstring(src, "compiler_code_result_test.lua")()
 local module_ast = decl:ast()
 local T = asdl.context_of(module_ast)
 local C = T.LalinCompiler
+local P = T.LalinPhase
+Machines.install_stage_methods(T)
+local stage = P.CompilerCStageInput(require("lalin.code_type")(T).default_target())
 
-local checked = Machines.typecheck_module(module_ast)
+local checked = Machines.typecheck_module(stage, module_ast)
 
 local abi = Abi(T)
 
-local c_code = Machines.checked_to_c_code(checked)
+local c_code = Machines.checked_to_c_code(stage, checked)
 assert(asdl.classof(c_code) == C.CodeResult)
 local c_report = abi.validate_code_result(c_code)
 assert(#c_report.issues == 0)
 
-local c_backend = Machines.code_to_c(c_code)
+local c_backend = Machines.code_to_c(stage, c_code)
 assert(asdl.classof(c_backend) == C.CompilerCBackendResult)
 assert(tostring(asdl.classof(c_backend.unit)):match("LalinC%.CBackendUnit"))
 assert(#c_backend.report.issues == 0)

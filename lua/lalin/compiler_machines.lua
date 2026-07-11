@@ -1,5 +1,6 @@
 -- Hosted machine implementations for lalin.compiler_package.
 
+local M = {}
 
 function M.typecheck_module(stage, module)
     return stage:typecheck_compiler_module(module)
@@ -19,7 +20,7 @@ function M.code_to_c(stage, code_result)
     return result
 end
 
-function M.register_capabilities(executor, T)
+function M.install_stage_methods(T)
     local P = T.LalinPhase
     function P.CompilerCStageInput:typecheck_compiler_module(module)
         return require("lalin.frontend_pipeline")(T).typecheck_module(module, { target = self.target })
@@ -30,6 +31,11 @@ function M.register_capabilities(executor, T)
     function P.CompilerCStageInput:lower_compiler_code_to_c(code_result)
         return require("lalin.frontend_pipeline")(T).code_result_to_c(code_result, { target = self.target })
     end
+end
+
+function M.register_capabilities(executor, T)
+    M.install_stage_methods(T)
+    local P = T.LalinPhase
     executor:register(P.MachineImplementationCapability(P.ImplLua("lalin.compiler_machines", "typecheck_module")), function(request)
         return P.PhaseValueCheckedModule(M.typecheck_module(request.stage, request.input.module))
     end)
