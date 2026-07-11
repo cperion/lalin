@@ -98,7 +98,7 @@ Healthy focused C checks include `test_emit_c_compile.lua`, `test_emit_c_lower.l
 
 ### STN-1 — Stencil semantic construction
 
-**Status:** integrated at `35c1ce5a3`; independent review pending.
+**Status:** integrated at `35c1ce5a3`; independently approved.
 **Failure cluster:** stale semantic parents and missing local helper capture in `lua/lalin/stencil_artifact_plan.lua`.
 
 - [x] Replace nonexistent semantic parents with concrete `StencilStoreSemantics` and `StencilReductionSemantics` leaf ownership.
@@ -320,10 +320,10 @@ Release-level gates:
 | ID | Priority | Dependencies | Suggested scope | Status | Owner/branch |
 |---|---:|---|---|---|---|
 | RGN-1 | P0 | none | Region helper restoration + focused tests | integrated | `82ec214af`; approved by `w4:p14` |
-| STN-1 | P0 | none | Stencil semantic construction | review | integrated `35c1ce5a3`; reviewer `w4:p16` |
+| STN-1 | P0 | none | Stencil semantic construction | integrated | `35c1ce5a3`; approved by `w4:p16` |
 | STN-SCHED | P0 | STN-1 | Typed schedule selection | ready | — |
 | LAY-1 | P0 | STN-1 analysis | Layout projection/resolution | working | `pack/lay-1` (`w4:p18`) |
-| TYP-1 | P0 | none | Typecheck projection regressions | working | `pack/typ-1` (`wZ:p1`) |
+| TYP-1 | P0 | none | Typed frontend target projection | changes requested | `pack/typ-1` (`wZ:p1`) |
 | CMP-1 | P1 | none | Compiler-process contracts | ready | — |
 | M0.1 | P0 | none | Failure ledger and focused reproducers | ready | — |
 | ASDL-CLOSURE | P1 | baseline stabilization | Closure state and leaf-method migration | planned | — |
