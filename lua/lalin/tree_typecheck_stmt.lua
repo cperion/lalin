@@ -211,7 +211,7 @@ return function(T)
     function Tr.StmtReturnValue:typecheck_tree_stmt(input)
         local value = type_expr_expect(self.value, input, input.return_ty)
         if (input.return_ty:typecheck_tree_accept_nil_literal() or asdl.classof(input.return_ty) == Ty.TPtr)
-            and tostring(value.ty) == tostring(Ty.TScalar(C.ScalarVoid))
+            and type_eq(value.ty, Ty.TScalar(C.ScalarVoid))
             and asdl.classof(value.expr) == Tr.ExprLit
             and asdl.isa(value.expr.value, C.LitNil)
         then
@@ -305,6 +305,7 @@ return function(T)
         return Tr.SwitchStmtArm(self.key, body.stmts), body.issues
     end
 
+
     function Tr.SwitchVariantStmtArm:typecheck_tree_stmt_arm(input)
         local scope = input.scope
         for i, bind in ipairs(self.binds or {}) do
@@ -330,6 +331,74 @@ return function(T)
             local arm, arm_issues = self.variant_arms[i]:typecheck_tree_stmt_arm(input)
             variant_arms[#variant_arms + 1] = arm
             append_all(issues, arm_issues)
+        end
+        local default_body = input:typecheck_tree_stmt_body(self.default_body)
+        append_all(issues, default_body.issues)
+        return Check.TypeStmtResult(input, { Tr.StmtSwitch(self.h, value.expr, arms, variant_arms, default_body.stmts) }, issues)
+    end
+
+    local function typecheck_source_variant_arm(lookup, source_arm, input, expected_binds, typed_binds)
+        local issues = {}
+        if #source_arm.binds ~= expected_binds then
+            issues[#issues + 1] = Check.TypeIssueVariantBindCount(lookup.def.type_name, source_arm.variant_name, expected_binds, #source_arm.binds)
+        end
+        local typed_source_arm = Tr.SwitchVariantStmtArm(source_arm.variant_name, typed_binds, source_arm.body)
+        local arm, arm_issues = typed_source_arm:typecheck_tree_stmt_arm(input)
+        append_all(issues, arm_issues)
+        return Check.TypeVariantArmResult(arm, issues)
+    end
+
+    function Check.TypeVariantPayloadNone:typecheck_tree_source_variant_arm(lookup, source_arm, input)
+        return typecheck_source_variant_arm(lookup, source_arm, input, 0, {})
+    end
+
+    function Check.TypeVariantPayloadUnsupported:typecheck_tree_source_variant_arm(lookup, source_arm, input)
+        local issues = { Check.TypeIssueVariantPayloadUnsupported(lookup.def.type_name, source_arm.variant_name, self.field_count) }
+        local typed_source_arm = Tr.SwitchVariantStmtArm(source_arm.variant_name, {}, source_arm.body)
+        local arm, arm_issues = typed_source_arm:typecheck_tree_stmt_arm(input)
+        append_all(issues, arm_issues)
+        return Check.TypeVariantArmResult(arm, issues)
+    end
+
+    function Check.TypeVariantPayloadFound:typecheck_tree_source_variant_arm(lookup, source_arm, input)
+        local binds = {}
+        if source_arm.binds[1] ~= nil then binds[1] = Tr.VariantBind(source_arm.binds[1], self.ty) end
+        return typecheck_source_variant_arm(lookup, source_arm, input, 1, binds)
+    end
+
+    function Check.TypeVariantCaseLookupFound:typecheck_tree_source_variant_arm(source_arm, input)
+        return self.case:typecheck_tree_payload_lookup():typecheck_tree_source_variant_arm(self, source_arm, input)
+    end
+
+    function Check.TypeVariantCaseLookupMissing:typecheck_tree_source_variant_arm(source_arm, input)
+        local issues = { Check.TypeIssueUnknownVariant(self.type_name, source_arm.variant_name) }
+        if #source_arm.binds ~= 0 then
+            issues[#issues + 1] = Check.TypeIssueVariantBindCount(self.type_name, source_arm.variant_name, 0, #source_arm.binds)
+        end
+        local typed_source_arm = Tr.SwitchVariantStmtArm(source_arm.variant_name, {}, source_arm.body)
+        local arm, arm_issues = typed_source_arm:typecheck_tree_stmt_arm(input)
+        append_all(issues, arm_issues)
+        return Check.TypeVariantArmResult(arm, issues)
+    end
+
+    function Tr.StmtVariantSwitchSource:typecheck_tree_stmt(input)
+        local value = self.value:typecheck_tree_expr(input:typecheck_tree_expr_input())
+        local issues = {}
+        append_all(issues, value.issues)
+        local arms = {}
+        for i = 1, #self.arms do
+            local arm, arm_issues = self.arms[i]:typecheck_tree_stmt_arm(input)
+            arms[#arms + 1] = arm
+            append_all(issues, arm_issues)
+        end
+        local variant_arms = {}
+        local variant_lookup = value.ty:typecheck_tree_lookup_variant(input.scope.facts)
+        for i = 1, #self.variant_arms do
+            local source_arm = self.variant_arms[i]
+            local arm_result = variant_lookup:typecheck_tree_lookup_variant_case(source_arm.variant_name)
+                :typecheck_tree_source_variant_arm(source_arm, input)
+            variant_arms[#variant_arms + 1] = arm_result.arm
+            append_all(issues, arm_result.issues)
         end
         local default_body = input:typecheck_tree_stmt_body(self.default_body)
         append_all(issues, default_body.issues)
@@ -588,8 +657,7 @@ return function(T)
             local capture_ty = ty
             local ref_name = expr_ref_name(value)
             if (capture_ty == nil or is_void_ty(capture_ty)) and ref_name ~= nil then
-                local binding = input.scope:typecheck_tree_lookup_value(ref_name)
-                if binding ~= nil then capture_ty = binding.ty end
+                capture_ty = input.scope:typecheck_tree_lookup_value(ref_name):typecheck_tree_value_type_or(capture_ty)
             end
             if capture_ty == nil or is_void_ty(capture_ty) then
                 local typed = value:typecheck_tree_expr(input.scope:typecheck_tree_expr_input())

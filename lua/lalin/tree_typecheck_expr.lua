@@ -110,7 +110,7 @@ return function(T)
     function Ty.TPtr:typecheck_tree_scalar_cast_op(op, to)
         if op == C.SurfaceCast
             and asdl.classof(to) == Ty.TPtr
-            and (type_eq(self.pointee, to.pointee) or tostring(self.pointee) == tostring(to.pointee))
+            and type_eq(self.pointee, to.pointee)
         then
             return C.MachineCastIdentity
         end
@@ -160,9 +160,7 @@ return function(T)
     end
 
     function B.ValueRefName:typecheck_tree_ref(input)
-        local binding = input.scope:typecheck_tree_lookup_value(self.name)
-        if binding ~= nil then return B.ValueRefBinding(binding):typecheck_tree_ref() end
-        return Check.TypeValueRefResult(self, void_ty(), { Check.TypeIssueUnresolvedValue(self.name) })
+        return input.scope:typecheck_tree_lookup_value(self.name):typecheck_tree_ref(self)
     end
 
     function B.ValueRefPath:typecheck_tree_ref()
@@ -210,13 +208,19 @@ return function(T)
         local value = self.value:typecheck_tree_expr(input)
         local ty = canonical_type(input.scope, self.ty)
         local machine_op = value.ty:typecheck_tree_scalar_cast_op(self.op, ty)
-        if machine_op == nil and self.op == C.SurfaceCast and tostring(value.ty) == tostring(ty) then
+        if machine_op == nil and self.op == C.SurfaceCast and type_eq(value.ty, ty) then
             machine_op = C.MachineCastIdentity
         end
         if machine_op ~= nil then
             return Check.TypeExprResult(Tr.ExprMachineCast(Tr.ExprTyped(ty), machine_op, ty, value.expr), ty, value.issues)
         end
         return Check.TypeExprResult(Tr.ExprCast(Tr.ExprTyped(ty), self.op, ty, value.expr), ty, value.issues)
+    end
+
+    function Tr.ExprSizeOf:typecheck_tree_expr(input)
+        local ty = canonical_type(input.scope, self.ty)
+        local result_ty = Ty.TScalar(C.ScalarIndex)
+        return Check.TypeExprResult(Tr.ExprSizeOf(Tr.ExprTyped(result_ty), ty), result_ty, {})
     end
 
     function Tr.ExprCast:typecheck_tree_expr_expected(input)
@@ -362,49 +366,54 @@ return function(T)
         return Check.TypeExprResult(Tr.ExprCall(Tr.ExprTyped(result_ty), callee.expr, args), result_ty, issues)
     end
 
-    local function find_variant_def(scope, type_name)
-        for i = 1, #(scope.facts and scope.facts.variants or {}) do
-            if scope.facts.variants[i].type_name == type_name then return scope.facts.variants[i] end
-        end
-        return nil
+    local function typecheck_ctor_without_payload(lookup, expr)
+        local issues = {}
+        if #expr.args ~= 0 then issues[#issues + 1] = Check.TypeIssueArgCount("variant constructor", 0, #expr.args) end
+        return Check.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(lookup.def.ty), expr.type_name, expr.variant_name, {}), lookup.def.ty, issues)
     end
 
-    local function find_variant_case(def, variant_name)
-        for i = 1, #(def and def.variants or {}) do
-            if def.variants[i].name == variant_name then return def.variants[i] end
-        end
-        return nil
+    function Check.TypeVariantPayloadNone:typecheck_tree_ctor_payload(lookup, expr, input)
+        return typecheck_ctor_without_payload(lookup, expr)
     end
 
-    local function variant_payload_type(variant)
-        if variant == nil then return nil end
-        if #(variant.fields or {}) == 1 then return variant.fields[1].ty end
-        if #(variant.fields or {}) > 1 then return nil end
-        if variant.payload == nil or variant.payload:typecheck_tree_is_void_type() then return nil end
-        return variant.payload
+    function Check.TypeVariantPayloadUnsupported:typecheck_tree_ctor_payload(lookup, expr, input)
+        local issues = { Check.TypeIssueVariantPayloadUnsupported(lookup.def.type_name, expr.variant_name, self.field_count) }
+        local args = {}
+        for i = 1, #expr.args do
+            local arg = expr.args[i]:typecheck_tree_expr(input.scope:typecheck_tree_expr_input())
+            append_all(issues, arg.issues)
+            args[i] = arg.expr
+        end
+        return Check.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(lookup.def.ty), expr.type_name, expr.variant_name, args), lookup.def.ty, issues)
     end
 
-    function Tr.ExprCtor:typecheck_tree_expr(input)
-        local def = find_variant_def(input.scope, self.type_name)
-        local variant = find_variant_case(def, self.variant_name)
-        local result_ty = def and def.ty or void_ty()
-        local payload_ty = variant_payload_type(variant)
-        if payload_ty ~= nil then payload_ty = canonical_type(input.scope, payload_ty) end
-        local expected_args = payload_ty and 1 or 0
-        local args, issues = {}, {}
-        if def == nil or variant == nil then
-            issues[#issues + 1] = Check.TypeIssueUnresolvedPath(C.Path({ C.Name(tostring(self.type_name)), C.Name(tostring(self.variant_name)) }))
-        end
-        if #(self.args or {}) ~= expected_args then
-            issues[#issues + 1] = Check.TypeIssueArgCount("variant constructor", expected_args, #(self.args or {}))
-        end
-        if payload_ty ~= nil and #(self.args or {}) >= 1 then
-            local arg = self.args[1]:typecheck_tree_expr_expected(Check.TypeExpectedExprInput(input.scope, payload_ty))
+    function Check.TypeVariantPayloadFound:typecheck_tree_ctor_payload(lookup, expr, input)
+        local payload_ty = canonical_type(input.scope, self.ty)
+        local issues, args = {}, {}
+        if #expr.args ~= 1 then issues[#issues + 1] = Check.TypeIssueArgCount("variant constructor", 1, #expr.args) end
+        if #expr.args >= 1 then
+            local arg = expr.args[1]:typecheck_tree_expr_expected(Check.TypeExpectedExprInput(input.scope, payload_ty))
             append_all(issues, arg.issues)
             if not type_eq(payload_ty, arg.ty) then issues[#issues + 1] = Check.TypeIssueExpected("variant payload", payload_ty, arg.ty) end
             args[1] = arg.expr
         end
-        return Check.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(result_ty), self.type_name, self.variant_name, args), result_ty, issues)
+        return Check.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(lookup.def.ty), expr.type_name, expr.variant_name, args), lookup.def.ty, issues)
+    end
+
+    function Check.TypeVariantCaseLookupFound:typecheck_tree_ctor(expr, input)
+        return self.case:typecheck_tree_payload_lookup():typecheck_tree_ctor_payload(self, expr, input)
+    end
+
+    function Check.TypeVariantCaseLookupMissing:typecheck_tree_ctor(expr, input)
+        local issues = { Check.TypeIssueUnknownVariant(self.type_name, self.variant_name) }
+        if #expr.args ~= 0 then issues[#issues + 1] = Check.TypeIssueArgCount("variant constructor", 0, #expr.args) end
+        return Check.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(self.ty), expr.type_name, expr.variant_name, {}), self.ty, issues)
+    end
+
+    function Tr.ExprCtor:typecheck_tree_expr(input)
+        return input.scope.facts:typecheck_tree_lookup_variant_name(self.type_name)
+            :typecheck_tree_lookup_variant_case(self.variant_name)
+            :typecheck_tree_ctor(self, input)
     end
 
     function Tr.ExprLoad:typecheck_tree_expr(input)

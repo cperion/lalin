@@ -323,22 +323,6 @@ local function bind_context(T)
         end
     end
 
-    local function find_variant(scope, type_name, variant_name)
-        for i = 1, #(scope.facts.variants or {}) do
-            local def = scope.facts.variants[i]
-            if def.type_name == type_name then
-                for j = 1, #(def.variants or {}) do
-                    if def.variants[j].name == variant_name then return def, def.variants[j] end
-                end
-                return def, nil
-            end
-        end
-        return nil, nil
-    end
-
-    local function variant_def_for_value_ty(scope, ty)
-        return ty:typecheck_tree_variant_def(scope.facts)
-    end
 
     local function bind_scope_for_variant(scope, region_id, variant, requested_binds)
         local out_scope = scope
@@ -1094,6 +1078,16 @@ local function bind_context(T)
     function Check.TypeIssueUnknownVariant:typecheck_tree_explanation()
         local Format = require("lalin.error.format")
         return Check.TypeIssueExplanation("E0201", "while resolving names", "unknown variant `" .. tostring(self.variant_name or "?") .. "` in type `" .. Format.type_name(self.type_name) .. "`", {}, {})
+    end
+
+    function Check.TypeIssueVariantBindCount:typecheck_tree_explanation()
+        return Check.TypeIssueExplanation("E0306", "while type-checking a variant arm",
+            "variant arm `" .. tostring(self.variant_name or "?") .. "` expected " .. tostring(self.expected) .. " payload binds, got " .. tostring(self.actual), {}, {})
+    end
+
+    function Check.TypeIssueVariantPayloadUnsupported:typecheck_tree_explanation()
+        return Check.TypeIssueExplanation("E0307", "while type-checking a variant payload",
+            "variant `" .. tostring(self.variant_name or "?") .. "` has " .. tostring(self.field_count) .. " payload fields; parsed multi-field payloads are unsupported", {}, {})
     end
 
     function Check.TypeIssueVariantPayloadMismatch:typecheck_tree_explanation()

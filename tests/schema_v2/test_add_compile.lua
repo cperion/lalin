@@ -195,13 +195,14 @@ local scope = LCheck.TypeValueScope(
 
 -- Lookup the function in scope
 local entry = scope:typecheck_tree_lookup_value("add")
-assert(entry ~= nil, "should find 'add' in scope")
-assert(entry.name == "add", "entry name should be 'add'")
+assert(asdl.classof(entry) == LCheck.TypeValueLookupFound, "should return typed found lookup for 'add'")
 assert(entry.binding.name == "add", "binding name should be 'add'")
 assert(asdl.classof(entry.binding.role) == B.BindingRoleGlobalFunc, "role should be BindingRoleGlobalFunc")
 
 -- Lookup nonexistent
-assert(scope:typecheck_tree_lookup_value("nonexistent") == nil, "nonexistent should return nil")
+local missing = scope:typecheck_tree_lookup_value("nonexistent")
+assert(asdl.classof(missing) == LCheck.TypeValueLookupMissing and missing.name == "nonexistent",
+  "nonexistent should return the typed missing alternative")
 
 print("  PASS: TypeValueScope lookups work correctly")
 

@@ -45,9 +45,65 @@ return function(T)
 
     function Check.TypeValueScope:typecheck_tree_lookup_value(name)
         for i = #self.values, 1, -1 do
-            if self.values[i].name == name then return self.values[i].binding end
+            if self.values[i].name == name then return Check.TypeValueLookupFound(self.values[i].binding) end
         end
-        return nil
+        return Check.TypeValueLookupMissing(name)
+    end
+
+    function Check.TypeValueLookupFound:typecheck_tree_ref(ref)
+        return Check.TypeValueRefResult(B.ValueRefBinding(self.binding), self.binding.ty, {})
+    end
+
+    function Check.TypeValueLookupMissing:typecheck_tree_ref(ref)
+        return Check.TypeValueRefResult(ref, void_ty(), { Check.TypeIssueUnresolvedValue(self.name) })
+    end
+
+    function Check.TypeValueLookupFound:typecheck_tree_value_type_or(fallback) return self.binding.ty end
+    function Check.TypeValueLookupMissing:typecheck_tree_value_type_or(fallback) return fallback end
+
+    function Check.TypeModuleFacts:typecheck_tree_lookup_variant_name(type_name)
+        for i = 1, #self.variants do
+            if self.variants[i].type_name == type_name then
+                return Check.TypeVariantDefLookupFound(self.variants[i])
+            end
+        end
+        return Check.TypeVariantDefLookupMissing(type_name, void_ty())
+    end
+
+    function Check.TypeVariantDefLookupFound:typecheck_tree_lookup_variant_case(variant_name)
+        for i = 1, #self.def.variants do
+            if self.def.variants[i].name == variant_name then
+                return Check.TypeVariantCaseLookupFound(self.def, self.def.variants[i])
+            end
+        end
+        return Check.TypeVariantCaseLookupMissing(self.def.type_name, variant_name, self.def.ty)
+    end
+
+    function Check.TypeVariantDefLookupMissing:typecheck_tree_lookup_variant_case(variant_name)
+        return Check.TypeVariantCaseLookupMissing(self.type_name, variant_name, self.ty)
+    end
+
+    function Check.TypeVariantCase:typecheck_tree_payload_lookup()
+        if #self.fields == 1 then return Check.TypeVariantPayloadFound(self.fields[1].ty) end
+        if #self.fields > 1 then return Check.TypeVariantPayloadUnsupported(#self.fields) end
+        if self.payload:typecheck_tree_is_void_type() then return Check.TypeVariantPayloadNone end
+        return Check.TypeVariantPayloadFound(self.payload)
+    end
+
+    function Ty.Type:typecheck_tree_lookup_variant(facts)
+        return Check.TypeVariantDefLookupMissing("<non-variant>", self)
+    end
+
+    function Ty.TNamed:typecheck_tree_lookup_variant(facts)
+        local type_name = self.ref:typecheck_tree_ref_leaf()
+        if type_name == nil then return Check.TypeVariantDefLookupMissing("<unnamed>", self) end
+        local result = facts:typecheck_tree_lookup_variant_name(type_name)
+        return result:typecheck_tree_with_variant_type(self)
+    end
+
+    function Check.TypeVariantDefLookupFound:typecheck_tree_with_variant_type(ty) return self end
+    function Check.TypeVariantDefLookupMissing:typecheck_tree_with_variant_type(ty)
+        return Check.TypeVariantDefLookupMissing(self.type_name, ty)
     end
 
     function Check.TypeValueScope:typecheck_tree_stmt_input(return_ty, yield)

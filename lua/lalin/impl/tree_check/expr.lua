@@ -22,16 +22,21 @@ function C.LitFloat:typecheck_tree_literal_ty() return Ty.TScalar(C.ScalarF64) e
 function C.LitBool:typecheck_tree_literal_ty() return Ty.TScalar(C.ScalarBool) end
 function C.LitString:typecheck_tree_literal_ty() return Ty.TSlice(Ty.TScalar(C.ScalarU8)) end
 
+function LCheck.TypeValueLookupFound:typecheck_tree_expr_ref(ref)
+  local binding_ref = B.ValueRefBinding(self.binding)
+  return LCheck.TypeExprResult(Tr.ExprRef(Tr.ExprTyped(self.binding.ty), binding_ref), self.binding.ty, {})
+end
+
+function LCheck.TypeValueLookupMissing:typecheck_tree_expr_ref(ref)
+  return LCheck.TypeExprResult(ref, Ty.TScalar(C.ScalarVoid), {LCheck.TypeIssueUnresolvedValue(self.name)})
+end
+
 function Tr.ExprRef:typecheck_tree_expr(input)
   local ref_name = self.ref:typecheck_tree_ref_name()
   if not ref_name then
     return LCheck.TypeExprResult(self, Ty.TScalar(C.ScalarVoid), {LCheck.TypeIssueUnresolvedValue("?")})
   end
-  local entry = input.scope and input.scope:typecheck_tree_lookup_value(ref_name)
-  if entry and entry.binding then
-    return LCheck.TypeExprResult(Tr.ExprRef(Tr.ExprTyped(entry.binding.ty), B.ValueRefBinding(entry.binding)), entry.binding.ty, {})
-  end
-  return LCheck.TypeExprResult(self, Ty.TScalar(C.ScalarVoid), {LCheck.TypeIssueUnresolvedValue(ref_name)})
+  return input.scope:typecheck_tree_lookup_value(ref_name):typecheck_tree_expr_ref(self)
 end
 
 function B.ValueRef:typecheck_tree_ref_name() return nil end
@@ -128,8 +133,7 @@ function Tr.ExprCall:typecheck_tree_expr(input)
     end
     if ar.ty == nil then return ar end
     if expected ~= nil and not (expected:tree_check_is_void_type() or ar.ty:tree_check_is_void_type()) then
-      -- compare types (structural equality via tostring for now)
-      if tostring(expected) ~= tostring(ar.ty) then
+      if expected ~= ar.ty then
         issues[#issues + 1] = LCheck.TypeIssueExpected("call arg", expected, ar.ty)
       end
     end
@@ -164,17 +168,21 @@ function Tr.Place:typecheck_tree_place(input)
   return LCheck.TypePlaceResult(self, ty, {})
 end
 
+function LCheck.TypeValueLookupFound:typecheck_tree_place_ref(place)
+  local typed = Tr.PlaceRef(Tr.PlaceTyped(self.binding.ty), B.ValueRefBinding(self.binding))
+  return LCheck.TypePlaceResult(typed, self.binding.ty, {})
+end
+
+function LCheck.TypeValueLookupMissing:typecheck_tree_place_ref(place)
+  return LCheck.TypePlaceResult(place, nil, {LCheck.TypeIssueUnresolvedValue(self.name)})
+end
+
 function Tr.PlaceRef:typecheck_tree_place(input)
   local ref_name = self.ref:typecheck_tree_ref_name()
   if not ref_name then
     return LCheck.TypePlaceResult(self, nil, {LCheck.TypeIssueUnresolvedValue("?")})
   end
-  local entry = input.scope and input.scope:typecheck_tree_lookup_value(ref_name)
-  if entry and entry.binding then
-    local place = Tr.PlaceRef(Tr.PlaceTyped(entry.binding.ty), B.ValueRefBinding(entry.binding))
-    return LCheck.TypePlaceResult(place, entry.binding.ty, {})
-  end
-  return LCheck.TypePlaceResult(self, nil, {LCheck.TypeIssueUnresolvedValue(ref_name)})
+  return input.scope:typecheck_tree_lookup_value(ref_name):typecheck_tree_place_ref(self)
 end
 
 function Tr.PlaceDeref:typecheck_tree_place(input)
@@ -226,7 +234,7 @@ function Tr.ExprArray:typecheck_tree_expr(input)
       elems[#elems+1] = er.expr
       -- Validate element type against elem_ty
       if not self.elem_ty:tree_check_is_void_type() and not er.ty:tree_check_is_void_type() then
-        if tostring(self.elem_ty) ~= tostring(er.ty) then
+        if self.elem_ty ~= er.ty then
           issues[#issues+1] = LCheck.TypeIssueExpected("array elem", self.elem_ty, er.ty)
         end
       end
@@ -256,7 +264,7 @@ function Tr.ExprArray:typecheck_tree_expr_expected(input)
       if er.issues then for _, iss in ipairs(er.issues) do issues[#issues+1]=iss end end
       if er.ty and er.expr then
         elems[#elems+1] = er.expr
-        if tostring(input.expected.elem) ~= tostring(er.ty) then
+        if input.expected.elem ~= er.ty then
           issues[#issues+1] = LCheck.TypeIssueExpected("array elem", input.expected.elem, er.ty)
         end
       else
@@ -297,57 +305,54 @@ function Tr.ExprIsNull:typecheck_tree_expr(input)
   return LCheck.TypeExprResult(Tr.ExprIsNull(Tr.ExprTyped(Ty.TScalar(C.ScalarBool)), vr.expr), Ty.TScalar(C.ScalarBool), issues)
 end
 
--- ExprCtor: variant constructor typecheck
-function Tr.ExprCtor:typecheck_tree_expr(input)
+-- ExprCtor: variant lookup alternatives own construction behavior.
+local function ctor_without_payload(lookup, expr)
   local issues = {}
-  -- Look up variant in scope facts
-  local variant_def, variant_case = nil, nil
-  if input.scope and input.scope.facts then
-    local facts = input.scope.facts
-    for i = 1, #(facts.variants or {}) do
-      if facts.variants[i].type_name == self.type_name then
-        variant_def = facts.variants[i]
-        for j = 1, #(variant_def.variants or {}) do
-          if variant_def.variants[j].name == self.variant_name then
-            variant_case = variant_def.variants[j]
-            break
-          end
-        end
-        break
-      end
-    end
-  end
-  local result_ty = variant_def and variant_def.ty or Ty.TScalar(C.ScalarVoid)
-  if variant_def == nil or variant_case == nil then
-    issues[#issues + 1] = LCheck.TypeIssueUnknownVariant(self.type_name, self.variant_name)
-  end
-  -- Determine expected argument count from payload type
-  local payload_ty = nil
-  if variant_case then
-    if #(variant_case.fields or {}) == 1 then
-      payload_ty = variant_case.fields[1].ty
-    elseif #(variant_case.fields or {}) > 1 then
-      payload_ty = nil
-    elseif variant_case.payload and not variant_case.payload:tree_check_is_void_type() then
-      payload_ty = variant_case.payload
-    end
-  end
-  local expected_args = payload_ty and 1 or 0
+  if #expr.args ~= 0 then issues[#issues + 1] = LCheck.TypeIssueArgCount("variant constructor", 0, #expr.args) end
+  return LCheck.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(lookup.def.ty), expr.type_name, expr.variant_name, {}), lookup.def.ty, issues)
+end
+
+function LCheck.TypeVariantPayloadNone:typecheck_tree_ctor_payload(lookup, expr, input)
+  return ctor_without_payload(lookup, expr)
+end
+
+function LCheck.TypeVariantPayloadUnsupported:typecheck_tree_ctor_payload(lookup, expr, input)
+  local issues = { LCheck.TypeIssueVariantPayloadUnsupported(lookup.def.type_name, expr.variant_name, self.field_count) }
   local args = {}
-  if #(self.args or {}) ~= expected_args then
-    issues[#issues + 1] = LCheck.TypeIssueArgCount("variant constructor", expected_args, #(self.args or {}))
+  for i = 1, #expr.args do
+    local ar = expr.args[i]:typecheck_tree_expr(input)
+    for _, issue in ipairs(ar.issues or {}) do issues[#issues + 1] = issue end
+    args[i] = ar.expr
   end
-  if payload_ty and #(self.args or {}) >= 1 then
-    local ar = self.args[1]:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, payload_ty))
-    if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
-    if ar.ty and not ar.ty:tree_check_is_void_type() and
-       not payload_ty:tree_check_is_void_type() and
-       tostring(payload_ty) ~= tostring(ar.ty) then
-      issues[#issues+1] = LCheck.TypeIssueExpected("variant payload", payload_ty, ar.ty)
-    end
+  return LCheck.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(lookup.def.ty), expr.type_name, expr.variant_name, args), lookup.def.ty, issues)
+end
+
+function LCheck.TypeVariantPayloadFound:typecheck_tree_ctor_payload(lookup, expr, input)
+  local issues, args = {}, {}
+  if #expr.args ~= 1 then issues[#issues + 1] = LCheck.TypeIssueArgCount("variant constructor", 1, #expr.args) end
+  if #expr.args >= 1 then
+    local ar = expr.args[1]:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, self.ty))
+    for _, issue in ipairs(ar.issues or {}) do issues[#issues + 1] = issue end
+    if ar.ty ~= self.ty then issues[#issues + 1] = LCheck.TypeIssueExpected("variant payload", self.ty, ar.ty) end
     args[1] = ar.expr
   end
-  return LCheck.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(result_ty), self.type_name, self.variant_name, args), result_ty, issues)
+  return LCheck.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(lookup.def.ty), expr.type_name, expr.variant_name, args), lookup.def.ty, issues)
+end
+
+function LCheck.TypeVariantCaseLookupFound:typecheck_tree_ctor(expr, input)
+  return self.case:typecheck_tree_payload_lookup():typecheck_tree_ctor_payload(self, expr, input)
+end
+
+function LCheck.TypeVariantCaseLookupMissing:typecheck_tree_ctor(expr, input)
+  local issues = { LCheck.TypeIssueUnknownVariant(self.type_name, self.variant_name) }
+  if #expr.args ~= 0 then issues[#issues + 1] = LCheck.TypeIssueArgCount("variant constructor", 0, #expr.args) end
+  return LCheck.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(self.ty), expr.type_name, expr.variant_name, {}), self.ty, issues)
+end
+
+function Tr.ExprCtor:typecheck_tree_expr(input)
+  return input.scope.facts:typecheck_tree_lookup_variant_name(self.type_name)
+    :typecheck_tree_lookup_variant_case(self.variant_name)
+    :typecheck_tree_ctor(self, input)
 end
 
 -- ExprLoad: validate that addr is a pointer to self.ty
@@ -388,7 +393,7 @@ function Tr.ExprAtomicRmw:typecheck_tree_expr(input)
     issues[#issues+1] = LCheck.TypeIssueNotPointer(ar.ty)
   end
   if vr.ty and not vr.ty:tree_check_is_void_type() and self.ty and not self.ty:tree_check_is_void_type() then
-    if tostring(self.ty) ~= tostring(vr.ty) then
+    if self.ty ~= vr.ty then
       issues[#issues+1] = LCheck.TypeIssueExpected("atomic rmw value", self.ty, vr.ty)
     end
   end
@@ -409,12 +414,12 @@ function Tr.ExprAtomicCas:typecheck_tree_expr(input)
     issues[#issues+1] = LCheck.TypeIssueNotPointer(ar.ty)
   end
   if er.ty and not er.ty:tree_check_is_void_type() and self.ty and not self.ty:tree_check_is_void_type() then
-    if tostring(self.ty) ~= tostring(er.ty) then
+    if self.ty ~= er.ty then
       issues[#issues+1] = LCheck.TypeIssueExpected("atomic cas expected", self.ty, er.ty)
     end
   end
   if rr.ty and not rr.ty:tree_check_is_void_type() and self.ty and not self.ty:tree_check_is_void_type() then
-    if tostring(self.ty) ~= tostring(rr.ty) then
+    if self.ty ~= rr.ty then
       issues[#issues+1] = LCheck.TypeIssueExpected("atomic cas replacement", self.ty, rr.ty)
     end
   end
@@ -436,7 +441,7 @@ function Tr.ExprSelect:typecheck_tree_expr(input)
   -- Branch type unification
   local result_ty = tr.ty
   if tr.ty and er.ty then
-    if tostring(tr.ty) ~= tostring(er.ty) then
+    if tr.ty ~= er.ty then
       issues[#issues+1] = LCheck.TypeIssueExpected("select branches", tr.ty, er.ty)
     end
   end
@@ -460,7 +465,7 @@ function Tr.ExprSwitch:typecheck_tree_expr(input)
     if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
     if ar.ty and not ar.ty:tree_check_is_void_type() then
       if result_ty == nil then result_ty = ar.ty
-      elseif tostring(result_ty) ~= tostring(ar.ty) then
+      elseif result_ty ~= ar.ty then
         issues[#issues+1] = LCheck.TypeIssueExpected("switch arm", result_ty, ar.ty)
       end
     end
@@ -480,7 +485,7 @@ function Tr.ExprSwitch:typecheck_tree_expr(input)
     if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
     if ar.ty and not ar.ty:tree_check_is_void_type() then
       if result_ty == nil then result_ty = ar.ty
-      elseif tostring(result_ty) ~= tostring(ar.ty) then
+      elseif result_ty ~= ar.ty then
         issues[#issues+1] = LCheck.TypeIssueExpected("switch variant arm", result_ty, ar.ty)
       end
     end
@@ -492,7 +497,7 @@ function Tr.ExprSwitch:typecheck_tree_expr(input)
   local default_expr = self.default_expr and self.default_expr:typecheck_tree_expr(input)
   if default_expr and default_expr.ty and not default_expr.ty:tree_check_is_void_type() then
     if result_ty == nil then result_ty = default_expr.ty
-    elseif tostring(result_ty) ~= tostring(default_expr.ty) then
+    elseif result_ty ~= default_expr.ty then
       issues[#issues+1] = LCheck.TypeIssueExpected("switch default", result_ty, default_expr.ty)
     end
   end

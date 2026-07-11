@@ -1,7 +1,9 @@
 -- lalin.syntax.expr
 
+local llbl = require("llbl")
 local Pratt = require("llbl.syntax.pratt")
 local Ast = require("lalin.syntax.ast")
+local Parse = require("lalin.syntax.parse_vocab")
 local Type = require("lalin.syntax.type")
 
 local Expr = {}
@@ -26,6 +28,17 @@ end
 local function binop(name)
   return function(op, left, right, ctx)
     return Ast.node("BinOp", { op = name or op.value, left = left, right = right }, Ast.origin(ctx.lex, op, ctx.lex.last, "parsed:binop"))
+  end
+end
+
+local function unsupported_binop(code, spelling, reason)
+  return function(op, left, right, ctx)
+    error(llbl.diagnostic {
+      code = code,
+      message = "binary operator `" .. spelling .. "` is not supported in Lalin source",
+      primary = Ast.origin(ctx.lex, op, op, "parsed:unsupported_operator"),
+      notes = { reason },
+    }, 0)
   end
 end
 
@@ -113,6 +126,15 @@ local function atom(lex, ctx)
       end
       return Ast.node("Hole", {}, Ast.origin(lex, t, t, "parsed:hole"))
     end
+    if lex:next_if("::") then
+      local variant = lex:expect_name("variant constructor name")
+      lex:expect("(")
+      local args = parse_expr_list(lex, ctx, ")")
+      return Ast.node("Call", {
+        projection = Parse.ParsedVariantConstructorCall(t.value, variant.value),
+        args = args,
+      }, Ast.origin(lex, t, lex.last, "parsed:variant_ctor"))
+    end
     return Ast.node("Name", { name = t.value }, Ast.origin(lex, t, t, "parsed:name"))
   elseif t.value == "(" then
     local start = lex:next()
@@ -143,7 +165,7 @@ parser = Pratt.new {
   postfix = {
     ["("] = { bp = 100, emit = function(op, left, lex, ctx)
       local args = parse_expr_list(lex, ctx, ")")
-      return Ast.node("Call", { callee = left, args = args }, Ast.origin(lex, op, lex.last, "parsed:call"))
+      return Ast.node("Call", { callee = left, projection = Parse.ParsedRegularCall, args = args }, Ast.origin(lex, op, lex.last, "parsed:call"))
     end },
     ["["] = { bp = 100, emit = function(op, left, lex, ctx)
       local index = Expr.parse(lex, ctx)
@@ -186,9 +208,13 @@ parser = Pratt.new {
     ["-"] = { bp = 50, emit = binop("sub") },
     ["*"] = { bp = 60, emit = binop("mul") },
     ["/"] = { bp = 60, emit = binop("div") },
-    ["//"] = { bp = 60, emit = binop("idiv") },
+    ["//"] = { bp = 60, emit = unsupported_binop(
+      "E_LALIN_UNSUPPORTED_IDIV", "//",
+      "floor-division semantics, including negative operands, are not defined; use `/` where truncating division is intended") },
     ["%"] = { bp = 60, emit = binop("mod") },
-    ["^"] = { bp = 90, right_assoc = true, emit = binop("pow") },
+    ["^"] = { bp = 90, right_assoc = true, emit = unsupported_binop(
+      "E_LALIN_UNSUPPORTED_POW", "^",
+      "integer and floating exponentiation require an explicit library function") }
   }
 }
 

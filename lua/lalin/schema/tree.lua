@@ -21,6 +21,7 @@ return schema. LalinTree {
     offset [number],
   },
   product. VariantBind { interned, field. name [str], field. ty [LalinType.Type], },
+  product. SwitchVariantSourceStmtArm { interned, variant_name [str], binds [many [str]], body [many [LalinTree.Stmt]], },
   sum. SwitchKey {
     SwitchKeyInt { variant_unique, raw [str], },
     SwitchKeyBool { variant_unique, field. value [bool], },
@@ -658,6 +659,14 @@ return schema. LalinTree {
       field. value [LalinTree.Expr],
       arms [many [LalinTree.SwitchStmtArm]],
       variant_arms [many [LalinTree.SwitchVariantStmtArm]],
+      default_body [many [LalinTree.Stmt]],
+    },
+    StmtVariantSwitchSource {
+      variant_unique,
+      h [LalinTree.StmtHeader],
+      field. value [LalinTree.Expr],
+      arms [many [LalinTree.SwitchStmtArm]],
+      variant_arms [many [LalinTree.SwitchVariantSourceStmtArm]],
       default_body [many [LalinTree.Stmt]],
     },
     StmtJump {

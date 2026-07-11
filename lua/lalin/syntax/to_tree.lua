@@ -113,6 +113,18 @@ local function bind_context(T)
     return "lln." .. tostring(kind) .. "." .. tostring(region_invoke_counter)
   end
 
+  function ToTree.parsed_regular_call(callee, parsed_args)
+    local args = {}
+    for i, arg in ipairs(parsed_args or {}) do args[i] = ToTree.expr(arg) end
+    return Tr.ExprCall(Tr.ExprSurface, ToTree.expr(callee), args)
+  end
+
+  function ToTree.parsed_variant_constructor_call(type_name, variant_name, parsed_args)
+    local args = {}
+    for i, arg in ipairs(parsed_args or {}) do args[i] = ToTree.expr(arg) end
+    return Tr.ExprCtor(Tr.ExprSurface, type_name, variant_name, args)
+  end
+
   --- Convert a parsed AST expression node to a LalinTree.Expr.
   function ToTree.expr(parsed)
     if not parsed then return nil end
@@ -120,7 +132,7 @@ local function bind_context(T)
       return ToTree.literal(parsed)
     end
     local cls = asdl.classof(parsed)
-    if cls then return parsed end -- already ASDL
+    if cls then return parsed end -- already tree ASDL
     if llbl.is(parsed, "HostEval") then return adapter:expr(parsed) end
 
     local tag = parsed.tag
@@ -168,12 +180,7 @@ local function bind_context(T)
       end
 
     elseif tag == "Call" then
-      local args = {}
-      for i, a in ipairs(parsed.args or {}) do
-        args[i] = ToTree.expr(a)
-      end
-      return Tr.ExprCall(Tr.ExprSurface, ToTree.expr(parsed.callee), args)
-
+      return parsed.projection:parsed_to_tree_call(ToTree, parsed.callee, parsed.args)
     elseif tag == "MethodCall" then
       local args = { ToTree.expr(parsed.receiver) }
       for i, a in ipairs(parsed.args or {}) do
@@ -403,8 +410,16 @@ local function bind_context(T)
       for i, arm in ipairs(parsed.arms or {}) do
         arms[i] = Tr.SwitchStmtArm(ToTree.switch_key(arm.key), ToTree.stmts(arm.body or {}))
       end
-      return Tr.StmtSwitch(Tr.StmtSurface, ToTree.expr(parsed.value), arms, {}, ToTree.stmts(parsed.default_body or {}))
-
+      if #(parsed.variant_arms or {}) == 0 then
+        return Tr.StmtSwitch(Tr.StmtSurface, ToTree.expr(parsed.value), arms, {}, ToTree.stmts(parsed.default_body or {}))
+      end
+      local variant_arms = {}
+      for i, arm in ipairs(parsed.variant_arms or {}) do
+        local binds = {}
+        for j, name in ipairs(arm.binds or {}) do binds[j] = name end
+        variant_arms[i] = Tr.SwitchVariantSourceStmtArm(arm.variant_name, binds, ToTree.stmts(arm.body or {}))
+      end
+      return Tr.StmtVariantSwitchSource(Tr.StmtSurface, ToTree.expr(parsed.value), arms, variant_arms, ToTree.stmts(parsed.default_body or {}))
     elseif tag == "StmtForRange" then
       local loop_lower = require("lalin.syntax.for_to_loop")(T)
       return loop_lower.lower(parsed)

@@ -321,12 +321,6 @@ return function(T)
         return a ~= nil and b ~= nil and a == b
     end
 
-    local function find_variant_def(facts, name)
-        for i = 1, #((facts and facts.variants) or {}) do
-            if facts.variants[i].type_name == name then return facts.variants[i] end
-        end
-        return nil
-    end
 
     local function find_handle_def(facts, name)
         for i = 1, #((facts and facts.handles) or {}) do
@@ -335,21 +329,6 @@ return function(T)
         return nil
     end
 
-    function Ty.Type:typecheck_tree_variant_def(facts)
-        return nil
-    end
-
-    function Ty.TNamed:typecheck_tree_variant_def(facts)
-        return self.ref:typecheck_tree_ref_variant_def(facts)
-    end
-
-    function Ty.TypeRef:typecheck_tree_ref_variant_def(facts) return nil end
-    function Ty.TypeRefGlobal:typecheck_tree_ref_variant_def(facts) return find_variant_def(facts, self.type_name) end
-    function Ty.TypeRefLocal:typecheck_tree_ref_variant_def(facts) return find_variant_def(facts, self.sym.name) end
-    function Ty.TypeRefPath:typecheck_tree_ref_variant_def(facts)
-        if #self.path.parts == 1 then return find_variant_def(facts, self.path.parts[1].text) end
-        return nil
-    end
 
     function Ty.Type:typecheck_tree_handle_def(facts)
         return nil

@@ -200,6 +200,8 @@ local issue_code_map = {
 
     -- Unknown/missing variant issues
     TypeIssueUnknownVariant = "E0301",
+    TypeIssueVariantBindCount = "E0306",
+    TypeIssueVariantPayloadUnsupported = "E0307",
     TypeIssueVariantPayloadMismatch = "E0301",
     TypeIssueDuplicateVariant = "E0203",
     TypeIssueMissingJumpArg = "E0404",

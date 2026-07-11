@@ -3,6 +3,7 @@
 local Ast = require("lalin.syntax.ast")
 local Type = require("lalin.syntax.type")
 local Stmt = require("lalin.syntax.stmt")
+local Parse = require("lalin.syntax.parse_vocab")
 local Expr = require("lalin.syntax.expr")
 
 local Decl = {}
@@ -118,6 +119,7 @@ function Decl.parse_fn(lex, ctx, entry_start)
   local result = nil
   if lex:peek().value == "[" then result = Type.parse(lex, ctx) end
   optional_do(lex)
+  local owner = Parse.ParseFunctionControlOwner
   local body
   if lex:peek().value == "entry" or lex:peek().value == "block" then
     local blocks = {}
@@ -125,11 +127,11 @@ function Decl.parse_fn(lex, ctx, entry_start)
       if lex:peek().value ~= "entry" and lex:peek().value ~= "block" then
         lex:error_at(lex:peek(), "expected function entry/block or end")
       end
-      blocks[#blocks + 1] = parse_entry_block(lex, ctx)
+      blocks[#blocks + 1] = parse_entry_block(lex, ctx, owner)
     end
     body = { Ast.node("StmtControlRegion", { region_id = "fn:" .. tostring(name or "anonymous"), blocks = blocks }, Ast.origin(lex, start, lex.last, "parsed:function_control")) }
   else
-    body = Stmt.parse_block(lex, ctx, { "end" })
+    body = Stmt.parse_block(lex, ctx, owner, { "end" })
   end
   lex:expect("end")
   return Ast.node("DeclFunc", {
@@ -280,14 +282,14 @@ function Decl.parse_handle(lex, ctx, entry_start)
   }, Ast.origin(lex, start, lex.last, "parsed:decl"))
 end
 
-parse_entry_block = function(lex, ctx)
+parse_entry_block = function(lex, ctx, owner)
   local start = lex:next() -- entry or block
   local kind = start.value
   local name = lex:expect_name(kind .. " name")
   local state = {}
   if lex:peek().value == "(" then state = Type.parse_params(lex, ctx) end
   optional_do(lex)
-  local body = Stmt.parse_block(lex, ctx, { "end" })
+  local body = Stmt.parse_block(lex, ctx, owner, { "end" })
   lex:expect("end")
   return Ast.node(kind == "entry" and "RegionEntry" or "RegionBlock", {
     name = name.value,
@@ -383,9 +385,10 @@ function Decl.parse_region(lex, ctx, entry_start)
     table.insert(inputs, 1, implicit_self_field(lex, start, qualifier))
   end
 
+  local owner = Parse.ParseRegionControlOwner
   local contracts = {}
   while not lex:at_eof() and lex:peek().value == "requires" do
-    contracts[#contracts + 1] = Stmt.parse(lex, ctx)
+    contracts[#contracts + 1] = Stmt.parse(lex, ctx, owner)
   end
 
   local blocks = {}
@@ -393,7 +396,7 @@ function Decl.parse_region(lex, ctx, entry_start)
     if lex:peek().value ~= "entry" and lex:peek().value ~= "block" then
       lex:error_at(lex:peek(), "expected region requires/entry/block or end")
     end
-    blocks[#blocks + 1] = parse_entry_block(lex, ctx)
+    blocks[#blocks + 1] = parse_entry_block(lex, ctx, owner)
   end
   lex:expect("end")
   return Ast.node("DeclRegion", {
@@ -416,7 +419,7 @@ end
 
 function Decl.parse_stmt_fragment(lex, ctx)
   local start = ctx.entry_token
-  local body = Stmt.parse_block(lex, ctx, { "end" })
+  local body = Stmt.parse_block(lex, ctx, Parse.ParseFunctionControlOwner, { "end" })
   lex:expect("end")
   return Ast.node("StmtFragment", { body = body }, Ast.origin(lex, start, lex.last, "parsed:stmt"))
 end

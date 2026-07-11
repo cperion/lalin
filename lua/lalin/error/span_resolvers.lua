@@ -504,7 +504,7 @@ function M.typecheck_resolver(issue, analysis)
 
     -- Variant issues
     if kind == "TypeIssueUnknownVariant" or kind == "TypeIssueVariantPayloadMismatch"
-       or kind == "TypeIssueDuplicateVariant" then
+       or kind == "TypeIssueVariantPayloadUnsupported" or kind == "TypeIssueDuplicateVariant" then
         local label = issue.variant_name or issue.field_name or issue.name
         if label then
             local a = first_anchor_with_label(anchors, label)

@@ -3,8 +3,14 @@
 local Ast = require("lalin.syntax.ast")
 local Expr = require("lalin.syntax.expr")
 local Type = require("lalin.syntax.type")
+local Parse = require("lalin.syntax.parse_vocab")
 
 local Stmt = {}
+
+
+local function reject_unsupported_control(lex, owner, control, tok)
+  return owner:reject_unsupported_control(control, lex, tok)
+end
 
 local function stop_set(list)
   local s = {}
@@ -152,18 +158,18 @@ local function parse_loop_domain(lex, ctx)
   return "range", { parse_range_domain(lex, ctx) }
 end
 
-function Stmt.parse_block(lex, ctx, stops)
+function Stmt.parse_block(lex, ctx, owner, stops)
   stops = stop_set(stops or { "end" })
   local items = {}
   lex:skip_separators()
   while not lex:at_eof() and not stops[lex:peek().value] do
-    items[#items + 1] = Stmt.parse(lex, ctx)
+    items[#items + 1] = Stmt.parse(lex, ctx, owner)
     lex:skip_separators()
   end
   return items
 end
 
-function Stmt.parse(lex, ctx)
+function Stmt.parse(lex, ctx, owner)
   ctx.lex = lex
   local t = lex:peek()
 
@@ -191,7 +197,7 @@ function Stmt.parse(lex, ctx)
     local start = lex:next()
     local cond = Expr.parse(lex, ctx)
     lex:expect("then")
-    local then_body = Stmt.parse_block(lex, ctx, { "elseif", "else", "end" })
+    local then_body = Stmt.parse_block(lex, ctx, owner, { "elseif", "else", "end" })
     local elseif_blocks = {}
     while lex:next_if("elseif") do
       local etok = lex.last
@@ -199,12 +205,12 @@ function Stmt.parse(lex, ctx)
       lex:expect("then")
       elseif_blocks[#elseif_blocks + 1] = Ast.node("ElseIf", {
         cond = ec,
-        body = Stmt.parse_block(lex, ctx, { "elseif", "else", "end" }),
+        body = Stmt.parse_block(lex, ctx, owner, { "elseif", "else", "end" }),
       }, Ast.origin(lex, etok, lex.last, "parsed:elseif"))
     end
     local else_body = nil
     if lex:next_if("else") then
-      else_body = Stmt.parse_block(lex, ctx, { "end" })
+      else_body = Stmt.parse_block(lex, ctx, owner, { "end" })
     end
     lex:expect("end")
     return Ast.node("StmtIf", { cond = cond, then_body = then_body, elseif_blocks = elseif_blocks, else_body = else_body }, Ast.origin(lex, start, lex.last, "parsed:if"))
@@ -215,26 +221,53 @@ function Stmt.parse(lex, ctx)
     lex:expect("do")
     lex:skip_separators()
     local arms = {}
+    local variant_arms = {}
     local default_body = nil
     while not lex:at_eof() and lex:peek().value ~= "end" do
       if lex:peek().value == "case" then
         local ctok = lex:next()
-        local key = Expr.parse(lex, ctx)
-        lex:expect("then")
-        local body = Stmt.parse_block(lex, ctx, { "case", "default", "end" })
-        arms[#arms + 1] = Ast.node("SwitchCase", { key = key, body = body }, Ast.origin(lex, ctok, lex.last, "parsed:switch_case"))
+        if lex:next_if("variant") then
+          local variant = lex:expect_name("variant arm name")
+          local binds = {}
+          if lex:next_if("(") then
+            if not lex:next_if(")") then
+              repeat
+                binds[#binds + 1] = lex:expect_name("variant payload bind").value
+              until not lex:next_if(",")
+              lex:expect(")")
+            end
+          end
+          lex:expect("then")
+          local body = Stmt.parse_block(lex, ctx, owner, { "case", "default", "end" })
+          variant_arms[#variant_arms + 1] = Ast.node("SwitchVariantCase", {
+            variant_name = variant.value, binds = binds, body = body,
+          }, Ast.origin(lex, ctok, lex.last, "parsed:switch_variant_case"))
+        else
+          local key = Expr.parse(lex, ctx)
+          lex:expect("then")
+          local body = Stmt.parse_block(lex, ctx, owner, { "case", "default", "end" })
+          arms[#arms + 1] = Ast.node("SwitchCase", { key = key, body = body }, Ast.origin(lex, ctok, lex.last, "parsed:switch_case"))
+        end
       elseif lex:peek().value == "default" then
         lex:next()
         lex:expect("then")
-        default_body = Stmt.parse_block(lex, ctx, { "end" })
+        default_body = Stmt.parse_block(lex, ctx, owner, { "end" })
       else
         lex:error_at(lex:peek(), "expected `case`, `default`, or `end` in switch")
       end
       lex:skip_separators()
     end
     lex:expect("end")
-    return Ast.node("StmtSwitch", { value = value, arms = arms, default_body = default_body or {} }, Ast.origin(lex, start, lex.last, "parsed:switch"))
+    return Ast.node("StmtSwitch", {
+      value = value, arms = arms, variant_arms = variant_arms, default_body = default_body or {},
+    }, Ast.origin(lex, start, lex.last, "parsed:switch"))
 
+  elseif t.value == "while" then
+    reject_unsupported_control(lex, owner, Parse.ParseUnsupportedWhile, t)
+  elseif t.value == "break" then
+    reject_unsupported_control(lex, owner, Parse.ParseUnsupportedBreak, t)
+  elseif t.value == "continue" then
+    reject_unsupported_control(lex, owner, Parse.ParseUnsupportedContinue, t)
   elseif t.value == "for" then
     lex:error_at(t, "source loops use `loop`, not `for`")
 
@@ -248,7 +281,7 @@ function Stmt.parse(lex, ctx)
     lex:expect("in")
     local producer, args = parse_loop_domain(lex, ctx)
     lex:expect("do")
-    local body = Stmt.parse_block(lex, ctx, { "end" })
+    local body = Stmt.parse_block(lex, ctx, owner, { "end" })
     lex:expect("end")
     return Ast.node("StmtForRange", { index = index, indexes = indexes, producer = producer, args = args, result_type = nil, body = body }, Ast.origin(lex, start, lex.last, "parsed:loop"))
 

@@ -79,7 +79,7 @@ function LalinSyntax.parse_expression(lex, ctx)
 end
 
 function LalinSyntax.parse_statement(lex, ctx)
-  local body = Stmt.parse_block(lex, ctx, { "end" })
+  local body = Stmt.parse_block(lex, ctx, require("lalin.syntax.parse_vocab").ParseFunctionControlOwner, { "end" })
   lex:expect("end")
   local ast = Ast.node("StmtFragment", { body = body }, ctx:origin(lex, ctx.entry_token, lex.last, "parsed:stmt"))
   return wrap_ast(ast, ctx, { role = "stmt", channel = "parsed:stmt" })

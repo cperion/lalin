@@ -20,6 +20,24 @@ return schema. LalinCheck {
     layouts [many [LalinSem.TypeLayout]],
     facts [LalinCheck.TypeModuleFacts],
   },
+  sum. TypeValueLookup {
+    TypeValueLookupFound { variant_unique, binding [LalinBind.Binding], },
+    TypeValueLookupMissing { variant_unique, field. name [str], },
+  },
+  sum. TypeVariantDefLookup {
+    TypeVariantDefLookupFound { variant_unique, def [LalinCheck.TypeVariantDef], },
+    TypeVariantDefLookupMissing { variant_unique, type_name [str], field. ty [LalinType.Type], },
+  },
+  sum. TypeVariantCaseLookup {
+    TypeVariantCaseLookupFound { variant_unique, def [LalinCheck.TypeVariantDef], case [LalinCheck.TypeVariantCase], },
+    TypeVariantCaseLookupMissing { variant_unique, type_name [str], variant_name [str], field. ty [LalinType.Type], },
+  },
+  sum. TypeVariantPayloadLookup {
+    TypeVariantPayloadNone,
+    TypeVariantPayloadFound { variant_unique, field. ty [LalinType.Type], },
+    TypeVariantPayloadUnsupported { variant_unique, field_count [number], },
+  },
+  product. TypeVariantArmResult { interned, arm [LalinTree.SwitchVariantStmtArm], issues [many [LalinCheck.TypeIssue]], },
   product. TypeScopeChange { interned, scope [LalinCheck.TypeValueScope], },
   product. TypeNameScope { interned, types [many [LalinBind.TypeEntry]], },
   product. TypeExprInput { interned, scope [LalinCheck.TypeValueScope], },
@@ -281,6 +299,7 @@ return schema. LalinCheck {
     },
     TypeIssueRegionInvoke { variant_unique, reject [LalinTree.RegionInvokeReject], },
     TypeIssueUnknownVariant { variant_unique, type_name [str], variant_name [str], },
+    TypeIssueVariantPayloadUnsupported { variant_unique, type_name [str], variant_name [str], field_count [number], },
     TypeIssueVariantPayloadMismatch {
       variant_unique,
       type_name [str],

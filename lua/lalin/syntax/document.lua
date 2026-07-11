@@ -85,6 +85,14 @@ end
 
 local function parse_root_item(lex, ctx)
   local tok = lex:peek()
+  if tok.value == "unique" then
+    error(llbl.diagnostic {
+      code = "E_LALIN_UNSUPPORTED_UNIQUE",
+      message = "`unique` declarations are not supported by the compiled Lalin surface",
+      primary = Ast.origin(lex, tok, tok, "parsed:unsupported_unique"),
+      notes = { "identity must be modeled explicitly; the compiler does not synthesize hidden identity maps" },
+    }, 0)
+  end
   if tok.kind == "error" then lex:error_at(tok, tok.value) end
   if tok.value == "[" then
     return Decl.parse_decl_stream(lex, ctx)
