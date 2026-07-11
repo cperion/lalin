@@ -809,7 +809,7 @@ Release-level gates:
 | history | ABI-SIG | P0 | LAY-1 | Required signatures | integrated `c95973fd5`; approved |
 | history | ABI-STATE | P0 | ABI-SIG | Cross-unit isolation | integrated `f7ba18a`; approved |
 | history | CMP-1 | P1 | none | Compiler-process contracts | integrated `7b983824`; approved |
-| current | M0.1 | P0 | CMP-1 | Refresh failure ledger/baseline | ready |
+| current | M0.1 | P0 | CMP-1 | Refresh failure ledger/baseline | working `w4:p1E` |
 | 1 | AUX-FUNC-ABI | P1 | M0 refresh | ABI harness classification | planned |
 | 2 | AUX-TYPE-C | P1 | M0 refresh | Canonical type-to-C test | planned |
 | 3 | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | planned |
