@@ -831,14 +831,10 @@ Release-level gates:
 | history | AUX-FUNC-ABI | P1 | M0 refresh | ABI harness classification | integrated `b9a40cd`; approved |
 | history | AUX-TYPE-C | P1 | M0 refresh | Canonical type-to-C projection | integrated `d94df76ae`; approved |
 | history | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | integrated `549e74a`; approved |
-| 4 | LNG-DIAG | P1 | M0 refresh | Unsupported control diagnostics | planned |
-| 5 | LNG-LOOP-C | P1 | integrated stencil/layout | Parsed loop GCC matrix | planned |
-| 6 | LNG-EXT-C | P1 | AUX ABI/type | Extern/builder/HostEval GCC | planned |
-| 7 | LNG-REG-C | P1 | RGN-1, LAY-1 | Region protocol GCC | planned |
-| 8 | LNG-EXPR-C | P1 | optional LNG-DIAG | Expressions through GCC | planned |
-| 9 | LNG-VAR-C | P2 | optional LNG-EXPR-C | Variants/identity | planned |
+| current-A | SURFACE-C batch | P1/P2 | M0 refresh | `LNG-DIAG → LNG-EXPR-C → LNG-VAR-C`, serialized parser ownership | working `pack/batch-surface-c` (`w4:p1N`) |
+| current-B | RUNTIME-C batch | P1 | integrated foundations | `LNG-LOOP-C → LNG-EXT-C → LNG-REG-C`, serialized runtime integration | working `pack/batch-runtime-c` (`w4:p1P`) |
 | 10 | LNG-OWN-C | P2 | optional LNG-REG-C | Ownership/domain runtime | planned |
-| M3-A | CLO-1→3 | P1 | M0 refresh | Closure vocabulary/collection/rewrite | planned |
+| current-C | CLO-1→3 | P1 | M0 refresh | Closure vocabulary → collection → rewrite, serialized | working `pack/batch-closure-asdl` (`w4:p1Q`) |
 | M3-B | MEM-1→4→EFF-1→2 | P1 | M0 refresh | Memory/effect facets and leaves | planned |
 | M3-C | KRN-1→SCH-1→2 | P1 | MEM/EFF | Kernel/schedule leaves | planned |
 | M3-D | CMAT-1→STN-PLAN/DESC-1→DESC-2→CMAT-2→3 | P1 | M0 refresh | Neutral stencil/CMat C path | planned |
