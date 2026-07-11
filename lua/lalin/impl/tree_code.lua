@@ -203,7 +203,10 @@ local function type_to_code_s(sigs, ty)
 end
 
 local function ensure_type_sig_s(sigs, params, result, requirement)
-  local sig, next_sigs = CodeType.ensure_type_sig_requirement(sigs, params, result, requirement)
+  local erased_params = {}
+  for i = 1, #(params or {}) do erased_params[i] = params[i]:tree_code_source_access_base() end
+  local sig, next_sigs = CodeType.ensure_type_sig_requirement(
+    sigs, erased_params, result:tree_code_source_access_base(), requirement)
   return TreeCode.TreeCodeSigTransitionResult(sig, next_sigs)
 end
 
@@ -597,8 +600,12 @@ function TreeCode.TreeCodeExprResult:tree_code_state() return self.state end
 function TreeCode.TreeCodePlaceResult:tree_code_state() return self.state end
 function TreeCode.TreeCodeStmtResult:tree_code_state() return self.state end
 
-function TreeCode.TreeCodeInput:tree_code_type(ty) return type_to_code_s(self.state.abi.sigs, ty).ty end
-function TreeCode.TreeCodeContractInput:tree_code_type(ty) return type_to_code_s(self.sigs, ty).ty end
+function TreeCode.TreeCodeInput:tree_code_type(ty)
+  return type_to_code_s(self.state.abi.sigs, ty:tree_code_source_access_base()).ty
+end
+function TreeCode.TreeCodeContractInput:tree_code_type(ty)
+  return type_to_code_s(self.sigs, ty:tree_code_source_access_base()).ty
+end
 
 ----------------------------------------------------------------------
 -- Bind.Binding

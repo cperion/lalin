@@ -14,8 +14,11 @@ return function(T)
         return a == b
     end
 
-    local function check_expected(site, expected, actual, issues)
-        if not type_eq(expected, actual) then issues[#issues + 1] = Check.TypeIssueExpected(site, expected, actual) end
+
+    local function check_expected(site, expected, actual, issues, scope)
+        if not type_eq(expected, actual) and not expected:typecheck_tree_arg_matches_actual(scope, actual) then
+            issues[#issues + 1] = Check.TypeIssueExpected(site, expected, actual)
+        end
     end
 
     local function type_expr_expect(expr, input, expected)
@@ -219,7 +222,8 @@ return function(T)
         end
         local issues = {}
         append_all(issues, value.issues)
-        check_expected("return", input.return_ty, value.ty, issues)
+        check_expected("return", input.return_ty, value.ty, issues, input.scope)
+        value.ty:typecheck_tree_append_lease_escape(issues, Check.TypeUnaryLeaseEscapeReturn)
         return Check.TypeStmtResult(input, { Tr.StmtReturnValue(self.h, value.expr) }, issues)
     end
 
@@ -256,13 +260,29 @@ return function(T)
         return Check.TypeStmtResult(input:typecheck_tree_with_scope(scope), { Tr.StmtVar(self.h, binding, init.expr) }, issues)
     end
 
+    function Tr.Place:typecheck_tree_check_store_escape(value_ty, issues) end
+    function Tr.PlaceRef:typecheck_tree_check_store_escape(value_ty, issues) end
+    function Tr.PlaceDeref:typecheck_tree_check_store_escape(value_ty, issues)
+        value_ty:typecheck_tree_append_lease_escape(issues, Check.TypeUnaryLeaseEscapeStore)
+    end
+    function Tr.PlaceDot:typecheck_tree_check_store_escape(value_ty, issues)
+        value_ty:typecheck_tree_append_lease_escape(issues, Check.TypeUnaryLeaseEscapeStore)
+    end
+    function Tr.PlaceField:typecheck_tree_check_store_escape(value_ty, issues)
+        value_ty:typecheck_tree_append_lease_escape(issues, Check.TypeUnaryLeaseEscapeStore)
+    end
+    function Tr.PlaceIndex:typecheck_tree_check_store_escape(value_ty, issues)
+        value_ty:typecheck_tree_append_lease_escape(issues, Check.TypeUnaryLeaseEscapeStore)
+    end
+
     function Tr.StmtSet:typecheck_tree_stmt(input)
         local place = self.place:typecheck_tree_place(input:typecheck_tree_place_input())
         local value = type_expr_expect(self.value, input, place.ty)
         local issues = {}
         append_all(issues, place.issues)
         append_all(issues, value.issues)
-        check_expected("set", place.ty, value.ty, issues)
+        check_expected("set", place.ty, value.ty, issues, input.scope)
+        place.place:typecheck_tree_check_store_escape(value.ty, issues)
         return Check.TypeStmtResult(input, { Tr.StmtSet(self.h, place.place, value.expr) }, issues)
     end
 
@@ -272,7 +292,8 @@ return function(T)
         local issues = {}
         append_all(issues, addr.issues)
         append_all(issues, value.issues)
-        check_expected("atomic store", self.ty, value.ty, issues)
+        check_expected("atomic store", self.ty, value.ty, issues, input.scope)
+        value.ty:typecheck_tree_append_lease_escape(issues, Check.TypeUnaryLeaseEscapeStore)
         return Check.TypeStmtResult(input, { Tr.StmtAtomicStore(self.h, self.ty, addr.expr, value.expr, self.ordering) }, issues)
     end
 

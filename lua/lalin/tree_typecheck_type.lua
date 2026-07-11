@@ -156,18 +156,21 @@ return function(T)
 
     function Ty.Type:typecheck_tree_deref_result() return nil end
     function Ty.TPtr:typecheck_tree_deref_result() return self.elem end
-
+    function Ty.TLease:typecheck_tree_deref_result() return self.base:typecheck_tree_deref_result() end
+    function Ty.TAccess:typecheck_tree_deref_result() return self.base:typecheck_tree_deref_result() end
     function Ty.Type:typecheck_tree_len_result() return nil end
     function Ty.TArray:typecheck_tree_len_result() return Ty.TScalar(C.ScalarIndex) end
     function Ty.TSlice:typecheck_tree_len_result() return Ty.TScalar(C.ScalarIndex) end
     function Ty.TView:typecheck_tree_len_result() return Ty.TScalar(C.ScalarIndex) end
-
+    function Ty.TLease:typecheck_tree_len_result() return self.base:typecheck_tree_len_result() end
+    function Ty.TAccess:typecheck_tree_len_result() return self.base:typecheck_tree_len_result() end
     function Ty.Type:typecheck_tree_index_elem() return nil end
     function Ty.TPtr:typecheck_tree_index_elem() return self.elem end
     function Ty.TArray:typecheck_tree_index_elem() return self.elem end
     function Ty.TSlice:typecheck_tree_index_elem() return self.elem end
     function Ty.TView:typecheck_tree_index_elem() return self.elem end
-
+    function Ty.TLease:typecheck_tree_index_elem() return self.base:typecheck_tree_index_elem() end
+    function Ty.TAccess:typecheck_tree_index_elem() return self.base:typecheck_tree_index_elem() end
     function Ty.TypeRef:typecheck_tree_resolve_env_type(env)
         return nil
     end
@@ -434,6 +437,59 @@ return function(T)
     function Ty.Type:typecheck_tree_append_live_lease(out) end
     function Ty.TLease:typecheck_tree_append_live_lease(out) out[#out + 1] = self end
 
+    function Ty.Type:typecheck_tree_append_lease_escape(issues, reason) end
+    function Ty.TLease:typecheck_tree_append_lease_escape(issues, reason)
+        issues[#issues + 1] = Check.TypeIssueInvalidUnary(reason, self)
+    end
+    function Ty.TAccess:typecheck_tree_append_lease_escape(issues, reason)
+        self.base:typecheck_tree_append_lease_escape(issues, reason)
+    end
+
+    function Ty.Type:typecheck_tree_check_lease_call_argument(actual, issues) end
+    function Ty.TPtr:typecheck_tree_check_lease_call_argument(actual, issues)
+        actual:typecheck_tree_append_lease_escape(issues, Check.TypeUnaryLeaseEscapeCall)
+    end
+    function Ty.TView:typecheck_tree_check_lease_call_argument(actual, issues)
+        actual:typecheck_tree_append_lease_escape(issues, Check.TypeUnaryLeaseEscapeCall)
+    end
+    function Ty.TLease:typecheck_tree_check_lease_call_argument(actual, issues) end
+    function Ty.TAccess:typecheck_tree_check_lease_call_argument(actual, issues)
+        self.access:typecheck_tree_check_lease_call_argument(self.base, actual, issues)
+    end
+
+    function Ty.TypeAccess:typecheck_tree_check_lease_call_argument(base, actual, issues)
+        base:typecheck_tree_check_lease_call_argument(actual, issues)
+    end
+    function Ty.TypeAccessNoEscape:typecheck_tree_check_lease_call_argument(base, actual, issues) end
+
+    function Ty.Type:typecheck_tree_check_live_lease_invalidation(scope, actual, issues) end
+    function Ty.TPtr:typecheck_tree_check_live_lease_invalidation(scope, actual, issues)
+        scope:typecheck_tree_check_live_lease_invalidation(actual, issues)
+    end
+    function Ty.TView:typecheck_tree_check_live_lease_invalidation(scope, actual, issues)
+        scope:typecheck_tree_check_live_lease_invalidation(actual, issues)
+    end
+    function Ty.TAccess:typecheck_tree_check_live_lease_invalidation(scope, actual, issues)
+        self.access:typecheck_tree_check_live_lease_invalidation(self.base, scope, actual, issues)
+    end
+
+    function Ty.TypeAccess:typecheck_tree_check_live_lease_invalidation(base, scope, actual, issues)
+        base:typecheck_tree_check_live_lease_invalidation(scope, actual, issues)
+    end
+    function Ty.TypeAccessReadonly:typecheck_tree_check_live_lease_invalidation(base, scope, actual, issues) end
+    function Ty.TypeAccessPreserve:typecheck_tree_check_live_lease_invalidation(base, scope, actual, issues) end
+
+    function Ty.Type:typecheck_tree_check_lease_origin_invalidation(actual_name, issues) end
+    function Ty.TLease:typecheck_tree_check_lease_origin_invalidation(actual_name, issues)
+        local origin = self:typecheck_tree_lease_origin_name()
+        if origin == nil or actual_name == nil or origin == actual_name then
+            issues[#issues + 1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryLeaseInvalidatingCall, self)
+        end
+    end
+    function Ty.TAccess:typecheck_tree_check_lease_origin_invalidation(actual_name, issues)
+        self.base:typecheck_tree_check_lease_origin_invalidation(actual_name, issues)
+    end
+
     function Ty.Type:typecheck_tree_lease_target_type() return nil end
     function Ty.TAccess:typecheck_tree_lease_target_type() return self.base:typecheck_tree_lease_target_type() end
     function Ty.TLease:typecheck_tree_lease_target_type() return self.base:typecheck_tree_lease_base_target_type() end
@@ -491,7 +547,7 @@ return function(T)
         return actual:typecheck_tree_arg_as_actual_for_expected(env, self)
     end
     function Ty.TAccess:typecheck_tree_arg_matches_actual(env, actual)
-        return self.base:typecheck_tree_arg_matches_actual(env, actual)
+        return type_eq(self.base, actual) or self.base:typecheck_tree_arg_matches_actual(env, actual)
     end
     function Ty.TLease:typecheck_tree_arg_matches_actual(env, actual)
         return actual:typecheck_tree_arg_as_actual_for_lease_expected(env, self)

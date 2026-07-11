@@ -6,13 +6,14 @@ local suite = arg and arg[1] or "default"
 local suites = {
     default = {
         "c_backend", "code_ir", "core", "frontend",
-        "asdl", "compiler_process", "runtime", "schema", "tooling",
+        "asdl", "compiler_process", "runtime", "schema", "schema_v2", "tooling",
     },
     optional = { "experiments", "retired" },
+    schema = { "schema", "schema_v2" },
     all = {
         "c_backend", "code_ir", "core",
         "experiments", "frontend",
-        "asdl", "compiler_process", "retired", "runtime", "schema", "tooling",
+        "asdl", "compiler_process", "retired", "runtime", "schema", "schema_v2", "tooling",
     },
 }
 

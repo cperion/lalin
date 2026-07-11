@@ -44,7 +44,10 @@ local function bind_context(T)
         return TL.TreeLowerTypeTransitionResult(code_ty, sigs)
     end
     local function ensure_type_sig_s(sigs, params, result, requirement)
-        local sig, next_sigs = CodeType.ensure_type_sig_requirement(sigs, params, result, requirement)
+        local erased_params = {}
+        for i = 1, #(params or {}) do erased_params[i] = params[i]:tree_code_source_access_base() end
+        local sig, next_sigs = CodeType.ensure_type_sig_requirement(
+            sigs, erased_params, result:tree_code_source_access_base(), requirement)
         return TL.TreeLowerSigTransitionResult(sig, next_sigs)
     end
     local function ensure_code_sig_s(sigs, params, results, requirement)
@@ -404,10 +407,10 @@ local function bind_context(T)
     end
 
     function TL.TreeLowerInput:tree_code_type(ty)
-        return type_to_code_s(self.state.abi.sigs, ty).ty
+        return type_to_code_s(self.state.abi.sigs, ty:tree_code_source_access_base()).ty
     end
     function TL.TreeLowerContractInput:tree_code_type(ty)
-        return type_to_code_s(self.sigs, ty).ty
+        return type_to_code_s(self.sigs, ty:tree_code_source_access_base()).ty
     end
 
     local function u8_code_ty()

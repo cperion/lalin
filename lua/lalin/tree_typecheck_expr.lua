@@ -187,6 +187,20 @@ return function(T)
         return Check.TypeExprResult(Tr.ExprLit(Tr.ExprTyped(ty), self.value), ty, {})
     end
 
+    function B.ValueRef:typecheck_tree_binding_name() return nil end
+    function B.ValueRefName:typecheck_tree_binding_name() return self.name end
+    function B.ValueRefBinding:typecheck_tree_binding_name() return self.binding.name end
+
+    function Tr.Expr:typecheck_tree_binding_name() return nil end
+    function Tr.ExprRef:typecheck_tree_binding_name() return self.ref:typecheck_tree_binding_name() end
+
+    function Check.TypeValueScope:typecheck_tree_check_live_lease_invalidation(actual, issues)
+        local actual_name = actual:typecheck_tree_binding_name()
+        for i = #self.values, 1, -1 do
+            self.values[i].binding.ty:typecheck_tree_check_lease_origin_invalidation(actual_name, issues)
+        end
+    end
+
     function Tr.ExprRef:typecheck_tree_expr(input)
         local ref_result = self.ref:typecheck_tree_ref(Check.TypeValueRefInput(input.scope))
         return Check.TypeExprResult(Tr.ExprRef(Tr.ExprTyped(ref_result.ty), ref_result.ref), ref_result.ty, ref_result.issues)
@@ -358,8 +372,14 @@ return function(T)
                 and self.args[i]:typecheck_tree_expr_expected(Check.TypeExpectedExprInput(input.scope, expected))
                 or self.args[i]:typecheck_tree_expr(input)
             append_all(issues, arg.issues)
-            if expected ~= nil and not type_eq(expected, arg.ty) then
-                issues[#issues + 1] = Check.TypeIssueExpected("call arg", expected, arg.ty)
+            if expected ~= nil then
+                if not type_eq(expected, arg.ty)
+                    and not expected:typecheck_tree_arg_matches_actual(input.scope, arg.ty)
+                then
+                    issues[#issues + 1] = Check.TypeIssueExpected("call arg", expected, arg.ty)
+                end
+                expected:typecheck_tree_check_lease_call_argument(arg.ty, issues)
+                expected:typecheck_tree_check_live_lease_invalidation(input.scope, arg.expr, issues)
             end
             args[#args + 1] = arg.expr
         end
@@ -594,6 +614,7 @@ return function(T)
             local field = self.fields[i]
             local value = field.value:typecheck_tree_expr(Check.TypeExprInput(input.scope))
             append_all(issues, value.issues)
+            value.ty:typecheck_tree_append_lease_escape(issues, Check.TypeUnaryLeaseEscapeAggregate)
             fields[#fields + 1] = Tr.FieldInit(field.name, value.expr, field.offset)
         end
         return Check.TypeExprResult(Tr.ExprAgg(Tr.ExprTyped(ty), ty, fields), ty, issues)
