@@ -18,6 +18,7 @@ return schema. LalinMem {
     MemAtomicRmw,
     MemAtomicCas,
   },
+  sum. MemAccessMode { MemAccessModeRead, MemAccessModeWrite, MemAccessModeReadWrite, },
 
   -- MemBase: root memory identity
   sum. MemBase {
@@ -548,6 +549,11 @@ return schema. LalinMem {
     },
   },
 
+  sum. MemMovementDecision {
+    MemMovementMovable { variant_unique, reason [str], },
+    MemMovementPinned { variant_unique, reason [str], },
+  },
+  sum. MemDerefBytes { MemDerefBytesKnown { variant_unique, bytes [number], }, MemDerefBytesUnavailable, },
   -- MemBackendAccessInfo
   product. MemBackendAccessInfo {
     interned,
@@ -555,40 +561,164 @@ return schema. LalinMem {
     trap [LalinMem.MemTrap],
     alignment [LalinMem.MemAlignment],
     bounds [LalinMem.MemBounds],
-    deref_bytes [optional [number]],
-    movable [bool],
+    deref_bytes [LalinMem.MemDerefBytes],
+    movement [LalinMem.MemMovementDecision],
     proofs [many [LalinMem.MemProof]],
   },
 
-  -- Projection entry types
-  product. MemAccessByIdEntry {
-    interned,
-    access_name [str],
-    access [LalinMem.MemAccessFact],
+  -- Immutable contract projection. Keyed relations are named entries under many.
+  sum. MemContractExprKey {
+    MemContractValueKey { variant_unique, field. value [LalinCode.CodeValueId], },
+    MemContractPlaceKey { variant_unique, place [LalinCode.CodePlace], },
   },
-  product. MemObjectByAccessEntry {
-    interned,
-    access_name [str],
-    object [LalinMem.MemObjectId],
+  product. MemContractProjectInput { source [LalinCode.CodeFuncContractFact], },
+  product. MemContractBoundsEntry { interned, func [LalinCode.CodeFuncId], base [LalinCode.CodeValueId], len [LalinCode.CodeValueId], source [LalinCode.CodeFuncContractFact], },
+  product. MemContractProjectionBoundsEntry { interned, func [LalinCode.CodeFuncId], base [LalinMem.MemContractExprKey], len [LalinMem.MemContractExprKey], source [LalinCode.CodeFuncContractFact], },
+  product. MemContractWindowEntry { interned, func [LalinCode.CodeFuncId], base [LalinCode.CodeValueId], base_len [LalinCode.CodeValueId], start [LalinCode.CodeValueId], len [LalinCode.CodeValueId], source [LalinCode.CodeFuncContractFact], },
+  product. MemContractPairEntry { interned, func [LalinCode.CodeFuncId], a [LalinCode.CodeValueId], b [LalinCode.CodeValueId], source [LalinCode.CodeFuncContractFact], },
+  product. MemContractSoAEntry { interned, func [LalinCode.CodeFuncId], base [LalinCode.CodeValueId], record_ty [LalinCode.CodeType], field_name [str], component_index [number], source [LalinCode.CodeFuncContractFact], },
+  product. MemContractValueEntry { interned, func [LalinCode.CodeFuncId], base [LalinCode.CodeValueId], source [LalinCode.CodeFuncContractFact], },
+  product. MemContractProjectionEntry { interned, func [LalinCode.CodeFuncId], base [LalinMem.MemContractExprKey], source [LalinCode.CodeFuncContractFact], },
+  product. MemContractRejectedEntry { interned, func [LalinCode.CodeFuncId], reason [str], source [LalinCode.CodeFuncContractFact], },
+  product. MemContractContribution {
+    bounds [many [LalinMem.MemContractBoundsEntry]],
+    projection_bounds [many [LalinMem.MemContractProjectionBoundsEntry]],
+    windows [many [LalinMem.MemContractWindowEntry]],
+    same_lengths [many [LalinMem.MemContractPairEntry]],
+    disjoint [many [LalinMem.MemContractPairEntry]],
+    soa [many [LalinMem.MemContractSoAEntry]],
+    noalias [many [LalinMem.MemContractValueEntry]],
+    readonly [many [LalinMem.MemContractValueEntry]],
+    writeonly [many [LalinMem.MemContractValueEntry]],
+    projection_readonly [many [LalinMem.MemContractProjectionEntry]],
+    projection_writeonly [many [LalinMem.MemContractProjectionEntry]],
+    invalidates [many [LalinMem.MemContractValueEntry]],
+    preserves [many [LalinMem.MemContractValueEntry]],
+    rejected [many [LalinMem.MemContractRejectedEntry]],
   },
-  product. MemBackendByAccessEntry {
-    interned,
-    access_name [str],
-    backend [LalinMem.MemBackendAccessInfo],
+  product. MemContractProjection {
+    bounds [many [LalinMem.MemContractBoundsEntry]],
+    projection_bounds [many [LalinMem.MemContractProjectionBoundsEntry]],
+    windows [many [LalinMem.MemContractWindowEntry]],
+    same_lengths [many [LalinMem.MemContractPairEntry]],
+    disjoint [many [LalinMem.MemContractPairEntry]],
+    soa [many [LalinMem.MemContractSoAEntry]],
+    noalias [many [LalinMem.MemContractValueEntry]],
+    readonly [many [LalinMem.MemContractValueEntry]],
+    writeonly [many [LalinMem.MemContractValueEntry]],
+    projection_readonly [many [LalinMem.MemContractProjectionEntry]],
+    projection_writeonly [many [LalinMem.MemContractProjectionEntry]],
+    invalidates [many [LalinMem.MemContractValueEntry]],
+    preserves [many [LalinMem.MemContractValueEntry]],
+    rejected [many [LalinMem.MemContractRejectedEntry]],
   },
-  product. MemProofByAccessEntry {
-    interned,
-    access_name [str],
-    proof [LalinMem.MemProof],
-  },
+
+  -- Access projection lookups never use nil as a semantic result.
+  product. MemAccessByIdEntry { interned, access [LalinMem.MemAccessFact], },
+  product. MemObjectByAccessEntry { interned, access [LalinMem.MemAccessId], object [LalinMem.MemObjectId], },
+  product. MemBackendByAccessEntry { interned, access [LalinMem.MemAccessId], backend [LalinMem.MemBackendAccessInfo], },
+  product. MemProofByAccessEntry { interned, access [LalinMem.MemAccessId], proof [LalinMem.MemProof], },
   product. MemAccessProjection {
     access_by_id [many [LalinMem.MemAccessByIdEntry]],
     object_by_access [many [LalinMem.MemObjectByAccessEntry]],
     backend_by_access [many [LalinMem.MemBackendByAccessEntry]],
     proof_by_access [many [LalinMem.MemProofByAccessEntry]],
   },
+  sum. MemAccessLookup { MemAccessFound { variant_unique, access [LalinMem.MemAccessFact], }, MemAccessMissing { variant_unique, access [LalinMem.MemAccessId], }, },
+  sum. MemObjectLookup { MemObjectFound { variant_unique, object [LalinMem.MemObjectId], }, MemObjectMissing { variant_unique, access [LalinMem.MemAccessId], }, },
+  sum. MemBackendLookup { MemBackendFound { variant_unique, backend [LalinMem.MemBackendAccessInfo], }, MemBackendMissing { variant_unique, access [LalinMem.MemAccessId], }, },
+  sum. MemProofLookup { MemProofFound { variant_unique, proof [LalinMem.MemProof], }, MemProofMissing { variant_unique, access [LalinMem.MemAccessId], }, },
+  sum. MemProofAccessProjection { MemProofAccessNone, MemProofAccessEntry { variant_unique, entry [LalinMem.MemProofByAccessEntry], }, },
 
-  -- Top-level fact sets
+  -- CodePlace resolution is leaf-owned and returns one typed result.
+  product. MemValueObjectEntry { interned, field. value [LalinCode.CodeValueId], object [LalinMem.MemObjectId], },
+  product. MemLocalObjectEntry { interned, field. local_id [LalinCode.CodeLocalId], object [LalinMem.MemObjectId], },
+  product. MemGlobalObjectEntry { interned, global [LalinCode.CodeGlobalId], object [LalinMem.MemObjectId], },
+  product. MemDataObjectEntry { interned, data [LalinCode.CodeDataId], object [LalinMem.MemObjectId], },
+  sum. MemValueObjectLookup { MemValueObjectFound { variant_unique, object [LalinMem.MemObjectId], }, MemValueObjectMissing { variant_unique, field. value [LalinCode.CodeValueId], }, },
+  sum. MemPlaceObjectLookup { MemPlaceObjectFound { variant_unique, object [LalinMem.MemObjectId], }, MemPlaceObjectMissing { variant_unique, reason [str], }, },
+  product. MemPlaceDiscoveries {
+    objects [many [LalinMem.MemObjectFact]],
+    relations [many [LalinMem.MemObjectRelation]],
+    proofs [many [LalinMem.MemProof]],
+  },
+  product. MemPlaceResolveInput {
+    func [LalinCode.CodeFuncId],
+    values [many [LalinMem.MemValueObjectEntry]],
+    locals [many [LalinMem.MemLocalObjectEntry]],
+    globals [many [LalinMem.MemGlobalObjectEntry]],
+    data [many [LalinMem.MemDataObjectEntry]],
+    objects [many [LalinMem.MemObjectFact]],
+  },
+  sum. MemPlaceResolveResult {
+    MemPlaceResolved { variant_unique, object [LalinMem.MemObjectId], base [LalinMem.MemBase], index [LalinMem.MemIndex], discoveries [LalinMem.MemPlaceDiscoveries], },
+    MemPlaceUnresolved { variant_unique, base [LalinMem.MemBase], index [LalinMem.MemIndex], reason [str], discoveries [LalinMem.MemPlaceDiscoveries], },
+  },
+  sum. MemAccessSafetyDecision {
+    MemAccessSafetyProven { variant_unique, reason [str], },
+    MemAccessSafetyUnproven { variant_unique, reason [str], },
+  },
+
+  -- Immutable instruction-transfer facet.
+  product. MemConstantEntry { interned, field. value [LalinCode.CodeValueId], number_value [number], },
+  sum. MemConstantProjection { MemConstantKnown { variant_unique, number_value [number], }, MemConstantUnavailable, },
+  product. MemLoadedPlaceEntry { interned, place [LalinCode.CodePlace], field. value [LalinCode.CodeValueId], },
+  sum. MemScaledStride { MemScaledStrideKnown { variant_unique, elems [number], }, MemScaledStrideDynamic, },
+  product. MemScaledStrideEntry { interned, field. value [LalinCode.CodeValueId], stride [LalinMem.MemScaledStride], },
+  product. MemDependenceAccess {
+    access [LalinMem.MemAccessFact],
+    object [LalinMem.MemObjectLookup],
+    loop [optional [LalinGraph.GraphLoopId]],
+    safety [LalinMem.MemAccessSafetyDecision],
+    order [number],
+  },
+  product. MemTransferFacet {
+    values [many [LalinMem.MemValueObjectEntry]],
+    locals [many [LalinMem.MemLocalObjectEntry]],
+    constants [many [LalinMem.MemConstantEntry]],
+    loaded_places [many [LalinMem.MemLoadedPlaceEntry]],
+    scaled_strides [many [LalinMem.MemScaledStrideEntry]],
+    objects [many [LalinMem.MemObjectFact]],
+    accesses [many [LalinMem.MemAccessFact]],
+    dependence_accesses [many [LalinMem.MemDependenceAccess]],
+    intervals [many [LalinMem.MemAccessInterval]],
+    safety [many [LalinMem.MemAccessSafetyFact]],
+    relations [many [LalinMem.MemObjectRelation]],
+    backend [many [LalinMem.MemBackendAccessInfo]],
+    proofs [many [LalinMem.MemProof]],
+  },
+  product. MemInstructionTransferInput {
+    func [LalinCode.CodeFunc],
+    block [LalinCode.CodeBlock],
+    inst [LalinCode.CodeInst],
+    loop [optional [LalinGraph.GraphLoopId]],
+    globals [many [LalinMem.MemGlobalObjectEntry]],
+    data [many [LalinMem.MemDataObjectEntry]],
+    facet [LalinMem.MemTransferFacet],
+  },
+  sum. MemInstructionTransferResult {
+    MemTransferUpdated { variant_unique, facet [LalinMem.MemTransferFacet], },
+    MemTransferUnchanged { variant_unique, facet [LalinMem.MemTransferFacet], },
+  },
+  product. MemModuleObjects { objects [many [LalinMem.MemObjectFact]], globals [many [LalinMem.MemGlobalObjectEntry]], data [many [LalinMem.MemDataObjectEntry]], },
+  product. MemDependenceAccumulation { facts [many [LalinMem.MemDependenceFact]], proofs [many [LalinMem.MemProof]], },
+  -- Alias/dependence relations and decisions are typed alternatives.
+  product. MemSameStoreEntry { interned, a [LalinMem.MemObjectId], b [LalinMem.MemObjectId], proof [LalinMem.MemProof], },
+  product. MemDisjointEntry { interned, a [LalinMem.MemObjectId], b [LalinMem.MemObjectId], proof [LalinMem.MemProof], },
+  product. MemAccessModeEntry { interned, object [LalinMem.MemObjectId], mode [LalinMem.MemAccessMode], proof [LalinMem.MemProof], },
+  product. MemRelationProjection { same_store [many [LalinMem.MemSameStoreEntry]], disjoint [many [LalinMem.MemDisjointEntry]], access_modes [many [LalinMem.MemAccessModeEntry]], },
+  sum. MemObjectPairDecision {
+    MemObjectPairIndependent { variant_unique, proof [LalinMem.MemProof], reason [str], },
+    MemObjectPairDependent { variant_unique, reason [str], },
+    MemObjectPairUnproven { variant_unique, reason [str], },
+  },
+  product. MemDependenceRequest { before [LalinMem.MemDependenceAccess], after [LalinMem.MemDependenceAccess], relations [LalinMem.MemRelationProjection], },
+  sum. MemDependenceResult {
+    MemDependenceClassified { variant_unique, fact [LalinMem.MemDependenceFact], decision [LalinMem.MemObjectPairDecision], },
+    MemDependenceNotComparable { variant_unique, reason [str], },
+  },
+
+  sum. MemRelationContribution { MemRelationNone, MemRelationSameStore { variant_unique, entry [LalinMem.MemSameStoreEntry], }, },
   product. MemSemanticFactSet {
     interned,
     field. module [LalinCode.CodeModuleId],

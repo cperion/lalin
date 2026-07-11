@@ -1,6 +1,6 @@
 -- impl/code_mem.lua — compute_mem methods on LalinCode, LalinGraph,
 -- LalinFlow, LalinValue, LalinMem types. Produces LalinMem.MemSemanticFactSet
--- from a CodeGraph. Heavy classof refactored to leaf methods.
+-- from a CodeGraph using typed projections and concrete leaf methods.
 -- Entry: Graph.CodeGraph:compute_mem(module, flow, values, contracts)
 
 require("lalin.schema_v2")
@@ -18,118 +18,85 @@ local function sanitize(s)
   return s
 end
 
-local function access_key(id)
-  if id == nil then return nil end
-  if type(id) == "string" then return id end
-  return id.text
+local function append_one(xs, value)
+  local out = {}
+  for i = 1, #xs do out[i] = xs[i] end
+  out[#out + 1] = value
+  return out
+end
+
+local function append_all(xs, ys)
+  local out = {}
+  for i = 1, #xs do out[#out + 1] = xs[i] end
+  for i = 1, #ys do out[#out + 1] = ys[i] end
+  return out
 end
 
 ----------------------------------------------------------------------
--- MemProof leaf methods: code_mem_projection_index
+-- Immutable access/object/backend/proof projection
 ----------------------------------------------------------------------
 
-function Mem.MemProof:code_mem_projection_index(projection)
+function Mem.MemProof:project_access_proof() return Mem.MemProofAccessNone end
+function Mem.MemProofBackend:project_access_proof()
+  return Mem.MemProofAccessEntry(Mem.MemProofByAccessEntry(self.access, self))
 end
-
-function Mem.MemProofBackend:code_mem_projection_index(projection)
-  projection.proof_by_access[self.access.text] = self
+function Mem.MemProofInterval:project_access_proof()
+  return Mem.MemProofAccessEntry(Mem.MemProofByAccessEntry(self.interval.access, self))
 end
+function Mem.MemProofAccessNone:append_access_proof(entries) return entries end
+function Mem.MemProofAccessEntry:append_access_proof(entries) return append_one(entries, self.entry) end
 
-function Mem.MemProofInterval:code_mem_projection_index(projection)
-  projection.proof_by_access[self.interval.access.text] = self
+function Mem.MemSemanticFactSet:project_accesses()
+  local access_entries, object_entries, backend_entries, proof_entries = {}, {}, {}, {}
+  for _, access in ipairs(self.accesses) do access_entries = append_one(access_entries, Mem.MemAccessByIdEntry(access)) end
+  for _, interval in ipairs(self.intervals) do object_entries = append_one(object_entries, Mem.MemObjectByAccessEntry(interval.access, interval.object)) end
+  for _, backend in ipairs(self.backend_info) do backend_entries = append_one(backend_entries, Mem.MemBackendByAccessEntry(backend.access, backend)) end
+  for _, proof in ipairs(self.proofs) do proof_entries = proof:project_access_proof():append_access_proof(proof_entries) end
+  return Mem.MemAccessProjection(access_entries, object_entries, backend_entries, proof_entries)
 end
 
 function Mem.MemAccessProjection:mem_access(id)
-  local key = access_key(id)
-  return key and self.access_by_id[key] or nil
+  for _, entry in ipairs(self.access_by_id) do if entry.access.id == id then return Mem.MemAccessFound(entry.access) end end
+  return Mem.MemAccessMissing(id)
 end
-
 function Mem.MemAccessProjection:object_for_access(id)
-  local key = access_key(id)
-  return key and self.object_by_access[key] or nil
+  for _, entry in ipairs(self.object_by_access) do if entry.access == id then return Mem.MemObjectFound(entry.object) end end
+  return Mem.MemObjectMissing(id)
 end
-
 function Mem.MemAccessProjection:backend_for_access(id)
-  local key = access_key(id)
-  return key and self.backend_by_access[key] or nil
+  for _, entry in ipairs(self.backend_by_access) do if entry.access == id then return Mem.MemBackendFound(entry.backend) end end
+  return Mem.MemBackendMissing(id)
 end
-
 function Mem.MemAccessProjection:proof_for_access(id)
-  local key = access_key(id)
-  return key and self.proof_by_access[key] or nil
-end
-
-local function access_projection(mem)
-  local projection = Mem.MemAccessProjection({}, {}, {}, {})
-  for _, access in ipairs(mem and mem.accesses or {}) do projection.access_by_id[access.id.text] = access end
-  for _, interval in ipairs(mem and mem.intervals or {}) do projection.object_by_access[interval.access.text] = interval.object end
-  for _, info in ipairs(mem and mem.backend_info or {}) do projection.backend_by_access[info.access.text] = info end
-  for _, proof in ipairs(mem and mem.proofs or {}) do proof:code_mem_projection_index(projection) end
-  return projection
+  for _, entry in ipairs(self.proof_by_access) do if entry.access == id then return Mem.MemProofFound(entry.proof) end end
+  return Mem.MemProofMissing(id)
 end
 
 ----------------------------------------------------------------------
--- CodeType leaf methods: unwrap_lease, pointee_ty, elem_ty, byte_span check
+-- CodeType memory projections
 ----------------------------------------------------------------------
 
-function Code.CodeType:code_mem_is_lease() return false end
-function Code.CodeTyLease:code_mem_is_lease() return true end
-function Code.CodeType:code_mem_is_view() return false end
-function Code.CodeTyView:code_mem_is_view() return true end
-function Code.CodeType:code_mem_is_slice() return false end
-function Code.CodeTySlice:code_mem_is_slice() return true end
-function Code.CodeType:code_mem_is_byte_span() return false end
-function Code.CodeTyByteSpan:code_mem_is_byte_span() return true end
-function Code.CodeType:code_mem_is_data_ptr() return false end
-function Code.CodeTyDataPtr:code_mem_is_data_ptr() return true end
-
-local function unwrap_lease(ty)
-  while ty:code_mem_is_lease() do ty = ty.base end
-  return ty
-end
-
-local function pointee_ty(ty)
-  ty = unwrap_lease(ty)
-  if ty:code_mem_is_data_ptr() then return ty.pointee end
-  return nil
-end
-
-local function view_elem_ty(ty)
-  ty = unwrap_lease(ty)
-  if ty:code_mem_is_view() then return ty.elem end
-  return nil
-end
-
-local function slice_elem_ty(ty)
-  ty = unwrap_lease(ty)
-  if ty:code_mem_is_slice() then return ty.elem end
-  return nil
-end
-
-local function object_elem_ty(ty)
-  ty = unwrap_lease(ty)
-  if ty:code_mem_is_byte_span() then return Code.CodeTyInt(8, Code.CodeUnsigned) end
-  return pointee_ty(ty) or view_elem_ty(ty) or slice_elem_ty(ty) or ty
-end
-
-local function storage_extent(ty, size, reason)
-  if size ~= nil then return Mem.MemExtentBytes(size, reason or "declared storage size") end
-  ty = unwrap_lease(ty)
-  if rawget(ty, "count") ~= nil then return Mem.MemExtentBytes(0, "array byte size is target-dependent before backend layout") end
-  return Mem.MemExtentUnknown(reason or "extent requires layout or contract fact")
-end
-
-local function scalar_bytes(ty)
-  ty = unwrap_lease(ty)
-  if ty == Code.CodeTyBool8 then return 1 end
-  if ty == Code.CodeTyIndex then return 8 end
-  if rawget(ty, "bits") ~= nil then return math.max(1, math.floor((ty.bits or 64) / 8)) end
-  if ty:code_mem_is_data_ptr() or ty == Code.CodeTyCodePtr or ty == Code.CodeTyImportedCFuncPtr then return 8 end
-  return nil
-end
+function Code.CodeType:memory_object_elem_type() return self end
+function Code.CodeTyDataPtr:memory_object_elem_type() return self.pointee end
+function Code.CodeTyView:memory_object_elem_type() return self.elem end
+function Code.CodeTySlice:memory_object_elem_type() return self.elem end
+function Code.CodeTyByteSpan:memory_object_elem_type() return Code.CodeTyInt(8, Code.CodeUnsigned) end
+function Code.CodeTyLease:memory_object_elem_type() return self.base:memory_object_elem_type() end
+function Code.CodeType:memory_pointee_type() return self end
+function Code.CodeTyDataPtr:memory_pointee_type() return self.pointee end
+function Code.CodeTyLease:memory_pointee_type() return self.base:memory_pointee_type() end
+function Code.CodeType:memory_deref_bytes() return Mem.MemDerefBytesUnavailable end
+function Code.CodeTyBool8:memory_deref_bytes() return Mem.MemDerefBytesKnown(1) end
+function Code.CodeTyIndex:memory_deref_bytes() return Mem.MemDerefBytesKnown(8) end
+function Code.CodeTyInt:memory_deref_bytes() return Mem.MemDerefBytesKnown(math.max(1, math.floor(self.bits / 8))) end
+function Code.CodeTyFloat:memory_deref_bytes() return Mem.MemDerefBytesKnown(math.max(1, math.floor(self.bits / 8))) end
+function Code.CodeTyDataPtr:memory_deref_bytes() return Mem.MemDerefBytesKnown(8) end
+function Code.CodeTyCodePtr:memory_deref_bytes() return Mem.MemDerefBytesKnown(8) end
+function Code.CodeTyImportedCFuncPtr:memory_deref_bytes() return Mem.MemDerefBytesKnown(8) end
+function Code.CodeTyLease:memory_deref_bytes() return self.base:memory_deref_bytes() end
 
 ----------------------------------------------------------------------
--- CodePlace leaf methods: place_key, object_for_place
+-- CodePlace leaf methods: stable keys and typed resolution
 ----------------------------------------------------------------------
 
 function Code.CodePlace:code_mem_place_key()
@@ -164,678 +131,539 @@ function Code.CodePlaceBytes:code_mem_place_key()
   return "bytes:" .. self.base.text .. ":" .. tostring(self.offset or 0) .. ":" .. tostring(self.size or 0)
 end
 
-----------------------------------------------------------------------
--- contract index helpers
-----------------------------------------------------------------------
-
-local function contract_expr_key(expr)
-  -- Check CodeContractValueRef vs CodeContractPlaceLoad
-  if rawget(expr, "value") ~= nil then return "value:" .. expr.value.text end
-  if rawget(expr, "place") ~= nil then return "place:" .. expr.place:code_mem_place_key() end
-  return nil
+local function empty_discoveries() return Mem.MemPlaceDiscoveries({}, {}, {}) end
+local function find_value_object(entries, value)
+  for _, entry in ipairs(entries) do if entry.value == value then return Mem.MemValueObjectFound(entry.object) end end
+  return Mem.MemValueObjectMissing(value)
+end
+local function find_local_object(entries, id)
+  for _, entry in ipairs(entries) do if entry.local_id == id then return Mem.MemPlaceObjectFound(entry.object) end end
+  return Mem.MemPlaceObjectMissing("local object is unavailable")
+end
+local function find_global_object(entries, id)
+  for _, entry in ipairs(entries) do if entry.global == id then return Mem.MemPlaceObjectFound(entry.object) end end
+  return Mem.MemPlaceObjectMissing("global object is unavailable")
+end
+local function find_data_object(entries, id)
+  for _, entry in ipairs(entries) do if entry.data == id then return Mem.MemPlaceObjectFound(entry.object) end end
+  return Mem.MemPlaceObjectMissing("data object is unavailable")
+end
+function Mem.MemValueObjectFound:as_place_object(reason) return Mem.MemPlaceObjectFound(self.object) end
+function Mem.MemValueObjectMissing:as_place_object(reason) return Mem.MemPlaceObjectMissing(reason) end
+function Mem.MemPlaceObjectFound:resolve_place(base, index) return Mem.MemPlaceResolved(self.object, base, index, empty_discoveries()) end
+function Mem.MemPlaceObjectMissing:resolve_place(base, index) return Mem.MemPlaceUnresolved(base, index, self.reason, empty_discoveries()) end
+local function place_object_id(func, role, owner, offset)
+  return Mem.MemObjectId(sanitize(func.text) .. ":" .. role .. ":" .. sanitize(owner.text) .. ":" .. tostring(offset))
 end
 
-local function contract_index(contracts)
-  local idx = { bounds = {}, projection_bounds = {}, window = {}, same_len = {}, disjoint = {}, soa = {}, noalias = {}, readonly = {}, writeonly = {}, projection_readonly = {}, projection_writeonly = {}, by_func = {} }
-  for _, f in ipairs(contracts and contracts.facts or {}) do
-    idx.by_func[f.func.text] = idx.by_func[f.func.text] or {}
-    idx.by_func[f.func.text][#idx.by_func[f.func.text] + 1] = f
-    local k = f.fact
-    if rawget(k, "base") ~= nil and rawget(k, "len") ~= nil and rawget(k, "start") == nil then
-      idx.bounds[f.func.text .. "\0" .. k.base.text] = f
-    elseif rawget(k, "base") ~= nil and rawget(k, "base_len") ~= nil then
-      idx.window[f.func.text .. "\0" .. k.base.text] = f
-    elseif rawget(k, "a") ~= nil and rawget(k, "b") ~= nil and rawget(k, "base") == nil then
-      idx.disjoint[#idx.disjoint + 1] = f
-    elseif rawget(k, "a") ~= nil and rawget(k, "b") ~= nil then
-      idx.same_len[#idx.same_len + 1] = f
-    elseif rawget(k, "component_index") ~= nil then
-      idx.soa[f.func.text .. "\0" .. k.base.text] = f
-    elseif rawget(k, "base") ~= nil and rawget(k, "field_name") == nil then
-      -- NoAlias, Readonly, Writeonly, Invalidate, Preserve, Rejected
-      local name = rawget(k, "reason") and "rejected" or
-        (rawget(k, "base") and rawget(k, "fact") and "rejected") or
-        "noalias"  -- default
-      if rawget(k, "reason") ~= nil then
-        -- Rejected/Preserve/Invalidate — skip indexing
-      else
-        idx.noalias[f.func.text .. "\0" .. k.base.text] = f
-      end
-    end
-  end
-  -- Separate readonly/writeonly by convention
-  for _, f in ipairs(contracts and contracts.facts or {}) do
-    local k = f.fact
-    if rawget(k, "base") ~= nil then
-      if rawget(k, "reason") == nil and rawget(k, "len") == nil and rawget(k, "a") == nil and rawget(k, "component_index") == nil then
-        -- Could be Readonly/Writeonly
-        idx.readonly[f.func.text .. "\0" .. k.base.text] = idx.readonly[f.func.text .. "\0" .. k.base.text] or f
-      end
-    end
-    if rawget(k, "base") ~= nil and rawget(k, "base") ~= nil and type(rawget(k, "base")) == "table" then
-      -- Projection variants
-      local key = contract_expr_key(k.base)
-      if key ~= nil then
-        if rawget(k, "len") ~= nil then idx.projection_bounds[f.func.text .. "\0" .. key] = f end
-      end
-    end
-  end
-  return idx
+function Code.CodePlaceLocal:resolve_memory_place(input)
+  return find_local_object(input.locals, self.local_id):resolve_place(Mem.MemBaseLocal(self.local_id), Mem.MemIndexNone)
+end
+function Code.CodePlaceGlobal:resolve_memory_place(input)
+  return find_global_object(input.globals, self.global):resolve_place(Mem.MemBaseGlobal(self.global), Mem.MemIndexNone)
+end
+function Code.CodePlaceData:resolve_memory_place(input)
+  return find_data_object(input.data, self.data):resolve_place(Mem.MemBaseData(self.data), Mem.MemIndexNone)
+end
+function Code.CodePlaceDeref:resolve_memory_place(input)
+  return find_value_object(input.values, self.addr):as_place_object("dereference value has no memory object"):resolve_place(Mem.MemBaseValue(self.addr), Mem.MemIndexNone)
 end
 
-----------------------------------------------------------------------
--- CodeInstOp leaf methods: access_op, is_write, access_value, access_place
-----------------------------------------------------------------------
-
-function Code.CodeInstOp:code_mem_access_op() return nil end
-
-function Code.CodeInstLoad:code_mem_access_op() return Mem.MemLoad end
-function Code.CodeInstStore:code_mem_access_op() return Mem.MemStore end
-function Code.CodeInstAtomicLoad:code_mem_access_op() return Mem.MemAtomicLoad end
-function Code.CodeInstAtomicStore:code_mem_access_op() return Mem.MemAtomicStore end
-function Code.CodeInstAtomicRmw:code_mem_access_op() return Mem.MemAtomicRmw end
-function Code.CodeInstAtomicCas:code_mem_access_op() return Mem.MemAtomicCas end
-
-local function is_write_op(op)
-  return op == Mem.MemStore or op == Mem.MemAtomicStore or op == Mem.MemAtomicRmw or op == Mem.MemAtomicCas
+function Mem.MemPlaceResolved:resolve_memory_index(place, input)
+  return Mem.MemPlaceResolved(self.object, self.base, Mem.MemIndexValue(place.index, place.elem_size, 0), self.discoveries)
 end
+function Mem.MemPlaceUnresolved:resolve_memory_index(place, input) return self end
+function Code.CodePlaceIndex:resolve_memory_place(input) return self.base:resolve_memory_place(input):resolve_memory_index(self, input) end
 
-local function access_value(k)
-  -- Store/AtomicStore/AtomicRmw have .value; AtomicCas has .replacement
-  return rawget(k, "value") or rawget(k, "replacement") or nil
+function Mem.MemPlaceResolved:resolve_memory_field(place, input)
+  local id = place_object_id(input.func, "field", self.object, place.offset)
+  local proof = Mem.MemProofObject(id, Mem.MemObjectBaseAddressStable)
+  local object = Mem.MemObjectFact(id, input.func, Mem.MemObjectFieldProjection(self.object, place.field), Mem.MemProvProjection(self.object, Mem.MemProjectField, place.offset), place.ty, Mem.MemExtentBytes(place.size or 0, Mem.MemExtentByConstruction), Mem.MemStrideUnit)
+  local relation = Mem.MemObjectSameStore(id, self.object, proof)
+  local discoveries = Mem.MemPlaceDiscoveries(append_one(self.discoveries.objects, object), append_one(self.discoveries.relations, relation), append_one(self.discoveries.proofs, proof))
+  return Mem.MemPlaceResolved(id, Mem.MemBaseProjection(self.base, Mem.MemProjectField, place.offset), self.index, discoveries)
 end
+function Mem.MemPlaceUnresolved:resolve_memory_field(place, input) return self end
+function Code.CodePlaceField:resolve_memory_place(input) return self.base:resolve_memory_place(input):resolve_memory_field(self, input) end
 
-local function access_place(k)
-  return k.place
+function Mem.MemValueObjectMissing:resolve_byte_place(place, input)
+  return Mem.MemPlaceUnresolved(Mem.MemBaseValue(place.base), Mem.MemIndexNone, "byte-place base has no memory object", empty_discoveries())
 end
-
-----------------------------------------------------------------------
--- MemIndex leaf methods
-----------------------------------------------------------------------
-
-function Mem.MemIndex:code_mem_index_key()
-  return nil
+function Mem.MemValueObjectFound:resolve_byte_place(place, input)
+  local parent = self.object
+  local id = place_object_id(input.func, "bytes", parent, place.offset)
+  local proof = Mem.MemProofObject(id, Mem.MemObjectBaseAddressStable)
+  local object = Mem.MemObjectFact(id, input.func, Mem.MemObjectBytes(parent, place.offset, place.size), Mem.MemProvProjection(parent, Mem.MemProjectBytes, place.offset), place.ty, Mem.MemExtentBytes(place.size, Mem.MemExtentByConstruction), Mem.MemStrideUnit)
+  local relation = Mem.MemObjectSameStore(id, parent, proof)
+  return Mem.MemPlaceResolved(id, Mem.MemBaseProjection(Mem.MemBaseValue(place.base), Mem.MemProjectBytes, place.offset), Mem.MemIndexNone, Mem.MemPlaceDiscoveries({ object }, { relation }, { proof }))
 end
+function Code.CodePlaceBytes:resolve_memory_place(input) return find_value_object(input.values, self.base):resolve_byte_place(self, input) end
 
--- MemIndexNone is a nullary constructor
-function Mem.MemIndex:code_mem_index_key_default()
-  return "none"
-end
-
-function Mem.MemIndexValue:code_mem_index_key()
-  return "value:" .. self.value.text .. ":" .. tostring(self.elem_size) .. ":" .. tostring(self.const_offset or 0)
-end
-
-function Mem.MemIndexInduction:code_mem_index_key()
-  return "induction:" .. self.induction.value.text .. ":" .. tostring(self.elem_size) .. ":" .. tostring(self.const_offset or 0)
-end
-
-local function index_key(index)
-  if index == Mem.MemIndexNone then return "none" end
-  return index:code_mem_index_key()
-end
+function Mem.MemObjectExtent:access_safety() return Mem.MemAccessSafetyUnproven("object extent is not proven") end
+function Mem.MemExtentUnknown:access_safety() return Mem.MemAccessSafetyUnproven("object extent is unknown") end
+function Mem.MemExtentElements:access_safety() return Mem.MemAccessSafetyProven("object has a typed element extent") end
+function Mem.MemExtentBytes:access_safety() return Mem.MemAccessSafetyProven("object has a byte extent") end
+function Mem.MemExtentContract:access_safety() return Mem.MemAccessSafetyProven("object extent is contract-proven") end
+local function extent_safety(self, extent) return extent:access_safety() end
+local function direct_safety() return Mem.MemAccessSafetyProven("direct storage object") end
+function Mem.MemObjectParam:access_safety(extent) return extent_safety(self, extent) end
+function Mem.MemObjectLocal:access_safety(extent) return direct_safety() end
+function Mem.MemObjectGlobal:access_safety(extent) return direct_safety() end
+function Mem.MemObjectData:access_safety(extent) return direct_safety() end
+function Mem.MemObjectView:access_safety(extent) return extent_safety(self, extent) end
+function Mem.MemObjectSlice:access_safety(extent) return extent_safety(self, extent) end
+function Mem.MemObjectByteSpan:access_safety(extent) return extent_safety(self, extent) end
+function Mem.MemObjectContract:access_safety(extent) return Mem.MemAccessSafetyProven("contract object") end
+function Mem.MemObjectFieldProjection:access_safety(extent) return extent_safety(self, extent) end
+function Mem.MemObjectPtrOffset:access_safety(extent) return extent_safety(self, extent) end
+function Mem.MemObjectBytes:access_safety(extent) return extent_safety(self, extent) end
+function Mem.MemObjectElement:access_safety(extent) return extent_safety(self, extent) end
+function Mem.MemObjectFieldPointer:access_safety(extent) return extent_safety(self, extent) end
+function Mem.MemObjectLease:access_safety(extent) return Mem.MemAccessSafetyProven("lease grant owns access") end
+function Mem.MemObjectUnknown:access_safety(extent) return Mem.MemAccessSafetyUnproven("memory object form is unknown") end
+function Mem.MemObjectFact:access_safety() return self.form:access_safety(self.extent) end
 
 ----------------------------------------------------------------------
--- value_expr_key
+-- CodeContractFact memory projection leaves
 ----------------------------------------------------------------------
 
-local function value_expr_key(expr, seen)
-  if expr == nil then return nil end
-  seen = seen or {}
-  if seen[expr] then return nil end
-  seen[expr] = true
-  if rawget(expr, "value") ~= nil and rawget(expr, "a") == nil then return "value:" .. expr.value.text end
-  if rawget(expr, "const") ~= nil then return "const:" .. tostring(expr.const) end
-  if rawget(expr, "op") ~= nil and rawget(expr, "from") ~= nil then return "cast:" .. tostring(expr.op) .. ":" .. tostring(expr.from) .. ":" .. tostring(expr.to) .. "(" .. tostring(value_expr_key(expr.value, seen)) .. ")" end
-  if rawget(expr, "op") ~= nil and rawget(expr, "value") ~= nil and rawget(expr, "a") == nil then return "unary:" .. tostring(expr.op) .. "(" .. tostring(value_expr_key(expr.value, seen)) .. ")" end
-  if rawget(expr, "a") ~= nil and rawget(expr, "b") ~= nil then
-    return "binary(" .. tostring(value_expr_key(expr.a, seen)) .. "," .. tostring(value_expr_key(expr.b, seen)) .. ")"
-  end
-  return tostring(expr)
+function Code.CodeContractValueRef:project_memory_contract_expr() return Mem.MemContractValueKey(self.value) end
+function Code.CodeContractPlaceLoad:project_memory_contract_expr() return Mem.MemContractPlaceKey(self.place) end
+
+local function empty_contract_contribution()
+  return Mem.MemContractContribution({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 end
 
-local function canonical_index_key(index, value_index)
-  if index == Mem.MemIndexNone then return "none" end
-  if rawget(index, "value") ~= nil then
-    local expr = value_index and value_index:expr_for_value_or_nil(index.value) or nil
-    return "value_expr:" .. tostring(value_expr_key(expr) or index.value.text) .. ":" .. tostring(index.elem_size) .. ":" .. tostring(index.const_offset or 0)
-  end
-  return index_key(index)
+function Code.CodeContractBounds:project_memory_contract(input)
+  local s = input.source
+  return Mem.MemContractContribution({ Mem.MemContractBoundsEntry(s.func, self.base, self.len, s) }, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+end
+function Code.CodeContractProjectionBounds:project_memory_contract(input)
+  local s = input.source
+  return Mem.MemContractContribution({}, { Mem.MemContractProjectionBoundsEntry(s.func, self.base:project_memory_contract_expr(), self.len:project_memory_contract_expr(), s) }, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+end
+function Code.CodeContractWindowBounds:project_memory_contract(input)
+  local s = input.source
+  return Mem.MemContractContribution({}, {}, { Mem.MemContractWindowEntry(s.func, self.base, self.base_len, self.start, self.len, s) }, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+end
+function Code.CodeContractDisjoint:project_memory_contract(input)
+  local s = input.source
+  return Mem.MemContractContribution({}, {}, {}, {}, { Mem.MemContractPairEntry(s.func, self.a, self.b, s) }, {}, {}, {}, {}, {}, {}, {}, {}, {})
+end
+function Code.CodeContractSameLen:project_memory_contract(input)
+  local s = input.source
+  return Mem.MemContractContribution({}, {}, {}, { Mem.MemContractPairEntry(s.func, self.a, self.b, s) }, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+end
+function Code.CodeContractSoAComponent:project_memory_contract(input)
+  local s = input.source
+  return Mem.MemContractContribution({}, {}, {}, {}, {}, { Mem.MemContractSoAEntry(s.func, self.base, self.record_ty, self.field_name, self.component_index, s) }, {}, {}, {}, {}, {}, {}, {}, {})
 end
 
-----------------------------------------------------------------------
--- helpers
-----------------------------------------------------------------------
+local function value_contract_contribution(slot, input, base)
+  local fields = { {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} }
+  fields[slot] = { Mem.MemContractValueEntry(input.source.func, base, input.source) }
+  return Mem.MemContractContribution(unpack(fields))
+end
+function Code.CodeContractNoAlias:project_memory_contract(input) return value_contract_contribution(7, input, self.base) end
+function Code.CodeContractReadonly:project_memory_contract(input) return value_contract_contribution(8, input, self.base) end
+function Code.CodeContractWriteonly:project_memory_contract(input) return value_contract_contribution(9, input, self.base) end
+function Code.CodeContractInvalidate:project_memory_contract(input) return value_contract_contribution(12, input, self.base) end
+function Code.CodeContractPreserve:project_memory_contract(input) return value_contract_contribution(13, input, self.base) end
 
-local function object_id(...)
-  local parts = { ... }
-  for i = 1, #parts do parts[i] = sanitize(parts[i]) end
-  return Mem.MemObjectId(table.concat(parts, ":"))
+local function projection_contract_contribution(slot, input, base)
+  local fields = { {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} }
+  fields[slot] = { Mem.MemContractProjectionEntry(input.source.func, base:project_memory_contract_expr(), input.source) }
+  return Mem.MemContractContribution(unpack(fields))
+end
+function Code.CodeContractProjectionReadonly:project_memory_contract(input) return projection_contract_contribution(10, input, self.base) end
+function Code.CodeContractProjectionWriteonly:project_memory_contract(input) return projection_contract_contribution(11, input, self.base) end
+function Code.CodeContractRejected:project_memory_contract(input)
+  local s = input.source
+  return Mem.MemContractContribution({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, { Mem.MemContractRejectedEntry(s.func, self.reason, s) })
 end
 
-local function access_id(func, block, inst)
-  return Mem.MemAccessId("access:" .. sanitize(func.name) .. ":" .. sanitize(block.id.text) .. ":" .. sanitize(inst.id.text))
+local contract_fields = { "bounds", "projection_bounds", "windows", "same_lengths", "disjoint", "soa", "noalias", "readonly", "writeonly", "projection_readonly", "projection_writeonly", "invalidates", "preserves", "rejected" }
+local function merge_contract_contribution(a, b)
+  local values = {}
+  for i, name in ipairs(contract_fields) do values[i] = append_all(a[name], b[name]) end
+  return Mem.MemContractContribution(unpack(values))
 end
-
-local function stride_from_value(value, consts)
-  local n = value and consts[value.text] or nil
-  if n == 1 then return Mem.MemStrideUnit end
-  if n ~= nil then return Mem.MemStrideConstElems(n) end
-  if value ~= nil then return Mem.MemStrideValue(value) end
-  return Mem.MemStrideUnknown("stride value is unavailable")
+function Code.CodeFuncContractFact:project_memory_contract()
+  return self.fact:project_memory_contract(Mem.MemContractProjectInput(self))
 end
-
-local function add_unique(out, by_key, key, fact)
-  if key ~= nil and by_key[key] ~= nil then return by_key[key] end
-  if key ~= nil then by_key[key] = fact end
-  out[#out + 1] = fact
-  return fact
-end
-
-local function const_values(func)
-  local out = {}
-  for _, block in ipairs(func.blocks or {}) do
-    for _, inst in ipairs(block.insts or {}) do
-      local k = inst.op
-      if rawget(k, "const") ~= nil and rawget(k, "dst") ~= nil then
-        local lit = rawget(k.const, "literal")
-        if lit ~= nil then
-          local raw_val = rawget(lit, "raw") or nil
-          local n = raw_val and tonumber(raw_val) or nil
-          if n ~= nil then out[k.dst.text] = n end
-        end
-      end
-    end
-  end
-  return out
-end
-
-local function loop_membership(graph)
-  local by_func = {}
-  for _, fg in ipairs(graph and graph.funcs or {}) do
-    by_func[fg.func.text] = by_func[fg.func.text] or {}
-    for _, loop in ipairs(fg.loops or {}) do
-      for _, gb in ipairs(loop.body or {}) do by_func[fg.func.text][gb.block.text] = loop.id end
-    end
-  end
-  return by_func
+function Code.CodeContractFactSet:project_memory_contract()
+  local result = empty_contract_contribution()
+  for _, fact in ipairs(self.facts) do result = merge_contract_contribution(result, fact:project_memory_contract()) end
+  return Mem.MemContractProjection(result.bounds, result.projection_bounds, result.windows, result.same_lengths, result.disjoint, result.soa, result.noalias, result.readonly, result.writeonly, result.projection_readonly, result.projection_writeonly, result.invalidates, result.preserves, result.rejected)
 end
 
 ----------------------------------------------------------------------
--- compute_mem: entry point — MemSemanticFactSet
+-- CodeInstOp immutable transfer leaves
 ----------------------------------------------------------------------
 
-local function compute_mem_semantic(module, graph, flow, value, contracts)
-  local cidx = contract_index(contracts)
-  local objects, object_by_key = {}, {}
-  local leases, accesses, intervals, safety, effects, dependences, relations, backend_info, proofs = {}, {}, {}, {}, {}, {}, {}, {}, {}
-  local module_objects = { data = {}, global = {} }
-  local loops_by_func_block = loop_membership(graph)
+function Mem.MemLoad:access_mode() return Mem.MemAccessModeRead end
+function Mem.MemStore:access_mode() return Mem.MemAccessModeWrite end
+function Mem.MemAtomicLoad:access_mode() return Mem.MemAccessModeRead end
+function Mem.MemAtomicStore:access_mode() return Mem.MemAccessModeWrite end
+function Mem.MemAtomicRmw:access_mode() return Mem.MemAccessModeReadWrite end
+function Mem.MemAtomicCas:access_mode() return Mem.MemAccessModeReadWrite end
 
-  local function add_object(fact)
-    add_unique(objects, object_by_key, fact.id.text, fact)
-    return fact.id
-  end
+local function unchanged(input) return Mem.MemTransferUnchanged(input.facet) end
+function Code.CodeInstUnary:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstFloatBinary:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstCompare:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstSelect:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstIntrinsicVoid:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstIntrinsicValue:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstAggregate:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstArray:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstClosure:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstVariantCtor:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstVariantTag:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstVariantPayload:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstCall:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstAtomicFence:transfer_memory(input) return unchanged(input) end
 
-  local function object_fact(id)
-    return id and object_by_key[id.text] or nil
-  end
+local function replace_values(facet, values)
+  return Mem.MemTransferFacet(values, facet.locals, facet.constants, facet.loaded_places, facet.scaled_strides, facet.objects, facet.accesses, facet.dependence_accesses, facet.intervals, facet.safety, facet.relations, facet.backend, facet.proofs)
+end
+local function replace_constants(facet, constants)
+  return Mem.MemTransferFacet(facet.values, facet.locals, constants, facet.loaded_places, facet.scaled_strides, facet.objects, facet.accesses, facet.dependence_accesses, facet.intervals, facet.safety, facet.relations, facet.backend, facet.proofs)
+end
+local function replace_scaled_strides(facet, strides)
+  return Mem.MemTransferFacet(facet.values, facet.locals, facet.constants, facet.loaded_places, strides, facet.objects, facet.accesses, facet.dependence_accesses, facet.intervals, facet.safety, facet.relations, facet.backend, facet.proofs)
+end
+local function find_transfer_object(facet, value) return find_value_object(facet.values, value) end
+function Mem.MemValueObjectFound:bind_transfer_object(input, dst)
+  return Mem.MemTransferUpdated(replace_values(input.facet, append_one(input.facet.values, Mem.MemValueObjectEntry(dst, self.object))))
+end
+function Mem.MemValueObjectMissing:bind_transfer_object(input, dst) return unchanged(input) end
+function Mem.MemPlaceObjectFound:bind_transfer_object(input, dst) return Mem.MemValueObjectFound(self.object):bind_transfer_object(input, dst) end
+function Mem.MemPlaceObjectMissing:bind_transfer_object(input, dst) return unchanged(input) end
+function Code.CodeInstAlias:transfer_memory(input) return find_transfer_object(input.facet, self.src):bind_transfer_object(input, self.dst) end
+function Code.CodeInstCast:transfer_memory(input) return find_transfer_object(input.facet, self.value):bind_transfer_object(input, self.dst) end
+function Code.CodeInstViewData:transfer_memory(input) return find_transfer_object(input.facet, self.view):bind_transfer_object(input, self.dst) end
+function Code.CodeInstViewLen:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstViewStride:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstSliceData:transfer_memory(input) return find_transfer_object(input.facet, self.slice):bind_transfer_object(input, self.dst) end
+function Code.CodeInstSliceLen:transfer_memory(input) return unchanged(input) end
+function Code.CodeInstByteSpanData:transfer_memory(input) return find_transfer_object(input.facet, self.span):bind_transfer_object(input, self.dst) end
+function Code.CodeInstByteSpanLen:transfer_memory(input) return unchanged(input) end
+function Core.LitInt:project_memory_constant() return Mem.MemConstantKnown(tonumber(self.raw)) end
+function Core.LitFloat:project_memory_constant() return Mem.MemConstantKnown(tonumber(self.raw)) end
+function Core.LitBool:project_memory_constant() return Mem.MemConstantKnown(self.value and 1 or 0) end
+function Core.LitString:project_memory_constant() return Mem.MemConstantUnavailable end
+function Core.LitNil:project_memory_constant() return Mem.MemConstantUnavailable end
+function Code.CodeConstLiteral:project_memory_constant() return self.literal:project_memory_constant() end
+function Code.CodeConstNull:project_memory_constant() return Mem.MemConstantUnavailable end
+function Code.CodeConstUndef:project_memory_constant() return Mem.MemConstantUnavailable end
+function Mem.MemConstantKnown:transfer_constant(op, input)
+  return Mem.MemTransferUpdated(replace_constants(input.facet, append_one(input.facet.constants, Mem.MemConstantEntry(op.dst, self.number_value))))
+end
+function Mem.MemConstantUnavailable:transfer_constant(op, input) return unchanged(input) end
+function Code.CodeInstConst:transfer_memory(input) return self.const:project_memory_constant():transfer_constant(self, input) end
+local function find_constant(facet, value)
+  for _, entry in ipairs(facet.constants) do if entry.value == value then return Mem.MemConstantKnown(entry.number_value) end end
+  return Mem.MemConstantUnavailable
+end
+function Mem.MemConstantKnown:multiply_stride(other) return other:multiply_known_stride(self.number_value) end
+function Mem.MemConstantUnavailable:multiply_stride(other) return Mem.MemScaledStrideDynamic end
+function Mem.MemConstantKnown:multiply_known_stride(value) return Mem.MemScaledStrideKnown(value * self.number_value) end
+function Mem.MemConstantUnavailable:multiply_known_stride(value) return Mem.MemScaledStrideDynamic end
+local function unchanged_binary(op, input) return unchanged(input) end
+function Core.BinAdd:transfer_memory_binary(op, input) return unchanged_binary(op, input) end
+function Core.BinSub:transfer_memory_binary(op, input) return unchanged_binary(op, input) end
+function Core.BinMul:transfer_memory_binary(op, input)
+  local stride = find_constant(input.facet, op.lhs):multiply_stride(find_constant(input.facet, op.rhs))
+  local next_strides = append_one(input.facet.scaled_strides, Mem.MemScaledStrideEntry(op.dst, stride))
+  return Mem.MemTransferUpdated(replace_scaled_strides(input.facet, next_strides))
+end
+function Core.BinDiv:transfer_memory_binary(op, input) return unchanged_binary(op, input) end
+function Core.BinRem:transfer_memory_binary(op, input) return unchanged_binary(op, input) end
+function Core.BinBitAnd:transfer_memory_binary(op, input) return unchanged_binary(op, input) end
+function Core.BinBitOr:transfer_memory_binary(op, input) return unchanged_binary(op, input) end
+function Core.BinBitXor:transfer_memory_binary(op, input) return unchanged_binary(op, input) end
+function Core.BinShl:transfer_memory_binary(op, input) return unchanged_binary(op, input) end
+function Core.BinLShr:transfer_memory_binary(op, input) return unchanged_binary(op, input) end
+function Core.BinAShr:transfer_memory_binary(op, input) return unchanged_binary(op, input) end
+function Code.CodeInstBinary:transfer_memory(input) return self.op:transfer_memory_binary(self, input) end
 
-  local function object_proves_access_safety(id)
-    local fact = object_fact(id)
-    if fact == nil then return false, "access object is unknown" end
-    local form = fact.form
-    local extent = fact.extent
-    if form == Mem.MemObjectLocal or form == Mem.MemObjectGlobal or form == Mem.MemObjectData then
-      return true, "direct local/global/data object access"
-    end
-    if form == Mem.MemObjectContract then
-      return true, "bounds contract proves object extent"
-    end
-    if form == Mem.MemObjectLease then
-      return true, "lease grant proves object access"
-    end
-    -- Check extent is not unknown for view/slice/bytespan/derived/fieldpointer
-    if rawget(extent, "reason") ~= nil then
-      if form == Mem.MemObjectView or form == Mem.MemObjectSlice or form == Mem.MemObjectByteSpan or form == Mem.MemObjectFieldProjection or form == Mem.MemObjectPtrOffset or form == Mem.MemObjectBytes or form == Mem.MemObjectElement or form == Mem.MemObjectFieldPointer then
-        return false, extent.reason or "object extent is unknown"
-      end
-    else
-      if form == Mem.MemObjectView or form == Mem.MemObjectSlice or form == Mem.MemObjectByteSpan or
-         form == Mem.MemObjectFieldProjection or form == Mem.MemObjectPtrOffset or form == Mem.MemObjectBytes or form == Mem.MemObjectElement or form == Mem.MemObjectFieldPointer then
-        return true, "derived object has explicit bounded extent"
-      end
-    end
-    return false, "object provenance alone is not a bounds proof"
-  end
+function Code.CodeGlobalRefGlobal:memory_referenced_object(input) return find_global_object(input.globals, self.global) end
+function Code.CodeGlobalRefData:memory_referenced_object(input) return find_data_object(input.data, self.data) end
+function Code.CodeGlobalRefFunc:memory_referenced_object(input) return Mem.MemPlaceObjectMissing("function reference is not a memory object") end
+function Code.CodeGlobalRefExtern:memory_referenced_object(input) return Mem.MemPlaceObjectMissing("extern reference is not a memory object") end
+function Code.CodeInstGlobalRef:transfer_memory(input) return self.ref:memory_referenced_object(input):bind_transfer_object(input, self.dst) end
+function Code.CodeInstAddrOf:transfer_memory(input)
+  local place_input = Mem.MemPlaceResolveInput(input.func.id, input.facet.values, input.facet.locals, input.globals, input.data, input.facet.objects)
+  return self.place:resolve_memory_place(place_input):bind_transfer_value(input, self.dst)
+end
+function Mem.MemPlaceResolved:bind_transfer_value(input, dst) return Mem.MemValueObjectFound(self.object):bind_transfer_object(input, dst) end
+function Mem.MemPlaceUnresolved:bind_transfer_value(input, dst) return unchanged(input) end
 
-  -- Register module data/globals
-  for _, data in ipairs(module.data or {}) do
-    local id = object_id("data", data.id.text)
-    module_objects.data[data.id.text] = id
-    add_object(Mem.MemObjectFact(id, nil, Mem.MemObjectData, Mem.MemProvData(data.id), nil, Mem.MemExtentBytes(data.size or 0, "CodeData.size"), Mem.MemStrideUnit))
-  end
-  for _, global in ipairs(module.globals or {}) do
-    local id = object_id("global", global.id.text)
-    module_objects.global[global.id.text] = id
-    add_object(Mem.MemObjectFact(id, nil, Mem.MemObjectGlobal, Mem.MemProvGlobal(global.id), object_elem_ty(global.ty), storage_extent(global.ty, global.size, "CodeGlobal storage"), Mem.MemStrideUnit))
-  end
-
-  for _, func in ipairs(module.funcs or {}) do
-    local value_object, local_object, local_value_object = {}, {}, {}
-    local access_records = {}
-    local readonly_objects, writeonly_objects = {}, {}
-    local consts = const_values(func)
-    local value_index = nil -- computed lazily below
-    local load_by_place = {}
-    for _, block in ipairs(func.blocks or {}) do
-      for _, inst in ipairs(block.insts or {}) do
-        local k = inst.op
-        if rawget(k, "place") ~= nil and rawget(k, "dst") ~= nil then
-          local key = k.place:code_mem_place_key()
-          if load_by_place[key] == nil then load_by_place[key] = k.dst end
-        end
-      end
-    end
-
-    local function value_for_contract_expr(expr)
-      if rawget(expr, "value") ~= nil then return expr.value end
-      if rawget(expr, "place") ~= nil then return load_by_place[expr.place:code_mem_place_key()] end
-      return nil
-    end
-
-    local scaled_index_stride = {}
-    local same_store = {}
-
-    local function mark_same_store(a, b)
-      if a == nil or b == nil then return end
-      same_store[a.text] = same_store[a.text] or {}
-      same_store[b.text] = same_store[b.text] or {}
-      same_store[a.text][b.text] = b
-      same_store[b.text][a.text] = a
-    end
-
-    local function extent_for_value(value, ty)
-      local bounds = value and cidx.bounds[func.id.text .. "\0" .. value.text]
-      local window = value and cidx.window[func.id.text .. "\0" .. value.text]
-      local contract = bounds or window
-      if contract ~= nil then
-        local k = contract.fact
-        local len = bounds and k.len or k.base_len
-        return Mem.MemExtentElements(len, object_elem_ty(ty) or Code.CodeTyVoid, bounds and "CodeContractBounds extent" or "CodeContractWindowBounds base extent"), contract
-      end
-      if view_elem_ty(ty) ~= nil then return Mem.MemExtentUnknown("view extent requires descriptor length or contract"), nil end
-      if slice_elem_ty(ty) ~= nil then return Mem.MemExtentUnknown("slice extent requires descriptor length or contract"), nil end
-      if ty:code_mem_is_byte_span() then return Mem.MemExtentUnknown("byte span extent requires descriptor length or contract"), nil end
-      return Mem.MemExtentUnknown("raw pointer parameter has no extent without contract or object provenance"), nil
-    end
-
-    -- Register params
-    for _, param in ipairs(func.params or {}) do
-      local ty = unwrap_lease(param.ty)
-      if param.ty:code_mem_is_lease() or ty:code_mem_is_data_ptr() or ty:code_mem_is_view() or ty:code_mem_is_slice() or ty:code_mem_is_byte_span() then
-        local extent, contract = extent_for_value(param.value, ty)
-        local id = object_id(func.name, param.ty:code_mem_is_lease() and "lease_param" or "param", param.value.text)
-        value_object[param.value.text] = id
-        local object_kind = param.ty:code_mem_is_lease() and Mem.MemObjectLease
-          or (contract and Mem.MemObjectContract
-              or (ty:code_mem_is_view() and Mem.MemObjectView
-                  or (ty:code_mem_is_slice() and Mem.MemObjectSlice
-                      or (ty:code_mem_is_byte_span() and Mem.MemObjectByteSpan or Mem.MemObjectParam))))
-        add_object(Mem.MemObjectFact(id, func.id, object_kind, contract and Mem.MemProvContract(contract) or Mem.MemProvValue(param.value), object_elem_ty(ty), extent, ty:code_mem_is_view() and Mem.MemStrideUnknown("view parameter stride requires descriptor stride fact") or Mem.MemStrideUnit))
-        if param.ty:code_mem_is_lease() then
-          local proof = Mem.MemProofObject(id, Mem.MemObjectSizeKnown(0))
-          proofs[#proofs + 1] = proof
-          local lease_id = Mem.MemLeaseId("lease:" .. sanitize(func.name) .. ":" .. sanitize(param.value.text))
-          leases[#leases + 1] = Mem.MemLeaseGrant(lease_id, Flow.FlowDomainFunction(func.id), param.value, nil, id, Mem.MemBaseValue(param.value), extent, Mem.MemStrideUnit, proof)
-        end
-      end
-    end
-
-    -- Register locals
-    for _, local_decl in ipairs(func.locals or {}) do
-      local id = object_id(func.name, "local", local_decl.id.text)
-      local_object[local_decl.id.text] = id
-      add_object(Mem.MemObjectFact(id, func.id, Mem.MemObjectLocal, Mem.MemProvLocal(local_decl.id), object_elem_ty(local_decl.ty), storage_extent(local_decl.ty, nil, "CodeLocal storage"), Mem.MemStrideUnit))
-    end
-
-    local function object_for_place(place)
-      -- Dispatch based on place kind using field checks
-      if rawget(place, "local_id") ~= nil then
-        return local_object[place.local_id.text], Mem.MemBaseLocal(place.local_id), Mem.MemIndexNone
-      end
-      if rawget(place, "global") ~= nil then
-        return module_objects.global[place.global.text], Mem.MemBaseGlobal(place.global), Mem.MemIndexNone
-      end
-      if rawget(place, "data") ~= nil then
-        return module_objects.data[place.data.text], Mem.MemBaseData(place.data), Mem.MemIndexNone
-      end
-      if rawget(place, "addr") ~= nil then
-        return value_object[place.addr.text], Mem.MemBaseValue(place.addr), Mem.MemIndexNone
-      end
-      if rawget(place, "index") ~= nil and rawget(place, "elem_size") ~= nil then
-        local parent, base = object_for_place(place.base)
-        return parent, base or Mem.MemBaseUnknown("index base object is unknown"), Mem.MemIndexValue(place.index, place.elem_size, 0)
-      end
-      if rawget(place, "field") ~= nil and rawget(place, "offset") ~= nil then
-        local parent, base, index = object_for_place(place.base)
-        if parent ~= nil then
-          local id = object_id(func.name, "field", parent.text, tostring(place.offset))
-          add_object(Mem.MemObjectFact(id, func.id, Mem.MemObjectFieldProjection, Mem.MemProvProjection(parent, Mem.MemProjectField, place.offset), place.ty, storage_extent(place.ty, place.size, "CodePlaceField projection"), Mem.MemStrideUnit))
-          local proof = Mem.MemProofObject(id, Mem.MemObjectBaseAddressStable)
-          proofs[#proofs + 1] = proof
-          relations[#relations + 1] = Mem.MemObjectSameStore(id, parent, proof)
-          mark_same_store(id, parent)
-          return id, Mem.MemBaseProjection(base or Mem.MemBaseUnknown("field base unknown"), Mem.MemProjectField, place.offset), index
-        end
-        return nil, Mem.MemBaseUnknown("field parent object is unknown"), Mem.MemIndexNone
-      end
-      if rawget(place, "base") ~= nil and rawget(place, "offset") ~= nil and rawget(place, "size") ~= nil then
-        local parent = value_object[place.base.text]
-        if parent ~= nil then
-          local id = object_id(func.name, "bytes", parent.text, tostring(place.offset))
-          add_object(Mem.MemObjectFact(id, func.id, Mem.MemObjectBytes, Mem.MemProvProjection(parent, Mem.MemProjectBytes, place.offset), place.ty, Mem.MemExtentBytes(place.size, "CodePlaceBytes projection"), Mem.MemStrideUnit))
-          local proof = Mem.MemProofObject(id, Mem.MemObjectBaseAddressStable)
-          proofs[#proofs + 1] = proof
-          relations[#relations + 1] = Mem.MemObjectSameStore(id, parent, proof)
-          mark_same_store(id, parent)
-          return id, Mem.MemBaseProjection(Mem.MemBaseValue(place.base), Mem.MemProjectBytes, place.offset), Mem.MemIndexNone
-        end
-        return nil, Mem.MemBaseValue(place.base), Mem.MemIndexNone
-      end
-      return nil, Mem.MemBaseUnknown("unsupported CodePlace for memory facts"), Mem.MemIndexNone
-    end
-
-    local function object_stride_const(object)
-      local fact = object_fact(object)
-      if fact == nil then return nil end
-      if fact.stride == Mem.MemStrideUnit then return 1 end
-      if rawget(fact.stride, "elems") ~= nil then return fact.stride.elems end
-      return nil
-    end
-
-    local function pattern_for_index(index)
-      if index == Mem.MemIndexNone then return Mem.MemAccessScalar end
-      if rawget(index, "value") ~= nil then
-        local stride = scaled_index_stride[index.value.text]
-        if stride == "dynamic" then return Mem.MemAccessUnknown end
-        if type(stride) == "number" and stride ~= 1 then return Mem.MemAccessStrided(stride) end
-      end
-      return Mem.MemAccessContiguous
-    end
-
-    -- Walk insts building value_object and tracking access records
-    for _, block in ipairs(func.blocks or {}) do
-      for _, inst in ipairs(block.insts or {}) do
-        local k = inst.op
-        if rawget(k, "ref") ~= nil and rawget(k, "dst") ~= nil then
-          -- CodeInstGlobalRef
-          local ref = k.ref
-          if rawget(ref, "data") ~= nil then value_object[k.dst.text] = module_objects.data[ref.data.text] end
-          if rawget(ref, "global") ~= nil then value_object[k.dst.text] = module_objects.global[ref.global.text] end
-        elseif rawget(k, "place") ~= nil and rawget(k, "ptr_ty") ~= nil then
-          -- CodeInstAddrOf
-          value_object[k.dst.text] = object_for_place(k.place)
-        elseif rawget(k, "base") ~= nil and rawget(k, "index") ~= nil then
-          -- CodeInstPtrOffset
-          local parent = value_object[k.base.text]
-          if parent ~= nil then
-            local id = object_id(func.name, "ptr_offset", k.dst.text)
-            value_object[k.dst.text] = id
-            add_object(Mem.MemObjectFact(id, func.id, Mem.MemObjectPtrOffset, Mem.MemProvProjection(parent, Mem.MemProjectPtrOffset, k.const_offset or 0), pointee_ty(k.ptr_ty), Mem.MemExtentUnknown("ptr-offset projection requires a bounded slice/window fact before it has an extent"), Mem.MemStrideUnit))
-          end
-        elseif rawget(k, "data") ~= nil and rawget(k, "len") ~= nil and rawget(k, "stride") ~= nil then
-          -- CodeInstViewMake
-          local id = object_id(func.name, "view", k.dst.text)
-          value_object[k.dst.text] = id
-          add_object(Mem.MemObjectFact(id, func.id, Mem.MemObjectView, Mem.MemProvView(k.dst, k.data, k.len, k.stride), k.elem_ty, Mem.MemExtentElements(k.len, k.elem_ty, "CodeInstViewMake explicit length"), stride_from_value(k.stride, consts)))
-          local parent = value_object[k.data.text]
-          if parent ~= nil then
-            local proof = Mem.MemProofObject(id, Mem.MemObjectBaseAddressStable)
-            proofs[#proofs + 1] = proof
-            relations[#relations + 1] = Mem.MemObjectSameStore(id, parent, proof)
-            mark_same_store(id, parent)
-          end
-        elseif rawget(k, "view") ~= nil and rawget(k, "dst") ~= nil and rawget(k, "data") == nil then
-          -- CodeInstViewData / CodeInstViewLen / CodeInstViewStride
-          value_object[k.dst.text] = value_object[k.view.text]
-          if rawget(k, "elem_ty") == nil then
-            -- ViewLen/ViewStride — compute stride const
-            local stride = object_stride_const(value_object[k.view.text])
-            if stride ~= nil then consts[k.dst.text] = stride end
-          end
-        elseif rawget(k, "data") ~= nil and rawget(k, "len") ~= nil and rawget(k, "stride") == nil and rawget(k, "elem_ty") ~= nil then
-          -- CodeInstSliceMake
-          local id = object_id(func.name, "slice", k.dst.text)
-          value_object[k.dst.text] = id
-          add_object(Mem.MemObjectFact(id, func.id, Mem.MemObjectSlice, Mem.MemProvSlice(k.dst, k.data, k.len), k.elem_ty, Mem.MemExtentElements(k.len, k.elem_ty, "CodeInstSliceMake explicit length"), Mem.MemStrideUnit))
-          local parent = value_object[k.data.text]
-          if parent ~= nil then
-            local proof = Mem.MemProofObject(id, Mem.MemObjectBaseAddressStable)
-            proofs[#proofs + 1] = proof
-            relations[#relations + 1] = Mem.MemObjectSameStore(id, parent, proof)
-            mark_same_store(id, parent)
-          end
-        elseif rawget(k, "slice") ~= nil and rawget(k, "dst") ~= nil and rawget(k, "data") == nil then
-          -- CodeInstSliceData / CodeInstSliceLen
-          value_object[k.dst.text] = value_object[k.slice.text]
-        elseif rawget(k, "data") ~= nil and rawget(k, "len") ~= nil and rawget(k, "elem_ty") == nil then
-          -- CodeInstByteSpanMake
-          local id = object_id(func.name, "bytespan", k.dst.text)
-          value_object[k.dst.text] = id
-          add_object(Mem.MemObjectFact(id, func.id, Mem.MemObjectByteSpan, Mem.MemProvByteSpan(k.dst, k.data, k.len), Code.CodeTyInt(8, Code.CodeUnsigned), Mem.MemExtentElements(k.len, Code.CodeTyInt(8, Code.CodeUnsigned), "CodeInstByteSpanMake explicit byte length"), Mem.MemStrideUnit))
-          local parent = value_object[k.data.text]
-          if parent ~= nil then
-            local proof = Mem.MemProofObject(id, Mem.MemObjectBaseAddressStable)
-            proofs[#proofs + 1] = proof
-            relations[#relations + 1] = Mem.MemObjectSameStore(id, parent, proof)
-            mark_same_store(id, parent)
-          end
-        elseif rawget(k, "span") ~= nil and rawget(k, "dst") ~= nil then
-          -- CodeInstByteSpanData / CodeInstByteSpanLen
-          value_object[k.dst.text] = value_object[k.span.text]
-        elseif rawget(k, "place") ~= nil and rawget(k, "dst") ~= nil then
-          -- CodeInstLoad — field-pointer projection
-          local place = k.place
-          if rawget(place, "field") ~= nil then
-            local pkey = "place:" .. place:code_mem_place_key()
-            local bounds_contract = cidx.projection_bounds[func.id.text .. "\0" .. pkey]
-            local elem_ty = pointee_ty(k.access.ty)
-            if bounds_contract ~= nil and elem_ty ~= nil then
-              local len = value_for_contract_expr(bounds_contract.fact.len)
-              if len ~= nil then
-                local owner = object_for_place(place)
-                local id = object_id(func.name, "field_ptr", k.dst.text)
-                value_object[k.dst.text] = id
-                add_object(Mem.MemObjectFact(id, func.id, Mem.MemObjectFieldPointer, Mem.MemProvFieldPointer(owner or Mem.MemObjectId("unknown:" .. sanitize(k.dst.text)), place.field, k.dst), elem_ty, Mem.MemExtentElements(len, elem_ty, "CodeContractProjectionBounds field-pointer extent"), Mem.MemStrideUnit))
-                if owner ~= nil then
-                  local proof = Mem.MemProofObject(id, Mem.MemObjectBaseAddressStable)
-                  proofs[#proofs + 1] = proof
-                  relations[#relations + 1] = Mem.MemObjectSameStore(id, owner, proof)
-                  mark_same_store(id, owner)
-                end
-              end
-            end
-          end
-        elseif rawget(k, "value") ~= nil and rawget(k, "place") ~= nil then
-          -- CodeInstStore — merge local value
-          if rawget(k.place, "local_id") ~= nil then
-            local key = k.place.local_id.text
-            local obj = value_object[k.value.text]
-            local old = local_value_object[key]
-            if old == nil then local_value_object[key] = obj or false elseif old ~= obj then local_value_object[key] = false end
-          end
-        elseif rawget(k, "src") ~= nil and rawget(k, "dst") ~= nil then
-          -- CodeInstAlias
-          value_object[k.dst.text] = value_object[k.src.text]
-          if consts[k.src.text] ~= nil then consts[k.dst.text] = consts[k.src.text] end
-        elseif rawget(k, "value") ~= nil and rawget(k, "from") ~= nil then
-          -- CodeInstCast
-          value_object[k.dst.text] = value_object[k.value.text]
-          if consts[k.value.text] ~= nil then consts[k.dst.text] = consts[k.value.text] end
-        elseif rawget(k, "lhs") ~= nil and rawget(k, "rhs") ~= nil and rawget(k, "op") ~= nil then
-          -- CodeInstBinary / CodeInstFloatBinary — track strides
-          local lhs, rhs = consts[k.lhs.text], consts[k.rhs.text]
-          if k.op == Core.BinMul then
-            if lhs ~= nil and rhs ~= nil then
-              consts[k.dst.text] = lhs * rhs
-              scaled_index_stride[k.dst.text] = lhs * rhs
-            elseif lhs ~= nil then
-              scaled_index_stride[k.dst.text] = lhs
-            elseif rhs ~= nil then
-              scaled_index_stride[k.dst.text] = rhs
-            else
-              scaled_index_stride[k.dst.text] = "dynamic"
-            end
-          elseif k.op == Core.BinAdd or k.op == Core.BinSub then
-            if lhs ~= nil and rhs ~= nil then consts[k.dst.text] = (k.op == Core.BinAdd) and (lhs + rhs) or (lhs - rhs) end
-          end
-        end
-
-        local op = k:code_mem_access_op()
-        if op ~= nil then
-          local place = access_place(k)
-          local object, base, index = object_for_place(place)
-          local id = access_id(func, block, inst)
-          local in_bounds, bounds_reason = object_proves_access_safety(object)
-          local bounds = in_bounds and Mem.MemBoundsInObject(bounds_reason) or Mem.MemBoundsUnknown(bounds_reason)
-          local trap
-          if k.access.trap == Code.CodeMustNotTrap or k.access.trap == Code.CodeCheckedTrap then
-            trap = (k.access.trap == Code.CodeMustNotTrap and Mem.MemNonTrapping("CodeMemoryAccess is marked must-not-trap") or Mem.MemCheckedTrap("CodeMemoryAccess is checked"))
-          elseif in_bounds then
-            trap = Mem.MemNonTrapping(bounds_reason)
-          else
-            trap = Mem.MemMayTrap
-          end
-          local align = k.access.align and Mem.MemAlignKnown(k.access.align) or Mem.MemAlignUnknown
-          local pattern = pattern_for_index(index)
-          local loop_id = loops_by_func_block[func.id.text] and loops_by_func_block[func.id.text][block.id.text] or nil
-          local access_fact = Mem.MemAccessFact(id, func.id, Graph.GraphBlockId(func.id, block.id), inst.id, op, place, k.access, base, index, pattern, align, bounds, trap)
-          accesses[#accesses + 1] = access_fact
-          if value_index == nil then value_index = Value.ValueFactSet and value and require("lalin.impl.code_value").expr_index(value) or nil end
-          access_records[#access_records + 1] = { id = id, object = object, op = op, index = index, index_key = canonical_index_key(index, value_index), loop = loop_id, in_bounds = in_bounds, trap = trap, order = #access_records + 1 }
-
-          local proof = Mem.MemProofBackend(id, Mem.MemBackendNativeAlignment(8))
-          proofs[#proofs + 1] = proof
-          local deref = scalar_bytes(k.access.ty)
-          local is_atomic = op == Mem.MemAtomicLoad or op == Mem.MemAtomicStore or op == Mem.MemAtomicRmw or op == Mem.MemAtomicCas or k.access.ordering ~= nil
-          local explicit_nontrap = k.access.trap == Code.CodeMustNotTrap
-          local movable = (rawget(trap, "reason") ~= nil and not is_atomic) and (in_bounds or explicit_nontrap) and not k.access.volatile and not is_atomic
-          backend_info[#backend_info + 1] = Mem.MemBackendAccessInfo(id, trap, align, bounds, deref, movable, { proof })
-          if object ~= nil and in_bounds then
-            local interval = Mem.MemAccessInterval(id, object, loop_id, index, Flow.FlowBoundDerived("access-length:" .. id.text, {}), deref or 0, 0, "access projected into proven bounded memory object")
-            intervals[#intervals + 1] = interval
-            local iproof = Mem.MemProofInterval(interval, Mem.MemIntervalWithinObject(object))
-            proofs[#proofs + 1] = iproof
-            safety[#safety + 1] = Mem.MemAccessInBounds(interval, iproof)
-          end
-          if deref ~= nil then safety[#safety + 1] = Mem.MemAccessDerefBytes(id, deref, proof) end
-          if k.access.align ~= nil then safety[#safety + 1] = Mem.MemAccessAlignKnown(id, k.access.align, proof) end
-          if rawget(trap, "reason") ~= nil then safety[#safety + 1] = Mem.MemAccessNonTrap(id, proof) end
-          if movable then safety[#safety + 1] = Mem.MemAccessMovable(id, proof) end
-        end
-      end
-    end
-
-    -- Process contracts for this func
-    for _, fact in ipairs(cidx.by_func[func.id.text] or {}) do
-      local k = fact.fact
-      local proof = Mem.MemProofContract(fact, Mem.MemContractBounds("memory contract normalized into semantic memory facts"))
-      proofs[#proofs + 1] = proof
-      if rawget(k, "base") ~= nil then
-        local obj = value_object[k.base.text]
-        if obj ~= nil then
-          if rawget(k, "a") == nil then
-            readonly_objects[obj.text] = true
-            effects[#effects + 1] = Mem.MemObjectReadonly(obj, proof)
-          else
-            writeonly_objects[obj.text] = true
-            effects[#effects + 1] = Mem.MemObjectWriteonly(obj, proof)
-          end
-        end
-      end
-    end
-
-    -- Process same_len, window_bounds
-    for _, fact in ipairs(cidx.by_func[func.id.text] or {}) do
-      local k = fact.fact
-      if rawget(k, "a") ~= nil and rawget(k, "b") ~= nil then
-        local a, b = value_object[k.a.text], value_object[k.b.text]
-        if a ~= nil and b ~= nil then
-          local proof = Mem.MemProofContract(fact, Mem.MemContractBounds("same_len"))
-          relations[#relations + 1] = Mem.MemObjectsSameLen(a, b, proof)
-        end
-      end
-    end
-
-    -- Disjoint objects
-    local disjoint = {}
-    local function mark_disjoint(a, b)
-      if a == nil or b == nil then return end
-      disjoint[a.text .. "\0" .. b.text] = true
-      disjoint[b.text .. "\0" .. a.text] = true
-    end
-    for _, fact in ipairs(cidx.disjoint or {}) do
-      if fact.func == func.id then mark_disjoint(value_object[fact.fact.a.text], value_object[fact.fact.b.text]) end
-    end
-    local noalias_objects = {}
-    for key, fact in pairs(cidx.noalias or {}) do
-      if fact.func == func.id then
-        local obj = value_object[fact.fact.base.text]
-        if obj ~= nil then noalias_objects[obj.text] = true end
-      end
-    end
-
-    -- Dependence analysis
-    local function object_pair_safe(a, b)
-      if a.object == nil or b.object == nil then return false, nil end
-      if a.object == b.object and a.index_key ~= nil and a.index_key == b.index_key then return true, "same object and same per-iteration index do not carry dependence across iterations" end
-      local function disjoint_through_same_store(x, y)
-        if disjoint[x.text .. "\0" .. y.text] then return true end
-        for _, sx in pairs(same_store[x.text] or {}) do
-          if disjoint[sx.text .. "\0" .. y.text] then return true end
-          for _, sy in pairs(same_store[y.text] or {}) do
-            if disjoint[sx.text .. "\0" .. sy.text] then return true end
-          end
-        end
-        for _, sy in pairs(same_store[y.text] or {}) do
-          if disjoint[x.text .. "\0" .. sy.text] then return true end
-        end
-        return false
-      end
-      if a.object ~= b.object and disjoint_through_same_store(a.object, b.object) then return true, "objects are disjoint by contract through same-store relation" end
-      if a.object ~= b.object and (noalias_objects[a.object.text] or noalias_objects[b.object.text]) then return true, "noalias contract separates one object from the other" end
-      if a.object ~= b.object and readonly_objects[a.object.text] and readonly_objects[b.object.text] then return true, "read-only objects do not create loop-carried dependence" end
-      if a.object ~= b.object and ((readonly_objects[a.object.text] and writeonly_objects[b.object.text]) or (writeonly_objects[a.object.text] and readonly_objects[b.object.text])) then
-        if disjoint[a.object.text .. "\0" .. b.object.text] or noalias_objects[a.object.text] or noalias_objects[b.object.text] then return true, "readonly/writeonly noalias objects are independent" end
-      end
-      return false, nil
-    end
-
-    for i = 1, #access_records do
-      for j = i + 1, #access_records do
-        local a, b = access_records[i], access_records[j]
-        if a.loop ~= nil and b.loop ~= nil and a.loop == b.loop then
-          if not is_write_op(a.op) and not is_write_op(b.op) then
-            dependences[#dependences + 1] = Mem.MemReadReadIndependent(a.id, b.id, "two reads in the same loop do not carry dependence")
-          elseif a.in_bounds and b.in_bounds and rawget(a.trap, "reason") ~= nil and rawget(b.trap, "reason") ~= nil then
-            local safe, reason = object_pair_safe(a, b)
-            if safe then
-              local proof = Mem.MemProofNoDependence({ a.id, b.id }, Mem.MemNoDependenceLoopLevel(a.loop))
-              proofs[#proofs + 1] = proof
-              dependences[#dependences + 1] = Mem.MemNoLoopCarriedDependence(a.id, b.id, a.loop, proof)
-            else
-              dependences[#dependences + 1] = Mem.MemDependenceUnknown(a.id, b.id, "no alias/dependence proof for loop-local memory pair")
-            end
-          end
-        end
-      end
-    end
-  end
-
-  return Mem.MemSemanticFactSet(module.id, objects, leases, accesses, intervals, safety, effects, dependences, relations, backend_info, proofs)
+local function append_object_projection(input, dst, object, form, provenance, elem_ty, extent, stride)
+  local fact = Mem.MemObjectFact(object, input.func.id, form, provenance, elem_ty, extent, stride)
+  local facet = input.facet
+  local next_facet = Mem.MemTransferFacet(append_one(facet.values, Mem.MemValueObjectEntry(dst, object)), facet.locals, facet.constants, facet.loaded_places, facet.scaled_strides, append_one(facet.objects, fact), facet.accesses, facet.dependence_accesses, facet.intervals, facet.safety, facet.relations, facet.backend, facet.proofs)
+  return Mem.MemTransferUpdated(next_facet)
+end
+function Mem.MemValueObjectMissing:transfer_pointer_offset(op, input) return unchanged(input) end
+function Mem.MemValueObjectFound:transfer_pointer_offset(op, input)
+  local id = Mem.MemObjectId("ptr-offset:" .. op.dst.text)
+  return append_object_projection(input, op.dst, id, Mem.MemObjectPtrOffset(self.object, Mem.MemIndexValue(op.index, op.elem_size, op.const_offset), op.elem_size), Mem.MemProvProjection(self.object, Mem.MemProjectPtrOffset, op.const_offset), op.ptr_ty:memory_pointee_type(), Mem.MemExtentUnknown(Mem.MemExtentDynamicAllocation), Mem.MemStrideUnit)
+end
+function Code.CodeInstPtrOffset:transfer_memory(input) return find_transfer_object(input.facet, self.base):transfer_pointer_offset(self, input) end
+function Code.CodeInstViewMake:transfer_memory(input)
+  local id = Mem.MemObjectId("view:" .. self.dst.text)
+  return append_object_projection(input, self.dst, id, Mem.MemObjectView, Mem.MemProvView(self.dst, self.data, self.len, self.stride), self.elem_ty, Mem.MemExtentElements(self.len, self.elem_ty, Mem.MemExtentByConstruction), Mem.MemStrideValue(self.stride))
+end
+function Code.CodeInstSliceMake:transfer_memory(input)
+  local id = Mem.MemObjectId("slice:" .. self.dst.text)
+  return append_object_projection(input, self.dst, id, Mem.MemObjectSlice, Mem.MemProvSlice(self.dst, self.data, self.len), self.elem_ty, Mem.MemExtentElements(self.len, self.elem_ty, Mem.MemExtentByConstruction), Mem.MemStrideUnit)
+end
+function Code.CodeInstByteSpanMake:transfer_memory(input)
+  local id = Mem.MemObjectId("bytespan:" .. self.dst.text)
+  local u8 = Code.CodeTyInt(8, Code.CodeUnsigned)
+  return append_object_projection(input, self.dst, id, Mem.MemObjectByteSpan, Mem.MemProvByteSpan(self.dst, self.data, self.len), u8, Mem.MemExtentElements(self.len, u8, Mem.MemExtentByConstruction), Mem.MemStrideUnit)
 end
 
-function Graph.CodeGraph:compute_mem(module, flow, values, contracts)
-  return compute_mem_semantic(module, self, flow, values, contracts)
+local function safety_for_object(objects, id)
+  for _, fact in ipairs(objects) do if fact.id == id then return fact:access_safety() end end
+  return Mem.MemAccessSafetyUnproven("resolved object fact is unavailable")
 end
+function Code.CodeMayTrap:memory_trap(safety) return Mem.MemMayTrap end
+function Code.CodeMustNotTrap:memory_trap(safety) return Mem.MemNonTrapping("access is declared must-not-trap") end
+function Code.CodeCheckedTrap:memory_trap(safety) return Mem.MemCheckedTrap("access is explicitly checked") end
+function Mem.MemAccessSafetyProven:memory_bounds() return Mem.MemBoundsInObject(self.reason) end
+function Mem.MemAccessSafetyUnproven:memory_bounds() return Mem.MemBoundsUnknown(self.reason) end
+function Mem.MemAccessSafetyProven:refine_trap(trap) return Mem.MemNonTrapping(self.reason) end
+function Mem.MemAccessSafetyUnproven:refine_trap(trap) return trap end
+function Mem.MemPlaceResolved:memory_safety(input) return safety_for_object(input.facet.objects, self.object) end
+function Mem.MemPlaceUnresolved:memory_safety(input) return Mem.MemAccessSafetyUnproven(self.reason) end
+function Mem.MemPlaceResolved:memory_object_lookup() return Mem.MemObjectFound(self.object) end
+function Mem.MemPlaceUnresolved:memory_object_lookup() return Mem.MemObjectMissing(Mem.MemAccessId("unresolved-place")) end
+
+function Mem.MemMayTrap:movement_decision(access, op, safety) return Mem.MemMovementPinned("potentially trapping accesses cannot move") end
+function Mem.MemCheckedTrap:movement_decision(access, op, safety) return Mem.MemMovementPinned("checked trapping order must be preserved") end
+function Mem.MemNonTrapping:movement_decision(access, op, safety) return op:nontrapping_movement(access, safety) end
+local function ordinary_movement(access, safety)
+  if access.volatile then return Mem.MemMovementPinned("volatile access order is observable") end
+  if access.ordering then return Mem.MemMovementPinned("ordered access cannot move") end
+  return safety:movement_decision()
+end
+function Mem.MemAccessSafetyProven:movement_decision() return Mem.MemMovementMovable(self.reason) end
+function Mem.MemAccessSafetyUnproven:movement_decision() return Mem.MemMovementPinned(self.reason) end
+function Mem.MemLoad:nontrapping_movement(access, safety) return ordinary_movement(access, safety) end
+function Mem.MemStore:nontrapping_movement(access, safety) return ordinary_movement(access, safety) end
+function Mem.MemAtomicLoad:nontrapping_movement(access, safety) return Mem.MemMovementPinned("atomic load ordering is observable") end
+function Mem.MemAtomicStore:nontrapping_movement(access, safety) return Mem.MemMovementPinned("atomic store ordering is observable") end
+function Mem.MemAtomicRmw:nontrapping_movement(access, safety) return Mem.MemMovementPinned("atomic read-modify-write is indivisible") end
+function Mem.MemAtomicCas:nontrapping_movement(access, safety) return Mem.MemMovementPinned("atomic compare-exchange is indivisible") end
+
+local function transfer_access(op_node, input, op, place, access)
+  local facet = input.facet
+  local place_input = Mem.MemPlaceResolveInput(input.func.id, facet.values, facet.locals, input.globals, input.data, facet.objects)
+  local resolved = place:resolve_memory_place(place_input)
+  local safety_decision = resolved:memory_safety(input)
+  local trap = safety_decision:refine_trap(access.trap:memory_trap(safety_decision))
+  local bounds = safety_decision:memory_bounds()
+  local alignment = Mem.MemAlignKnown(access.align)
+  local id = Mem.MemAccessId("access:" .. input.func.name .. ":" .. input.block.id.text .. ":" .. input.inst.id.text)
+  local fact = Mem.MemAccessFact(id, input.func.id, Graph.GraphBlockId(input.func.id, input.block.id), input.inst.id, op, place, access, resolved.base, resolved.index, Mem.MemAccessScalar, alignment, bounds, trap)
+  local proof = Mem.MemProofBackend(id, Mem.MemBackendNativeAlignment(access.align))
+  local movement = trap:movement_decision(access, op, safety_decision)
+  local backend = Mem.MemBackendAccessInfo(id, trap, alignment, bounds, access.ty:memory_deref_bytes(), movement, { proof })
+  local dependence = Mem.MemDependenceAccess(fact, resolved:memory_object_lookup(), input.loop, safety_decision, #facet.dependence_accesses + 1)
+  local loaded = facet.loaded_places
+  if op == Mem.MemLoad or op == Mem.MemAtomicLoad then loaded = append_one(loaded, Mem.MemLoadedPlaceEntry(place, op_node.dst)) end
+  local next_facet = Mem.MemTransferFacet(facet.values, facet.locals, facet.constants, loaded, facet.scaled_strides, append_all(facet.objects, resolved.discoveries.objects), append_one(facet.accesses, fact), append_one(facet.dependence_accesses, dependence), facet.intervals, facet.safety, append_all(facet.relations, resolved.discoveries.relations), append_one(facet.backend, backend), append_all(append_one(facet.proofs, proof), resolved.discoveries.proofs))
+  return Mem.MemTransferUpdated(next_facet)
+end
+function Code.CodeInstLoad:transfer_memory(input) return transfer_access(self, input, Mem.MemLoad, self.place, self.access) end
+function Code.CodeInstStore:transfer_memory(input) return transfer_access(self, input, Mem.MemStore, self.place, self.access) end
+function Code.CodeInstAtomicLoad:transfer_memory(input) return transfer_access(self, input, Mem.MemAtomicLoad, self.place, self.access) end
+function Code.CodeInstAtomicStore:transfer_memory(input) return transfer_access(self, input, Mem.MemAtomicStore, self.place, self.access) end
+function Code.CodeInstAtomicRmw:transfer_memory(input) return transfer_access(self, input, Mem.MemAtomicRmw, self.place, self.access) end
+function Code.CodeInstAtomicCas:transfer_memory(input) return transfer_access(self, input, Mem.MemAtomicCas, self.place, self.access) end
+
+function Mem.MemTransferUpdated:next_facet() return self.facet end
+function Mem.MemTransferUnchanged:next_facet() return self.facet end
+
+local function disjoint_pair(relations, a, b)
+  for _, entry in ipairs(relations.disjoint) do
+    if (entry.a == a and entry.b == b) or (entry.a == b and entry.b == a) then return entry.proof end
+  end
+end
+function Mem.MemAccessModeRead:classify_access_modes(other, request) return other:classify_after_read(request) end
+function Mem.MemAccessModeWrite:classify_access_modes(other, request) return other:classify_after_write(request) end
+function Mem.MemAccessModeReadWrite:classify_access_modes(other, request) return other:classify_after_write(request) end
+function Mem.MemAccessModeRead:classify_after_read(request)
+  local ids = { request.before.access.id, request.after.access.id }
+  local proof = Mem.MemProofNoDependence(ids, Mem.MemNoDependenceReadOnly(request.before.access.id))
+  return Mem.MemObjectPairIndependent(proof, "two reads do not create a dependence")
+end
+function Mem.MemAccessModeWrite:classify_after_read(request) return Mem.MemObjectPairDependent("read followed by write may conflict") end
+function Mem.MemAccessModeReadWrite:classify_after_read(request) return Mem.MemObjectPairDependent("read followed by read-write may conflict") end
+function Mem.MemAccessModeRead:classify_after_write(request) return Mem.MemObjectPairDependent("write followed by read may conflict") end
+function Mem.MemAccessModeWrite:classify_after_write(request) return Mem.MemObjectPairDependent("two writes may conflict") end
+function Mem.MemAccessModeReadWrite:classify_after_write(request) return Mem.MemObjectPairDependent("write and read-write may conflict") end
+
+function Mem.MemObjectMissing:classify_object_pair(request, other) return Mem.MemObjectPairUnproven("one access object is unresolved") end
+function Mem.MemObjectFound:classify_object_pair(request, other) return other:classify_known_object_pair(request, self.object) end
+function Mem.MemObjectMissing:classify_known_object_pair(request, first) return Mem.MemObjectPairUnproven("one access object is unresolved") end
+function Mem.MemObjectFound:classify_known_object_pair(request, first)
+  local proof = disjoint_pair(request.relations, first, self.object)
+  if proof then return Mem.MemObjectPairIndependent(proof, "objects are disjoint by typed relation") end
+  local before_mode = request.before.access.op:access_mode()
+  local after_mode = request.after.access.op:access_mode()
+  if first == self.object then return before_mode:classify_access_modes(after_mode, request) end
+  return Mem.MemObjectPairUnproven("distinct objects lack a disjointness proof")
+end
+function Mem.MemDependenceAccess:classify_dependence(request) return self.object:classify_object_pair(request, request.after.object) end
+function Mem.MemObjectPairIndependent:dependence_result(request)
+  local before, after = request.before.access.id, request.after.access.id
+  local fact
+  if request.before.loop then fact = Mem.MemNoLoopCarriedDependence(before, after, request.before.loop, self.proof)
+  else fact = Mem.MemNoDependence(before, after, self.proof) end
+  return Mem.MemDependenceClassified(fact, self)
+end
+function Mem.MemObjectPairDependent:dependence_result(request)
+  local before, after = request.before.access.id, request.after.access.id
+  if request.before.loop then return Mem.MemDependenceClassified(Mem.MemLoopCarriedDependence(before, after, request.before.loop, self.reason), self) end
+  return Mem.MemDependenceClassified(Mem.MemDependenceUnknown(before, after, self.reason), self)
+end
+function Mem.MemObjectPairUnproven:dependence_result(request)
+  return Mem.MemDependenceClassified(Mem.MemDependenceUnknown(request.before.access.id, request.after.access.id, self.reason), self)
+end
+function Mem.MemDependenceRequest:classify() return self.before:classify_dependence(self):dependence_result(self) end
+
+----------------------------------------------------------------------
+-- compute_mem: immutable composition over instruction transfer leaves
+----------------------------------------------------------------------
+
+function Mem.MemObjectsSameLen:relation_contribution() return Mem.MemRelationNone end
+function Mem.MemObjectWindowOf:relation_contribution() return Mem.MemRelationNone end
+function Mem.MemObjectSliceOf:relation_contribution() return Mem.MemRelationNone end
+function Mem.MemObjectSameStore:relation_contribution() return Mem.MemRelationSameStore(Mem.MemSameStoreEntry(self.a, self.b, self.proof)) end
+function Mem.MemRelationNone:append_same_store(entries) return entries end
+function Mem.MemRelationSameStore:append_same_store(entries) return append_one(entries, self.entry) end
+
+local function object_id_for(role, text) return Mem.MemObjectId(role .. ":" .. sanitize(text)) end
+local function append_unique_object(objects, fact)
+  for _, existing in ipairs(objects) do if existing.id == fact.id then return objects end end
+  return append_one(objects, fact)
+end
+local function loop_for_block(graph, func, block)
+  for _, fg in ipairs(graph.funcs) do
+    if fg.func == func then
+      for _, loop in ipairs(fg.loops) do
+        for _, member in ipairs(loop.body) do if member.block == block then return loop.id end end
+      end
+    end
+  end
+end
+local function module_memory_objects(module)
+  local objects, globals, data = {}, {}, {}
+  for _, item in ipairs(module.data) do
+    local id = object_id_for("data", item.id.text)
+    objects = append_one(objects, Mem.MemObjectFact(id, nil, Mem.MemObjectData, Mem.MemProvData(item.id), Code.CodeTyInt(8, Code.CodeUnsigned), Mem.MemExtentBytes(item.size, Mem.MemExtentByConstruction), Mem.MemStrideUnit))
+    data = append_one(data, Mem.MemDataObjectEntry(item.id, id))
+  end
+  for _, item in ipairs(module.globals) do
+    local id = object_id_for("global", item.id.text)
+    objects = append_one(objects, Mem.MemObjectFact(id, nil, Mem.MemObjectGlobal, Mem.MemProvGlobal(item.id), item.ty:memory_object_elem_type(), Mem.MemExtentUnknown(Mem.MemExtentDynamicAllocation), Mem.MemStrideUnit))
+    globals = append_one(globals, Mem.MemGlobalObjectEntry(item.id, id))
+  end
+  return Mem.MemModuleObjects(objects, globals, data)
+end
+
+local function initial_function_facet(func, module_objects)
+  local values, locals, objects = {}, {}, module_objects
+  for _, param in ipairs(func.params) do
+    local id = object_id_for(func.name .. ":param", param.value.text)
+    values = append_one(values, Mem.MemValueObjectEntry(param.value, id))
+    objects = append_unique_object(objects, Mem.MemObjectFact(id, func.id, Mem.MemObjectParam, Mem.MemProvValue(param.value), param.ty:memory_object_elem_type(), Mem.MemExtentUnknown(Mem.MemExtentOpaquePointer(param.value.text)), Mem.MemStrideUnit))
+  end
+  for _, local_decl in ipairs(func.locals) do
+    local id = object_id_for(func.name .. ":local", local_decl.id.text)
+    locals = append_one(locals, Mem.MemLocalObjectEntry(local_decl.id, id))
+    objects = append_unique_object(objects, Mem.MemObjectFact(id, func.id, Mem.MemObjectLocal, Mem.MemProvLocal(local_decl.id), local_decl.ty:memory_object_elem_type(), Mem.MemExtentUnknown(Mem.MemExtentDynamicAllocation), Mem.MemStrideUnit))
+  end
+  return Mem.MemTransferFacet(values, locals, {}, {}, {}, objects, {}, {}, {}, {}, {}, {}, {})
+end
+
+function Mem.MemValueObjectMissing:add_contract_disjoint(other, source, entries) return entries end
+function Mem.MemValueObjectFound:add_contract_disjoint(other, source, entries) return other:add_contract_disjoint_from(self.object, source, entries) end
+function Mem.MemValueObjectMissing:add_contract_disjoint_from(first, source, entries) return entries end
+function Mem.MemValueObjectFound:add_contract_disjoint_from(first, source, entries)
+  local proof = Mem.MemProofContract(source, Mem.MemContractNoAlias("disjoint", source.fact.a.text))
+  return append_one(entries, Mem.MemDisjointEntry(first, self.object, proof))
+end
+function Mem.MemObjectMissing:append_access_mode(access, entries) return entries end
+function Mem.MemObjectFound:append_access_mode(access, entries)
+  local proof = Mem.MemProofBackend(access.access.id, Mem.MemBackendNativeAlignment(access.access.access.align))
+  return append_one(entries, Mem.MemAccessModeEntry(self.object, access.access.op:access_mode(), proof))
+end
+local function relation_projection(facet, contracts, func)
+  local same_store = {}
+  for _, relation in ipairs(facet.relations) do same_store = relation:relation_contribution():append_same_store(same_store) end
+  local disjoint = {}
+  for _, entry in ipairs(contracts.disjoint) do
+    if entry.func == func then disjoint = find_value_object(facet.values, entry.a):add_contract_disjoint(find_value_object(facet.values, entry.b), entry.source, disjoint) end
+  end
+  local modes = {}
+  for _, access in ipairs(facet.dependence_accesses) do modes = access.object:append_access_mode(access, modes) end
+  return Mem.MemRelationProjection(same_store, disjoint, modes)
+end
+
+function Mem.MemDependenceClassified:append_dependence(accumulation) return Mem.MemDependenceAccumulation(append_one(accumulation.facts, self.fact), accumulation.proofs) end
+function Mem.MemDependenceNotComparable:append_dependence(accumulation) return accumulation end
+local function classify_dependences(facet, projection)
+  local accumulation = Mem.MemDependenceAccumulation({}, facet.proofs)
+  for i = 1, #facet.dependence_accesses do
+    for j = i + 1, #facet.dependence_accesses do
+      local before, after = facet.dependence_accesses[i], facet.dependence_accesses[j]
+      if before.loop and after.loop and before.loop == after.loop then accumulation = Mem.MemDependenceRequest(before, after, projection):classify():append_dependence(accumulation) end
+    end
+  end
+  return accumulation
+end
+
+function Mem.MemValueObjectMissing:append_readonly_effect(source, effects) return effects end
+function Mem.MemValueObjectFound:append_readonly_effect(source, effects)
+  local proof = Mem.MemProofContract(source, Mem.MemContractReadonly("readonly", source.fact.base.text))
+  return append_one(effects, Mem.MemObjectReadonly(self.object, proof))
+end
+function Mem.MemValueObjectMissing:append_writeonly_effect(source, effects) return effects end
+function Mem.MemValueObjectFound:append_writeonly_effect(source, effects)
+  local proof = Mem.MemProofContract(source, Mem.MemContractNoAlias("writeonly", source.fact.base.text))
+  return append_one(effects, Mem.MemObjectWriteonly(self.object, proof))
+end
+local function contract_object_effects(facet, projection, func)
+  local effects = {}
+  for _, entry in ipairs(projection.readonly) do if entry.func == func then effects = find_value_object(facet.values, entry.base):append_readonly_effect(entry.source, effects) end end
+  for _, entry in ipairs(projection.writeonly) do if entry.func == func then effects = find_value_object(facet.values, entry.base):append_writeonly_effect(entry.source, effects) end end
+  return effects
+end
+
+local function compute_mem_semantic(module, graph, flow, values, contracts)
+  local contract_projection = contracts:project_memory_contract()
+  local module_projection = module_memory_objects(module)
+  local objects, accesses, intervals, safety, effects, dependences, relations, backend, proofs = module_projection.objects, {}, {}, {}, {}, {}, {}, {}, {}
+  for _, func in ipairs(module.funcs) do
+    local facet = initial_function_facet(func, module_projection.objects)
+    for _, block in ipairs(func.blocks) do
+      local loop = loop_for_block(graph, func.id, block.id)
+      for _, inst in ipairs(block.insts) do facet = inst.op:transfer_memory(Mem.MemInstructionTransferInput(func, block, inst, loop, module_projection.globals, module_projection.data, facet)):next_facet() end
+    end
+    local projection = relation_projection(facet, contract_projection, func.id)
+    local function_dependences = classify_dependences(facet, projection)
+    for _, fact in ipairs(facet.objects) do objects = append_unique_object(objects, fact) end
+    accesses, intervals, safety = append_all(accesses, facet.accesses), append_all(intervals, facet.intervals), append_all(safety, facet.safety)
+    effects = append_all(effects, contract_object_effects(facet, contract_projection, func.id))
+    dependences, relations = append_all(dependences, function_dependences.facts), append_all(relations, facet.relations)
+    backend, proofs = append_all(backend, facet.backend), append_all(proofs, function_dependences.proofs)
+  end
+  return Mem.MemSemanticFactSet(module.id, objects, {}, accesses, intervals, safety, effects, dependences, relations, backend, proofs)
+end
+
+function Graph.CodeGraph:compute_mem(module, flow, values, contracts) return compute_mem_semantic(module, self, flow, values, contracts) end

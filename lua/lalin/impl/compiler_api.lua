@@ -4,6 +4,7 @@
 local T = require("lalin.schema_v2")
 local Compiler = require("lalin.schema_v2.compiler")
 local Sem = require("lalin.schema_v2.sem")
+local Code = require("lalin.schema_v2.code")
 
 -- Ensure all phase methods are installed
 require("lalin.impl.tree_surface")
@@ -30,13 +31,15 @@ require("lalin.impl.exec_plan")
 local CodeValidation = require("lalin.schema_v2.code_validation")
 
 local function compile_validated(input)
-  local code_module, contracts = input.module, input.contracts
+  local code_module = input.module
+  local contracts = Code.CodeContractFactSet(code_module.id, input.contracts)
   local graph_ok, graph = pcall(function() return code_module:build_graph() end)
   if not graph_ok then return Compiler.CompilerArtifactError("build_graph: " .. tostring(graph)) end
   local flow = graph:compute_flow(code_module)
   local values = graph:compute_values(code_module, flow)
   local mem = graph:compute_mem(code_module, flow, values, contracts)
-  local effects = graph:compute_effects(code_module, mem, contracts)
+  local effect_analysis = graph:compute_effect_analysis(code_module, mem, contracts)
+  local effects = effect_analysis.facts
   local kernels = mem:plan_kernels(flow, values, mem, effects)
   local schedules = kernels:plan_schedules(code_module, flow, values, mem, effects)
   local lower_plan = code_module:plan_lowering(graph, kernels, schedules)

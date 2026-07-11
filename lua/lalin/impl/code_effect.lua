@@ -22,198 +22,257 @@ local function access_id_text(func, block, inst)
 end
 
 ----------------------------------------------------------------------
--- Leaf methods on CodeContractFact for effect classification
+-- CodeContractFact effect leaves return typed immutable results
 ----------------------------------------------------------------------
 
-function Code.CodeContractFact:code_effect_entry_effects(out, func_id, proof)
+local function contract_evidence(input)
+  local proof = Mem.MemProofContract(input.source, Mem.MemContractBounds("effect contract"))
+  return Effect.EffectEvidenceContract(input.source, proof)
 end
-
-function Code.CodeContractReadonly:code_effect_entry_effects(out, func_id, proof)
-  local effects = out[func_id.text]
-  if effects == nil then effects = {}; out[func_id.text] = effects end
-  effects[#effects + 1] = Effect.EffectRead(Effect.EffectObjectStore(self.base), proof)
-  effects[#effects + 1] = Effect.EffectNoEscape(self.base, "readonly contract value does not escape through writes")
+local function contract_no_effect(input, reason) return Effect.ContractNoEffect(Effect.EffectEvidenceDeclared(reason)) end
+function Code.CodeContractBounds:contract_effect(input) return contract_no_effect(input, "bounds contract has no runtime effect") end
+function Code.CodeContractProjectionBounds:contract_effect(input) return contract_no_effect(input, "projection bounds contract has no runtime effect") end
+function Code.CodeContractWindowBounds:contract_effect(input) return contract_no_effect(input, "window bounds contract has no runtime effect") end
+function Code.CodeContractDisjoint:contract_effect(input) return contract_no_effect(input, "disjointness is alias evidence") end
+function Code.CodeContractSameLen:contract_effect(input) return contract_no_effect(input, "same-length is shape evidence") end
+function Code.CodeContractSoAComponent:contract_effect(input) return contract_no_effect(input, "SoA component is layout evidence") end
+function Code.CodeContractNoAlias:contract_effect(input)
+  return Effect.ContractEffects({ Effect.EffectNoEscape(self.base, contract_evidence(input)) })
 end
-
-function Code.CodeContractWriteonly:code_effect_entry_effects(out, func_id, proof)
-  local effects = out[func_id.text]
-  if effects == nil then effects = {}; out[func_id.text] = effects end
-  effects[#effects + 1] = Effect.EffectWrite(Effect.EffectObjectStore(self.base), proof)
+function Code.CodeContractReadonly:contract_effect(input)
+  local evidence = contract_evidence(input)
+  return Effect.ContractEffects({ Effect.EffectRead(Effect.EffectObjectStore(self.base), evidence), Effect.EffectNoEscape(self.base, evidence) })
 end
-
-function Code.CodeContractNoAlias:code_effect_entry_effects(out, func_id, proof)
-  local effects = out[func_id.text]
-  if effects == nil then effects = {}; out[func_id.text] = effects end
-  effects[#effects + 1] = Effect.EffectNoEscape(self.base, "noalias/noescape contract boundary")
+function Code.CodeContractWriteonly:contract_effect(input)
+  return Effect.ContractEffects({ Effect.EffectWrite(Effect.EffectObjectStore(self.base), contract_evidence(input)) })
 end
-
-function Code.CodeContractInvalidate:code_effect_entry_effects(out, func_id, proof)
-  local effects = out[func_id.text]
-  if effects == nil then effects = {}; out[func_id.text] = effects end
-  effects[#effects + 1] = Effect.EffectInvalidate(Effect.EffectObjectStore(self.base), "invalidate contract boundary")
+function Code.CodeContractProjectionReadonly:contract_effect(input)
+  return Effect.ContractEffects({ Effect.EffectRead(Effect.EffectObjectUnknown("readonly contract projection"), contract_evidence(input)) })
 end
-
-function Code.CodeContractPreserve:code_effect_entry_effects(out, func_id, proof)
-  local effects = out[func_id.text]
-  if effects == nil then effects = {}; out[func_id.text] = effects end
-  effects[#effects + 1] = Effect.EffectRetain(self.base, "preserve contract boundary")
+function Code.CodeContractProjectionWriteonly:contract_effect(input)
+  return Effect.ContractEffects({ Effect.EffectWrite(Effect.EffectObjectUnknown("writeonly contract projection"), contract_evidence(input)) })
 end
-
-function Code.CodeContractRejected:code_effect_entry_effects(out, func_id, proof)
-  local effects = out[func_id.text]
-  if effects == nil then effects = {}; out[func_id.text] = effects end
-  effects[#effects + 1] = Effect.EffectUnknown(self.reason)
+function Code.CodeContractInvalidate:contract_effect(input)
+  return Effect.ContractEffects({ Effect.EffectInvalidate(Effect.EffectObjectStore(self.base), contract_evidence(input)) })
 end
-
-local function contract_entry_effects(contracts)
-  local out = {}
-  for _, f in ipairs(contracts and contracts.facts or {}) do
-    local proof = Mem.MemProofContract(f, Mem.MemContractBounds("contract normalized into explicit effect fact"))
-    f.fact:code_effect_entry_effects(out, f.func, proof)
+function Code.CodeContractPreserve:contract_effect(input)
+  return Effect.ContractEffects({ Effect.EffectRetain(self.base, contract_evidence(input)) })
+end
+function Code.CodeContractRejected:contract_effect(input)
+  return Effect.ContractEffects({ Effect.EffectUnknown(Effect.EffectEvidenceConservative(self.reason)) })
+end
+function Code.CodeFuncContractFact:contract_effect() return self.fact:contract_effect(Effect.ContractEffectInput(self)) end
+function Code.CodeContractFactSet:project_contract_effects()
+  local entries = {}
+  for _, source in ipairs(self.facts) do
+    local next_entries = {}
+    for i = 1, #entries do next_entries[i] = entries[i] end
+    next_entries[#next_entries + 1] = Effect.ContractEffectEntry(source.func, source:contract_effect())
+    entries = next_entries
   end
+  return Effect.ContractEffectProjection(entries)
+end
+
+
+----------------------------------------------------------------------
+-- Complete call-target summaries
+----------------------------------------------------------------------
+
+function Effect.FunctionEffectProjection:lookup(func)
+  for _, entry in ipairs(self.functions) do if entry.func == func then return Effect.FunctionEffectFound(entry) end end
+  return Effect.FunctionEffectMissing(func)
+end
+function Effect.FunctionEffectFound:call_summary_direct(target) return self.entry.classification:call_summary_direct(target) end
+function Effect.FunctionEffectMissing:call_summary_direct(target)
+  local evidence = Effect.EffectEvidenceConservative("direct callee classification is unavailable")
+  return Effect.CallSummaryDirect(target.func, Effect.FunctionEffectUnresolved(evidence), { Effect.EffectUnknown(evidence) })
+end
+function Effect.FunctionEffectPure:call_summary_direct(target) return Effect.CallSummaryDirect(target.func, self, { Effect.EffectNoTrap(self.evidence) }) end
+function Effect.FunctionEffectful:call_summary_direct(target) return Effect.CallSummaryDirect(target.func, self, self.effects) end
+function Effect.FunctionEffectUnresolved:call_summary_direct(target) return Effect.CallSummaryDirect(target.func, self, { Effect.EffectUnknown(self.evidence) }) end
+
+function Code.CodeCallDirect:effect_summary(input) return input.functions:lookup(self.func):call_summary_direct(self) end
+function Code.CodeCallExtern:effect_summary(input)
+  local symbol = self["extern"].text
+  for _, ext in ipairs(input.module.externs) do if ext.id == self["extern"] then symbol = ext.symbol end end
+  local evidence = Effect.EffectEvidenceConservative("extern call has no declared effect contract")
+  return Effect.CallSummaryExtern(self["extern"], symbol, { Effect.EffectUnknown(evidence) })
+end
+function Code.CodeCallIndirect:effect_summary(input)
+  local evidence = Effect.EffectEvidenceConservative("indirect call target is unresolved")
+  return Effect.CallSummaryIndirect(self.callee, self.sig, { Effect.EffectUnknown(evidence) })
+end
+function Code.CodeCallClosure:effect_summary(input)
+  local evidence = Effect.EffectEvidenceConservative("closure call target is unresolved")
+  return Effect.CallSummaryClosure(self.closure, self.sig, { Effect.EffectUnknown(evidence) })
+end
+
+----------------------------------------------------------------------
+-- Instruction and terminator effect leaves
+----------------------------------------------------------------------
+
+local function append_one(xs, value)
+  local out = {}
+  for i = 1, #xs do out[i] = xs[i] end
+  out[#out + 1] = value
+  return out
+end
+local function append_all(xs, ys)
+  local out = {}
+  for i = 1, #xs do out[#out + 1] = xs[i] end
+  for i = 1, #ys do out[#out + 1] = ys[i] end
   return out
 end
 
-----------------------------------------------------------------------
--- Leaf methods on CodeCallTarget for effect summary
-----------------------------------------------------------------------
+function Mem.MemObjectFound:effect_object() return Effect.EffectObjectMem(self.object) end
+function Mem.MemObjectMissing:effect_object() return Effect.EffectObjectUnknown("memory access object is unresolved") end
+function Mem.MemProofFound:effect_evidence() return Effect.EffectEvidenceMemory(self.proof) end
+function Mem.MemProofMissing:effect_evidence() return Effect.EffectEvidenceConservative("memory proof is unavailable for " .. self.access.text) end
+function Mem.MemNonTrapping:effect_trap(evidence) return Effect.EffectNoTrap(evidence) end
+function Mem.MemCheckedTrap:effect_trap(evidence) return Effect.EffectMayTrap(evidence) end
+function Mem.MemMayTrap:effect_trap(evidence) return Effect.EffectMayTrap(evidence) end
+function Mem.MemBackendFound:effect_trap(access, evidence) return self.backend.trap:effect_trap(evidence) end
+function Mem.MemBackendMissing:effect_trap(access, evidence) return access.trap:effect_trap(evidence) end
+function Code.CodeMayTrap:effect_trap(evidence) return Effect.EffectMayTrap(evidence) end
+function Code.CodeMustNotTrap:effect_trap(evidence) return Effect.EffectNoTrap(evidence) end
+function Code.CodeCheckedTrap:effect_trap(evidence) return Effect.EffectMayTrap(evidence) end
 
-function Code.CodeCallDirect:code_effect_summary(module, contracts, pure_funcs)
-  if pure_funcs and pure_funcs[self.func.text] then
-    return Effect.CallSummary(self.func, nil, { Effect.EffectNoTrap("direct internal callee has no memory/call/trap effects") })
+function Mem.MemLoad:effects_for_access(object, evidence) return Effect.EffectAccessEffects({ Effect.EffectRead(object, evidence) }) end
+function Mem.MemStore:effects_for_access(object, evidence) return Effect.EffectAccessEffects({ Effect.EffectWrite(object, evidence) }) end
+function Mem.MemAtomicLoad:effects_for_access(object, evidence) return Effect.EffectAccessEffects({ Effect.EffectRead(object, evidence) }) end
+function Mem.MemAtomicStore:effects_for_access(object, evidence) return Effect.EffectAccessEffects({ Effect.EffectWrite(object, evidence) }) end
+function Mem.MemAtomicRmw:effects_for_access(object, evidence) return Effect.EffectAccessEffects({ Effect.EffectRead(object, evidence), Effect.EffectWrite(object, evidence) }) end
+function Mem.MemAtomicCas:effects_for_access(object, evidence) return Effect.EffectAccessEffects({ Effect.EffectRead(object, evidence), Effect.EffectWrite(object, evidence) }) end
+
+local function memory_effect(input, op, access, ordering)
+  local aid = Mem.MemAccessId(access_id_text(input.func, input.block, input.inst))
+  local object = input.memory:object_for_access(aid):effect_object()
+  local evidence = input.memory:proof_for_access(aid):effect_evidence()
+  local effects = op:effects_for_access(object, evidence).effects
+  effects = append_one(effects, input.memory:backend_for_access(aid):effect_trap(access, evidence))
+  if access.volatile then effects = append_one(effects, Effect.EffectVolatile(Effect.EffectEvidenceDeclared("volatile memory access"))) end
+  if ordering then effects = append_one(effects, Effect.EffectAtomic(ordering, Effect.EffectEvidenceDeclared("atomic memory operation"))) end
+  return Effect.EffectInstructionEffects(Effect.InstEffect(input.inst.id, effects))
+end
+function Code.CodeInstLoad:compute_effect(input) return memory_effect(input, Mem.MemLoad, self.access, self.access.ordering) end
+function Code.CodeInstStore:compute_effect(input) return memory_effect(input, Mem.MemStore, self.access, self.access.ordering) end
+function Code.CodeInstAtomicLoad:compute_effect(input) return memory_effect(input, Mem.MemAtomicLoad, self.access, self.ordering) end
+function Code.CodeInstAtomicStore:compute_effect(input) return memory_effect(input, Mem.MemAtomicStore, self.access, self.ordering) end
+function Code.CodeInstAtomicRmw:compute_effect(input) return memory_effect(input, Mem.MemAtomicRmw, self.access, self.ordering) end
+function Code.CodeInstAtomicCas:compute_effect(input) return memory_effect(input, Mem.MemAtomicCas, self.access, self.ordering) end
+function Code.CodeInstCall:compute_effect(input)
+  local summary = self.target:effect_summary(Effect.CallSummaryInput(input.module, input.functions))
+  return Effect.EffectInstructionCall(summary, Effect.InstEffect(input.inst.id, summary.effects))
+end
+function Code.CodeInstAtomicFence:compute_effect(input)
+  return Effect.EffectInstructionEffects(Effect.InstEffect(input.inst.id, { Effect.EffectAtomic(self.ordering, Effect.EffectEvidenceDeclared("atomic fence")) }))
+end
+
+local function no_instruction_effect() return Effect.EffectInstructionNone end
+function Code.CodeInstConst:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstAlias:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstUnary:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstBinary:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstFloatBinary:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstCompare:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstCast:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstSelect:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstIntrinsicVoid:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstIntrinsicValue:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstAddrOf:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstGlobalRef:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstPtrOffset:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstAggregate:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstArray:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstViewMake:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstViewData:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstViewLen:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstViewStride:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstSliceMake:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstSliceData:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstSliceLen:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstByteSpanMake:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstByteSpanData:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstByteSpanLen:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstClosure:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstVariantCtor:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstVariantTag:compute_effect(input) return no_instruction_effect() end
+function Code.CodeInstVariantPayload:compute_effect(input) return no_instruction_effect() end
+
+function Effect.FunctionEffectEmpty:append_effects(effects)
+  if #effects == 0 then return self end
+  return Effect.FunctionEffectsAccumulated(effects)
+end
+function Effect.FunctionEffectsAccumulated:append_effects(effects) return Effect.FunctionEffectsAccumulated(append_all(self.effects, effects)) end
+function Effect.FunctionEffectEmpty:classification() return Effect.FunctionEffectPure(self.evidence) end
+function Effect.FunctionEffectsAccumulated:classification() return Effect.FunctionEffectful(self.effects) end
+function Effect.EffectInstructionNone:compose(state) return state end
+function Effect.EffectInstructionEffects:compose(state)
+  return Effect.EffectFunctionComposition(state.calls, append_one(state.insts, self.effect), state.terms, state.accumulation:append_effects(self.effect.effects))
+end
+function Effect.EffectInstructionCall:compose(state)
+  return Effect.EffectFunctionComposition(append_one(state.calls, self.summary), append_one(state.insts, self.effect), state.terms, state.accumulation:append_effects(self.effect.effects))
+end
+
+function Code.CodeTermJump:compute_term_effect(input) return Effect.EffectTermNone end
+function Code.CodeTermBranch:compute_term_effect(input) return Effect.EffectTermNone end
+function Code.CodeTermSwitch:compute_term_effect(input) return Effect.EffectTermNone end
+function Code.CodeTermVariantSwitch:compute_term_effect(input) return Effect.EffectTermNone end
+function Code.CodeTermReturn:compute_term_effect(input) return Effect.EffectTermNone end
+function Code.CodeTermTrap:compute_term_effect(input)
+  return Effect.EffectTermEffects(Effect.TermEffect(input.block.id, { Effect.EffectMayTrap(Effect.EffectEvidenceDeclared(self.reason)) }))
+end
+function Code.CodeTermUnreachable:compute_term_effect(input)
+  return Effect.EffectTermEffects(Effect.TermEffect(input.block.id, { Effect.EffectMayTrap(Effect.EffectEvidenceDeclared(self.reason)) }))
+end
+function Effect.EffectTermNone:compose(state) return state end
+function Effect.EffectTermEffects:compose(state)
+  return Effect.EffectFunctionComposition(state.calls, state.insts, append_one(state.terms, self.effect), state.accumulation:append_effects(self.effect.effects))
+end
+
+function Effect.ContractEffects:append_for_function(effects) return append_all(effects, self.effects) end
+function Effect.ContractNoEffect:append_for_function(effects) return effects end
+function Effect.ContractEffectProjection:effects_for_function(func)
+  local effects = {}
+  for _, entry in ipairs(self.entries) do if entry.func == func then effects = entry.result:append_for_function(effects) end end
+  return effects
+end
+
+local function unresolved_function_projection(module)
+  local entries = {}
+  for _, func in ipairs(module.funcs) do
+    entries = append_one(entries, Effect.FunctionEffectEntry(func.id, Effect.FunctionEffectUnresolved(Effect.EffectEvidenceConservative("function analysis is in progress"))))
   end
-  return Effect.CallSummary(self.func, nil, { Effect.EffectUnknown("direct call effects require callee summary") })
+  return Effect.FunctionEffectProjection(entries)
 end
-
-function Code.CodeCallExtern:code_effect_summary(module, contracts, pure_funcs)
-  local name = self["extern"].text
-  for _, ext in ipairs(module.externs or {}) do if ext.id == self["extern"] then name = ext.symbol or ext.name or name end end
-  return Effect.CallSummary(nil, name, { Effect.EffectUnknown("extern call has unknown effects without a contract summary") })
-end
-
-function Code.CodeCallIndirect:code_effect_summary(module, contracts, pure_funcs)
-  return Effect.CallSummary(nil, nil, { Effect.EffectUnknown("indirect call target is unknown") })
-end
-
-function Code.CodeCallClosure:code_effect_summary(module, contracts, pure_funcs)
-  return Effect.CallSummary(nil, nil, { Effect.EffectUnknown("closure call target is unknown") })
-end
-
-----------------------------------------------------------------------
--- Mem non-trapping check
-----------------------------------------------------------------------
-
-function Mem.MemTrap:code_effect_is_non_trapping() return false end
-function Mem.MemNonTrapping:code_effect_is_non_trapping() return true end
-
-----------------------------------------------------------------------
--- internal helpers
-----------------------------------------------------------------------
-
-local function pure_internal_functions(module)
-  local pure = {}
-  for _, func in ipairs(module.funcs or {}) do
-    local ok = true
-    for _, block in ipairs(func.blocks or {}) do
-      for _, inst in ipairs(block.insts or {}) do
-        local op = inst.op
-        if rawget(op, "access") ~= nil or rawget(op, "target") ~= nil or rawget(op, "ordering") ~= nil then
-          ok = false
-        end
+function Effect.EffectAnalysisRequest:analyze()
+  local memory = self.memory:project_accesses()
+  local contract_projection = self.contracts:project_contract_effects()
+  local function_inputs = unresolved_function_projection(self.module)
+  local calls, insts, terms, classifications = {}, {}, {}, {}
+  for _, func in ipairs(self.module.funcs) do
+    local empty = Effect.FunctionEffectEmpty(Effect.EffectEvidenceDeclared("function has no observable effects"))
+    local state = Effect.EffectFunctionComposition({}, {}, {}, empty)
+    for _, block in ipairs(func.blocks) do
+      for _, inst in ipairs(block.insts) do
+        local input = Effect.EffectInstructionInput(self.module, func, block, inst, memory, function_inputs)
+        state = inst.op:compute_effect(input):compose(state)
       end
-      local term_op = block.term and block.term.op or nil
-      if term_op ~= nil and (rawget(term_op, "reason") ~= nil) then ok = false end
+      state = block.term.op:compute_term_effect(Effect.EffectTermInput(func, block, block.term, contract_projection)):compose(state)
     end
-    if ok then pure[func.id.text] = true end
-  end
-  return pure
-end
-
-local function inst_effects(module, mem, contracts)
-  local mem_projection = nil
-  -- access projection from mem facts
-  if mem ~= nil then
-    local p = Mem.MemAccessProjection({}, {}, {}, {})
-    for _, access in ipairs(mem.accesses or {}) do p.access_by_id[access.id.text] = access end
-    for _, interval in ipairs(mem.intervals or {}) do p.object_by_access[interval.access.text] = interval.object end
-    for _, info in ipairs(mem.backend_info or {}) do p.backend_by_access[info.access.text] = info end
-    for _, proof in ipairs(mem.proofs or {}) do proof:code_mem_projection_index(p) end
-    mem_projection = p
-  end
-  local pure_funcs = pure_internal_functions(module)
-  local insts, calls = {}, {}
-  for _, func in ipairs(module.funcs or {}) do
-    for _, block in ipairs(func.blocks or {}) do
-      for _, inst in ipairs(block.insts or {}) do
-        local k = inst.op
-        local effects = {}
-        if rawget(k, "access") ~= nil then
-          local aid = access_id_text(func, block, inst)
-          local obj = mem_projection and mem_projection:object_for_access(aid) or nil
-          local proof = mem_projection and mem_projection:proof_for_access(aid) or nil
-          local eobj = obj and Effect.EffectObjectMem(obj) or Effect.EffectObjectUnknown("memory access object is unknown")
-          if rawget(k, "dst") ~= nil and rawget(k, "value") == nil then
-            -- Load/AtomicLoad
-            effects[#effects + 1] = Effect.EffectRead(eobj, proof)
-          elseif rawget(k, "value") ~= nil and rawget(k, "replacement") == nil then
-            -- Store/AtomicStore
-            effects[#effects + 1] = Effect.EffectWrite(eobj, proof)
-          else
-            -- AtomicRmw/AtomicCas — both read and write
-            effects[#effects + 1] = Effect.EffectRead(eobj, proof)
-            effects[#effects + 1] = Effect.EffectWrite(eobj, proof)
-          end
-          local backend = mem_projection and mem_projection:backend_for_access(aid) or nil
-          if backend ~= nil and backend.trap:code_effect_is_non_trapping() then
-            effects[#effects + 1] = Effect.EffectNoTrap(backend.trap.reason or "memory backend info proves non-trapping")
-          elseif k.access.trap == Code.CodeMustNotTrap then
-            effects[#effects + 1] = Effect.EffectNoTrap("Code memory access is marked must-not-trap")
-          else
-            effects[#effects + 1] = Effect.EffectMayTrap("memory access may trap")
-          end
-          if k.access.volatile then effects[#effects + 1] = Effect.EffectVolatile("volatile memory access") end
-          if rawget(k, "ordering") ~= nil then effects[#effects + 1] = Effect.EffectAtomic(tostring(k.ordering or k.access.ordering or "atomic")) end
-        elseif rawget(k, "target") ~= nil then
-          local summary = k.target:code_effect_summary(module, contracts, pure_funcs)
-          calls[#calls + 1] = summary
-          for _, eff in ipairs(summary.effects or {}) do effects[#effects + 1] = eff end
-        elseif rawget(k, "ordering") ~= nil then
-          effects[#effects + 1] = Effect.EffectAtomic(tostring(k.ordering or "fence"))
-        end
-        if #effects > 0 then insts[#insts + 1] = Effect.InstEffect(inst.id, effects) end
-      end
+    local contract_effects = contract_projection:effects_for_function(func.id)
+    if #contract_effects > 0 then
+      local entry_effect = Effect.TermEffect(func.entry, contract_effects)
+      state = Effect.EffectFunctionComposition(state.calls, state.insts, append_one(state.terms, entry_effect), state.accumulation:append_effects(contract_effects))
     end
+    calls, insts, terms = append_all(calls, state.calls), append_all(insts, state.insts), append_all(terms, state.terms)
+    classifications = append_one(classifications, Effect.FunctionEffectEntry(func.id, state.accumulation:classification()))
   end
-  return calls, insts
+  local facts = Effect.EffectFactSet(self.module.id, calls, insts, terms)
+  return Effect.EffectAnalysisResult(facts, Effect.FunctionEffectProjection(classifications))
 end
 
-local function term_effects(module, contracts)
-  local terms = {}
-  local entry_effects = contract_entry_effects(contracts)
-  for _, func in ipairs(module.funcs or {}) do
-    local effects = entry_effects[func.id.text]
-    if effects ~= nil and #effects > 0 then terms[#terms + 1] = Effect.TermEffect(func.entry, effects) end
-    for _, block in ipairs(func.blocks or {}) do
-      local term = block.term and block.term.op or nil
-      if term ~= nil then
-        if rawget(term, "reason") ~= nil and rawget(term, "dest") == nil and rawget(term, "cond") == nil and rawget(term, "values") == nil then
-          terms[#terms + 1] = Effect.TermEffect(block.id, { Effect.EffectMayTrap(term.reason or "explicit trap/unreachable terminator") })
-        end
-      end
-    end
-  end
-  return terms
+function Graph.CodeGraph:compute_effect_analysis(module, mem, contracts)
+  return Effect.EffectAnalysisRequest(module, self, mem, contracts):analyze()
 end
-
-----------------------------------------------------------------------
--- compute_effects: entry point
-----------------------------------------------------------------------
-
-local function compute_effect_facts(module, graph, mem, contracts)
-  local calls, insts = inst_effects(module, mem, contracts)
-  return Effect.EffectFactSet(module.id, calls, insts, term_effects(module, contracts))
-end
-
-function Graph.CodeGraph:compute_effects(module, mem, contracts)
-  return compute_effect_facts(module, self, mem, contracts)
-end
+function Graph.CodeGraph:compute_effects(module, mem, contracts) return self:compute_effect_analysis(module, mem, contracts).facts end
