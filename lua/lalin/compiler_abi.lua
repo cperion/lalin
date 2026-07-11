@@ -46,15 +46,7 @@ local function bind_context(T)
         local module_ok = check_field(issues, code_result.module, "module", Code.CodeModule, "LalinCode.CodeModule")
         check_field(issues, code_result.layout_env, "layout_env", Sem.LayoutEnv, "LalinSem.LayoutEnv")
 
-        if type(code_result.contracts) ~= "table" or asdl.classof(code_result.contracts) then
-            add(issues, Compiler.CodeResultIssueInvalidField("contracts", "LalinCode.CodeFuncContractFact[]", class_name(code_result.contracts)))
-        else
-            for i = 1, #code_result.contracts do
-                if asdl.classof(code_result.contracts[i]) ~= Code.CodeFuncContractFact then
-                    add(issues, Compiler.CodeResultIssueInvalidField("contracts[" .. tostring(i) .. "]", "LalinCode.CodeFuncContractFact", class_name(code_result.contracts[i])))
-                end
-            end
-        end
+        check_field(issues, code_result.contracts, "contracts", Code.CodeContractFactSet, "LalinCode.CodeContractFactSet")
 
         if module_ok then
             local code_issues = TreeToCode:code_validation_issues(code_result.module, opts.collector)

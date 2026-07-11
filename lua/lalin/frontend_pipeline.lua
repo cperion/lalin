@@ -99,11 +99,10 @@ local function bind_context(T)
         local lowering = TreeToCode:module_result(resolved, { layout_env = layout_env, target = target, module_id = opts.module_id })
         local code_module = lowering.code_module
         local code_contract_set = lowering.contracts
-        local code_contracts = code_contract_set.facts
-        progress(process_ctx, "tree_lower", { code_module = code_module, code_contracts = code_contracts, code_contract_set = code_contract_set, target = is_c and "c" or "back" })
+        progress(process_ctx, "tree_lower", { code_module = code_module, code_contracts = code_contract_set.facts, code_contract_set = code_contract_set, target = is_c and "c" or "back" })
         local code_issues = TreeToCode:code_validation_issues(code_module, collector)
         progress(process_ctx, "code_validate", { issues = code_issues, target = is_c and "c" or "back" })
-        return T.LalinCompiler.CodeResult(code_module, code_contracts, layout_env)
+        return T.LalinCompiler.CodeResult(code_module, code_contract_set, layout_env)
     end
 
     local function code_result_to_c(code_result, opts)

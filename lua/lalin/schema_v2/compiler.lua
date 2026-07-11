@@ -28,7 +28,7 @@ return schema. LalinCompiler {
   product. CodeResult {
     interned,
     field. module [LalinCode.CodeModule],
-    contracts [many [LalinCode.CodeFuncContractFact]],
+    contracts [LalinCode.CodeContractFactSet],
     layout_env [LalinSem.LayoutEnv],
   },
   product. CompilerCBackendResult {

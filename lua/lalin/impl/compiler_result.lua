@@ -55,15 +55,7 @@ local function validate_code_result(code_result, opts)
   local module_ok = check_field(issues, code_result.module, "module", Code.CodeModule, "LalinCode.CodeModule")
   check_field(issues, code_result.layout_env, "layout_env", Sem.LayoutEnv, "LalinSem.LayoutEnv")
 
-  if type(code_result.contracts) == "table" and not asdl.classof(code_result.contracts) then
-    for i = 1, #code_result.contracts do
-      if asdl.classof(code_result.contracts[i]) ~= Code.CodeFuncContractFact then
-        add(issues, Compiler.CodeResultIssueInvalidField("contracts["..tostring(i).."]", "LalinCode.CodeFuncContractFact", class_name(code_result.contracts[i])))
-      end
-    end
-  elseif code_result.contracts ~= nil then
-    add(issues, Compiler.CodeResultIssueInvalidField("contracts", "LalinCode.CodeFuncContractFact[]", class_name(code_result.contracts)))
-  end
+  check_field(issues, code_result.contracts, "contracts", Code.CodeContractFactSet, "LalinCode.CodeContractFactSet")
 
   if module_ok then
     local code_report = CodeValidate.validate(code_result.module)
