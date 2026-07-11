@@ -832,9 +832,9 @@ Release-level gates:
 | history | ABI-STATE | P0 | ABI-SIG | Cross-unit isolation | integrated `f7ba18a`; approved |
 | history | CMP-1 | P1 | none | Compiler-process contracts | integrated `7b983824`; approved |
 | history | M0.1 | P0 | CMP-1 | Refreshed failure ledger/baseline | complete at `af80ae43` source |
-| current-A | AUX-FUNC-ABI | P1 | M0 refresh | ABI harness classification | ready |
-| current-B | AUX-TYPE-C | P1 | M0 refresh | Canonical type-to-C test | ready |
-| current-C | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | ready |
+| current-A | AUX-FUNC-ABI | P1 | M0 refresh | ABI harness classification | working `w4:p1K` |
+| current-B | AUX-TYPE-C | P1 | M0 refresh | Canonical type-to-C test | review `bfbdf4569` by `w4:p6` |
+| current-C | AUX-CLOSURE-NAME | P1 | M0 refresh | Module-name method binding | working `w4:p1M` |
 | 4 | LNG-DIAG | P1 | M0 refresh | Unsupported control diagnostics | planned |
 | 5 | LNG-LOOP-C | P1 | integrated stencil/layout | Parsed loop GCC matrix | planned |
 | 6 | LNG-EXT-C | P1 | AUX ABI/type | Extern/builder/HostEval GCC | planned |
