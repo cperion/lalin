@@ -383,7 +383,7 @@ Release-level gates:
 | TYP-1 | P0 | none | Typed frontend target projection | integrated | `1750e4ce5`; approved by `w4:p6` |
 | TYP-OWN | P0 | none | Check/lower schema ownership | ready | — |
 | ABI-SIG | P0 | LAY-1 | Required code signature projection | integrated | `c95973fd5`; approved by `w4:p6` |
-| ABI-STATE | P0 | ABI-SIG vocabulary | Cross-unit lowering isolation | ready | — |
+| ABI-STATE | P0 | ABI-SIG vocabulary | Cross-unit lowering isolation | working | `pack/abi-state` (`w4:p1B`) |
 | LJBC-STENCIL | P1 | STN-SCHED | LuaJIT stencil artifact payload | ready | — |
 | CMP-1 | P1 | none | Compiler-process contracts | ready | — |
 | M0.1 | P0 | none | Failure ledger and focused reproducers | ready | — |
