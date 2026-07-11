@@ -126,6 +126,132 @@ return schema. LalinCMat {
       issues [many [LalinCMat.CMatMaterializationIssue]],
     },
   },
+  product. CMatCEmissionInput {
+    interned,
+    module_name [str],
+    symbol [str],
+    target [LalinC.CBackendTarget],
+  },
+  sum. CMatCEmissionIssue {
+    CMatCEmissionMaterializationIssue { variant_unique, issue [LalinCMat.CMatMaterializationIssue], },
+    CMatCEmissionUnsupportedProducer { variant_unique, producer [LalinStencil.StencilProducerShape], reason [str], },
+    CMatCEmissionUnsupportedAccess { variant_unique, access [LalinStencil.StencilAccess], reason [str], },
+    CMatCEmissionUnsupportedStream { variant_unique, stream [LalinStencil.StencilStreamDef], reason [str], },
+    CMatCEmissionUnsupportedSink { variant_unique, sink [LalinStencil.StencilSinkDef], reason [str], },
+    CMatCEmissionUnsupportedPoint { variant_unique, field. expr [LalinStencil.StencilPointExpr], reason [str], },
+    CMatCEmissionUnsupportedValue { variant_unique, field. value [LalinValue.ValueExpr], reason [str], },
+    CMatCEmissionInvalidKernel { variant_unique, reason [str], },
+    CMatCEmissionValidationRejected { variant_unique, issues [many [LalinC.CBackendValidationIssue]], },
+  },
+  sum. CMatCEmission {
+    CMatCEmitted { variant_unique, field. unit [LalinC.CBackendUnit], },
+    CMatCRejected { variant_unique, issues [many [LalinCMat.CMatCEmissionIssue]], },
+  },
+
+  product. CMatCAccessCEntry {
+    interned,
+    access [LalinStencil.StencilAccessRef],
+    binding [LalinCMat.CMatAccessBinding],
+    param [LalinC.CBackendLocal],
+    stride [number],
+  },
+  product. CMatCAccessCProjection { interned, entries [many [LalinCMat.CMatCAccessCEntry]], },
+  sum. CMatCAccessCLookup {
+    CMatCAccessCFound { variant_unique, entry [LalinCMat.CMatCAccessCEntry], },
+    CMatCAccessCMissing { variant_unique, access [LalinStencil.StencilAccessRef], },
+  },
+  sum. CMatCAccessCBindingResult {
+    CMatCAccessCBindingReady { variant_unique, entry [LalinCMat.CMatCAccessCEntry], },
+    CMatCAccessCBindingRejected { variant_unique, issue [LalinCMat.CMatCEmissionIssue], },
+  },
+  sum. CMatCAccessCCollection {
+    CMatCAccessCCollectionReady { variant_unique, entries [many [LalinCMat.CMatCAccessCEntry]], },
+    CMatCAccessCCollectionRejected { variant_unique, issues [many [LalinCMat.CMatCEmissionIssue]], },
+  },
+
+  product. CMatCStreamDefEntry { interned, stream [LalinStencil.StencilStreamRef], def [LalinStencil.StencilStreamDef], },
+  product. CMatCStreamDefProjection { interned, entries [many [LalinCMat.CMatCStreamDefEntry]], },
+  sum. CMatCStreamDefLookup {
+    CMatCStreamDefFound { variant_unique, entry [LalinCMat.CMatCStreamDefEntry], },
+    CMatCStreamDefMissing { variant_unique, stream [LalinStencil.StencilStreamRef], },
+  },
+  product. CMatCSinkDefEntry { interned, sink [LalinStencil.StencilSinkRef], def [LalinStencil.StencilSinkDef], },
+  product. CMatCSinkDefProjection { interned, entries [many [LalinCMat.CMatCSinkDefEntry]], },
+  sum. CMatCSinkDefLookup {
+    CMatCSinkDefFound { variant_unique, entry [LalinCMat.CMatCSinkDefEntry], },
+    CMatCSinkDefMissing { variant_unique, sink [LalinStencil.StencilSinkRef], },
+  },
+  product. CMatCStreamValueEntry {
+    interned,
+    field. name [str],
+    stream [LalinStencil.StencilStreamRef],
+    local_id [LalinC.CBackendLocalId],
+    field. ty [LalinC.CBackendType],
+  },
+  product. CMatCStreamValueProjection { interned, entries [many [LalinCMat.CMatCStreamValueEntry]], },
+  sum. CMatCStreamValueLookup {
+    CMatCStreamValueFound { variant_unique, entry [LalinCMat.CMatCStreamValueEntry], },
+    CMatCStreamValueMissing { variant_unique, field. name [str], },
+  },
+
+  product. CMatCFunctionState {
+    interned,
+    index [LalinC.CBackendLocalId],
+    index_ty [LalinC.CBackendType],
+    accesses [LalinCMat.CMatCAccessCProjection],
+    stream_defs [LalinCMat.CMatCStreamDefProjection],
+    sink_defs [LalinCMat.CMatCSinkDefProjection],
+    values [LalinCMat.CMatCStreamValueProjection],
+    locals [many [LalinC.CBackendLocal]],
+    entry_stmts [many [LalinC.CBackendStmt]],
+    body_stmts [many [LalinC.CBackendStmt]],
+    helpers [many [LalinC.CBackendHelperUse]],
+    next_local [number],
+  },
+  product. CMatCLocalAllocation { interned, state [LalinCMat.CMatCFunctionState], c_local [LalinC.CBackendLocal], },
+  product. CMatCHelperAllocation { interned, state [LalinCMat.CMatCFunctionState], helper [LalinC.CBackendHelperId], },
+  product. CMatCDefProjections {
+    interned,
+    streams [LalinCMat.CMatCStreamDefProjection],
+    sinks [LalinCMat.CMatCSinkDefProjection],
+  },
+  sum. CMatCStateStep {
+    CMatCStateReady { variant_unique, state [LalinCMat.CMatCFunctionState], },
+    CMatCStateRejected { variant_unique, issues [many [LalinCMat.CMatCEmissionIssue]], },
+  },
+  sum. CMatCPointEmission {
+    CMatCPointEmitted {
+      variant_unique,
+      state [LalinCMat.CMatCFunctionState],
+      atom [LalinC.CBackendAtom],
+      field. ty [LalinC.CBackendType],
+    },
+    CMatCPointRejected { variant_unique, issues [many [LalinCMat.CMatCEmissionIssue]], },
+  },
+  sum. CMatCAtomEmission {
+    CMatCAtomEmitted { variant_unique, atom [LalinC.CBackendAtom], field. ty [LalinC.CBackendType], },
+    CMatCAtomRejected { variant_unique, issue [LalinCMat.CMatCEmissionIssue], },
+  },
+  sum. CMatCBinarySelection {
+    CMatCBinarySelected { variant_unique, spec [LalinC.CBackendHelperSpec], },
+    CMatCBinaryRejected { variant_unique, reason [str], },
+  },
+  product. CMatCLoopDirectionPlan {
+    interned,
+    compare [LalinCore.CmpOp],
+    step_op [LalinCore.BinaryOp],
+  },
+  sum. CMatCSinkEmission {
+    CMatCSinkVoidEmitted { variant_unique, state [LalinCMat.CMatCFunctionState], },
+    CMatCSinkValueEmitted {
+      variant_unique,
+      state [LalinCMat.CMatCFunctionState],
+      atom [LalinC.CBackendAtom],
+      field. ty [LalinC.CBackendType],
+    },
+    CMatCSinkRejected { variant_unique, issues [many [LalinCMat.CMatCEmissionIssue]], },
+  },
+
   product. CMatModule {
     interned,
     field. module [LalinCode.CodeModuleId],

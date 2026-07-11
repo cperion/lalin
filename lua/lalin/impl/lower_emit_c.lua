@@ -9,6 +9,7 @@ local Core = require("lalin.schema_v2.core")
 require("lalin.impl.lower_emit_c.schedule_form")
 require("lalin.impl.lower_emit_c.code_to_c")
 require("lalin.impl.lower_emit_c.materialize")
+require("lalin.impl.lower_emit_c.stencil")
 
 function Lower.LowerCSignatureProjection:lower_c_signature_lookup(sig)
   for i = 1, #self.entries do
