@@ -1,9 +1,9 @@
-local asdl = require("lalin.asdl")
-
 local function bind_context(T)
     local Backend = T.LalinBackend
     local Host = T.LalinHost
-    assert(Backend and Host, "lalin.backend_target_model(T) expects LalinBackend/LalinHost in the context")
+    local C = T.LalinC
+    assert(Backend and Host and C,
+        "lalin.backend_target_model(T) expects LalinBackend/LalinHost/LalinC in the context")
 
     local api = {}
 
@@ -48,20 +48,60 @@ local function bind_context(T)
         })
     end
 
-    local function first_fact(model, cls)
-        for i = 1, #model.facts do
-            if asdl.classof(model.facts[i]) == cls then return model.facts[i] end
+    function Host.HostTargetModel:host_target_model()
+        return self
+    end
+
+    function C.CBackendLittleEndian:host_endian()
+        return Host.HostEndianLittle
+    end
+
+    function C.CBackendBigEndian:host_endian()
+        return Host.HostEndianBig
+    end
+
+    function C.CBackendTarget:host_target_model()
+        return Host.HostTargetModel(self.pointer_bits, self.index_bits, self.endian:host_endian())
+    end
+
+    function Backend.BackEndianLittle:host_endian()
+        return Host.HostEndianLittle
+    end
+
+    function Backend.BackEndianBig:host_endian()
+        return Host.HostEndianBig
+    end
+
+    function Backend.BackTargetFact:host_target_projection(projection)
+        return projection
+    end
+
+    function Backend.BackTargetPointerBits:host_target_projection(projection)
+        return Backend.BackHostTargetProjection(self.bits, projection.index_bits, projection.endian)
+    end
+
+    function Backend.BackTargetIndexBits:host_target_projection(projection)
+        return Backend.BackHostTargetProjection(projection.pointer_bits, self.bits, projection.endian)
+    end
+
+    function Backend.BackTargetEndian:host_target_projection(projection)
+        return Backend.BackHostTargetProjection(projection.pointer_bits, projection.index_bits, self.endian)
+    end
+
+    function Backend.BackTargetModel:host_target_model()
+        local projection = Backend.BackHostTargetProjection(64, 64, Backend.BackEndianLittle)
+        for i = 1, #self.facts do
+            projection = self.facts[i]:host_target_projection(projection)
         end
-        return nil
+        return Host.HostTargetModel(
+            projection.pointer_bits,
+            projection.index_bits,
+            projection.endian:host_endian()
+        )
     end
 
     function api.host_target(model)
-        local pointer = first_fact(model, Backend.BackTargetPointerBits)
-        local index = first_fact(model, Backend.BackTargetIndexBits)
-        local endian = first_fact(model, Backend.BackTargetEndian)
-        local host_endian = Host.HostEndianLittle
-        if endian ~= nil and endian.endian == Backend.BackEndianBig then host_endian = Host.HostEndianBig end
-        return Host.HostTargetModel(pointer and pointer.bits or 64, index and index.bits or 64, host_endian)
+        return model:host_target_model()
     end
 
     return api

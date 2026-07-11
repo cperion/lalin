@@ -129,6 +129,7 @@ return schema. LalinCheck {
       variant_unique,
       field. module [LalinTree.Module],
       issues [many [LalinCheck.TypeIssue]],
+      target [LalinHost.HostTargetModel],
     },
   },
 

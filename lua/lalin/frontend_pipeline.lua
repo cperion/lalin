@@ -69,12 +69,18 @@ local function bind_context(T)
     local BackTarget = require("lalin.backend_target_model")(T)
     local CompilerAbi = require("lalin.compiler_abi")(T)
     local Errors = require("lalin.error")
+    local function typecheck_host_target(opts)
+        if opts.target ~= nil then return opts.target:host_target_model() end
+        if opts.c_target ~= nil then return CodeType.default_target(opts.c_target):host_target_model() end
+        if opts.target_model ~= nil then return opts.target_model:host_target_model() end
+        if opts.backend_target_model ~= nil then return opts.backend_target_model:host_target_model() end
+        return BackTarget.default_native():host_target_model()
+    end
     local function checked_to_code_result(checked, opts)
         opts = opts or {}
         local process_ctx = opts.process_ctx
         local is_c = opts.root == "emit_c" or opts.codegen == "c" or opts.backend == "c" or opts.c_target ~= nil
-        local target_model = opts.target_model or opts.backend_target_model or BackTarget.default_native()
-        local host_target = opts.target or BackTarget.host_target(target_model)
+        local host_target = typecheck_host_target(opts)
         local target = is_c and CodeType.default_target(opts.c_target or opts) or host_target
         local analysis_ctx = opts.analysis_ctx or {}
         local collector = opts.collector or Errors.ThrowingCollector(
@@ -177,7 +183,8 @@ local function bind_context(T)
         progress(process_ctx, "surface_resolve", { module = surfaced })
         local closed = ClosureConvert.module(surfaced)
         progress(process_ctx, "closure_convert", { module = closed })
-        local checked = Typecheck.check_module(closed, { collector = collector, layout_env = opts.layout_env, target = opts.target or opts.c_target })
+        local host_target = typecheck_host_target(opts)
+        local checked = Typecheck.check_module(closed, { collector = collector, layout_env = opts.layout_env, target = host_target })
         progress(process_ctx, "typecheck", { result = checked, module = checked and checked.module })
         return checked
     end

@@ -571,7 +571,7 @@ local function prepare_c_backend(decl, name, opts)
         site = "emit_c:typecheck",
         name = name,
         layout_env = opts.layout_env,
-        target = opts.target or opts.c_target,
+        target = opts.target,
         c_target = opts.c_target,
     })
     local code_result = Pipeline.checked_to_code_result(checked, {

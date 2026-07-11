@@ -37,6 +37,12 @@ return schema. LalinBackend {
     BackTargetNamed { variant_unique, field. name [str], },
   },
   sum. BackEndian { BackEndianLittle, BackEndianBig, },
+  product. BackHostTargetProjection {
+    interned,
+    pointer_bits [number],
+    index_bits [number],
+    endian [LalinBackend.BackEndian],
+  },
   sum. BackTargetFeature {
     BackFeatureSSE2,
     BackFeatureAVX2,

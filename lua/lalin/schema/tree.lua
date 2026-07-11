@@ -1155,6 +1155,7 @@ return schema. LalinTree {
       variant_unique,
       field. module [LalinTree.Module],
       issues [many [LalinTree.TypeIssue]],
+      target [LalinHost.HostTargetModel],
     },
   },
   product. TreeCodeModuleFacts {

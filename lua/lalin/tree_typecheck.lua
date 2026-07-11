@@ -53,6 +53,7 @@ local function bind_context(T)
     local B = T.LalinBind
     local Sem = T.LalinSem
     local Tr = T.LalinTree
+    local H = T.LalinHost
 
     local module_type_api = require("lalin.tree_module_type")(T)
     local control_api = require("lalin.tree_control_facts")(T)
@@ -1884,6 +1885,7 @@ local function bind_context(T)
     end
 
     local function type_module_with_layout_env(module, extra_layout_env, target, collector, analysis_ctx)
+        target = target or H.HostTargetModel(64, 64, H.HostEndianLittle)
         module = module:with_tree_region_seals(module_type_api.module_name(module.h))
         local base_env = module_type_api.env(module, target)
         local facts = module:typecheck_tree_module_facts(Tr.TypeModuleFactsInput(base_env.module_name))
@@ -1899,7 +1901,7 @@ local function bind_context(T)
             append_all(issues, r.issues)
             emit_item_issues(collector, analysis_ctx or {}, item, r.issues)
         end
-        return Tr.TypeModuleResult(Tr.Module(Tr.ModuleTyped(module_scope.module_name), items), issues)
+        return Tr.TypeModuleResult(Tr.Module(Tr.ModuleTyped(module_scope.module_name), items), issues, target)
     end
 
     function Tr.Module:typecheck_tree_module(extra_layout_env, target, collector, analysis_ctx)
