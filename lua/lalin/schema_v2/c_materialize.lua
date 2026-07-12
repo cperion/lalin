@@ -252,6 +252,63 @@ return schema. LalinCMat {
     CMatCSinkRejected { variant_unique, issues [many [LalinCMat.CMatCEmissionIssue]], },
   },
 
+  product. CMatCCarrierBindingEntry { interned, carrier [LalinFlow.FlowCarrierId], c_local [LalinC.CBackendLocal], },
+  product. CMatCCarrierBindingProjection { interned, entries [many [LalinCMat.CMatCCarrierBindingEntry]], },
+  sum. CMatCCarrierBindingLookup {
+    CMatCCarrierBindingFound { variant_unique, entry [LalinCMat.CMatCCarrierBindingEntry], },
+    CMatCCarrierBindingMissing { variant_unique, carrier [LalinFlow.FlowCarrierId], },
+  },
+  product. CMatCAddressBindingEntry { interned, address [LalinFlow.FlowAddressId], c_local [LalinC.CBackendLocal], },
+  product. CMatCAddressBindingProjection { interned, entries [many [LalinCMat.CMatCAddressBindingEntry]], },
+  sum. CMatCAddressBindingLookup {
+    CMatCAddressBindingFound { variant_unique, entry [LalinCMat.CMatCAddressBindingEntry], },
+    CMatCAddressBindingMissing { variant_unique, address [LalinFlow.FlowAddressId], },
+  },
+  product. CMatCBlockMapping { interned, source [LalinCode.CodeBlockId], replacement [LalinC.CBackendBlock], },
+  product. CMatCValueMapping { interned, field. value [LalinCode.CodeValueId], c_local [LalinC.CBackendLocal], },
+  sum. CMatCControlResult {
+    CMatCControlNone,
+    CMatCControlValue { variant_unique, atom [LalinC.CBackendAtom], field. ty [LalinC.CBackendType], },
+    CMatCControlBranch { variant_unique, success [LalinC.CBackendLabel], failure [LalinC.CBackendLabel], },
+  },
+  product. CMatCFragmentInput {
+    interned,
+    materialization [LalinCMat.CMatMaterialization],
+    code_func [LalinCode.CodeFunc],
+    covered_blocks [many [LalinCode.CodeBlockId]],
+    target [LalinC.CBackendTarget],
+    carriers [LalinCMat.CMatCCarrierBindingProjection],
+    addresses [LalinCMat.CMatCAddressBindingProjection],
+  },
+  product. CMatCFragment {
+    interned,
+    blocks [many [LalinC.CBackendBlock]],
+    locals [many [LalinC.CBackendLocal]],
+    helpers [many [LalinC.CBackendHelperUse]],
+    block_mappings [many [LalinCMat.CMatCBlockMapping]],
+    value_mappings [many [LalinCMat.CMatCValueMapping]],
+    control [LalinCMat.CMatCControlResult],
+  },
+  sum. CMatCFragmentEmission {
+    CMatCFragmentEmitted { variant_unique, fragment [LalinCMat.CMatCFragment], },
+    CMatCFragmentRejected { variant_unique, issues [many [LalinCMat.CMatCEmissionIssue]], },
+  },
+  product. CMatWindowIndexInput {
+    interned,
+    boundary [LalinStencil.StencilWindowBoundary],
+    index [LalinC.CBackendAtom],
+    lower [LalinC.CBackendAtom],
+    upper [LalinC.CBackendAtom],
+    field. ty [LalinC.CBackendType],
+  },
+  sum. CMatWindowIndexDecision {
+    CMatWindowIndexInBounds { variant_unique, index [LalinC.CBackendAtom], },
+    CMatWindowIndexClamped { variant_unique, index [LalinC.CBackendAtom], },
+    CMatWindowIndexWrapped { variant_unique, index [LalinC.CBackendAtom], },
+    CMatWindowIndexZero { variant_unique, field. value [LalinC.CBackendAtom], },
+    CMatWindowIndexRejected { variant_unique, issue [LalinCMat.CMatCEmissionIssue], },
+  },
+
   product. CMatModule {
     interned,
     field. module [LalinCode.CodeModuleId],
