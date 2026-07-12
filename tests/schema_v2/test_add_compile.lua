@@ -6,6 +6,7 @@ local asdl = require("lalin.asdl")
 local T = require("lalin.schema_v2")
 require("lalin.impl.compiler_api")
 local Compiler = require("lalin.schema_v2.compiler")
+local Tr = require("lalin.schema_v2.tree")
 
 -- Helper: compile source and get result
 local function compile(name, source)
@@ -191,7 +192,7 @@ local scope = LCheck.TypeValueScope(
   },
   {},
   {},
-  LCheck.TypeModuleFacts({}, {}, {}, {}, {}, {}, {})
+  LCheck.TypeModuleFacts({}, {}, {}, Tr.RegionFactProjection(Tr.RegionDefinitionProjection({}), Tr.RegionProtocolProjection({}), Tr.RegionSealProjection({}), Tr.RegionBundleProjection({})))
 )
 
 -- Lookup the function in scope

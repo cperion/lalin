@@ -143,37 +143,55 @@ function Kernel.KernelTripKnown:kernel_trip_proofs(domain, proofs)
 end
 function Kernel.KernelTripUnavailable:kernel_trip_proofs(domain, proofs) return proofs end
 
-local function planned(request, result, proofs)
+function Flow.FlowCountedDomain:kernel_counter() return Kernel.KernelCounterValue(self.start) end
+function Kernel.KernelLoopCounted:kernel_counter() return self.domain:kernel_counter() end
+function Kernel.KernelLoopNotCountedEvidence:kernel_counter() return Kernel.KernelCounterAbsent end
+
+local function planned(request, build, result, proofs)
   local fact = request.fact
+  local all_proofs = fact.trip:kernel_trip_proofs(fact.domain, append_all(build.proofs.proofs, proofs))
   local body = Kernel.KernelBody(
-    Kernel.KernelDomainFlow(fact.domain, fact.trip, nil),
-    request.lanes, request.bindings, request.effects, result,
-    Kernel.KernelEquivalenceProof(fact.trip:kernel_trip_proofs(fact.domain, proofs)))
+    Kernel.KernelDomainFlow(build.domain, build.trip, build.counter),
+    build.lanes, build.bindings, build.effects, result,
+    Kernel.KernelEquivalenceProof(all_proofs))
   return Kernel.KernelPlanned(Kernel.KernelId("kernel:" .. sanitize(fact.loop.text)), Kernel.KernelSubjectLoop(fact.loop), body)
 end
-function Kernel.KernelLoopNoPlan:materialize_kernel_loop(request) return Kernel.KernelNoPlan(Kernel.KernelSubjectLoop(request.fact.loop), self.rejects) end
-function Kernel.KernelLoopPlanOriginalControl:materialize_kernel_loop(request) return Kernel.KernelNoPlan(Kernel.KernelSubjectLoop(request.fact.loop), self.rejects) end
-function Kernel.KernelLoopPlanClosedForm:materialize_kernel_loop(request)
-  return planned(request, Kernel.KernelResultClosedForm(self.closed_form), append_all(request.proofs, { Kernel.KernelProofValue(self.closed_form.proof, "closed-form fact") }))
+function Kernel.KernelLoopAnalysisReady:materialize_kernel_selection(selection, request) return selection:materialize_kernel_build(request, self.build) end
+function Kernel.KernelLoopAnalysisRejected:materialize_kernel_selection(selection, request) return Kernel.KernelNoPlan(Kernel.KernelSubjectLoop(self.fact.loop), self.rejects) end
+function Kernel.KernelLoopNoPlan:materialize_kernel_build(request, build) return Kernel.KernelNoPlan(Kernel.KernelSubjectLoop(request.fact.loop), self.rejects) end
+function Kernel.KernelLoopPlanOriginalControl:materialize_kernel_build(request, build) return Kernel.KernelNoPlan(Kernel.KernelSubjectLoop(request.fact.loop), self.rejects) end
+function Kernel.KernelLoopPlanClosedForm:materialize_kernel_build(request, build)
+  return planned(request, build, Kernel.KernelResultClosedForm(self.closed_form), { Kernel.KernelProofValue(self.closed_form.proof, "closed-form fact") })
 end
-function Kernel.KernelLoopPlanReduction:materialize_kernel_loop(request)
-  return planned(request, Kernel.KernelResultReduction(self.reduction), append_all(request.proofs, { Kernel.KernelProofValue(self.reduction.proof, "reduction fact") }))
+function Kernel.KernelLoopPlanReduction:materialize_kernel_build(request, build)
+  return planned(request, build, Kernel.KernelResultReduction(self.reduction), { Kernel.KernelProofValue(self.reduction.proof, "reduction fact") })
 end
-function Kernel.KernelLoopPlanSkeleton:materialize_kernel_loop(request) return planned(request, self.result, request.proofs) end
+function Kernel.KernelLoopPlanSkeleton:materialize_kernel_build(request, build) return planned(request, build, self.result, {}) end
 
 function Kernel.KernelNoPlan:schedule_eligibility() return Kernel.KernelScheduleIneligible(self.subject, self.rejects) end
 function Kernel.KernelPlanned:schedule_eligibility() return Kernel.KernelScheduleEligible(self) end
+
+function Kernel.KernelLoopFactEntry:kernel_empty_analysis(candidate)
+  return Kernel.KernelLoopAnalysisReady(Kernel.KernelLoopPlanBuild(
+    self.domain,
+    self.trip,
+    self.count:kernel_counter(),
+    Kernel.KernelLaneProjection({}),
+    Kernel.KernelBindingProjection({}),
+    Kernel.KernelEffectProjection({}),
+    Kernel.KernelProofProjection({})))
+end
 
 function Kernel.KernelModulePlanRequest:plan_kernels()
   local projection = self.flow:project_kernel_loop_facts(self.values, self.trips)
   local plans = {}
   for _, fact in ipairs(projection.loops) do
     local candidate = fact:kernel_candidate(projection)
-    local request = Kernel.KernelLoopPlanRequest(fact, candidate, {}, {}, {}, {})
-    plans[#plans + 1] = candidate:select_kernel_loop_plan():materialize_kernel_loop(request)
+    local request = Kernel.KernelLoopPlanRequest(fact, candidate, fact:kernel_empty_analysis(candidate))
+    plans[#plans + 1] = request.analysis:materialize_kernel_selection(candidate:select_kernel_loop_plan(), request)
   end
-  return Kernel.KernelModulePlan(self.mem.module, self.flow, self.values, self.mem, self.effects, plans)
+  return Kernel.KernelModulePlan(self.module.id, self.flow, self.values, self.mem, self.effects, plans)
 end
-function Mem.MemSemanticFactSet:plan_kernels(flow, values, mem, effects)
-  return Kernel.KernelModulePlanRequest(flow, values, mem, effects, values:project_kernel_trips()):plan_kernels()
+function Mem.MemSemanticFactSet:plan_kernels(module, graph, flow, values, effects)
+  return Kernel.KernelModulePlanRequest(module, graph, flow, values, self, effects, values:project_kernel_trips()):plan_kernels()
 end

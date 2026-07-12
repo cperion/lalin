@@ -383,12 +383,20 @@ function Code.CodeModule:plan_lowering(graph, kernels, schedules, target)
   local selected_target = target or Lower.LowerTargetBack
   local kernel_projection = kernels:lower_kernel_projection()
   local schedule_projection = schedules:lower_schedule_projection()
-  local funcs, issues = {}, {}
+  local func_entries, issues = {}, {}
   for _, func in ipairs(self.funcs) do
     local result = graph:lower_func_lookup(func.id):plan_lower_func(func, kernel_projection, schedule_projection)
-    funcs = append_all(funcs, { result.plan })
+    func_entries = append_all(func_entries, { Lower.LowerFunctionPlanEntry(func.id, result.plan) })
     issues = append_all(issues, result.issues)
   end
   local carrier_plans, address_plans = carrier_and_address_plans(kernels.flow, graph, kernels)
-  return Lower.LowerModule(self.id, selected_target, kernels, schedules, carrier_plans, address_plans, funcs, issues)
+  return Lower.LowerModule(
+    self.id,
+    selected_target,
+    kernels,
+    schedules,
+    Lower.LowerCarrierPlanProjection(carrier_plans),
+    Lower.LowerAddressPlanProjection(address_plans),
+    Lower.LowerFunctionPlanProjection(func_entries),
+    issues)
 end

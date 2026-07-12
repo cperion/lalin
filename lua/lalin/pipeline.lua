@@ -58,7 +58,7 @@ local function compile_pipeline(declarations, opts)
   local effects = graph:compute_effects(code_result.module, mem, code_result.contracts)
 
   -- Kernel planning: identify stencil/copy/reduction candidates
-  local kernels = mem:plan_kernels(flow, values, mem, effects)
+  local kernels = mem:plan_kernels(code_result.module, graph, flow, values, effects)
 
   -- Schedule planning: assign vector/scalar/fallback schedules to kernels
   local schedules = kernels:plan_schedules(code_result.module, flow, values, mem, effects, opts.target)

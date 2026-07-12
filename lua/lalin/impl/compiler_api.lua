@@ -6,6 +6,7 @@ local Compiler = require("lalin.schema_v2.compiler")
 local Sem = require("lalin.schema_v2.sem")
 local Code = require("lalin.schema_v2.code")
 local Tr = require("lalin.schema_v2.tree")
+require("lalin.backend_target_model")(T) -- installs CBackendTarget:host_target_model for canonical target propagation
 -- Ensure all phase methods are installed
 require("lalin.impl.tree_surface")
 require("lalin.impl.tree_closure")
@@ -40,7 +41,7 @@ local function compile_validated(input)
   local mem = graph:compute_mem(code_module, flow, values, contracts)
   local effect_analysis = graph:compute_effect_analysis(code_module, mem, contracts)
   local effects = effect_analysis.facts
-  local kernels = mem:plan_kernels(flow, values, mem, effects)
+  local kernels = mem:plan_kernels(code_module, graph, flow, values, effects)
   local schedules = kernels:plan_schedules(code_module, flow, values, mem, effects)
   local code_result = Compiler.CodeResult(code_module, contracts, Sem.LayoutEnv({}))
   local request = Compiler.CompilerCCodegenRequest(code_result, input.target)
@@ -77,7 +78,7 @@ local function compile_after_closure(m, c_target)
   end)
   if not lower_ok then return Compiler.CompilerArtifactError("lower_to_code: " .. tostring(lowering)) end
   local code_module = lowering.code_module
-  local contracts = lowering.contracts.facts
+  local contracts = lowering.contracts
 
   local validate_mod = require("lalin.impl.code_validate")
   local validate_ok, validate_result = pcall(function() return validate_mod.validate(code_module) end)
