@@ -6,7 +6,7 @@ local B      = require("lalin.schema_v2.bind")
 local LCheck = require("lalin.schema_v2.check")
 local Sem    = require("lalin.schema_v2.sem")
 local Ty     = require("lalin.schema_v2.type")
-
+local Tr     = require("lalin.schema_v2.tree")
 function LCheck.TypeValueScope:typecheck_tree_lookup_value(name)
   for i = #(self.values or {}), 1, -1 do
     local entry = self.values[i]
@@ -50,14 +50,18 @@ function LCheck.TypeValueScope:typecheck_tree_add_value(name, ty, binding)
   for _, e in ipairs(self.values or {}) do values[#values+1] = e end
   local b = binding or B.Binding(nil, name, ty, B.BindingRoleLocalValue)
   values[#values+1] = B.ValueEntry(name, b)
-  return LCheck.TypeValueScope(self.module_name or "", values, self.types or {}, self.layouts or {}, self.facts or LCheck.TypeModuleFacts({}, {}, {}, {}, {}, {}, {}))
+  local facts = self.facts or Tr.RegionFactProjection(Tr.RegionDefinitionProjection({}), Tr.RegionProtocolProjection({}), Tr.RegionSealProjection({}), Tr.RegionBundleProjection({}))
+  return LCheck.TypeValueScope(self.module_name or "", values, self.types or {}, self.layouts or {},
+    self.facts or LCheck.TypeModuleFacts({}, {}, {}, facts))
 end
 
 function LCheck.TypeValueScope:typecheck_tree_add_type(name, ty)
   local types = {}
   for _, e in ipairs(self.types or {}) do types[#types+1] = e end
   types[#types+1] = B.TypeEntry(name, ty)
-  return LCheck.TypeValueScope(self.module_name or "", self.values or {}, types, self.layouts or {}, self.facts or LCheck.TypeModuleFacts({}, {}, {}, {}, {}, {}, {}))
+  local facts = self.facts or Tr.RegionFactProjection(Tr.RegionDefinitionProjection({}), Tr.RegionProtocolProjection({}), Tr.RegionSealProjection({}), Tr.RegionBundleProjection({}))
+  return LCheck.TypeValueScope(self.module_name or "", self.values or {}, types, self.layouts or {},
+    self.facts or LCheck.TypeModuleFacts({}, {}, {}, facts))
 end
 
 function LCheck.TypeValueScope:typecheck_tree_add_type(name, ty) return self end

@@ -24,8 +24,11 @@ function M.install(T)
 
   function Compiler.TreeCodeSchemaV2Implementation:typecheck_module(module, input)
     require("lalin.impl.tree_check.init")
+    require("lalin.impl.tree_region")
     local checked_module = module:typecheck(input)
-    return T.LalinCheck.TypeModuleResult(checked_module, {}, input.target)
+    local facts = checked_module:region_fact_projection()
+    local expansion = checked_module:region_expand(T.LalinTree.RegionModuleExpansionInput(facts))
+    return T.LalinCheck.TypeModuleResult(expansion:region_module(), expansion:region_issues(), input.target)
   end
 
   function Compiler.TreeCodeSchemaV2Implementation:module_result(module, input)

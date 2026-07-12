@@ -11,6 +11,7 @@ local Tr  = require("lalin.schema_v2.tree")
 local asdl = require("lalin.asdl")
 local TypeSizeAlign = require("lalin.type_size_align")
 local layout_api = TypeSizeAlign(require("lalin.schema_v2"))
+require("lalin.impl.tree_region")
 -- Leaf methods for classof-free pattern matching
 function Ty.TypeRef:is_type_ref_path() return false end
 function Ty.TypeRefPath:is_type_ref_path() return true end
@@ -287,8 +288,9 @@ function Tr.Module:typecheck(input)
     end
   end
 
+  local region_facts = self:region_fact_projection()
   local module_scope = LCheck.TypeValueScope(mod_name, values, types, {},
-    LCheck.TypeModuleFacts({}, {}, {}, {}, {}, {}, {}))
+    LCheck.TypeModuleFacts({}, {}, {}, region_facts))
 
   -- Typecheck each item (inline, no helper functions)
   local checked_items = {}

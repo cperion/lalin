@@ -5,11 +5,12 @@ local T = require("lalin.schema_v2")
 local Compiler = require("lalin.schema_v2.compiler")
 local Sem = require("lalin.schema_v2.sem")
 local Code = require("lalin.schema_v2.code")
-
+local Tr = require("lalin.schema_v2.tree")
 -- Ensure all phase methods are installed
 require("lalin.impl.tree_surface")
 require("lalin.impl.tree_closure")
 require("lalin.impl.tree_check.init")
+require("lalin.impl.tree_region")
 require("lalin.impl.tree_code")
 require("lalin.impl.code_graph")
 require("lalin.impl.code_flow")
@@ -64,6 +65,12 @@ end
 local function compile_after_closure(m)
   local check_ok, checked = pcall(function() return m:typecheck({}) end)
   if not check_ok then return Compiler.CompilerArtifactError("typecheck: " .. tostring(checked)) end
+  local region_facts = checked:region_fact_projection()
+  local region_result = checked:region_expand(Tr.RegionModuleExpansionInput(region_facts))
+  if #(region_result:region_issues() or {}) > 0 then
+    return Compiler.CompilerArtifactError("region expansion rejected: " .. tostring(#region_result:region_issues()) .. " issue(s)")
+  end
+  checked = region_result:region_module()
 
   local T = require("lalin.schema_v2")
   local backend_target = require("lalin.backend_target_model")(T)
