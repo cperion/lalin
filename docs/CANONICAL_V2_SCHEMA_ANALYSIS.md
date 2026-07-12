@@ -185,4 +185,4 @@ Before any ownership cutover:
 
 ## Current status correction
 
-The integrated KRN/SCH, CMat, and lower packages provide useful vocabulary and isolated methods, but they do not constitute a complete canonical semantic path. `OWN-FRONT` and its C patch remain reverted. The next work is schema repair, not another cutover or implementation-over-old-code attempt.
+The integrated KRN/SCH, CMat, and lower implementations still do not constitute a complete canonical semantic path, and `OWN-FRONT` remains reverted. The schema repair is now complete: canonical bootstrap/profile boundaries, region projections, exact target requests, complete kernel analysis, option-free stencil/CMat bridge, and lower fragment consumption have committed constructor/forbidden-import gates. Implementation may now proceed only against these canonical types; ownership cutover remains blocked.

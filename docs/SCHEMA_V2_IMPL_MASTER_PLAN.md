@@ -881,12 +881,14 @@ Release-level gates:
 | history/reopened | KRN-1→SCH-1→2 | P1 | MEM/EFF | Typed planning vocabulary integrated `bfe8e6b`; complete fact population remains `KRN-CANON` | incomplete end-to-end |
 | history/reopened | CMAT-1→3 | P1 | CLOW | Typed standalone materialization/emission integrated `ec873d5`,`702f89a`; inline path remains `CMAT-INLINE` | incomplete end-to-end |
 | history | CVAL-2 | P1 | CLOW-1, OWN-0 | Canonical CBackend validation | integrated `921816f` |
-| current-schema | V2-BOOT-SCHEMA | P0 | analysis | Close canonical main-C vocabulary and profile boundaries | planned; no implementation agent assigned |
-| next-schema | V2-REGION-SCHEMA + V2-TARGET-SCHEMA | P0 | V2-BOOT-SCHEMA | Region projections and exact C target requests | planned parallel schema work |
-| next-schema | V2-KERNEL-SCHEMA | P0 | V2-BOOT-SCHEMA | Complete loop-analysis vocabulary | planned |
-| next-schema | V2-STENCIL-CMAT-SCHEMA | P0 | V2-KERNEL-SCHEMA | Kernel bridge and CMat fragment vocabulary | planned |
-| next-schema | V2-LOWER-SCHEMA | P0 | V2-STENCIL-CMAT-SCHEMA, V2-TARGET-SCHEMA | Fragment consumption vocabulary | planned |
-| blocked-impl | RGN-CANON + C-TARGET + KRN-CANON→KERNEL-STENCIL-CANON→CMAT-FRAGMENT-CANON→LOWER-SEM | P0 | all schema gates | Canonical semantic implementation | do not start |
+| history-schema | V2-BOOT-SCHEMA | P0 | analysis | Closed main-C bootstrap, frontend leaves, phase vocabulary, profile isolation | integrated `695456bd`,`d2f1066f` |
+| history-schema | V2-REGION-SCHEMA | P0 | V2-BOOT-SCHEMA | Immutable region facts/lookup/expansion vocabulary | integrated `96b57023` |
+| history-schema | V2-TARGET-SCHEMA | P0 | V2-BOOT-SCHEMA | Exact target/codegen/module emission requests | integrated `69a914dc` |
+| history-schema | V2-KERNEL-SCHEMA | P0 | V2-BOOT-SCHEMA | Complete loop-analysis relations/results | integrated `9d11ac77` |
+| history-schema | V2-STENCIL-CMAT-SCHEMA | P0 | V2-KERNEL-SCHEMA | No optional soup; kernel bridge and fragment vocabulary | integrated `7f581142` |
+| history-schema | V2-LOWER-SCHEMA | P0 | stencil/target schemas | Fragment consumption and typed resolution vocabulary | integrated `c10fff72` |
+| current-impl | RGN-CANON + C-TARGET | P0 | schema gates | Canonical region semantics and exact target propagation | ready for delegated implementation |
+| next-impl | KRN-CANON→KERNEL-STENCIL-CANON→CMAT-FRAGMENT-CANON→LOWER-SEM | P0 | schema gates | Canonical semantic C chain | ready serial chain |
 | blocked | OWN-FRONT / OWN-META | P2 | RGN-CANON and parity matrix | Previous cutover `e76fc29cf` reverted by `de3294194` | do not resume |
 | blocked | OWN-ANALYSIS / OWN-STENCIL / OWN-C | P2 | parity blockers | Domain cutovers | do not resume |
 | final | OWN-CUTOVER | P2 | all ownership domains | Public facade and old-tree retirement | blocked |
