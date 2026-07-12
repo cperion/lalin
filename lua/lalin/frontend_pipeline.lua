@@ -55,7 +55,7 @@ local function bind_context(T)
     local Errors = require("lalin.error")
     local function typecheck_host_target(opts)
         if opts.target ~= nil then return opts.target:host_target_model() end
-        if opts.c_target ~= nil then return CodeType.default_target(opts.c_target):host_target_model() end
+        if opts.c_target ~= nil then return CodeType.normalize_target(opts.c_target):host_target_model() end
         if opts.target_model ~= nil then return opts.target_model:host_target_model() end
         if opts.backend_target_model ~= nil then return opts.backend_target_model:host_target_model() end
         return BackTarget.default_native():host_target_model()
@@ -63,9 +63,9 @@ local function bind_context(T)
     local function checked_to_code_result(checked, opts)
         opts = opts or {}
         local process_ctx = opts.process_ctx
-        local is_c = opts.root == "emit_c" or opts.codegen == "c" or opts.backend == "c" or opts.c_target ~= nil
+        local is_c = opts.root == "emit_c" or opts.codegen == "c" or opts.backend == "c" or opts.c_target ~= nil or opts.target ~= nil
         local host_target = typecheck_host_target(opts)
-        local target = is_c and CodeType.default_target(opts.c_target or opts) or host_target
+        local target = is_c and CodeType.normalize_target(opts.c_target or opts.target or opts) or host_target
         local analysis_ctx = opts.analysis_ctx or {}
         local collector = opts.collector or Errors.ThrowingCollector(
             Errors.SpanResolvers.RESOLVERS,
@@ -116,7 +116,9 @@ local function bind_context(T)
             Errors.Terminal.render
         )
         CompilerAbi.assert_valid_code_result(code_result, { collector = collector })
-        return TreeToCode:code_result_to_c(code_result, opts)
+        local target = CodeType.normalize_target(opts.c_target or opts.target or opts)
+        local request = T.LalinCompiler.CompilerCCodegenRequest(code_result, target)
+        return TreeToCode:code_result_to_c(request)
     end
 
     local function typecheck_module(module, opts)

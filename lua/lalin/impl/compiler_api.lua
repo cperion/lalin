@@ -42,14 +42,13 @@ local function compile_validated(input)
   local effects = effect_analysis.facts
   local kernels = mem:plan_kernels(flow, values, mem, effects)
   local schedules = kernels:plan_schedules(code_module, flow, values, mem, effects)
-  local lower_plan = code_module:plan_lowering(graph, kernels, schedules)
-  local c_unit = lower_plan:emit_c(code_module)
+  local code_result = Compiler.CodeResult(code_module, contracts, Sem.LayoutEnv({}))
+  local request = Compiler.CompilerCCodegenRequest(code_result, input.target)
+  local backend = require("lalin.compiler_schema_v2_c_backend").code_result_to_c(request)
   local Cemit = require("lalin.schema_v2.cemit")
-  local C_schema = require("lalin.schema_v2.c")
   local Lower_schema = require("lalin.schema_v2.lower")
-  local target = C_schema.CBackendTarget(C_schema.CBackendC99, C_schema.CBackendHostedNative, 64, 64, C_schema.CBackendLittleEndian, true)
-  local spine = Lower_schema.LowerBackSpine(code_module, graph, target)
-  local artifact = Cemit.CEmitMachine(spine, {}, {}, {}, {}):emit_module(c_unit)
+  local spine = Lower_schema.LowerBackSpine(code_module, graph, input.target)
+  local artifact = Cemit.CEmitMachine(spine, {}, {}, {}, {}):emit_module(backend.unit)
   return Compiler.CompilerArtifactC(artifact.source, artifact.header)
 end
 
@@ -62,7 +61,7 @@ function CodeValidation.CodeValidateFailed:compiler_compile(input)
   return Compiler.CompilerArtifactError("code_validate: " .. #msgs .. " issue(s): " .. table.concat(msgs, "; "))
 end
 
-local function compile_after_closure(m)
+local function compile_after_closure(m, c_target)
   local check_ok, checked = pcall(function() return m:typecheck({}) end)
   if not check_ok then return Compiler.CompilerArtifactError("typecheck: " .. tostring(checked)) end
   local region_facts = checked:region_fact_projection()
@@ -72,10 +71,7 @@ local function compile_after_closure(m)
   end
   checked = region_result:region_module()
 
-  local T = require("lalin.schema_v2")
-  local backend_target = require("lalin.backend_target_model")(T)
-  local back_target = backend_target.default_native()
-  local host_target = backend_target.host_target(back_target)
+  local host_target = c_target:host_target_model()
   local lower_ok, lowering = pcall(function()
     return checked:lower_tree_module_result_to_code({ target = host_target })
   end)
@@ -86,16 +82,18 @@ local function compile_after_closure(m)
   local validate_mod = require("lalin.impl.code_validate")
   local validate_ok, validate_result = pcall(function() return validate_mod.validate(code_module) end)
   if not validate_ok then return Compiler.CompilerArtifactError("code_validate crashed: " .. tostring(validate_result)) end
-  return validate_result:compiler_compile(Compiler.CompilerCodeGenerationInput(code_module, contracts))
+  return validate_result:compiler_compile(Compiler.CompilerCodeGenerationInput(code_module, contracts, c_target))
 end
 
-function Sem.ClosureConverted:compiler_compile_after_closure() return compile_after_closure(self.module) end
-function Sem.ClosureUnchanged:compiler_compile_after_closure() return compile_after_closure(self.module) end
-function Sem.ClosureUnsupported:compiler_compile_after_closure()
+function Sem.ClosureConverted:compiler_compile_after_closure(c_target) return compile_after_closure(self.module, c_target) end
+function Sem.ClosureUnchanged:compiler_compile_after_closure(c_target) return compile_after_closure(self.module, c_target) end
+function Sem.ClosureUnsupported:compiler_compile_after_closure(c_target)
   return Compiler.CompilerArtifactError("closure_convert: " .. self.reason)
 end
 
-function Compiler.CompilerSession:compile()
+function Compiler.CompilerSession:compile(c_target)
+  local CodeType = require("lalin.code_type")(T)
+  c_target = CodeType.normalize_target(c_target)
 
   -- Parse source → LalinTree Module
   local Document = require("lalin.syntax_v2.document")
@@ -115,12 +113,11 @@ function Compiler.CompilerSession:compile()
     return Compiler.CompilerArtifactError("surface_resolve: " .. tostring(m))
   end
 
-  -- Phase 2: typed closure conversion with the selected host target.
-  local backend_target = require("lalin.backend_target_model")(T)
-  local host_target = backend_target.host_target(backend_target.default_native())
+  -- Phase 2: typed closure conversion with the selected C target's host projection.
+  local host_target = c_target:host_target_model()
   local cc_ok, closure_result = pcall(function() return m:closure_convert(Sem.ClosureModuleInput(host_target)) end)
   if not cc_ok then return Compiler.CompilerArtifactError("closure_convert crashed: " .. tostring(closure_result)) end
-  return closure_result:compiler_compile_after_closure()
+  return closure_result:compiler_compile_after_closure(c_target)
 end
 
 
@@ -281,7 +278,10 @@ function Compiler.CompilerArtifactError:compile_gcc_artifact(opts, source_name, 
   return nil, self
 end
 function Compiler.CompilerSession:compile_gcc(opts)
-  return self:compile():compile_gcc_artifact(opts, self.source_name, self.source_text)
+  opts = opts or {}
+  local CodeType = require("lalin.code_type")(T)
+  local target = CodeType.normalize_target(opts.c_target or opts.target or opts)
+  return self:compile(target):compile_gcc_artifact(opts, self.source_name, self.source_text)
 end
 
 return Compiler

@@ -8,9 +8,78 @@ local Cemit = require("lalin.schema_v2.cemit")
 local C     = require("lalin.schema_v2.c")
 local Core  = require("lalin.schema_v2.core")
 
+function C.CBackendTarget:target_capability(feature)
+  return feature:c_backend_target_capability(self)
+end
+function C.CBackendTargetFeature:c_backend_target_capability(target)
+  error("missing target capability leaf method", 2)
+end
+function C.CBackendC99:c_backend_c11_atomics_capability()
+  return C.CBackendTargetFeatureRejected(C.CBackendFeatureC11Atomics, "C99 does not provide C11 atomics")
+end
+function C.CBackendC11:c_backend_c11_atomics_capability()
+  return C.CBackendTargetFeatureSupported(C.CBackendFeatureC11Atomics)
+end
+function C.CBackendGnuC:c_backend_c11_atomics_capability()
+  return C.CBackendTargetFeatureSupported(C.CBackendFeatureC11Atomics)
+end
+function C.CBackendClangC:c_backend_c11_atomics_capability()
+  return C.CBackendTargetFeatureSupported(C.CBackendFeatureC11Atomics)
+end
+function C.CBackendPlatform:c_backend_hosted_runtime_capability()
+  return C.CBackendTargetFeatureRejected(C.CBackendFeatureHostedRuntime, "target platform is not hosted")
+end
+function C.CBackendHostedNative:c_backend_hosted_runtime_capability()
+  return C.CBackendTargetFeatureSupported(C.CBackendFeatureHostedRuntime)
+end
+function C.CBackendFreestanding:c_backend_hosted_runtime_capability()
+  return C.CBackendTargetFeatureRejected(C.CBackendFeatureHostedRuntime, "freestanding target has no hosted runtime")
+end
+function C.CBackendWasmCapable:c_backend_hosted_runtime_capability()
+  return C.CBackendTargetFeatureRejected(C.CBackendFeatureHostedRuntime, "wasm-capable target has no hosted runtime")
+end
+function C.CBackendEmbedded:c_backend_hosted_runtime_capability()
+  return C.CBackendTargetFeatureRejected(C.CBackendFeatureHostedRuntime, "embedded target has no hosted runtime")
+end
+function C.CBackendPlatform:c_backend_libm_capability()
+  return C.CBackendTargetFeatureRejected(C.CBackendFeatureLibm, "target platform has no libm provider")
+end
+function C.CBackendHostedNative:c_backend_libm_capability()
+  return C.CBackendTargetFeatureSupported(C.CBackendFeatureLibm)
+end
+function C.CBackendFreestanding:c_backend_libm_capability()
+  return C.CBackendTargetFeatureRejected(C.CBackendFeatureLibm, "freestanding target has no libm provider")
+end
+function C.CBackendWasmCapable:c_backend_libm_capability()
+  return C.CBackendTargetFeatureRejected(C.CBackendFeatureLibm, "wasm-capable target has no libm provider")
+end
+function C.CBackendEmbedded:c_backend_libm_capability()
+  return C.CBackendTargetFeatureRejected(C.CBackendFeatureLibm, "embedded target has no libm provider")
+end
+function C.CBackendFeatureC11Atomics:c_backend_target_capability(target)
+  return target.dialect:c_backend_c11_atomics_capability()
+end
+function C.CBackendFeatureHostedRuntime:c_backend_target_capability(target)
+  return target.platform:c_backend_hosted_runtime_capability()
+end
+function C.CBackendFeatureLibm:c_backend_target_capability(target)
+  return target.platform:c_backend_libm_capability()
+end
+function C.CBackendFeatureBuiltinOverflow:c_backend_target_capability(target)
+  return C.CBackendTargetFeatureSupported(self)
+end
+function C.CBackendFeatureBuiltinBitops:c_backend_target_capability(target)
+  return C.CBackendTargetFeatureSupported(self)
+end
+function C.CBackendFeatureUnalignedAccess:c_backend_target_capability(target)
+  return C.CBackendTargetFeatureSupported(self)
+end
+function C.CBackendFeatureStaticAssert:c_backend_target_capability(target)
+  return C.CBackendTargetFeatureSupported(self)
+end
+
 function C.CBackendUnit:c_emit_sig_projection()
   local entries = {}
-  for i = 1, #self.sigs do entries[i] = C.CBackendFuncSigEntry(self.sigs[i].id, self.sigs[i]) end
   return C.CBackendFuncSigProjection(entries)
 end
 function C.CBackendFuncSigProjection:c_emit_sig_lookup(id)

@@ -358,6 +358,16 @@ function C.CBackendDataPtr:c_validation_static_size() return 8 end
 function C.CBackendQualifiedDataPtr:c_validation_static_size() return 8 end
 function C.CBackendCodePtr:c_validation_static_size() return 8 end
 function C.CBackendImportedCodePtr:c_validation_static_size() return 8 end
+function C.CBackendTargetCapability:c_validation_report()
+  error("missing target capability validation leaf method", 2)
+end
+function C.CBackendTargetFeatureSupported:c_validation_report() return clean() end
+function C.CBackendTargetFeatureRejected:c_validation_report()
+  return issue(C.CBackendIssueInvalidTargetFeature(self.feature, self.reason))
+end
+local function target_feature_report(target, feature)
+  return target:target_capability(feature):c_validation_report()
+end
 
 -- Every helper leaf owns target/alignment validation. Signatures are independently
 -- leaf-owned by cemit_emit.lua.
@@ -378,8 +388,7 @@ C.CBackendHelperMemset.c_validate=helper_clean
 C.CBackendHelperMemcmp.c_validate=helper_clean
 C.CBackendHelperTrap.c_validate=helper_clean
 local function atomic_helper(self,input)
-  if input.source.unit.target.dialect:c_emit_supports_c11_atomics() then return clean() end
-  return issue(C.CBackendIssueInvalidTargetFeature(C.CBackendFeatureC11Atomics,"atomic helper requires C11 atomics"))
+  return target_feature_report(input.source.unit.target, C.CBackendFeatureC11Atomics)
 end
 C.CBackendHelperAtomicLoad.c_validate=atomic_helper
 C.CBackendHelperAtomicStore.c_validate=atomic_helper
@@ -389,7 +398,9 @@ C.CBackendHelperAtomicFence.c_validate=atomic_helper
 local function helper_alignment(self,input) if valid_alignment(self.align) then return clean() end; return issue(C.CBackendIssueInvalidAlignment("helper",self.align)) end
 C.CBackendHelperTypedMemcpy.c_validate=helper_alignment; C.CBackendHelperTypedMemset.c_validate=helper_alignment; C.CBackendHelperScan.c_validate=helper_alignment; C.CBackendHelperFind.c_validate=helper_alignment; C.CBackendHelperReduce.c_validate=helper_alignment
 function C.CBackendHelperLayoutAssert:c_validate(input) return clean() end
-function C.CBackendHelperRequireFeature:c_validate(input) return issue(C.CBackendIssueInvalidTargetFeature(self.feature,self.reason)) end
+function C.CBackendHelperRequireFeature:c_validate(input)
+  return target_feature_report(input.source.unit.target, self.feature)
+end
 function C.CBackendHelperUse:c_validate(input) return self.spec:c_validate(input) end
 
 function C.CBackendTypedef:c_validate(input) return self.ty:c_validate(input) end

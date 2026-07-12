@@ -938,9 +938,10 @@ function M.compile_v2(name, source_text, opts)
 
   local asdl = require("lalin.asdl")
   local Compiler = require("lalin.schema_v2.compiler")
-  require("lalin.schema_v2")
+  local T = require("lalin.schema_v2")
+  local CodeType = require("lalin.code_type")(T)
   require("lalin.impl.compiler_api")
-
+  local target = CodeType.normalize_target(opts.c_target or opts.target or opts)
   local cs = Compiler.CompilerSession(source_text, name)
 
   local use_gcc = opts.gcc or opts.runner == "gcc" or opts.build_so
@@ -955,6 +956,7 @@ function M.compile_v2(name, source_text, opts)
       opt = opts.opt or 3,
       out_dir = opts.out_dir or opts.build_dir,
       cc = opts.cc or opts.compiler,
+      c_target = target,
     }
     local session, err = cs:compile_gcc(gcc_opts)
     if not session then
@@ -967,7 +969,7 @@ function M.compile_v2(name, source_text, opts)
     return session
   else
     -- C text only (like the old emit_c)
-    local result = cs:compile()
+    local result = cs:compile(target)
     if result == nil then
       error("compile_v2: compile returned nil", 2)
     end

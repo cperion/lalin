@@ -133,7 +133,9 @@ function Code.CodeData:lower_c_global()
 end
 function Code.CodeExtern:lower_c_extern() return C.CBackendExtern(C.CBackendName(self.name), self.symbol, C.CBackendFuncSigId(self.sig.text), nil) end
 
-function Lower.LowerModule:lower_c_module(code_module)
+function Lower.LowerModule:lower_c_module(input)
+  local spine = input.spine
+  local code_module = spine.code_module
   local signatures = code_module:lower_c_signature_projection()
   local sigs = {}
   for i = 1, #signatures.entries do sigs[i] = signatures.entries[i].c_sig end
@@ -150,11 +152,9 @@ function Lower.LowerModule:lower_c_module(code_module)
   for i = 1, #code_module.data do globals[#globals + 1] = code_module.data[i]:lower_c_global() end
   local types = {}
   for i = 1, #code_module.types do types[i] = code_module.types[i]:lower_code_type_decl_to_c() end
-  local target = C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian, true)
-  local unit = C.CBackendUnit(code_module.id.text, target, sigs, types, globals, externs, helpers, cfuncs)
+  local unit = C.CBackendUnit(code_module.id.text, spine.target, sigs, types, globals, externs, helpers, cfuncs)
   return Lower.LowerCModuleEmission(unit, signatures, functions)
 end
-
-function Lower.LowerModule:emit_c(code_module) return self:lower_c_module(code_module).unit end
+function Lower.LowerModule:emit_c(input) return self:lower_c_module(input).unit end
 
 return Lower

@@ -86,7 +86,6 @@ local function bind_context(T)
             pointer_bits = target.pointer_bits,
             index_bits = target.index_bits,
             endian = target.endian,
-            hosted = target.hosted,
         }
     end
 
@@ -299,7 +298,7 @@ local function bind_context(T)
     end
 
     function CEm.CEmitMachine.dummy(target)
-        target = target or C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian, true)
+        target = target or default_target()
         local spine = Lower.LowerBackSpine(
             Code.CodeModule(Code.CodeModuleId("_dummy"), {}, {}, {}, {}, {}, {}, Code.CodeOriginUnknown),
             Graph.CodeGraph(Code.CodeModuleId("_dummy"), {}),
