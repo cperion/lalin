@@ -703,7 +703,13 @@ The attempted `OWN-FRONT` cutover proved that several earlier packages establish
 
 **Ownership/acceptance:** function/module C emission consumes typed lower fragments. `LowerStrategyCode` uses ordinary instruction lowering; `LowerStrategyKernel` consumes canonical kernel/CMat emission. Tests must prove the selected strategy changes emitted CBackend structure and runtime values.
 
-**Dependency:** `RGN-CANON` gates `OWN-FRONT`; `KRN-CANON -> CMAT-INLINE -> LOWER-SEM` gates `OWN-ANALYSIS` and `OWN-STENCIL`. No ownership deletion resumes until all four pass the public C/GCC matrix with old-schema consumers explicitly measured.
+### C-TARGET — Preserve typed C target capabilities
+
+**Evidence:** canonical validation now rejects `test_dsl_lua_owned.lua` because the requested C11 target is dropped before lower/validation; atomics are validated against an implicit C99 target. A prior cutover patch fixed leaf capability lookup but not target propagation.
+
+**Ownership/acceptance:** carry a precise typed `CBackendTarget` through compiler stage input, lower planning, C emission, and validation. Target dialect/capability leaves own atomic support. The original public `Decl:lower` path passes without option copying, defaults, or wrappers.
+
+**Dependency:** `RGN-CANON` gates `OWN-FRONT`; `C-TARGET` gates `OWN-C`; `KRN-CANON -> CMAT-INLINE -> LOWER-SEM` gates `OWN-ANALYSIS` and `OWN-STENCIL`. No ownership deletion resumes until all five pass the public C/GCC matrix with old-schema consumers explicitly measured.
 
 ## Milestone 4 — Canonical Schema Ownership Packages
 
@@ -869,7 +875,7 @@ Release-level gates:
 | history/reopened | KRN-1→SCH-1→2 | P1 | MEM/EFF | Typed planning vocabulary integrated `bfe8e6b`; complete fact population remains `KRN-CANON` | incomplete end-to-end |
 | history/reopened | CMAT-1→3 | P1 | CLOW | Typed standalone materialization/emission integrated `ec873d5`,`702f89a`; inline path remains `CMAT-INLINE` | incomplete end-to-end |
 | history | CVAL-2 | P1 | CLOW-1, OWN-0 | Canonical CBackend validation | integrated `921816f` |
-| current | RGN-CANON | P0 | canonical frontend vocabulary | Complete canonical region semantics | planned |
+| current | RGN-CANON + C-TARGET | P0 | canonical frontend/C vocabulary | Complete canonical regions and typed target propagation | planned parallel packages |
 | next | KRN-CANON→CMAT-INLINE→LOWER-SEM | P0 | MEM/EFF/KRN/CMAT/CLOW | Complete canonical semantic C path | planned serial chain |
 | blocked | OWN-FRONT / OWN-META | P2 | RGN-CANON and parity matrix | Previous cutover `e76fc29cf` reverted by `de3294194` | do not resume |
 | blocked | OWN-ANALYSIS / OWN-STENCIL / OWN-C | P2 | parity blockers | Domain cutovers | do not resume |
