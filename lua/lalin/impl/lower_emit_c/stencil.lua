@@ -231,13 +231,16 @@ end
 
 function CMat.CMatCPointRejected:cmat_c_finish_binary(left, expr) return self end
 function CMat.CMatCPointEmitted:cmat_c_finish_binary(left, expr)
-  if expr.result_ty == nil then
-    return CMat.CMatCPointRejected({
-      CMat.CMatCEmissionUnsupportedPoint(expr, "point binary expression requires an explicit result type")
-    })
-  end
-  local ty = expr.result_ty:code_to_c_backend_type()
-  return expr.op:cmat_c_binary_selection(ty):cmat_c_apply_binary(left, self, expr, ty)
+  return expr.result:cmat_c_finish_binary_type(left, self, expr)
+end
+function Stencil.StencilPointResultInferred:cmat_c_finish_binary_type(left, right, expr)
+  return CMat.CMatCPointRejected({
+    CMat.CMatCEmissionUnsupportedPoint(expr, "point binary expression requires an explicit result type")
+  })
+end
+function Stencil.StencilPointResultTyped:cmat_c_finish_binary_type(left, right, expr)
+  local ty = self.ty:code_to_c_backend_type()
+  return expr.op:cmat_c_binary_selection(ty):cmat_c_apply_binary(left, right, expr, ty)
 end
 
 function CMat.CMatCBinaryRejected:cmat_c_apply_binary(left, right, expr, ty)
@@ -278,13 +281,16 @@ function Stencil.StencilStreamOp:cmat_c_emit_stream_op(state, def)
   })
 end
 
+function Stencil.StencilIndexProducer:cmat_c_emit_stream_access(state, def, access)
+  return state.accesses:cmat_c_lookup(access.access):cmat_c_emit_access_stream(state, def)
+end
+function Stencil.StencilIndexExplicit:cmat_c_emit_stream_access(state, def, access)
+  return CMat.CMatCStateRejected({
+    CMat.CMatCEmissionUnsupportedStream(def, "explicit stream indexing is outside contiguous point access")
+  })
+end
 function Stencil.StencilStreamAccess:cmat_c_emit_stream_op(state, def)
-  if self.index ~= nil then
-    return CMat.CMatCStateRejected({
-      CMat.CMatCEmissionUnsupportedStream(def, "explicit stream indexing is outside contiguous point access")
-    })
-  end
-  return state.accesses:cmat_c_lookup(self.access):cmat_c_emit_access_stream(state, def)
+  return self.index:cmat_c_emit_stream_access(state, def, self)
 end
 
 function CMat.CMatCAccessCMissing:cmat_c_emit_access_stream(state, def)
@@ -569,11 +575,14 @@ function CMat.CMatCAtomRejected:cmat_c_emit_range(kernel, input, shape)
   return CMat.CMatCRejected({ self.issue })
 end
 function CMat.CMatCAtomEmitted:cmat_c_emit_range(kernel, input, shape)
-  if shape.stop == nil then
-    return CMat.CMatCRejected({ CMat.CMatCEmissionUnsupportedProducer(
-      shape, "range-1D C emission requires an explicit stop value") })
-  end
-  return shape.stop:cmat_c_atom():cmat_c_emit_range_stop(kernel, input, shape, self.atom)
+  return shape.stop:cmat_c_emit_range_stop_bound(kernel, input, shape, self.atom)
+end
+function Stencil.StencilBoundDynamic:cmat_c_emit_range_stop_bound(kernel, input, shape, start_atom)
+  return CMat.CMatCRejected({ CMat.CMatCEmissionUnsupportedProducer(
+    shape, "range-1D C emission requires an explicit stop value") })
+end
+function Stencil.StencilBoundValue:cmat_c_emit_range_stop_bound(kernel, input, shape, start_atom)
+  return self.value:cmat_c_atom():cmat_c_emit_range_stop(kernel, input, shape, start_atom)
 end
 
 function Stencil.StencilProducerShape:cmat_c_emit_kernel(kernel, input)
@@ -581,16 +590,19 @@ function Stencil.StencilProducerShape:cmat_c_emit_kernel(kernel, input)
     CMat.CMatCEmissionUnsupportedProducer(self, "producer is outside scalar range-1D C emission")
   })
 end
+function Stencil.StencilBoundDynamic:cmat_c_emit_range_start_bound(kernel, input, shape)
+  return CMat.CMatCRejected({ CMat.CMatCEmissionUnsupportedProducer(
+    shape, "range-1D C emission requires an explicit start value") })
+end
+function Stencil.StencilBoundValue:cmat_c_emit_range_start_bound(kernel, input, shape)
+  return self.value:cmat_c_atom():cmat_c_emit_range(kernel, input, shape)
+end
 function Stencil.StencilProduceRange1D:cmat_c_emit_kernel(kernel, input)
-  if self.start == nil then
-    return CMat.CMatCRejected({ CMat.CMatCEmissionUnsupportedProducer(
-      self, "range-1D C emission requires an explicit start value") })
-  end
   if self.step <= 0 then
     return CMat.CMatCRejected({ CMat.CMatCEmissionUnsupportedProducer(
       self, "range-1D C emission requires a positive step") })
   end
-  return self.start:cmat_c_atom():cmat_c_emit_range(kernel, input, self)
+  return self.start:cmat_c_emit_range_start_bound(kernel, input, self)
 end
 
 function CMat.CMatMaterializedFused:cmat_emit_c(input)
