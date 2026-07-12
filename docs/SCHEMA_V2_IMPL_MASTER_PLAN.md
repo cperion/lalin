@@ -675,6 +675,36 @@ This ID deliberately replaces the planning report's `STN-1`; `STN-1` is already 
 
 **Checks/acceptance:** validator and canonical-context tests; one validator/report, no string semantic state; negative assertions and GCC smoke.
 
+## Milestone 3-F — Canonical End-to-End Parity Blockers
+
+The attempted `OWN-FRONT` cutover proved that several earlier packages established typed vocabulary and focused leaf tests without migrating the complete semantics consumed by the public C path. These blockers are reopened work, not review tasks. Old implementations are executable references only; canonical code must not call or wrap them.
+
+### RGN-CANON — Complete canonical region semantics
+
+**Evidence:** after canonical frontend ownership, region tests leave `RegionContWire`, `RegionInvokeTarget`, `RegionWireBlock`, `StmtRegionEmit`, and `StmtRegionCall` at the C boundary. Canonical region checking omits lexical scope threading, nested if/switch expansion, block-parameter scopes, captured wire arguments, protocol grouping, forwarding, bundles, and compatible tail-call conversion.
+
+**Ownership/acceptance:** migrate these operations onto canonical schema-v2 region/module/statement/fact leaves with typed inputs/results. Parsed nested/parameterized region GCC, region main/call, and parallel transfer must pass with old frontend schemas absent. No call into the old typechecker/region expander and no adapter.
+
+### KRN-CANON — Populate complete canonical kernel facts
+
+**Evidence:** canonical `KernelLoopPlanRequest` is built with empty lanes, bindings, effects, and proofs and lacks the module/graph projections needed for real recognition. Focused candidate tests do not prove copy/scan/reduction/all/all-compare recognition or carrier/address facts.
+
+**Ownership/acceptance:** typed module/graph/flow/memory/effect projections populate complete kernel requests and concrete candidate leaves recognize supported computations without text indexes or side maps. Assert non-empty facts and real loop isolation in end-to-end tests.
+
+### CMAT-INLINE — Canonical inline CMat semantics
+
+**Evidence:** schema-v2 CMat emits standalone closed computations, but the public function path still depends on old inline binding/point/window/accumulator/sink/control semantics. Window clamp behavior currently survives only through that old path.
+
+**Ownership/acceptance:** define backend-neutral typed inline projections and leaf methods in canonical CMat/stencil vocabulary, including window bounds and sink/control results. Copy/scan/reduce/all/all-compare/SOAC and clamp runtime values must pass without the old CMat owner.
+
+### LOWER-SEM — Consume selected semantic fragments
+
+**Evidence:** canonical `LowerModule` contains selected `LowerStrategyKernel` fragments, but `impl/lower_emit_c.lua` lowers every `CodeFunc` through ordinary Code-to-C; schedule-form dispatch is dead.
+
+**Ownership/acceptance:** function/module C emission consumes typed lower fragments. `LowerStrategyCode` uses ordinary instruction lowering; `LowerStrategyKernel` consumes canonical kernel/CMat emission. Tests must prove the selected strategy changes emitted CBackend structure and runtime values.
+
+**Dependency:** `RGN-CANON` gates `OWN-FRONT`; `KRN-CANON -> CMAT-INLINE -> LOWER-SEM` gates `OWN-ANALYSIS` and `OWN-STENCIL`. No ownership deletion resumes until all four pass the public C/GCC matrix with old-schema consumers explicitly measured.
+
 ## Milestone 4 — Canonical Schema Ownership Packages
 
 ### OWN-0 — Ownership inventory and ambiguity guard
@@ -836,14 +866,14 @@ Release-level gates:
 | history | LNG-OWN-C + OWN-0 | P2 | integrated regions | Ownership runtime and ambiguity inventory | integrated `8b24eff3d`; inventory fix `67f53804c` |
 | history | CLO-1→3 | P1 | M0 refresh | Closure vocabulary → collection → rewrite | integrated `d424017`; canonical-input fix `a61918a` |
 | history | MEM-1→4→EFF-1→2 | P1 | M0 refresh | Memory/effect facets and leaves | integrated `d071edb`; projection-owner fix `a09c2ab65` |
-| current-A | KRN-1→SCH-1→2 | P1 | MEM/EFF | Kernel/schedule leaves | working `pack/kernel-schedule` (`w4:p23`) |
-| history | CMAT-1→STN-PLAN/DESC-1→DESC-2→CMAT-2 | P1 | M0 refresh | Neutral stencil planning/materialization | integrated `ec873d5` |
-| current-B | CMAT-3 | P1 | CMAT-2, CLOW-1 | CBackend stencil emission/GCC | working `pack/cmat-emission` (`w4:p24`) |
-| history | VAL-1→CVAL-1→CEMIT-1→CLOW-1 | P1 | M0 refresh | Validation and typed C lowering | integrated `df10f3ea9`; C backend 28/28 |
-| current-C | CVAL-2 | P1 | CLOW-1, OWN-0 | Canonical CBackend validation | working `pack/canonical-c-validation` (`w4:p25`) |
-| current-D | OWN-FRONT→OWN-META | P2 | OWN-0, stabilized compiler contracts | Frontend and phase/project/exec ownership | working `pack/ownership-front-meta` (`w4:p26`) |
-| next | OWN-ANALYSIS / OWN-STENCIL / OWN-C | P2 | current A/B/C | Domain cutovers | blocked on current wave |
-| final | OWN-CUTOVER | P2 | all ownership domains | Public facade and old-tree retirement | blocked on domain cutovers |
+| history/reopened | KRN-1→SCH-1→2 | P1 | MEM/EFF | Typed planning vocabulary integrated `bfe8e6b`; complete fact population remains `KRN-CANON` | incomplete end-to-end |
+| history/reopened | CMAT-1→3 | P1 | CLOW | Typed standalone materialization/emission integrated `ec873d5`,`702f89a`; inline path remains `CMAT-INLINE` | incomplete end-to-end |
+| history | CVAL-2 | P1 | CLOW-1, OWN-0 | Canonical CBackend validation | integrated `921816f` |
+| current | RGN-CANON | P0 | canonical frontend vocabulary | Complete canonical region semantics | planned |
+| next | KRN-CANON→CMAT-INLINE→LOWER-SEM | P0 | MEM/EFF/KRN/CMAT/CLOW | Complete canonical semantic C path | planned serial chain |
+| blocked | OWN-FRONT / OWN-META | P2 | RGN-CANON and parity matrix | Previous cutover `e76fc29cf` reverted by `de3294194` | do not resume |
+| blocked | OWN-ANALYSIS / OWN-STENCIL / OWN-C | P2 | parity blockers | Domain cutovers | do not resume |
+| final | OWN-CUTOVER | P2 | all ownership domains | Public facade and old-tree retirement | blocked |
 | deferred | LJBC-STENCIL/native/slow binary | — | owner decision | Explicit non-main profiles | stopped/not scheduled |
 
 ## Distribution Protocol
