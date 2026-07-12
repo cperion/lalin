@@ -119,7 +119,7 @@ local dummy_origin = Code.CodeOriginUnknown
 local dummy_code_module = Code.CodeModule(dummy_module_id, {}, {}, {}, {}, {}, {}, dummy_origin)
 local dummy_graph = Graph.CodeGraph(dummy_module_id, {})
 local spine = Lower.LowerBackSpine(dummy_code_module, dummy_graph, target)
-local machine = Cemit.CEmitMachine(spine, {}, {}, {}, {})
+local machine = Cemit.CEmitMachine(spine, { Cemit.CEmitCSigEntry(sig_id.text, func_sig) }, { func_sig }, {}, {})
 
 -- ============================================================
 -- Emit

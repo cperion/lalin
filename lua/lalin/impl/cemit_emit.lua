@@ -80,6 +80,10 @@ end
 
 function C.CBackendUnit:c_emit_sig_projection()
   local entries = {}
+  for i = 1, #(self.sigs or {}) do
+    local sig = self.sigs[i]
+    entries[#entries + 1] = C.CBackendFuncSigEntry(sig.id, sig)
+  end
   return C.CBackendFuncSigProjection(entries)
 end
 function C.CBackendFuncSigProjection:c_emit_sig_lookup(id)

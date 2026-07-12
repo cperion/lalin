@@ -218,7 +218,7 @@ do
   assert_ok("switch default captured", asdl.isa(sr.expr.default_body[1].expr, Tr.ExprLoad) and asdl.isa(sr.expr.default_expr, Tr.ExprLoad), sr.expr.default_expr)
 
   local label = Tr.BlockLabel("entry")
-  local cont = Tr.RegionCont("done", "done", {})
+  local cont = Tr.RegionCont(Tr.RegionProtocolKey("done"), "done", {})
   local jump = Tr.StmtJump(Tr.StmtSurface, label, { Tr.JumpArg("x", ref()) })
   local jump_cont = Tr.StmtJumpCont(Tr.StmtSurface, cont, { Tr.JumpArg("x", ref()) })
   local region = Tr.ControlStmtRegion("r", Tr.EntryControlBlock(label, { Tr.EntryBlockParam("p", i32, ref()) }, { jump, jump_cont }), {})

@@ -64,7 +64,7 @@ assert(has(Validate.validate(C.CBackendUnit("bad", target, {}, {}, { global }, {
 -- Validate, emit, compile with GCC, and execute the exported value.
 local module_id = Code.CodeModuleId("canonical_validation")
 local code_module = Code.CodeModule(module_id, {}, {}, {}, {}, {}, {}, Code.CodeOriginUnknown)
-local machine = Cemit.CEmitMachine(Lower.LowerBackSpine(code_module, Graph.CodeGraph(module_id, {}), target), {}, {}, {}, {})
+local machine = Cemit.CEmitMachine(Lower.LowerBackSpine(code_module, Graph.CodeGraph(module_id, {}), target), { Cemit.CEmitCSigEntry(sid.text, sig) }, { sig }, {}, {})
 local artifact = machine:emit_module(unit)
 local base = os.tmpname()
 local c_path, so_path = base .. ".c", base .. ".so"

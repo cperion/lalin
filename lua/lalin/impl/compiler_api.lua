@@ -49,7 +49,12 @@ local function compile_validated(input)
   local Cemit = require("lalin.schema_v2.cemit")
   local Lower_schema = require("lalin.schema_v2.lower")
   local spine = Lower_schema.LowerBackSpine(code_module, graph, input.target)
-  local artifact = Cemit.CEmitMachine(spine, {}, {}, {}, {}):emit_module(backend.unit)
+  local c_sig_entries = {}
+  for i = 1, #backend.unit.sigs do
+    local sig = backend.unit.sigs[i]
+    c_sig_entries[i] = Cemit.CEmitCSigEntry(sig.id.text, sig)
+  end
+  local artifact = Cemit.CEmitMachine(spine, c_sig_entries, backend.unit.sigs, {}, {}):emit_module(backend.unit)
   return Compiler.CompilerArtifactC(artifact.source, artifact.header)
 end
 
