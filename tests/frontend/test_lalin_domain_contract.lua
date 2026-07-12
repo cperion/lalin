@@ -3,16 +3,15 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local lalin = require("lalin")
 local asdl = require("lalin.asdl")
 
-local T = asdl.context()
-require("lalin.schema_projection")(T)
-require("lalin.tree_typecheck")(T)
+local T = require("lalin.schema_v2")
+require("lalin.impl.tree_check.init")
 local Tr = T.LalinTree
 
 local Check = T.LalinCheck
 local function check(src, name)
   local decls = assert(lalin.loadstring(src, "@" .. name .. ".lln"))
   local module = lalin.syntax.to_module(decls, name, T)
-  return module:typecheck_tree_module()
+  return require("lalin.frontend_pipeline")(T).typecheck_module(module, {})
 end
 
 local store_ok = check([=[

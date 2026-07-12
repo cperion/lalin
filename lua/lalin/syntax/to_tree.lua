@@ -262,7 +262,7 @@ local function bind_context(T)
   function ToTree.parsed_type(ptype)
     if not ptype then return Ty.TScalar(C.ScalarVoid) end
     local cls = asdl.classof(ptype)
-    if cls then return ptype end
+    if cls and asdl.context_of(cls) == T then return ptype end
     if llbl.is(ptype, "HostEval") or ptype.tag == "HostEscape" then
       return adapter:type(ptype)
     end
@@ -416,10 +416,12 @@ local function bind_context(T)
       local variant_arms = {}
       for i, arm in ipairs(parsed.variant_arms or {}) do
         local binds = {}
-        for j, name in ipairs(arm.binds or {}) do binds[j] = name end
-        variant_arms[i] = Tr.SwitchVariantSourceStmtArm(arm.variant_name, binds, ToTree.stmts(arm.body or {}))
+        for j, name in ipairs(arm.binds or {}) do
+          binds[j] = Tr.VariantBind(name, Ty.TScalar(C.ScalarVoid))
+        end
+        variant_arms[i] = Tr.SwitchVariantStmtArm(arm.variant_name, binds, ToTree.stmts(arm.body or {}))
       end
-      return Tr.StmtVariantSwitchSource(Tr.StmtSurface, ToTree.expr(parsed.value), arms, variant_arms, ToTree.stmts(parsed.default_body or {}))
+      return Tr.StmtSwitch(Tr.StmtSurface, ToTree.expr(parsed.value), arms, variant_arms, ToTree.stmts(parsed.default_body or {}))
     elseif tag == "StmtForRange" then
       local loop_lower = require("lalin.syntax.for_to_loop")(T)
       return loop_lower.lower(parsed)

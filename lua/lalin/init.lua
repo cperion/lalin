@@ -92,9 +92,7 @@ end
 
 local function parsed_decls_from(value)
     if value == nil then return nil end
-    local asdl = require("lalin.asdl")
-    local T = asdl.context()
-    require("lalin.schema_projection")(T)
+    local T = facade_T
     local adapter = require("lalin.syntax.role_adapter")(T)
     local ok, decls = pcall(function() return adapter:decls(value) end)
     if not ok or #(decls or {}) == 0 then return nil end

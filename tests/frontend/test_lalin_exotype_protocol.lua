@@ -5,8 +5,7 @@ local Exotype = require("lalin.exotype")
 local Document = require("lalin.syntax.document")
 local asdl = require("lalin.asdl")
 
-local T = asdl.context()
-require("lalin.schema_projection")(T)
+local T = require("lalin.schema_v2")
 local Tr = T.LalinTree
 
 local getentries_count = 0

@@ -230,6 +230,7 @@ return schema. LalinTreeCode {
   },
   product. TreeCodeItemAccumulationFacet {
     funcs [many [LalinCode.CodeFunc]],
+    types [many [LalinCode.CodeTypeDecl]],
     data [many [LalinCode.CodeData]],
     globals [many [LalinCode.CodeGlobal]],
   },

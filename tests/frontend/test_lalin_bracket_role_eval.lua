@@ -10,8 +10,7 @@ local Stmt = require("lalin.syntax.stmt")
 local Type = require("lalin.syntax.type")
 local Decl = require("lalin.syntax.decl")
 
-local T = asdl.context()
-require("lalin.schema_projection")(T)
+local T = require("lalin.schema_v2")
 local ToTree = require("lalin.syntax.to_tree")(T)
 
 -- Parsed [Pair] adapts a declaration value to a type position through the role adapter.

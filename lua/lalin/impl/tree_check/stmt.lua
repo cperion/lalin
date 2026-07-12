@@ -33,23 +33,34 @@ local function is_error_result(er)
 end
 
 function Tr.StmtLet:typecheck_tree_stmt(input)
-  local er = self.init:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+  local er = self.init:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, self.binding.ty))
   if is_error_result(er) then return LCheck.TypeStmtResult(input, {self}, er.issues) end
   local scope = input.scope:typecheck_tree_add_value(self.binding.name, er.ty, self.binding)
-  return LCheck.TypeStmtResult(LCheck.TypeStmtInput(scope, input.return_ty, input.yield), {Tr.StmtLet(Tr.StmtFlow(Sem.FlowFallsThrough), self.binding, er.expr)}, {})
+  return LCheck.TypeStmtResult(LCheck.TypeStmtInput(scope, input.return_ty, input.yield), {Tr.StmtLet(Tr.StmtFlow(Sem.FlowFallsThrough), self.binding, er.expr)}, er.issues or {})
 end
 function Tr.StmtVar:typecheck_tree_stmt(input)
-  local er = self.init:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+  local er = self.init:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, self.binding.ty))
   if is_error_result(er) then return LCheck.TypeStmtResult(input, {self}, er.issues) end
   local scope = input.scope:typecheck_tree_add_value(self.binding.name, er.ty, self.binding)
-  return LCheck.TypeStmtResult(LCheck.TypeStmtInput(scope, input.return_ty, input.yield), {Tr.StmtVar(Tr.StmtFlow(Sem.FlowFallsThrough), self.binding, er.expr)}, {})
+  return LCheck.TypeStmtResult(LCheck.TypeStmtInput(scope, input.return_ty, input.yield), {Tr.StmtVar(Tr.StmtFlow(Sem.FlowFallsThrough), self.binding, er.expr)}, er.issues or {})
 end
 function Tr.StmtSet:typecheck_tree_stmt(input)
   local pr = self.place:typecheck_tree_place(LCheck.TypePlaceInput(input.scope))
-  local vr = self.value:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
-  if is_error_result(vr) then return LCheck.TypeStmtResult(input, {self}, vr.issues) end
-  return LCheck.TypeStmtResult(input, {Tr.StmtSet(Tr.StmtFlow(Sem.FlowFallsThrough), pr.place, vr.expr)}, {})
+  local vr = self.value:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, pr.ty))
+  local issues = {}
+  for _, issue in ipairs(pr.issues or {}) do issues[#issues + 1] = issue end
+  for _, issue in ipairs(vr.issues or {}) do issues[#issues + 1] = issue end
+  if vr.ty then pr.place:tree_check_store_lease_escape(vr.ty, issues) end
+  if is_error_result(vr) then return LCheck.TypeStmtResult(input, {self}, issues) end
+  return LCheck.TypeStmtResult(input, {Tr.StmtSet(Tr.StmtFlow(Sem.FlowFallsThrough), pr.place, vr.expr)}, issues)
 end
+
+function Tr.Place:tree_check_store_lease_escape(value_ty, issues) end
+function Tr.PlaceRef:tree_check_store_lease_escape(value_ty, issues) end
+function Tr.PlaceDeref:tree_check_store_lease_escape(value_ty, issues) value_ty:tree_check_append_lease_escape(issues, LCheck.TypeUnaryLeaseEscapeStore) end
+function Tr.PlaceDot:tree_check_store_lease_escape(value_ty, issues) value_ty:tree_check_append_lease_escape(issues, LCheck.TypeUnaryLeaseEscapeStore) end
+function Tr.PlaceField:tree_check_store_lease_escape(value_ty, issues) value_ty:tree_check_append_lease_escape(issues, LCheck.TypeUnaryLeaseEscapeStore) end
+function Tr.PlaceIndex:tree_check_store_lease_escape(value_ty, issues) value_ty:tree_check_append_lease_escape(issues, LCheck.TypeUnaryLeaseEscapeStore) end
 function Tr.StmtExpr:typecheck_tree_stmt(input)
   local er = self.expr:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
   if is_error_result(er) then return LCheck.TypeStmtResult(input, {self}, er.issues) end
@@ -61,9 +72,12 @@ function Tr.StmtAssert:typecheck_tree_stmt(input)
   return LCheck.TypeStmtResult(input, {Tr.StmtAssert(Tr.StmtFlow(Sem.FlowFallsThrough), cr.expr)}, {})
 end
 function Tr.StmtReturnValue:typecheck_tree_stmt(input)
-  local vr = self.value:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
-  if is_error_result(vr) then return LCheck.TypeStmtResult(input, {self}, vr.issues) end
-  return LCheck.TypeStmtResult(input, {Tr.StmtReturnValue(Tr.StmtFlow(Sem.FlowReturns), vr.expr)}, {})
+  local vr = self.value:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, input.return_ty))
+  local issues = {}
+  for _, issue in ipairs(vr.issues or {}) do issues[#issues + 1] = issue end
+  if vr.ty then vr.ty:tree_check_append_lease_escape(issues, LCheck.TypeUnaryLeaseEscapeReturn) end
+  if is_error_result(vr) then return LCheck.TypeStmtResult(input, {self}, issues) end
+  return LCheck.TypeStmtResult(input, {Tr.StmtReturnValue(Tr.StmtFlow(Sem.FlowReturns), vr.expr)}, issues)
 end
 function Tr.StmtReturnVoid:typecheck_tree_stmt(input)
   return LCheck.TypeStmtResult(input, {Tr.StmtReturnVoid(Tr.StmtFlow(Sem.FlowReturns))}, {})
@@ -99,6 +113,33 @@ function Tr.StmtIf:typecheck_tree_stmt(input)
   return LCheck.TypeStmtResult(input, {Tr.StmtIf(Tr.StmtFlow(Sem.FlowFallsThrough), cr.expr, then_body.stmts, else_body.stmts)}, issues)
 end
 
+local function checked_variant_arm(lookup, va, input, expected, bind_ty, extra_issues)
+  local issues, binds, scope = extra_issues or {}, {}, input.scope
+  if #va.binds ~= expected then issues[#issues+1] = LCheck.TypeIssueVariantBindCount(lookup.def.type_name, va.variant_name, expected, #va.binds) end
+  for i = 1, #va.binds do
+    local ty = bind_ty or Ty.TScalar(C.ScalarVoid)
+    binds[i] = Tr.VariantBind(va.binds[i].name, ty)
+    scope = scope:typecheck_tree_add_value(binds[i].name, ty)
+  end
+  local body = LCheck.TypeStmtInput(scope, input.return_ty, input.yield):typecheck_tree_stmt_body(va.body)
+  for _, issue in ipairs(body.issues) do issues[#issues+1] = issue end
+  return LCheck.TypeVariantArmResult(Tr.SwitchVariantStmtArm(va.variant_name, binds, body.stmts), issues)
+end
+
+function LCheck.TypeVariantPayloadNone:tree_check_variant_arm(lookup, va, input) return checked_variant_arm(lookup, va, input, 0) end
+function LCheck.TypeVariantPayloadFound:tree_check_variant_arm(lookup, va, input) return checked_variant_arm(lookup, va, input, 1, self.ty) end
+function LCheck.TypeVariantPayloadUnsupported:tree_check_variant_arm(lookup, va, input)
+  return checked_variant_arm(lookup, va, input, 0, nil, {LCheck.TypeIssueVariantPayloadUnsupported(lookup.def.type_name, va.variant_name, self.field_count)})
+end
+function LCheck.TypeVariantCaseLookupFound:tree_check_variant_arm(va, input) return self.case:typecheck_tree_payload_lookup():tree_check_variant_arm(self, va, input) end
+function LCheck.TypeVariantCaseLookupMissing:tree_check_variant_arm(va, input)
+  local issues = {LCheck.TypeIssueUnknownVariant(self.type_name, va.variant_name)}
+  if #va.binds ~= 0 then issues[#issues+1] = LCheck.TypeIssueVariantBindCount(self.type_name, va.variant_name, 0, #va.binds) end
+  local body = input:typecheck_tree_stmt_body(va.body)
+  for _, issue in ipairs(body.issues) do issues[#issues+1] = issue end
+  return LCheck.TypeVariantArmResult(Tr.SwitchVariantStmtArm(va.variant_name, {}, body.stmts), issues)
+end
+
 function Tr.StmtSwitch:typecheck_tree_stmt(input)
   local vr = self.value:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
   local issues = {}
@@ -119,17 +160,9 @@ function Tr.StmtSwitch:typecheck_tree_stmt(input)
   local variant_arms = {}
   for i = 1, #(self.variant_arms or {}) do
     local va = self.variant_arms[i]
-    local scope = input.scope
-    for j = 1, #(va.binds or {}) do
-      local bnd = va.binds[j]
-      scope = scope:typecheck_tree_add_value(bnd.name, bnd.ty)
-    end
-    local arm_input = LCheck.TypeStmtInput(scope, input.return_ty, input.yield)
-    local arm_body = arm_input:typecheck_tree_stmt_body(va.body or {})
-    variant_arms[#variant_arms + 1] = Tr.SwitchVariantStmtArm(va.variant_name, va.binds, arm_body.stmts)
-    if arm_body.issues then
-      for _, iss in ipairs(arm_body.issues) do issues[#issues + 1] = iss end
-    end
+    local result = vr.ty:tree_check_variant_lookup(input.scope.facts):typecheck_tree_lookup_variant_case(va.variant_name):tree_check_variant_arm(va, input)
+    variant_arms[#variant_arms+1] = result.arm
+    for _, issue in ipairs(result.issues) do issues[#issues+1] = issue end
   end
   -- Typecheck default body
   local default_body = input:typecheck_tree_stmt_body(self.default_body or {})
@@ -139,7 +172,13 @@ function Tr.StmtSwitch:typecheck_tree_stmt(input)
   return LCheck.TypeStmtResult(input, {Tr.StmtSwitch(Tr.StmtFlow(Sem.FlowFallsThrough), vr.expr, arms, variant_arms, default_body.stmts)}, issues)
 end
 function Tr.StmtAtomicStore:typecheck_tree_stmt(input)
-  return LCheck.TypeStmtResult(input, {self}, {})
+  local addr = self.addr:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+  local value = self.value:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+  local issues = {}
+  for _, issue in ipairs(addr.issues) do issues[#issues+1] = issue end
+  for _, issue in ipairs(value.issues) do issues[#issues+1] = issue end
+  if value.ty then value.ty:tree_check_append_lease_escape(issues, LCheck.TypeUnaryLeaseEscapeStore) end
+  return LCheck.TypeStmtResult(input, {Tr.StmtAtomicStore(Tr.StmtFlow(Sem.FlowFallsThrough), self.ty, addr.expr, value.expr, self.ordering)}, issues)
 end
 function Tr.StmtAtomicFence:typecheck_tree_stmt(input)
   return LCheck.TypeStmtResult(input, {self}, {})

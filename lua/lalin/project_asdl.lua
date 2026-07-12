@@ -5,7 +5,7 @@ local S = require("lalin.schema.dsl")
 local M = {}
 
 local function project_module()
-    return require("lalin.schema.project")
+    return require("lalin.schema_v2.project")
 end
 
 function M.schema(T)

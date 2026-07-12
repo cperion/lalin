@@ -1367,8 +1367,7 @@ end
 
 function Decl:typecheck(opts)
     opts = merge_source_ctx(opts, self)
-    local Typecheck = require("lalin.tree_typecheck")(T)
-    return Typecheck.check_module(module_ast_of(self), opts)
+    return require("lalin.frontend_pipeline")(T).typecheck_module(module_ast_of(self), opts)
 end
 
 local function retarget_cont_jumps_stmt(stmt, cont_by_name)

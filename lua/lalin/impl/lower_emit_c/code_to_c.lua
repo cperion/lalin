@@ -223,7 +223,13 @@ function Code.CodeGlobalRefExtern:lower_code_global_ref_to_c_sig(c_emission)
 end
 
 function Code.CodeGlobalRef:lower_code_global_ref_to_c_assign(c_emission, dst)
-  error("code_to_c: unsupported global ref assign", 3)
+  error("code_to_c: unsupported global ref assign for " .. tostring(require("lalin.asdl").class_basename(self)), 3)
+end
+function Code.CodeGlobalRefData:lower_code_global_ref_to_c_assign(c_emission, dst)
+  return C.CBackendAssign(dst, C.CBackendRAtom(C.CBackendAtomGlobal(C.CBackendGlobalId("__data_" .. self.data.text))))
+end
+function Code.CodeGlobalRefGlobal:lower_code_global_ref_to_c_assign(c_emission, dst)
+  return C.CBackendAssign(dst, C.CBackendRAtom(C.CBackendAtomGlobal(C.CBackendGlobalId(self.global.text))))
 end
 function Code.CodeGlobalRefFunc:lower_code_global_ref_to_c_assign(c_emission, dst)
   local name = self:lower_code_global_ref_to_c_name()

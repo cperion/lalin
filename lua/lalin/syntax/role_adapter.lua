@@ -101,9 +101,18 @@ local function bind(T, callbacks)
     value, host = self:value(value, "type", ctx)
     if value == nil then return Ty.TScalar(C.ScalarVoid) end
 
+    if Exotype.is(value) then
+      return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(Exotype.typename(value)) })))
+    end
     local projected = TypeValue.type(value)
     if projected ~= nil then return projected end
-    if asdl.classof(value) then return value end
+    local value_class = asdl.classof(value)
+    if value_class and asdl.context_of(value_class) == T then return value end
+    local value_mt = type(value) == "table" and getmetatable(value) or nil
+    if value_mt and rawget(value_mt, "__dsl_class") == "Decl" and (value.type_name or value.name) then
+      return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(value.type_name or value.name) })))
+    end
+
 
     if type(value) == "table" and value.tag then
       if (value.tag == "DeclStruct" or value.tag == "DeclUnion") and value.name ~= nil then
@@ -115,9 +124,6 @@ local function bind(T, callbacks)
       if lower then return lower(value) end
     end
 
-    if Exotype.is(value) then
-      return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(Exotype.typename(value)) })))
-    end
 
     role_error("type", "type host-eval produced unsupported value " .. tostring(value), value, host)
   end

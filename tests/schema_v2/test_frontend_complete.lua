@@ -195,5 +195,15 @@ struct Empty
 end
 ]]); passes = passes + 1
 
+local parsed_identity = Document.to_module(Document.parse([[
+fn identity(x [i32]) [i32] do
+  return x
+end
+]], "frontend_identity"), "frontend_identity")
+local builder_identity = require("lalin.dsl")(T).to_unit("builder_identity", {}):ast()
+assert(asdl.context_of(asdl.classof(parsed_identity)) == T, "parsed frontend must use the canonical context")
+assert(asdl.classof(parsed_identity) == asdl.classof(builder_identity), "parsed and builder modules must share one constructor identity")
+print("parsed/builder canonical identity -> OK")
+
 print(string.format("\n=== %d/%d frontend_complete tests passed ===", passes, total))
 if passes ~= total then os.exit(1) end

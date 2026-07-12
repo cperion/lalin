@@ -39,6 +39,121 @@ function Tr.ModuleCode:tree_module_name() return self.module_name end
 
 function Tr.Module:tree_code_module_name() return self.h:tree_module_name() end
 
+local function append_all(dst, src)
+  for i = 1, #(src or {}) do dst[#dst + 1] = src[i] end
+end
+
+function Ty.TypeRef:tree_check_ref_name() return nil end
+function Ty.TypeRefPath:tree_check_ref_name()
+  local parts = {}
+  for i = 1, #self.path.parts do parts[i] = self.path.parts[i].text end
+  return table.concat(parts, ".")
+end
+function Ty.TypeRefGlobal:tree_check_ref_name() return self.type_name end
+function Ty.TypeRefLocal:tree_check_ref_name() return self.sym.name end
+
+function Ty.Type:tree_check_named_ref() return nil end
+function Ty.TNamed:tree_check_named_ref() return self.ref:tree_check_ref_name() end
+function Ty.THandle:tree_check_named_ref() return self.ref:tree_check_ref_name() end
+function Ty.Type:tree_check_ptr_elem_name() return nil end
+function Ty.TPtr:tree_check_ptr_elem_name() return self.elem:tree_check_named_ref() end
+function Ty.TAccess:tree_check_ptr_elem_name() return self.base:tree_check_ptr_elem_name() end
+
+function Ty.TypeAccess:tree_check_preserving() return false end
+function Ty.TypeAccessReadonly:tree_check_preserving() return true end
+function Ty.TypeAccessPreserve:tree_check_preserving() return true end
+function Ty.TypeAccess:tree_check_invalidating() return false end
+function Ty.TypeAccessInvalidate:tree_check_invalidating() return true end
+function Ty.TypeAccessWriteonly:tree_check_invalidating() return true end
+function Ty.Type:tree_check_preserving() return false end
+function Ty.TAccess:tree_check_preserving() return self.access:tree_check_preserving() end
+function Ty.Type:tree_check_invalidating() return false end
+function Ty.TAccess:tree_check_invalidating() return self.access:tree_check_invalidating() end
+function Ty.TPtr:tree_check_invalidating() return true end
+function Ty.TView:tree_check_invalidating() return true end
+
+function Ty.Type:tree_check_lease_grants(origin, target) return false end
+function Ty.TLease:tree_check_lease_grants(origin, target)
+  local lease_origin = self.origin.tree_check_origin_name and self.origin:tree_check_origin_name() or nil
+  return lease_origin == origin and (target == nil or self.base:tree_check_ptr_elem_name() == target)
+end
+function Ty.TAccess:tree_check_lease_grants(origin, target) return self.base:tree_check_lease_grants(origin, target) end
+function Ty.LeaseOrigin:tree_check_origin_name() return nil end
+function Ty.LeaseOriginParam:tree_check_origin_name() return self.name end
+
+function Ty.HandleFact:tree_check_domain_ref() return nil end
+function Ty.HandleDomain:tree_check_domain_ref() return self.domain end
+function Ty.HandleFact:tree_check_target_ref() return nil end
+function Ty.HandleTarget:tree_check_target_ref() return self.target end
+
+function Tr.TypeDecl:tree_check_variant_defs(input) return {} end
+function Tr.TypeDeclTaggedUnionSugar:tree_check_variant_defs(input)
+  local variants = {}
+  for i = 1, #self.variants do
+    local v = self.variants[i]
+    variants[i] = require("lalin.schema_v2.check").TypeVariantCase(v.name, i - 1, v.payload, v.fields)
+  end
+  return {require("lalin.schema_v2.check").TypeVariantDef(self.name, Ty.TNamed(Ty.TypeRefGlobal(input.module_name, self.name)), variants)}
+end
+function Tr.TypeDeclEnumSugar:tree_check_variant_defs(input)
+  local variants = {}
+  for i = 1, #self.variants do variants[i] = require("lalin.schema_v2.check").TypeVariantCase(self.variants[i].name, i - 1, Ty.TScalar(C.ScalarVoid), {}) end
+  return {require("lalin.schema_v2.check").TypeVariantDef(self.name, Ty.TNamed(Ty.TypeRefGlobal(input.module_name, self.name)), variants)}
+end
+
+function Tr.TypeDecl:tree_check_handle_defs(input) return {} end
+function Tr.TypeDeclHandle:tree_check_handle_defs(input)
+  local domain, target
+  for _, fact in ipairs(self.facts) do domain = fact:tree_check_domain_ref() or domain; target = fact:tree_check_target_ref() or target end
+  return {require("lalin.schema_v2.check").TypeHandleDef(self.name, Ty.THandle(Ty.TypeRefGlobal(input.module_name, self.name), self.repr), self.repr, self.invalid, domain, target)}
+end
+
+function Tr.Func:tree_check_effect_defs() return {} end
+function Tr.FuncLocal:tree_check_effect_defs() return {require("lalin.schema_v2.check").TypeFuncEffect(self.name, self.params, {}, {}, {})} end
+function Tr.FuncExport:tree_check_effect_defs() return {require("lalin.schema_v2.check").TypeFuncEffect(self.name, self.params, {}, {}, {})} end
+function Tr.FuncDecl:tree_check_effect_defs() return {require("lalin.schema_v2.check").TypeFuncEffect(self.name, self.params, {}, {}, {})} end
+function Tr.FuncContract:tree_check_effect_name(readonly, preserve, invalidate) end
+function Tr.ContractReadonly:tree_check_effect_name(readonly, preserve, invalidate) local n = self.base:typecheck_tree_contract_name(); if n then readonly[#readonly+1]=n; preserve[#preserve+1]=n end end
+function Tr.ContractPreserve:tree_check_effect_name(readonly, preserve, invalidate) local n = self.base:typecheck_tree_contract_name(); if n then preserve[#preserve+1]=n end end
+function Tr.ContractInvalidate:tree_check_effect_name(readonly, preserve, invalidate) local n = self.base:typecheck_tree_contract_name(); if n then invalidate[#invalidate+1]=n end end
+function Tr.Expr:typecheck_tree_contract_name() return nil end
+function Tr.ExprRef:typecheck_tree_contract_name() return self.ref:typecheck_tree_contract_name() end
+function B.ValueRef:typecheck_tree_contract_name() return nil end
+function B.ValueRefName:typecheck_tree_contract_name() return self.name end
+function B.ValueRefBinding:typecheck_tree_contract_name() return self.binding.name end
+local function contract_effect(func)
+  local readonly, preserve, invalidate = {}, {}, {}
+  for _, contract in ipairs(func.contracts) do contract:tree_check_effect_name(readonly, preserve, invalidate) end
+  return {require("lalin.schema_v2.check").TypeFuncEffect(func.name, func.params, readonly, preserve, invalidate)}
+end
+function Tr.FuncLocalContract:tree_check_effect_defs() return contract_effect(self) end
+function Tr.FuncExportContract:tree_check_effect_defs() return contract_effect(self) end
+
+function Tr.Item:tree_check_variant_defs(input) return {} end
+function Tr.ItemType:tree_check_variant_defs(input) return self.t:tree_check_variant_defs(input) end
+function Tr.Item:tree_check_handle_defs(input) return {} end
+function Tr.ItemType:tree_check_handle_defs(input) return self.t:tree_check_handle_defs(input) end
+function Tr.Item:tree_check_effect_defs(input) return {} end
+function Tr.ItemFunc:tree_check_effect_defs(input) return self.func:tree_check_effect_defs(input) end
+function Tr.ItemExtern:tree_check_effect_defs(input) return {require("lalin.schema_v2.check").TypeFuncEffect(self.func.name, self.func.params, {}, {}, {})} end
+function Tr.Item:tree_check_region_defs(input) return {} end
+function Tr.ItemRegion:tree_check_region_defs(input)
+  local parts = {}
+  for part in self.region.name:gmatch("[^%.]+") do parts[#parts+1] = C.Name(part) end
+  return {Tr.TypeRegionDef(Tr.RegionInvokeTarget(C.Path(parts)), self.region)}
+end
+
+function Tr.Module:tree_check_module_facts(input)
+  local variants, handles, effects, regions = {}, {}, {}, {}
+  for _, item in ipairs(self.items) do
+    append_all(variants, item:tree_check_variant_defs(input))
+    append_all(handles, item:tree_check_handle_defs(input))
+    append_all(effects, item:tree_check_effect_defs(input))
+    append_all(regions, item:tree_check_region_defs(input))
+  end
+  return require("lalin.schema_v2.check").TypeModuleFacts(variants, handles, effects, regions, {}, {}, {})
+end
+
 -- Type canonicalization
 function Ty.Type:tree_module_canonicalize(mod_name) return self end
 function Ty.TNamed:tree_module_canonicalize(mod_name)
@@ -246,10 +361,51 @@ function Tr.Module:tree_module_env(target)
   return {B.Env(mod_name, values, types, layouts)}
 end
 
+function Tr.TypeDecl:tree_check_decl_issues(scope) return {} end
+function Tr.TypeDeclStruct:tree_check_decl_issues(scope)
+  local Check, issues = require("lalin.schema_v2.check"), {}
+  for _, field in ipairs(self.fields) do if field.ty:tree_check_contains_lease() then issues[#issues+1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryLeaseEscapeDurable, field.ty) end end
+  return issues
+end
+function Tr.TypeDeclUnion:tree_check_decl_issues(scope) return Tr.TypeDeclStruct.tree_check_decl_issues(self, scope) end
+function Tr.TypeDeclTaggedUnionSugar:tree_check_decl_issues(scope)
+  local Check, issues = require("lalin.schema_v2.check"), {}
+  for _, variant in ipairs(self.variants) do
+    if variant.payload:tree_check_contains_lease() then issues[#issues+1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryLeaseEscapeDurable, variant.payload) end
+    for _, field in ipairs(variant.fields) do if field.ty:tree_check_contains_lease() then issues[#issues+1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryLeaseEscapeDurable, field.ty) end end
+  end
+  return issues
+end
+
+function Tr.Region:tree_check_matches_domain(domain_name, handle_name)
+  if #self.params < 2 then return false end
+  local actual_handle = self.params[2].ty:tree_check_named_ref()
+  local expected_leaf = handle_name:match("([^.]+)$")
+  return self.params[1].name == "self" and self.params[1].ty:tree_check_ptr_elem_name() == domain_name
+    and (actual_handle == handle_name or actual_handle == expected_leaf)
+end
+function Tr.Region:tree_check_grants_domain_lease(target_name)
+  for _, cont in ipairs(self.conts) do for _, param in ipairs(cont.params) do if param.ty:tree_check_lease_grants("self", target_name) then return true end end end
+  return false
+end
+function Tr.TypeDeclHandle:tree_check_decl_issues(scope)
+  local Check, domain, target = require("lalin.schema_v2.check")
+  for _, fact in ipairs(self.facts) do domain = fact:tree_check_domain_ref() or domain; target = fact:tree_check_target_ref() or target end
+  if not domain then return {} end
+  local domain_name = domain:tree_check_ref_name()
+  local target_name = target and target:tree_check_ref_name() or nil
+  local handle_name = self.name:find(".", 1, true) and self.name or (domain_name .. "." .. self.name)
+  local candidates = {}
+  for _, region_def in ipairs(scope.facts.regions) do if region_def.region:tree_check_matches_domain(domain_name, handle_name) then candidates[#candidates+1] = region_def.region end end
+  if #candidates == 0 then return {Check.TypeIssueDomainContract(handle_name, domain_name, "missing domain resolver region taking `(self, handle)`")} end
+  for _, region in ipairs(candidates) do if region:tree_check_grants_domain_lease(target_name) then return {} end end
+  return {Check.TypeIssueDomainContract(handle_name, domain_name, "resolver region must grant `lease(\"self\", ptr(Target))` on a success continuation")}
+end
+
 -- Pipeline entry point: typecheck the module.
 -- Traverses items, builds scopes, resolves ValueRefName -> ValueRefBinding,
 -- and returns a new Module with ModuleTyped header containing typechecked items.
-function Tr.Module:typecheck(input)
+local function typecheck_module(self, input)
   local LCheck = require("lalin.schema_v2.check")
   local mod_name = self.h:tree_module_name()
 
@@ -287,8 +443,10 @@ function Tr.Module:typecheck(input)
     end
   end
 
-  local module_scope = LCheck.TypeValueScope(mod_name, values, types, {},
-    LCheck.TypeModuleFacts({}, {}, {}, {}, {}, {}, {}))
+  local facts = self:tree_check_module_facts(LCheck.TypeModuleFactsInput(mod_name))
+  local module_env = self:tree_module_env(input.target)[1]
+  local module_scope = LCheck.TypeValueScope(mod_name, values, types, module_env.layouts, facts)
+  local issues = {}
 
   -- Typecheck each item (inline, no helper functions)
   local checked_items = {}
@@ -312,6 +470,13 @@ function Tr.Module:typecheck(input)
           scope = scope:typecheck_tree_add_value(p.name, p.ty, binding)
         end
 
+        local typed_contracts = {}
+        for ci, contract in ipairs(func.contracts or {}) do
+          local contract_result = contract:tree_check_contract(LCheck.TypeStmtInput(scope, func.result, LCheck.TypeYieldNone))
+          typed_contracts[ci] = contract_result.contract
+          append_all(issues, contract_result.issues)
+        end
+
         -- Typecheck body (inline loop)
         local stmt_input = LCheck.TypeStmtInput(scope, func.result, LCheck.TypeYieldNone)
         local cur_input = stmt_input
@@ -319,6 +484,7 @@ function Tr.Module:typecheck(input)
         for bi = 1, #(func.body or {}) do
           local stmt = func.body[bi]
           local tc_result = stmt:typecheck_tree_stmt(cur_input)
+          for _, issue in ipairs(tc_result.issues or {}) do issues[#issues + 1] = issue end
           if tc_result.state ~= nil then
             cur_input = tc_result.state
           end
@@ -334,9 +500,9 @@ function Tr.Module:typecheck(input)
         if func_class == Tr.FuncExport then
           new_func = Tr.FuncExport(func.name, func.params, func.result, new_stmts)
         elseif func_class == Tr.FuncLocalContract then
-          new_func = Tr.FuncLocalContract(func.name, func.params, func.result, func.contracts or {}, new_stmts)
+          new_func = Tr.FuncLocalContract(func.name, func.params, func.result, typed_contracts, new_stmts)
         elseif func_class == Tr.FuncExportContract then
-          new_func = Tr.FuncExportContract(func.name, func.params, func.result, func.contracts or {}, new_stmts)
+          new_func = Tr.FuncExportContract(func.name, func.params, func.result, typed_contracts, new_stmts)
         else
           new_func = Tr.FuncLocal(func.name, func.params, func.result, new_stmts)
         end
@@ -352,6 +518,9 @@ function Tr.Module:typecheck(input)
       else
         checked_items[i] = item
       end
+    elseif item_class == Tr.ItemType then
+      append_all(issues, item.t:tree_check_decl_issues(module_scope))
+      checked_items[i] = item
     elseif item_class == Tr.ItemStatic then
       -- Typecheck static initializer
       local s = item.s
@@ -367,5 +536,15 @@ function Tr.Module:typecheck(input)
     end
   end
 
-  return Tr.Module(Tr.ModuleTyped(mod_name), checked_items)
+  return Tr.Module(Tr.ModuleTyped(mod_name), checked_items), issues
+end
+
+function Tr.Module:typecheck(input)
+  local module = typecheck_module(self, input)
+  return module
+end
+
+function Tr.Module:typecheck_result(input)
+  local module, issues = typecheck_module(self, input)
+  return require("lalin.schema_v2.check").TypeModuleResult(module, issues, input.target)
 end

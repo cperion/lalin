@@ -8,8 +8,7 @@ local Ast = require("lalin.syntax.ast")
 local Document = require("lalin.syntax.document")
 local lalin_syntax = require("lalin.syntax")
 local asdl = require("lalin.asdl")
-local T = asdl.context()
-require("lalin.schema_projection")(T)
+local T = require("lalin.schema_v2")
 local ToTree = require("lalin.syntax.to_tree")(T)
 local Tr = T.LalinTree
 
