@@ -677,39 +677,45 @@ This ID deliberately replaces the planning report's `STN-1`; `STN-1` is already 
 
 ## Milestone 3-F — Canonical End-to-End Parity Blockers
 
-The attempted `OWN-FRONT` cutover proved that several earlier packages established typed vocabulary and focused leaf tests without migrating the complete semantics consumed by the public C path. These blockers are reopened work, not review tasks. Old implementations are executable references only; canonical code must not call or wrap them.
+The binding analysis is `docs/CANONICAL_V2_SCHEMA_ANALYSIS.md`. The attempted `OWN-FRONT` cutover proved that focused leaf tests had over-reported completion. Old implementations are frozen behavioral evidence only; canonical code must not import, invoke, wrap, alias, or extend them.
 
-### RGN-CANON — Complete canonical region semantics
+No semantic implementation package below starts until all schema packages pass constructor and forbidden-import gates.
 
-**Evidence:** after canonical frontend ownership, region tests leave `RegionContWire`, `RegionInvokeTarget`, `RegionWireBlock`, `StmtRegionEmit`, and `StmtRegionCall` at the C boundary. Canonical region checking omits lexical scope threading, nested if/switch expansion, block-parameter scopes, captured wire arguments, protocol grouping, forwarding, bundles, and compatible tail-call conversion.
+### V2-BOOT-SCHEMA — Close the canonical main-C vocabulary
 
-**Ownership/acceptance:** migrate these operations onto canonical schema-v2 region/module/statement/fact leaves with typed inputs/results. Parsed nested/parameterized region GCC, region main/call, and parallel transfer must pass with old frontend schemas absent. No call into the old typechecker/region expander and no adapter.
+Add missing parsed variant/diagnostic leaves, give phase/project/exec one real schema-v2 owner, and split LuaJIT/native stencil-machine declarations out of the main bootstrap. `LalinHost` remains the explicit non-duplicated platform boundary. Add guards against old frontend namespaces and excluded backend types.
 
-### KRN-CANON — Populate complete canonical kernel facts
+### V2-REGION-SCHEMA — Name complete region projections
 
-**Evidence:** canonical `KernelLoopPlanRequest` is built with empty lanes, bindings, effects, and proofs and lacks the module/graph projections needed for real recognition. Focused candidate tests do not prove copy/scan/reduction/all/all-compare recognition or carrier/address facts.
+Define typed protocol keys/contributions/lookups, region fact projection, definition/seal/wire lookups, captured-wire relations, statement/body/block expansion inputs/results, and module expansion success/rejection. No mutable block arrays, callbacks, nil lookup, or generic expansion context.
 
-**Ownership/acceptance:** typed module/graph/flow/memory/effect projections populate complete kernel requests and concrete candidate leaves recognize supported computations without text indexes or side maps. Assert non-empty facts and real loop isolation in end-to-end tests.
+### V2-TARGET-SCHEMA — Preserve the exact C target
 
-### CMAT-INLINE — Canonical inline CMat semantics
+Define `CompilerCCodegenRequest` and target-carrying `LowerCModuleInput`; remove duplicated hosted-boolean semantics from target decisions. Dialect/platform leaves own capabilities. No option table or default target at semantic boundaries.
 
-**Evidence:** schema-v2 CMat emits standalone closed computations, but the public function path still depends on old inline binding/point/window/accumulator/sink/control semantics. Window clamp behavior currently survives only through that old path.
+### V2-KERNEL-SCHEMA — Name complete loop analysis
 
-**Ownership/acceptance:** define backend-neutral typed inline projections and leaf methods in canonical CMat/stencil vocabulary, including window bounds and sink/control results. Copy/scan/reduce/all/all-compare/SOAC and clamp runtime values must pass without the old CMat owner.
+Add module/graph to kernel planning, one-loop analysis input/result, lane/binding/effect/proof relation projections and lookups, explicit counter/rewrite alternatives, and complete skeleton-selection leaves. Empty arrays may not stand for undiscovered semantic facts.
 
-### LOWER-SEM — Consume selected semantic fragments
+### V2-STENCIL-CMAT-SCHEMA — Define the canonical kernel bridge
 
-**Evidence:** canonical `LowerModule` contains selected `LowerStrategyKernel` fragments, but `impl/lower_emit_c.lua` lowers every `CodeFunc` through ordinary Code-to-C; schedule-form dispatch is dead.
+Define kernel-to-stencil projection input/result, normalize main-path producer bound/index/arithmetic/stride/capability alternatives, and add typed CMat fragment input/emission carrying blocks, locals, helpers, mappings, and control results. Reuse canonical window-boundary leaves; do not copy old inline Lua protocols.
 
-**Ownership/acceptance:** function/module C emission consumes typed lower fragments. `LowerStrategyCode` uses ordinary instruction lowering; `LowerStrategyKernel` consumes canonical kernel/CMat emission. Tests must prove the selected strategy changes emitted CBackend structure and runtime values.
+### V2-LOWER-SCHEMA — Define fragment consumption
 
-### C-TARGET — Preserve typed C target capabilities
+Define function-plan projections/lookups, fragment emission input/alternatives, immutable function emission state/result, typed carrier/address resolutions, and exact target-carrying module emission input.
 
-**Evidence:** canonical validation now rejects `test_dsl_lua_owned.lua` because the requested C11 target is dropped before lower/validation; atomics are validated against an implicit C99 target. A prior cutover patch fixed leaf capability lookup but not target propagation.
+### Canonical semantic implementation chain
 
-**Ownership/acceptance:** carry a precise typed `CBackendTarget` through compiler stage input, lower planning, C emission, and validation. Target dialect/capability leaves own atomic support. The original public `Decl:lower` path passes without option copying, defaults, or wrappers.
+After the schema gates, implement concrete leaf methods in this order:
 
-**Dependency:** `RGN-CANON` gates `OWN-FRONT`; `C-TARGET` gates `OWN-C`; `KRN-CANON -> CMAT-INLINE -> LOWER-SEM` gates `OWN-ANALYSIS` and `OWN-STENCIL`. No ownership deletion resumes until all five pass the public C/GCC matrix with old-schema consumers explicitly measured.
+1. `RGN-CANON` and `C-TARGET` in parallel.
+2. `KRN-CANON` — populate complete canonical loop facts.
+3. `KERNEL-STENCIL-CANON` — project planned kernels into canonical `StencilComputation`.
+4. `CMAT-FRAGMENT-CANON` — emit typed CBackend fragments, including window boundary behavior and sink/control results.
+5. `LOWER-SEM` — consume every selected function fragment through its concrete strategy leaf.
+
+Canonical-only fresh-process tests must inspect intermediate ASDL products and assert that forbidden old modules were never loaded. `RGN-CANON` gates `OWN-FRONT`; `C-TARGET` gates `OWN-C`; the kernel/stencil/CMat/lower chain gates `OWN-ANALYSIS` and `OWN-STENCIL`. Ownership deletion does not resume until the public runtime matrix passes through the canonical bootstrap.
 
 ## Milestone 4 — Canonical Schema Ownership Packages
 
@@ -725,7 +731,7 @@ The attempted `OWN-FRONT` cutover proved that several earlier packages establish
 
 **Evidence/target:** old and v2 modules define the same frontend namespaces, and without cutover closure semantics require two implementations. Canonical target is schema-v2 `core parse source type bind sem tree check tree_code`; completed CLO methods attach only to canonical concrete classes. No old→new conversion methods.
 
-**Owned files:** corresponding schema pairs, frontend wiring/imports, closure tests, ownership manifest. **Dependencies:** CLO-3, OWN-0, typed check ownership. **Out of scope:** analysis, stencil, C, Host.
+**Owned files:** corresponding schema pairs, frontend wiring/imports, closure tests, ownership manifest. **Dependencies:** V2-BOOT-SCHEMA, V2-REGION-SCHEMA, RGN-CANON, CLO-3, OWN-0. **Out of scope:** analysis, stencil, C, Host.
 
 **Checks/acceptance:** frontend-complete, closure, frontend suite; one constructor identity; parsed/builder convergence; remove old only after zero consumers; no wrappers/mixed contexts.
 
@@ -733,7 +739,7 @@ The attempted `OWN-FRONT` cutover proved that several earlier packages establish
 
 **Evidence/target:** every `code graph flow value mem effect kernel schedule lower` namespace is duplicated; active implementations import schema-v2 while old code-IR tests still instantiate `require("lalin.schema")`. MEM/EFF/KRN/SCH methods and projection identities become canonical on one set of concrete leaves.
 
-**Owned files:** corresponding pairs; graph/flow/value/mem/effect/kernel/schedule/lower implementations; test imports. **Dependencies:** MEM-4, EFF-2, KRN-1, SCH-2, OWN-0. **Out of scope:** C materialization/public facade.
+**Owned files:** corresponding pairs; graph/flow/value/mem/effect/kernel/schedule/lower implementations; test imports. **Dependencies:** V2-KERNEL-SCHEMA, V2-LOWER-SCHEMA, KRN-CANON, LOWER-SEM, MEM-4, EFF-2, OWN-0. **Out of scope:** C materialization/public facade.
 
 **Checks/acceptance:** code-IR suite and add-compile; one identity per fact, no adapters, port old tests before removal, scalar GCC remains green.
 
@@ -741,7 +747,7 @@ The attempted `OWN-FRONT` cutover proved that several earlier packages establish
 
 **Evidence/target:** CMAT-1 added canonical `schema_v2/c_materialize.lua` while the old `LalinCMat` declaration remains for unmigrated consumers, creating an intentional temporary duplicate. `schema_v2/c_materialize.lua` is the intended `LalinCMat` owner alongside canonical `schema_v2/stencil.lua` and neutral DESC-2; planning/materialization/emission methods attach only there. CMAT/OWN-STENCIL migrates remaining consumers and removes the old `schema/c_materialize.lua` ownership rather than hiding the ambiguity. `stencil_machine` still mixes excluded LuaJIT values with semantic descriptors.
 
-**Owned files:** old/new stencil/CMat schemas, C-facing implementations/tests, ownership manifest. **Dependencies:** STN-PLAN, DESC-1, DESC-2, CMAT-3, OWN-0. **Out of scope:** LuaJIT/LuaTrace adapters.
+**Owned files:** old/new stencil/CMat schemas, C-facing implementations/tests, ownership manifest. **Dependencies:** V2-STENCIL-CMAT-SCHEMA, KERNEL-STENCIL-CANON, CMAT-FRAGMENT-CANON, LOWER-SEM, OWN-0. **Out of scope:** LuaJIT/LuaTrace adapters.
 
 **Checks/acceptance:** stencil-plan, CMat-materialize, GCC tests; one neutral main-C vocabulary, no backend imports, old CMat removed only after migration, runtime values asserted.
 
@@ -749,7 +755,7 @@ The attempted `OWN-FRONT` cutover proved that several earlier packages establish
 
 **Evidence/target:** public and v2 pipelines instantiate different `LalinCode`/`LalinC` classes, with duplicate validators/lowerers and incompatible result assumptions. Canonical target is `code code_validation c cemit backend compiler exec`; VAL/CLOW/CVAL/CEMIT behavior attaches only to canonical concrete leaves, while process execution remains IO-boundary plumbing.
 
-**Owned files:** corresponding schema pairs, validators/lowering, compiler wiring, C tests. **Dependencies:** VAL-1, CVAL-2, CLOW-1, OWN-0. **Out of scope:** process-option redesign, LuaJIT/native.
+**Owned files:** corresponding schema pairs, validators/lowering, compiler wiring, C tests. **Dependencies:** V2-TARGET-SCHEMA, V2-LOWER-SCHEMA, C-TARGET, CVAL-2, CLOW-1, OWN-0. **Out of scope:** process-option redesign, LuaJIT/native.
 
 **Checks/acceptance:** module wiring, validator, C-backend suite; one `LalinCode`/`LalinC`, no old implementation in canonical context, no aliases, GCC value after cutover.
 
@@ -757,7 +763,7 @@ The attempted `OWN-FRONT` cutover proved that several earlier packages establish
 
 **Evidence/target:** duplicated phase/project/exec are not prerequisites. Add no semantic type unless migration exposes a precise missing union; concrete canonical leaves retain behavior.
 
-**Owned files:** schema pairs, phase/project/exec implementations, compiler-process tests. **Dependencies:** OWN-0; after compiler/C contracts stabilize. **Out of scope:** compiler-process implementation changes beyond imports.
+**Owned files:** schema pairs, phase/project/exec implementations, compiler-process tests. **Dependencies:** V2-BOOT-SCHEMA, OWN-0; after compiler/C contracts stabilize. **Out of scope:** compiler-process implementation changes beyond imports.
 
 **Checks/acceptance:** phase plan/validate/execute tests; one identity, no mixed contexts/adapters.
 
@@ -771,7 +777,7 @@ The attempted `OWN-FRONT` cutover proved that several earlier packages establish
 
 ### Parallel execution and mandatory serialization
 
-Safe independent starts after the refreshed M0 gate: `OWN-0`, `CLO-1`, `MEM-1`, `CMAT-1`, `VAL-1`, and `CVAL-1`. Closure, memory/effect, validation, and helper-emission chains can proceed independently. `STN-PLAN` and `DESC-1` may overlap only with explicit line ownership.
+Historical parallelization below describes completed earlier work. Current repair starts with schema-only packages from Milestone 3-F. No canonical semantic implementation or ownership package may start before its schema dependency passes.
 
 | Serialize | Shared ownership |
 |---|---|
@@ -875,8 +881,12 @@ Release-level gates:
 | history/reopened | KRN-1→SCH-1→2 | P1 | MEM/EFF | Typed planning vocabulary integrated `bfe8e6b`; complete fact population remains `KRN-CANON` | incomplete end-to-end |
 | history/reopened | CMAT-1→3 | P1 | CLOW | Typed standalone materialization/emission integrated `ec873d5`,`702f89a`; inline path remains `CMAT-INLINE` | incomplete end-to-end |
 | history | CVAL-2 | P1 | CLOW-1, OWN-0 | Canonical CBackend validation | integrated `921816f` |
-| current | RGN-CANON + C-TARGET | P0 | canonical frontend/C vocabulary | Complete canonical regions and typed target propagation | planned parallel packages |
-| next | KRN-CANON→CMAT-INLINE→LOWER-SEM | P0 | MEM/EFF/KRN/CMAT/CLOW | Complete canonical semantic C path | planned serial chain |
+| current-schema | V2-BOOT-SCHEMA | P0 | analysis | Close canonical main-C vocabulary and profile boundaries | planned; no implementation agent assigned |
+| next-schema | V2-REGION-SCHEMA + V2-TARGET-SCHEMA | P0 | V2-BOOT-SCHEMA | Region projections and exact C target requests | planned parallel schema work |
+| next-schema | V2-KERNEL-SCHEMA | P0 | V2-BOOT-SCHEMA | Complete loop-analysis vocabulary | planned |
+| next-schema | V2-STENCIL-CMAT-SCHEMA | P0 | V2-KERNEL-SCHEMA | Kernel bridge and CMat fragment vocabulary | planned |
+| next-schema | V2-LOWER-SCHEMA | P0 | V2-STENCIL-CMAT-SCHEMA, V2-TARGET-SCHEMA | Fragment consumption vocabulary | planned |
+| blocked-impl | RGN-CANON + C-TARGET + KRN-CANON→KERNEL-STENCIL-CANON→CMAT-FRAGMENT-CANON→LOWER-SEM | P0 | all schema gates | Canonical semantic implementation | do not start |
 | blocked | OWN-FRONT / OWN-META | P2 | RGN-CANON and parity matrix | Previous cutover `e76fc29cf` reverted by `de3294194` | do not resume |
 | blocked | OWN-ANALYSIS / OWN-STENCIL / OWN-C | P2 | parity blockers | Domain cutovers | do not resume |
 | final | OWN-CUTOVER | P2 | all ownership domains | Public facade and old-tree retirement | blocked |
