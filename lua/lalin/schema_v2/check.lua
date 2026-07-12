@@ -299,6 +299,13 @@ return schema. LalinCheck {
     },
     TypeIssueRegionInvoke { variant_unique, reject [LalinTree.RegionInvokeReject], },
     TypeIssueUnknownVariant { variant_unique, type_name [str], variant_name [str], },
+    TypeIssueVariantBindCount {
+      variant_unique,
+      type_name [str],
+      variant_name [str],
+      expected [number],
+      actual [number],
+    },
     TypeIssueVariantPayloadUnsupported { variant_unique, type_name [str], variant_name [str], field_count [number], },
     TypeIssueVariantPayloadMismatch {
       variant_unique,

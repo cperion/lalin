@@ -17,7 +17,7 @@ local files = {
   "type", "c", "bind", "sem",
   "tree", "check", "tree_code",
   "code", "graph", "flow", "value", "mem", "effect",
-  "kernel", "stencil", "stencil_descriptor", "c_materialize", "stencil_machine",
+  "kernel", "stencil", "stencil_descriptor", "c_materialize",
   "lower", "schedule",
   "backend", "cemit",
   "compiler", "code_validation", "exec",
@@ -38,9 +38,6 @@ end
 local host_decl = require("lalin.schema.host")
 modules[#modules + 1] = host_decl
 
--- Old LalinLuaJIT module (referenced by stencil_machine.lua)
-local luajit_decl = require("lalin.schema.luajit")
-modules[#modules + 1] = luajit_decl
 
 
 
