@@ -194,10 +194,7 @@ return schema. LalinCheck {
     variants [many [LalinCheck.TypeVariantDef]],
     handles [many [LalinCheck.TypeHandleDef]],
     effects [many [LalinCheck.TypeFuncEffect]],
-    regions [many [LalinTree.TypeRegionDef]],
-    region_protocols [many [LalinTree.RegionProtocol]],
-    region_seals [many [LalinTree.RegionSeal]],
-    region_bundles [many [LalinTree.RegionBundle]],
+    region [LalinTree.RegionFactProjection],
   },
   product. TypeModuleFactsInput { interned, module_name [str], },
 
