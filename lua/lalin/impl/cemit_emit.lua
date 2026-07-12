@@ -8,12 +8,6 @@ local Cemit = require("lalin.schema_v2.cemit")
 local C     = require("lalin.schema_v2.c")
 local Core  = require("lalin.schema_v2.core")
 
--- Target capabilities are owned by the canonical concrete dialect leaves.
-function C.CBackendC99:c_emit_supports_c11_atomics() return false end
-function C.CBackendC11:c_emit_supports_c11_atomics() return true end
-function C.CBackendGnuC:c_emit_supports_c11_atomics() return true end
-function C.CBackendClangC:c_emit_supports_c11_atomics() return true end
-
 function C.CBackendUnit:c_emit_sig_projection()
   local entries = {}
   for i = 1, #self.sigs do entries[i] = C.CBackendFuncSigEntry(self.sigs[i].id, self.sigs[i]) end
