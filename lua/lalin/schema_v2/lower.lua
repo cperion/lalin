@@ -268,6 +268,11 @@ return schema. LalinLower {
     graph [LalinGraph.CodeGraph],
     target [LalinC.CBackendTarget],
   },
+  product. LowerCModuleInput {
+    interned,
+    spine [LalinLower.LowerBackSpine],
+    plan [LalinLower.LowerModule],
+  },
   product. LowerCSignatureEntry {
     interned,
     code_sig [LalinCode.CodeSigId],

@@ -38,7 +38,13 @@ return schema. LalinCompiler {
   },
   product. CompilerCodeGenerationInput {
     field. module [LalinCode.CodeModule],
-    contracts [many [LalinCode.CodeFuncContractFact]],
+    contracts [LalinCode.CodeContractFactSet],
+    target [LalinC.CBackendTarget],
+  },
+  product. CompilerCCodegenRequest {
+    interned,
+    result [LalinCompiler.CodeResult],
+    target [LalinC.CBackendTarget],
   },
 
   sum. TreeCodeImplementation {

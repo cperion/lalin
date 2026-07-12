@@ -82,7 +82,6 @@ return schema. LalinC {
     pointer_bits [number],
     index_bits [number],
     endian [LalinC.CBackendEndian],
-    hosted [bool],
   },
   sum. CBackendType {
     CBackendVoid,
@@ -406,6 +405,10 @@ return schema. LalinC {
     CBackendFeatureUnalignedAccess,
     CBackendFeatureStaticAssert,
     CBackendFeatureHostedRuntime,
+  },
+  sum. CBackendTargetCapability {
+    CBackendTargetFeatureSupported { variant_unique, feature [LalinC.CBackendTargetFeature], },
+    CBackendTargetFeatureRejected { variant_unique, feature [LalinC.CBackendTargetFeature], reason [str], },
   },
   product. CBackendLayoutAssertion {
     interned,
