@@ -679,7 +679,7 @@ This ID deliberately replaces the planning report's `STN-1`; `STN-1` is already 
 
 The binding analysis is `docs/CANONICAL_V2_SCHEMA_ANALYSIS.md`. The attempted `OWN-FRONT` cutover proved that focused leaf tests had over-reported completion. Old implementations are frozen behavioral evidence only; canonical code must not import, invoke, wrap, alias, or extend them.
 
-No semantic implementation package below starts until all schema packages pass constructor and forbidden-import gates.
+No semantic implementation package below starts until all schema packages pass constructor and forbidden-import gates. Schema-v2 edits are lead-owned and must not be delegated; implementation packages may be delegated only after the lead commits the required vocabulary.
 
 ### V2-BOOT-SCHEMA — Close the canonical main-C vocabulary
 
