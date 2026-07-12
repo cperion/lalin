@@ -10,6 +10,7 @@ require("lalin.schema_v2")
 local Code   = require("lalin.schema_v2.code")
 local Core   = require("lalin.schema_v2.core")
 local C      = require("lalin.schema_v2.c")
+local Graph  = require("lalin.schema_v2.graph")
 local Lower  = require("lalin.schema_v2.lower")
 local Type   = require("lalin.schema_v2.type")
 local asdl   = require("lalin.asdl")
@@ -42,7 +43,7 @@ local function make_lower_module()
     Lower.LowerTargetC,
     kernel_plan,
     schedule_plan,
-    {}, {}, {}, {}
+    Lower.LowerCarrierPlanProjection({}), Lower.LowerAddressPlanProjection({}), Lower.LowerFunctionPlanProjection({}), {}
   )
 end
 
@@ -109,11 +110,13 @@ local code_module = Code.CodeModule(
 -- Run emit_c and verify fields
 ----------------------------------------------------------------------
 
-local emission = lower_module:lower_c_module(code_module)
+local c_target = C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian, true)
+local input = Lower.LowerCModuleInput(Lower.LowerBackSpine(code_module, Graph.CodeGraph(code_module.id, {}), c_target), lower_module)
+local emission = lower_module:lower_c_module(input)
 assert(asdl.classof(emission) == Lower.LowerCModuleEmission, "module lowering must return typed emission")
 local c_unit = emission.unit
 assert(asdl.classof(c_unit) == C.CBackendUnit, "typed emission must own CBackendUnit")
-assert(lower_module:emit_c(code_module) == c_unit, "public emit boundary must unwrap canonical typed result")
+assert(lower_module:emit_c(input) == c_unit, "public emit boundary must unwrap canonical typed result")
 assert(c_unit.module_name == "wired_module", "bad module_name")
 
 -- Test externs

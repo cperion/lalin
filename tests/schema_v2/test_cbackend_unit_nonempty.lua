@@ -10,6 +10,7 @@ require("lalin.schema_v2")
 local Code   = require("lalin.schema_v2.code")
 local Core   = require("lalin.schema_v2.core")
 local C      = require("lalin.schema_v2.c")
+local Graph  = require("lalin.schema_v2.graph")
 local Lower  = require("lalin.schema_v2.lower")
 local asdl   = require("lalin.asdl")
 
@@ -105,13 +106,17 @@ local lower_module = Lower.LowerModule(
   Lower.LowerTargetC,
   kernel_plan,
   schedule_plan,
-  {},
-  {},
-  {},
+  Lower.LowerCarrierPlanProjection({}),
+  Lower.LowerAddressPlanProjection({}),
+  Lower.LowerFunctionPlanProjection({}),
   {}
 )
+local c_target = C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian, true)
+local function lower_input(module)
+  return Lower.LowerCModuleInput(Lower.LowerBackSpine(module, Graph.CodeGraph(module.id, {}), c_target), lower_module)
+end
 
-local c_unit = lower_module:emit_c(code_module)
+local c_unit = lower_module:emit_c(lower_input(code_module))
 
 -- Assertions
 assert(c_unit ~= nil, "emit_c returned nil")
@@ -169,7 +174,7 @@ local empty_module = Code.CodeModule(
   {},  -- no funcs
   Code.CodeOriginSource("empty")
 )
-local empty_unit = lower_module:emit_c(empty_module)
+local empty_unit = lower_module:emit_c(lower_input(empty_module))
 assert(empty_unit ~= nil, "emit_c empty module returned nil")
 assert(#empty_unit.funcs == 0, "empty module should have 0 funcs")
 print("\nEmpty module: OK")

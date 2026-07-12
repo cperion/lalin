@@ -31,6 +31,18 @@ assert(projection:lookup_reductions(b).entries[1].reduction == rb)
 assert(require("lalin.asdl").classof(projection:lookup_closed_forms(b)) == Kernel.KernelClosedFormMissing, "closed form from loop A must not leak into loop B")
 assert(projection.loops[1].trip.trip_count.count.text == "trip:a")
 assert(projection.loops[2].trip.trip_count.count.text == "trip:b")
-local request_plan = Kernel.KernelModulePlanRequest(flow, values, require("lalin.schema_v2.mem").MemSemanticFactSet(module, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}), require("lalin.schema_v2.effect").EffectFactSet(module, {}, {}, {}), trips):plan_kernels()
+local func_id = Code.CodeFuncId("fn:kernel_projection")
+local block_id = Code.CodeBlockId("entry")
+local sig_id = Code.CodeSigId("sig:kernel_projection")
+local origin = Code.CodeOriginUnknown
+local term = Code.CodeTerm(Code.CodeTermId("ret"), Code.CodeTermReturn({}), origin)
+local block = Code.CodeBlock(block_id, "entry", {}, {}, term, origin)
+local func = Code.CodeFunc(func_id, "kernel_projection", Code.CodeLinkageLocal, sig_id, {}, {}, block_id, { block }, origin)
+local code_module = Code.CodeModule(module, { Code.CodeSig(sig_id, {}, {}) }, {}, {}, {}, {}, { func }, origin)
+local graph = Graph.CodeGraph(module, { Graph.CodeFuncGraph(func_id, {}, {}, {}, {
+  Graph.GraphLoop(a, func_id, Graph.GraphBlockId(func_id, block_id), { Graph.GraphBlockId(func_id, block_id) }, {}, {}),
+  Graph.GraphLoop(b, func_id, Graph.GraphBlockId(func_id, block_id), { Graph.GraphBlockId(func_id, block_id) }, {}, {}),
+}) })
+local request_plan = Kernel.KernelModulePlanRequest(code_module, graph, flow, values, require("lalin.schema_v2.mem").MemSemanticFactSet(module, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}), require("lalin.schema_v2.effect").EffectFactSet(module, {}, {}, {}), trips):plan_kernels()
 assert(request_plan.plans[1].body.domain.trip.trip_count == trip_a, "module planning must wire real trip evidence")
 print("test_kernel_plan_module: ok")

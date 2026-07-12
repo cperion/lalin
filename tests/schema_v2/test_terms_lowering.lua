@@ -10,6 +10,7 @@ require("lalin.schema_v2")
 local Code   = require("lalin.schema_v2.code")
 local Core   = require("lalin.schema_v2.core")
 local C      = require("lalin.schema_v2.c")
+local Graph  = require("lalin.schema_v2.graph")
 local Lower  = require("lalin.schema_v2.lower")
 local asdl   = require("lalin.asdl")
 
@@ -42,7 +43,7 @@ local function make_lower_module()
     Lower.LowerTargetC,
     kernel_plan,
     schedule_plan,
-    {}, {}, {}, {}
+    Lower.LowerCarrierPlanProjection({}), Lower.LowerAddressPlanProjection({}), Lower.LowerFunctionPlanProjection({}), {}
   )
 end
 
@@ -104,6 +105,10 @@ end
 
 local i32_type = Code.CodeTyInt(32, Code.CodeSigned)
 local lower_module = make_lower_module()
+local c_target = C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian, true)
+local function emit_module(module)
+  return lower_module:emit_c(Lower.LowerCModuleInput(Lower.LowerBackSpine(module, Graph.CodeGraph(module.id, {}), c_target), lower_module))
+end
 
 ----------------------------------------------------------------------
 -- Test 1: CodeTermJump → CBackendGoto
@@ -115,7 +120,7 @@ local target_blk = make_term_block("target", "target")
 local jump_op = Code.CodeTermJump(Code.CodeBlockId("target"), {})
 local mod1 = make_module_with_term(jump_op, {}, { target_blk })
 
-local unit1 = lower_module:emit_c(mod1)
+local unit1 = emit_module(mod1)
 assert(unit1 ~= nil, "emit_c returned nil")
 assert(#unit1.funcs == 1, "expected 1 func")
 
@@ -144,7 +149,7 @@ local branch_op = Code.CodeTermBranch(cond_val,
 
 local mod2 = make_module_with_term(branch_op, { cond_param }, { then_blk, else_blk }, { cond_param })
 
-local unit2 = lower_module:emit_c(mod2)
+local unit2 = emit_module(mod2)
 assert(unit2 ~= nil)
 local blk2 = unit2.funcs[1].body.blocks[1]
 local term2 = blk2.term
@@ -175,7 +180,7 @@ local switch_op = Code.CodeTermSwitch(switch_val, cases, Code.CodeBlockId("defau
 
 local mod3 = make_module_with_term(switch_op, { sw_param }, { case1_blk, case2_blk, def_blk }, { sw_param })
 
-local unit3 = lower_module:emit_c(mod3)
+local unit3 = emit_module(mod3)
 assert(unit3 ~= nil)
 local blk3 = unit3.funcs[1].body.blocks[1]
 local term3 = blk3.term
@@ -213,7 +218,7 @@ local vswitch_op = Code.CodeTermVariantSwitch(tag_val, vcases, Code.CodeBlockId(
 
 local mod4 = make_module_with_term(vswitch_op, { tag_param }, { vcase1_blk, vcase2_blk, vdef_blk }, { tag_param })
 
-local unit4 = lower_module:emit_c(mod4)
+local unit4 = emit_module(mod4)
 assert(unit4 ~= nil)
 local blk4 = unit4.funcs[1].body.blocks[1]
 local term4 = blk4.term
