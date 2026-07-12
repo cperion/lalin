@@ -20,6 +20,15 @@ end
 function Lower.LowerCSignatureFound:lower_c_sig_id() return self.entry.c_sig_id end
 function Lower.LowerCSignatureMissing:lower_c_sig_id() error("C lowering missing validated signature " .. self.sig.text, 2) end
 
+function Lower.LowerCExternProjection:lower_c_extern_lookup(extern)
+  for i = 1, #self.entries do
+    if self.entries[i].code_extern == extern then return Lower.LowerCExternFound(self.entries[i]) end
+  end
+  return Lower.LowerCExternMissing(extern)
+end
+function Lower.LowerCExternFound:lower_c_name() return self.entry.c_name end
+function Lower.LowerCExternMissing:lower_c_name() error("C lowering missing validated extern " .. self.extern.text, 2) end
+
 function Code.CodeSig:lower_c_signature_entry()
   local params = {}
   for i = 1, #self.params do params[i] = self.params[i]:code_to_c_backend_type() end
@@ -61,7 +70,7 @@ function Code.CodeBlock:lower_c_block(input)
     params[i] = C.CBackendBlockParam(entry.c_local.id, entry.c_local.ty)
   end
   for i = 1, #self.insts do
-    local result = self.insts[i]:lower_to_c_backend(Lower.LowerCInstructionInput(input.signatures, values))
+    local result = self.insts[i]:lower_to_c_backend(Lower.LowerCInstructionInput(input.signatures, input.externs, values))
     append_items(stmts, result.stmts)
     append_helpers(helpers, result.helpers)
     append_items(locals, result.locals)
@@ -94,7 +103,7 @@ function Code.CodeFunc:lower_c_function(input)
   local values = Lower.LowerCValueTypeProjection(value_entries)
   local blocks, helpers = {}, {}
   for i = 1, #self.blocks do
-    local result = self.blocks[i]:lower_c_block(Lower.LowerCBlockInput(input.signatures, values))
+    local result = self.blocks[i]:lower_c_block(Lower.LowerCBlockInput(input.signatures, input.externs, values))
     blocks[#blocks + 1] = result.block
     append_helpers(helpers, result.helpers)
     append_items(locals, result.locals)
@@ -106,53 +115,65 @@ function Code.CodeFunc:lower_c_function(input)
   return Lower.LowerCFunctionEmission(func, helpers, values)
 end
 
-function Code.CodeDataInit:lower_code_data_init_to_c() error("missing lower_code_data_init_to_c leaf method", 2) end
-function Code.CodeDataZero:lower_code_data_init_to_c() return C.CBackendDataZero(self.offset, self.size) end
-function Code.CodeDataBytes:lower_code_data_init_to_c() return C.CBackendDataBytes(self.offset, self.bytes) end
-function Code.CodeDataScalar:lower_code_data_init_to_c() return C.CBackendDataScalar(self.offset, self.ty:code_to_c_backend_type(), self.literal) end
-function Code.CodeGlobalRefFunc:lower_c_reloc_target() return C.CBackendRelocFunc(C.CBackendName(self.func.text)) end
-function Code.CodeGlobalRefExtern:lower_c_reloc_target() return C.CBackendRelocExtern(C.CBackendName(self.extern.text)) end
-function Code.CodeGlobalRefGlobal:lower_c_reloc_target() return C.CBackendRelocGlobal(C.CBackendGlobalId(self.global.text)) end
-function Code.CodeGlobalRefData:lower_c_reloc_target() return C.CBackendRelocGlobal(C.CBackendGlobalId(self.data.text)) end
-function Code.CodeDataReloc:lower_code_data_init_to_c() return C.CBackendDataReloc(self.reloc.offset, self.reloc.target:lower_c_reloc_target(), self.reloc.addend) end
+function Code.CodeDataInit:lower_code_data_init_to_c(externs) error("missing lower_code_data_init_to_c leaf method", 2) end
+function Code.CodeDataZero:lower_code_data_init_to_c(externs) return C.CBackendDataZero(self.offset, self.size) end
+function Code.CodeDataBytes:lower_code_data_init_to_c(externs) return C.CBackendDataBytes(self.offset, self.bytes) end
+function Code.CodeDataScalar:lower_code_data_init_to_c(externs) return C.CBackendDataScalar(self.offset, self.ty:code_to_c_backend_type(), self.literal) end
+function Code.CodeGlobalRefFunc:lower_c_reloc_target(externs) return C.CBackendRelocFunc(C.CBackendName(self.func.text)) end
+function Code.CodeGlobalRefExtern:lower_c_reloc_target(externs) return C.CBackendRelocExtern(externs:lower_c_extern_lookup(self.extern):lower_c_name()) end
+function Code.CodeGlobalRefGlobal:lower_c_reloc_target(externs) return C.CBackendRelocGlobal(C.CBackendGlobalId(self.global.text)) end
+function Code.CodeGlobalRefData:lower_c_reloc_target(externs) return C.CBackendRelocGlobal(C.CBackendGlobalId(self.data.text)) end
+function Code.CodeDataReloc:lower_code_data_init_to_c(externs) return C.CBackendDataReloc(self.reloc.offset, self.reloc.target:lower_c_reloc_target(externs), self.reloc.addend) end
 
 function Code.CodeType:lower_c_decl_id(fallback_name) return C.CTypeId(fallback_name, fallback_name) end
 function Code.CodeTyNamed:lower_c_decl_id(fallback_name) return C.CTypeId(self.module_name, self.type_name) end
 function Code.CodeTypeDecl:lower_code_type_decl_to_c() return C.CBackendOpaqueDecl(self.ty:lower_c_decl_id(self.name)) end
 
-local function lower_inits(inits)
+local function lower_inits(inits, externs)
   local result = {}
-  for i = 1, #inits do result[i] = inits[i]:lower_code_data_init_to_c() end
+  for i = 1, #inits do result[i] = inits[i]:lower_code_data_init_to_c(externs) end
   return result
 end
-function Code.CodeGlobal:lower_c_global()
-  return C.CBackendGlobal(C.CBackendGlobalId(self.id.text), C.CBackendName(self.name), self.linkage:lower_c_visibility(), self.ty:code_to_c_backend_type(), self.size or 0, self.align or 8, lower_inits(self.inits))
+function Code.CodeGlobal:lower_c_global(externs)
+  return C.CBackendGlobal(C.CBackendGlobalId(self.id.text), C.CBackendName(self.name), self.linkage:lower_c_visibility(), self.ty:code_to_c_backend_type(), self.size or 0, self.align or 8, lower_inits(self.inits, externs))
 end
-function Code.CodeData:lower_c_global()
-  return C.CBackendGlobal(C.CBackendGlobalId(self.id.text), C.CBackendName(self.name), self.linkage:lower_c_visibility(), C.CBackendDataPtr(nil), self.size, self.align, lower_inits(self.inits))
+function Code.CodeData:lower_c_global(externs)
+  return C.CBackendGlobal(C.CBackendGlobalId(self.id.text), C.CBackendName(self.name), self.linkage:lower_c_visibility(), C.CBackendDataPtr(nil), self.size, self.align, lower_inits(self.inits, externs))
 end
-function Code.CodeExtern:lower_c_extern() return C.CBackendExtern(C.CBackendName(self.name), self.symbol, C.CBackendFuncSigId(self.sig.text), nil) end
+function Code.CodeExtern:lower_c_extern_entry()
+  local name = C.CBackendName(self.symbol)
+  return Lower.LowerCExternEntry(self.id, self, name)
+end
+function Lower.LowerCExternEntry:lower_c_extern()
+  return C.CBackendExtern(self.c_name, self.code_declaration.symbol, C.CBackendFuncSigId(self.code_declaration.sig.text), nil)
+end
+function Code.CodeModule:lower_c_extern_projection()
+  local entries = {}
+  for i = 1, #self.externs do entries[i] = self.externs[i]:lower_c_extern_entry() end
+  return Lower.LowerCExternProjection(entries)
+end
 
 function Lower.LowerModule:lower_c_module(code_module)
   local signatures = code_module:lower_c_signature_projection()
+  local extern_projection = code_module:lower_c_extern_projection()
   local sigs = {}
   for i = 1, #signatures.entries do sigs[i] = signatures.entries[i].c_sig end
   local functions, cfuncs, helpers = {}, {}, {}
   for i = 1, #code_module.funcs do
-    local result = code_module.funcs[i]:lower_c_function(Lower.LowerCFunctionInput(signatures))
+    local result = code_module.funcs[i]:lower_c_function(Lower.LowerCFunctionInput(signatures, extern_projection))
     functions[#functions + 1], cfuncs[#cfuncs + 1] = result, result.func
     append_helpers(helpers, result.helpers)
   end
   local externs = {}
-  for i = 1, #code_module.externs do externs[i] = code_module.externs[i]:lower_c_extern() end
+  for i = 1, #extern_projection.entries do externs[i] = extern_projection.entries[i]:lower_c_extern() end
   local globals = {}
-  for i = 1, #code_module.globals do globals[#globals + 1] = code_module.globals[i]:lower_c_global() end
-  for i = 1, #code_module.data do globals[#globals + 1] = code_module.data[i]:lower_c_global() end
+  for i = 1, #code_module.globals do globals[#globals + 1] = code_module.globals[i]:lower_c_global(extern_projection) end
+  for i = 1, #code_module.data do globals[#globals + 1] = code_module.data[i]:lower_c_global(extern_projection) end
   local types = {}
   for i = 1, #code_module.types do types[i] = code_module.types[i]:lower_code_type_decl_to_c() end
   local target = C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian, true)
   local unit = C.CBackendUnit(code_module.id.text, target, sigs, types, globals, externs, helpers, cfuncs)
-  return Lower.LowerCModuleEmission(unit, signatures, functions)
+  return Lower.LowerCModuleEmission(unit, signatures, extern_projection, functions)
 end
 
 function Lower.LowerModule:emit_c(code_module) return self:lower_c_module(code_module).unit end

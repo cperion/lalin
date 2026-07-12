@@ -258,7 +258,7 @@ function Code.CodeCallDirect:lower_code_call_target_to_c(c_emission)
 end
 
 function Code.CodeCallExtern:lower_code_call_target_to_c(c_emission)
-  return C.CBackendCallExtern(C.CBackendName(self.extern.text))
+  return C.CBackendCallExtern(c_emission.externs:lower_c_extern_lookup(self.extern):lower_c_name())
 end
 
 function Code.CodeCallIndirect:lower_code_call_target_to_c(c_emission)

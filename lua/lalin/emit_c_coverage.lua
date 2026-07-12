@@ -133,7 +133,6 @@ local tables = {
         StmtAssert = supported("C_BACKEND_DESIGN.md §15", "Assertions lower to conditional trap paths."),
         StmtIf = supported("C_BACKEND_DESIGN.md §13", "Statement if lowers through CFG branch/join construction."),
         StmtSwitch = supported("C_BACKEND_DESIGN.md §13", "Scalar switch statements lower to switch/goto CFG; variant arms are tracked separately."),
-        StmtVariantSwitchSource = phase_unreachable("C_BACKEND_DESIGN.md §13", "Parsed variant binds are resolved to typed StmtSwitch arms during typechecking."),
         StmtJump = supported("C_BACKEND_DESIGN.md §13", "Block jumps lower to parallel block-parameter transfers and goto."),
         StmtJumpCont = phase_unreachable("C_BACKEND_DESIGN.md §13", "Continuation jumps are region-internal control and must not escape to final C lowering."),
         StmtRegionEmit = phase_unreachable("C_BACKEND_DESIGN.md §13", "Region emit invocation is expanded/spliced into enclosing control regions before backend C lowering."),

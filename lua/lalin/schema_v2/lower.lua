@@ -283,6 +283,20 @@ return schema. LalinLower {
     LowerCSignatureFound { variant_unique, entry [LalinLower.LowerCSignatureEntry], },
     LowerCSignatureMissing { variant_unique, sig [LalinCode.CodeSigId], },
   },
+  product. LowerCExternEntry {
+    interned,
+    code_extern [LalinCode.CodeExternId],
+    code_declaration [LalinCode.CodeExtern],
+    c_name [LalinC.CBackendName],
+  },
+  product. LowerCExternProjection {
+    interned,
+    entries [many [LalinLower.LowerCExternEntry]],
+  },
+  sum. LowerCExternLookup {
+    LowerCExternFound { variant_unique, entry [LalinLower.LowerCExternEntry], },
+    LowerCExternMissing { variant_unique, extern [LalinCode.CodeExternId], },
+  },
   product. LowerCValueTypeEntry {
     interned,
     field. value [LalinCode.CodeValueId],
@@ -300,6 +314,7 @@ return schema. LalinLower {
   product. LowerCInstructionInput {
     interned,
     signatures [LalinLower.LowerCSignatureProjection],
+    externs [LalinLower.LowerCExternProjection],
     values [LalinLower.LowerCValueTypeProjection],
   },
   product. LowerCInstEmission {
@@ -316,6 +331,7 @@ return schema. LalinLower {
   product. LowerCBlockInput {
     interned,
     signatures [LalinLower.LowerCSignatureProjection],
+    externs [LalinLower.LowerCExternProjection],
     values [LalinLower.LowerCValueTypeProjection],
   },
   product. LowerCBlockEmission {
@@ -332,6 +348,7 @@ return schema. LalinLower {
   product. LowerCFunctionInput {
     interned,
     signatures [LalinLower.LowerCSignatureProjection],
+    externs [LalinLower.LowerCExternProjection],
   },
   product. LowerCFunctionEmission {
     interned,
@@ -343,6 +360,7 @@ return schema. LalinLower {
     interned,
     unit [LalinC.CBackendUnit],
     signatures [LalinLower.LowerCSignatureProjection],
+    externs [LalinLower.LowerCExternProjection],
     functions [many [LalinLower.LowerCFunctionEmission]],
   },
   product. LowerBackEmitInput {
