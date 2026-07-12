@@ -45,7 +45,7 @@ modules[#modules + 1] = host_decl
 local T = asdl.context()
 S.define(T, modules)
 
-require("lalin.compiler_implementation").install_schema_v2(T)
+require("lalin.compiler_implementation_v2").install(T)
 
 -- Step 3: Patch package.loaded so impl files get typed namespaces
 -- Map schema module name → T namespace

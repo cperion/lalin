@@ -49,4 +49,21 @@ for _, path in ipairs {
   assert(not text:match("LalinStencilMachine"), path .. " must not depend on excluded machine schema")
 end
 
+local canonical_impl = source("lua/lalin/compiler_implementation_v2.lua")
+for _, forbidden in ipairs {
+  "lalin%.tree_typecheck",
+  "lalin%.tree_typecheck_stmt",
+  "lalin%.tree_typecheck_fact",
+  "lalin%.code_kernel_plan",
+  "lalin%.lower_to_c",
+  "lalin%.compiler_canonical_c_backend",
+  "lalin%.schema%.",
+} do
+  assert(not canonical_impl:match(forbidden), "canonical implementation imports forbidden old code: " .. forbidden)
+end
+for _, path in ipairs { "lua/lalin/impl/compiler_api.lua", "lua/lalin/pipeline.lua" } do
+  local text = source(path)
+  assert(not text:match('require%("lalin%.impl%.stencil_machine"%)'), path .. " must not load excluded stencil machine")
+end
+
 print("schema_v2 bootstrap boundaries ok")
