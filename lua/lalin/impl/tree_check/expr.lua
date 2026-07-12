@@ -7,18 +7,9 @@ local Ty     = require("lalin.schema_v2.type")
 local Tr     = require("lalin.schema_v2.tree")
 local B      = require("lalin.schema_v2.bind")
 local LCheck = require("lalin.schema_v2.check")
-local Sem    = require("lalin.schema_v2.sem")
 local asdl   = require("lalin.asdl")
 
 function Tr.Expr:typecheck_tree_expr(input) end  -- parent default
-
-function Tr.ExprLit:typecheck_tree_expr_expected(input)
-  local result = self:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
-  if result.ty:tree_check_is_integer_type() and input.expected:tree_check_is_integer_type() then
-    return LCheck.TypeExprResult(Tr.ExprLit(Tr.ExprTyped(input.expected), self.value), input.expected, result.issues)
-  end
-  return result
-end
 
 function Tr.ExprLit:typecheck_tree_expr(input)
   local lit_ty = self.value:typecheck_tree_literal_ty()
@@ -39,9 +30,6 @@ end
 function LCheck.TypeValueLookupMissing:typecheck_tree_expr_ref(ref)
   return LCheck.TypeExprResult(ref, Ty.TScalar(C.ScalarVoid), {LCheck.TypeIssueUnresolvedValue(self.name)})
 end
-
-function Tr.Expr:tree_check_value_name() return nil end
-function Tr.ExprRef:tree_check_value_name() return self.ref:typecheck_tree_ref_name() end
 
 function Tr.ExprRef:typecheck_tree_expr(input)
   local ref_name = self.ref:typecheck_tree_ref_name()
@@ -65,14 +53,11 @@ function Tr.ExprUnary:typecheck_tree_expr(input)
 end
 
 function Tr.ExprBinary:typecheck_tree_expr(input)
-  local lr = self.lhs:typecheck_tree_expr(input); if lr == nil then error("missing canonical typecheck on " .. tostring(self.lhs), 2) end; if lr.ty == nil then return lr end
-  local rr = self.rhs:typecheck_tree_expr(input); if rr == nil then error("missing canonical typecheck on " .. tostring(self.rhs), 2) end; if rr.ty == nil then return rr end
+  local lr = self.lhs:typecheck_tree_expr(input); if lr.ty == nil then return lr end
+  local rr = self.rhs:typecheck_tree_expr(input); if rr.ty == nil then return rr end
   local result_ty = self.op:tree_check_result_type(lr.ty, rr.ty)
-  local issues = {}
-  for _, issue in ipairs(lr.issues or {}) do issues[#issues+1] = issue end
-  for _, issue in ipairs(rr.issues or {}) do issues[#issues+1] = issue end
   if not result_ty:tree_check_is_void_type() then
-    return LCheck.TypeExprResult(Tr.ExprBinary(Tr.ExprTyped(result_ty), self.op, lr.expr, rr.expr), result_ty, issues)
+    return LCheck.TypeExprResult(Tr.ExprBinary(Tr.ExprTyped(result_ty), self.op, lr.expr, rr.expr), result_ty, {})
   end
   return LCheck.TypeExprResult(nil, nil, {})
 end
@@ -143,13 +128,11 @@ function Tr.ExprCall:typecheck_tree_expr(input)
     local ar
     if expected ~= nil then
       ar = self.args[i]:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, expected))
-      if expected:tree_check_invalidating() then input.scope:tree_check_append_live_lease_invalidation(self.args[i]:tree_check_value_name(), issues) end
     else
       ar = self.args[i]:typecheck_tree_expr(input)
     end
     if ar.ty == nil then return ar end
     if expected ~= nil and not (expected:tree_check_is_void_type() or ar.ty:tree_check_is_void_type()) then
-      expected:tree_check_call_lease_escape(ar.ty, issues)
       if expected ~= ar.ty then
         issues[#issues + 1] = LCheck.TypeIssueExpected("call arg", expected, ar.ty)
       end
@@ -159,61 +142,30 @@ function Tr.ExprCall:typecheck_tree_expr(input)
   return LCheck.TypeExprResult(Tr.ExprCall(Tr.ExprTyped(result_ty), cr.expr, args), result_ty, issues)
 end
 
-function Ty.Type:tree_check_field_owner_name() return nil end
-function Ty.TNamed:tree_check_field_owner_name() return self.ref:tree_check_ref_name() end
-function Ty.TPtr:tree_check_field_owner_name() return self.elem:tree_check_field_owner_name() end
-function Ty.TAccess:tree_check_field_owner_name() return self.base:tree_check_field_owner_name() end
-function Sem.TypeLayout:tree_check_field_for(owner_name, field_name) return nil end
-function Sem.LayoutNamed:tree_check_field_for(owner_name, field_name)
-  if self.type_name ~= owner_name then return nil end
-  for _, field in ipairs(self.fields) do if field.field_name == field_name then return field end end
-end
-function Sem.LayoutLocal:tree_check_field_for(owner_name, field_name) return nil end
-
-function Tr.ExprDot:typecheck_tree_expr(input)
-  local base = self.base:typecheck_tree_expr(input)
-  local owner = base.ty:tree_check_field_owner_name()
-  for _, layout in ipairs(input.scope.layouts) do
-    local field = layout:tree_check_field_for(owner, self.name)
-    if field then
-      return LCheck.TypeExprResult(Tr.ExprField(Tr.ExprTyped(field.ty), base.expr, Sem.FieldByName(field.field_name, field.ty)), field.ty, base.issues)
-    end
-  end
-  local void = Ty.TScalar(C.ScalarVoid)
-  return LCheck.TypeExprResult(Tr.ExprDot(Tr.ExprTyped(void), base.expr, self.name), void, base.issues)
-end
-
 function Tr.ExprField:typecheck_tree_expr(input)
   local br = self.base:typecheck_tree_expr(input); if br.ty == nil then return br end
   return LCheck.TypeExprResult(Tr.ExprField(Tr.ExprTyped(self.field.ty), br.expr, self.field), self.field.ty, {})
 end
 
 function Tr.ExprIndex:typecheck_tree_expr(input)
-  local base = self.base:typecheck_tree_index_base(LCheck.TypeIndexBaseInput(input.scope))
-  local ir = self.index:typecheck_tree_expr(input)
-  local issues = {}
-  for _, issue in ipairs(base.issues) do issues[#issues+1] = issue end
-  for _, issue in ipairs(ir.issues) do issues[#issues+1] = issue end
-  local elem_ty = base.elem:tree_check_index_elem_type()
-  return LCheck.TypeExprResult(Tr.ExprIndex(Tr.ExprTyped(elem_ty), base.base, ir.expr), elem_ty, issues)
+  local base_ty = self.base:typecheck_tree_index_base_ty(input)
+  if base_ty == nil then return LCheck.TypeExprResult(nil, nil, {}) end
+  local ir = self.index:typecheck_tree_expr(input); if ir.ty == nil then return ir end
+  local elem_ty = base_ty:tree_code_index_elem_type()
+  return LCheck.TypeExprResult(Tr.ExprIndex(Tr.ExprTyped(elem_ty), self.base, ir.expr), elem_ty, {})
 end
 
-function Tr.IndexBase:typecheck_tree_index_base(input) return LCheck.TypeIndexBaseResult(self, Ty.TScalar(C.ScalarVoid), {}) end
-function Tr.IndexBaseExpr:typecheck_tree_index_base(input)
-  local result = self.base:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
-  return LCheck.TypeIndexBaseResult(Tr.IndexBaseExpr(result.expr), result.ty, result.issues)
+function Tr.IndexBase:typecheck_tree_index_base_ty(input) return nil end
+function Tr.IndexBaseExpr:typecheck_tree_index_base_ty(input)
+  return self.base:typecheck_tree_expr(input).ty
 end
-function Tr.IndexBasePlace:typecheck_tree_index_base(input)
-  local result = self.base:typecheck_tree_place(LCheck.TypePlaceInput(input.scope))
-  return LCheck.TypeIndexBaseResult(Tr.IndexBasePlace(result.place, self.elem), self.elem, result.issues)
-end
-function Tr.IndexBaseView:typecheck_tree_index_base(input) return LCheck.TypeIndexBaseResult(self, self.view.elem_ty, {}) end
 
 -- ExprIntrinsic moved below; see full implementation
 
 -- Place typechecking
 function Tr.Place:typecheck_tree_place(input)
-  return LCheck.TypePlaceResult(self, Ty.TScalar(C.ScalarVoid), {})
+  local ty = self.h and self.h:tree_code_place_type() or Ty.TScalar(C.ScalarVoid)
+  return LCheck.TypePlaceResult(self, ty, {})
 end
 
 function LCheck.TypeValueLookupFound:typecheck_tree_place_ref(place)
@@ -241,26 +193,26 @@ function Tr.PlaceDeref:typecheck_tree_place(input)
   return LCheck.TypePlaceResult(self, nil, er.issues or {})
 end
 
-function Tr.PlaceIndex:typecheck_tree_place(input)
-  local base = self.base:typecheck_tree_index_base(LCheck.TypeIndexBaseInput(input.scope))
-  local index = self.index:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
-  local elem_ty = base.elem:tree_check_index_elem_type()
-  local issues = {}
-  for _, issue in ipairs(base.issues) do issues[#issues+1] = issue end
-  for _, issue in ipairs(index.issues) do issues[#issues+1] = issue end
-  return LCheck.TypePlaceResult(Tr.PlaceIndex(Tr.PlaceTyped(elem_ty), base.base, index.expr), elem_ty, issues)
-end
+-- ============================================================
+-- Remaining expr leaves (real implementations)
+-- ============================================================
 
 function Tr.ExprAgg:typecheck_tree_expr(input)
-  local fields, issues = {}, {}
-  for i = 1, #self.fields do
-    local field = self.fields[i]
-    local value = field.value:typecheck_tree_expr(input)
-    for _, issue in ipairs(value.issues or {}) do issues[#issues+1] = issue end
-    if value.ty then value.ty:tree_check_append_lease_escape(issues, LCheck.TypeUnaryLeaseEscapeAggregate) end
-    fields[i] = Tr.FieldInit(field.name, value.expr or field.value, field.offset)
+  -- Struct aggregate init: canoncalize type, typecheck each field value
+  local ty = self.ty  -- canonicalized by caller if needed
+  local fields = {}
+  local issues = {}
+  for i = 1, #(self.fields or {}) do
+    local fi = self.fields[i]
+    local vr = fi.value:typecheck_tree_expr(input)
+    if vr.issues then for _, iss in ipairs(vr.issues) do issues[#issues+1]=iss end end
+    if vr.ty and vr.expr then
+      fields[#fields+1] = Tr.FieldInit(fi.name, vr.expr, fi.offset)
+    else
+      fields[#fields+1] = Tr.FieldInit(fi.name, fi.value, fi.offset)
+    end
   end
-  return LCheck.TypeExprResult(Tr.ExprAgg(Tr.ExprTyped(self.ty), self.ty, fields), self.ty, issues)
+  return LCheck.TypeExprResult(Tr.ExprAgg(Tr.ExprTyped(ty), ty, fields), ty, issues)
 end
 
 -- ExprAgg:typecheck_tree_expr_expected: delegate to type if aggregate
@@ -299,11 +251,10 @@ function Tr.ExprArray:typecheck_tree_expr_expected(input)
   if input.expected and input.expected:tree_check_is_array_type() then
     local counts_match = true
     if input.expected.count and input.expected.count:tree_check_is_const() then
-      local expected_n = input.expected.count.count
+      local expected_n = input.expected.count.value
       if expected_n ~= #(self.elems or {}) then
-        local actual_ty = Ty.TArray(Ty.ArrayLenConst(#(self.elems or {})), input.expected.elem)
-        local issues = {LCheck.TypeIssueExpected("array length", input.expected, actual_ty)}
-        return LCheck.TypeExprResult(Tr.ExprArray(Tr.ExprTyped(actual_ty), input.expected.elem, self.elems), actual_ty, issues)
+        local issues = {LCheck.TypeIssueExpected("array length", input.expected, Ty.TArray(Ty.ArrayLenConst(#(self.elems or 0)), input.expected.elem))}
+        return LCheck.TypeExprResult(self, input.expected, issues)
       end
     end
     local issues = {}

@@ -47,7 +47,7 @@ assert(P.TaskStatus:isclassof(P.TaskDone))
 local schema = Project.schema(asdl.context())
 assert(schema.modules[1].name == "LalinProject")
 
-local text = S.file_text(require("lalin.schema_v2.project"), { width = 100, indent = 2 })
+local text = S.file_text(require("lalin.schema.project"), { width = 100, indent = 2 })
 assert(text:match("schema%. LalinProject"))
 assert(text:match("product%. Task"))
 

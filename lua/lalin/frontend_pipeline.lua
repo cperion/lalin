@@ -95,10 +95,7 @@ local function bind_context(T)
         progress(process_ctx, "layout_env", { layout_env = layout_env, target = is_c and "c" or "back" })
         local resolved = Layout.module(checked.module, layout_env, host_target)
         progress(process_ctx, "layout_resolve", { module = resolved, target = is_c and "c" or "back" })
-        if is_c then
-            resolved = resolved:tree_c_frontend_projection()
-            assert_no_c_phase_unreachable(resolved, opts.site or "C frontend")
-        end
+        if is_c then assert_no_c_phase_unreachable(resolved, opts.site or "C frontend") end
         local lowering = TreeToCode:module_result(resolved, { layout_env = layout_env, target = target, module_id = opts.module_id })
         local code_module = lowering.code_module
         local code_contract_set = lowering.contracts

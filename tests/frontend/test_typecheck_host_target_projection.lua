@@ -1,7 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local asdl = require("lalin.asdl")
-local T = require("lalin.schema_v2")
+local Schema = require("lalin.schema_projection")
+
+local T = asdl.context()
+Schema(T)
 
 local dsl = require("lalin.dsl")(T)
 local decl = dsl.to_unit("TargetProjection", dsl.loadstring([[

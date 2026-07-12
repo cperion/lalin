@@ -21,22 +21,18 @@ local files = {
   "lower", "schedule",
   "backend", "cemit",
   "compiler", "code_validation", "exec",
-  "project",
+  "phase", "project",
 }
 
 -- Step 1: Load all schema modules (schema_v2 + old LalinHost)
 local modules = {}
-local declarations = {}
 
 -- Schema_v2 modules
 for _, name in ipairs(files) do
   local mod_path = "lalin.schema_v2." .. name
   local decl = require(mod_path)
-  declarations[name] = decl
   modules[#modules + 1] = decl
 end
-modules[#modules + 1] = require("lalin.schema.phase")
-package.loaded["lalin.schema_v2.declarations"] = declarations
 
 -- Old LalinHost module (referenced by sem.lua via LalinHost.HostFieldRep)
 local host_decl = require("lalin.schema.host")

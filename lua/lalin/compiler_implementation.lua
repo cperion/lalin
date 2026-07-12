@@ -55,12 +55,13 @@ function M.install_schema_v2(T)
     function Compiler.TreeCodeSchemaV2Implementation:closure_convert(module, input)
         require("lalin.impl.tree_check.module")
         require("lalin.impl.tree_closure")
-        return module:closure_convert(input).module
+        return module:closure_convert(input)
     end
 
     function Compiler.TreeCodeSchemaV2Implementation:typecheck_module(module, input)
         require("lalin.impl.tree_check.init")
-        return module:typecheck_result(input)
+        local checked_module = module:typecheck(input)
+        return T.LalinCheck.TypeModuleResult(checked_module, {}, input.target)
     end
 
     function Compiler.TreeCodeSchemaV2Implementation:module_result(module, opts)

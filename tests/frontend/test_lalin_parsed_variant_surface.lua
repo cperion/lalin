@@ -4,8 +4,9 @@ local lalin = require("lalin")
 local asdl = require("lalin.asdl")
 local llbl = require("llbl")
 
-local T = require("lalin.schema_v2")
-require("lalin.impl.tree_check.init")
+local T = asdl.context()
+require("lalin.schema_projection")(T)
+require("lalin.tree_typecheck")(T)
 local Tr, Check = T.LalinTree, T.LalinCheck
 
 local source = [=[
@@ -38,8 +39,8 @@ assert(#decls[2].body[2].variant_arms[2].binds == 0, "nullary arm must carry no 
 
 local module = lalin.syntax.to_module(decls, "parsed_variant_surface", T)
 assert(asdl.classof(module.items[2].func.body[1].init) == Tr.ExprCtor, "parsed constructor must project to ExprCtor")
-assert(asdl.classof(module.items[2].func.body[2]) == Tr.StmtSwitch, "parsed variant arms must project directly to the canonical switch")
-local checked = require("lalin.frontend_pipeline")(T).typecheck_module(module, {})
+assert(asdl.classof(module.items[2].func.body[2]) == Tr.StmtVariantSwitchSource, "parsed variant arms must project to the schema-owned source switch")
+local checked = module:typecheck_tree_module()
 assert(#checked.issues == 0, "valid nullary/payload constructors and binds must typecheck")
 
 local function issues_for(body, name)
@@ -52,10 +53,7 @@ end
 fn rejected() [i32] do
 ]=] .. body .. "\nend\n"
   local parsed = assert(lalin.loadstring(bad, "@" .. name .. ".lln"))
-  local ok, result = pcall(function()
-    return require("lalin.frontend_pipeline")(T).typecheck_module(lalin.syntax.to_module(parsed, name, T), {})
-  end)
-  return ok and result.issues or { tostring(result) }
+  return lalin.syntax.to_module(parsed, name, T):typecheck_tree_module().issues
 end
 
 local unknown_ctor = issues_for("  return MaybeI32::Missing()", "unknown-variant-constructor")
@@ -115,7 +113,7 @@ fn rejected() [i32] do
 end
     ]=]
 local multi_decls = assert(lalin.loadstring(multi_source, "@multi-field-variant.lln"))
-local multi_issues = require("lalin.frontend_pipeline")(T).typecheck_module(lalin.syntax.to_module(multi_decls, "multi_field_variant", T), {}).issues
+local multi_issues = lalin.syntax.to_module(multi_decls, "multi_field_variant", T):typecheck_tree_module().issues
 local unsupported_count = 0
 for _, issue in ipairs(multi_issues) do
   if asdl.classof(issue) == Check.TypeIssueVariantPayloadUnsupported then

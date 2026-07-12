@@ -35,46 +35,18 @@ function Tr.Module:surface_resolve()
   return Tr.Module(self.h, items)
 end
 
-local function resolved_signature(func, mod_name)
-  local params = {}
-  for i = 1, #(func.params or {}) do
-    local p = func.params[i]
-    params[i] = Ty.Param(p.name, p.ty:tree_surface_resolve_ty(mod_name))
-  end
-  return params, func.result:tree_surface_resolve_ty(mod_name)
-end
-
-function Tr.Item:tree_c_frontend_items() return {self} end
-function Tr.ItemRegion:tree_c_frontend_items() return {} end
-function Tr.Module:tree_c_frontend_projection()
-  local items = {}
-  for _, item in ipairs(self.items) do for _, kept in ipairs(item:tree_c_frontend_items()) do items[#items+1] = kept end end
-  return Tr.Module(self.h, items)
-end
-
 function Tr.FuncLocal:surface_resolve_item(mod_name)
-  local params, result = resolved_signature(self, mod_name)
-  return Tr.FuncLocal(self.name, params, result, self.body)
+  local params = {}
+  for i = 1, #(self.params or {}) do
+    local p = self.params[i]
+    params[i] = Ty.Param(p.name, p.ty:tree_surface_resolve_ty(mod_name), p.attrs)
+  end
+  local result = self.result and self.result:tree_surface_resolve_ty(mod_name) or nil
+  return Tr.FuncLocal(self.name, params, result, self.body, self.attrs)
 end
 
 function Tr.FuncExport:surface_resolve_item(mod_name)
-  local params, result = resolved_signature(self, mod_name)
-  return Tr.FuncExport(self.name, params, result, self.body)
-end
-
-function Tr.FuncLocalContract:surface_resolve_item(mod_name)
-  local params, result = resolved_signature(self, mod_name)
-  return Tr.FuncLocalContract(self.name, params, result, self.contracts, self.body)
-end
-
-function Tr.FuncExportContract:surface_resolve_item(mod_name)
-  local params, result = resolved_signature(self, mod_name)
-  return Tr.FuncExportContract(self.name, params, result, self.contracts, self.body)
-end
-
-function Tr.FuncDecl:surface_resolve_item(mod_name)
-  local params, result = resolved_signature(self, mod_name)
-  return Tr.FuncDecl(self.name, params, result)
+  return Tr.FuncLocal:surface_resolve_item(self, mod_name)
 end
 
 -- Type resolution methods (below are unchanged)
@@ -96,9 +68,6 @@ end
 
 function Tr.TypeDeclTaggedUnionSugar:tree_surface_resolve(mod_name) return self end
 function Tr.TypeDeclHandle:tree_surface_resolve(mod_name) return self end
-
-function Ty.TypeRef:is_type_ref_path() return false end
-function Ty.TypeRefPath:is_type_ref_path() return true end
 
 function Ty.Type:tree_surface_resolve_ty(mod_name) return self end
 function Ty.TNamed:tree_surface_resolve_ty(mod_name)

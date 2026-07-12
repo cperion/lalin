@@ -143,10 +143,12 @@ end
 
 function LalinSyntax.to_module(parsed_decls, name, T)
   parsed_decls = LalinSyntax.to_decls(parsed_decls)
-  -- Parsed documents and the Lua builder meet at the canonical frontend context.
-  T = T or require("lalin.schema_v2")
-  assert(T == require("lalin.schema_v2"),
-    "lalin.syntax.to_module only accepts the canonical frontend context")
+  -- Use the caller's schema context, or create one at this public boundary.
+  local asdl = require("lalin.asdl")
+  T = T or asdl.context()
+  if not T.LalinTree then
+    require("lalin.schema_projection")(T)
+  end
   local to_tree = require("lalin.syntax.to_tree")(T)
   local Tr, C, B, Ty = T.LalinTree, T.LalinCore, T.LalinBind, T.LalinType
 
@@ -182,14 +184,6 @@ function LalinSyntax.to_module(parsed_decls, name, T)
 
   local function handle_repr(ptype)
     if ptype == nil then return Ty.HandleReprScalar(C.ScalarU32) end
-    local repr_scalars = {
-      i8 = C.ScalarI8, i16 = C.ScalarI16, i32 = C.ScalarI32, i64 = C.ScalarI64,
-      u8 = C.ScalarU8, u16 = C.ScalarU16, u32 = C.ScalarU32, u64 = C.ScalarU64,
-      index = C.ScalarIndex,
-    }
-    if type(ptype) == "table" and repr_scalars[ptype.source] then
-      return Ty.HandleReprScalar(repr_scalars[ptype.source])
-    end
     local ty = parsed_type(ptype)
     if asdl.classof(ty) ~= Ty.TScalar then
       error("parsed_to_module: handle repr must be a scalar type such as `[u32]`", 2)
@@ -198,11 +192,6 @@ function LalinSyntax.to_module(parsed_decls, name, T)
   end
 
   local function handle_type_ref(ptype, site)
-    if type(ptype) == "table" and type(ptype.source) == "string" then
-      local parts = {}
-      for part in ptype.source:gmatch("[_%a][_%w]*") do parts[#parts + 1] = C.Name(part) end
-      if #parts > 0 then return Ty.TypeRefPath(C.Path(parts)) end
-    end
     local ty = parsed_type(ptype)
     local cls = asdl.classof(ty)
     if cls == Ty.TNamed or cls == Ty.THandle then return ty.ref end

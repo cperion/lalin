@@ -1,26 +1,39 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local expected_names = {
-  "c", "c_materialize", "code", "compiler", "effect", "flow", "graph",
-  "init", "kernel", "lower", "mem", "schedule", "stencil", "stencil_machine", "value",
+  "bind", "check", "c", "c_materialize", "code", "compiler", "core", "effect",
+  "exec", "flow", "graph", "init", "kernel", "lower", "mem", "parse",
+  "phase", "project", "schedule", "sem", "source", "stencil",
+  "stencil_machine", "tree", "type", "value",
 }
 table.sort(expected_names)
 
 local ownership = {
+  bind = { namespace = "LalinBind", owner = "lua/lalin/schema_v2/bind.lua" },
+  check = { namespace = "LalinCheck", owner = "lua/lalin/schema_v2/check.lua" },
   c = { namespace = "LalinC", owner = "lua/lalin/schema_v2/c.lua" },
   c_materialize = { namespace = "LalinCMat", owner = "lua/lalin/schema_v2/c_materialize.lua" },
   code = { namespace = "LalinCode", owner = "lua/lalin/schema_v2/code.lua" },
   compiler = { namespace = "LalinCompiler", owner = "lua/lalin/schema_v2/compiler.lua" },
+  core = { namespace = "LalinCore", owner = "lua/lalin/schema_v2/core.lua" },
   effect = { namespace = "LalinEffect", owner = "lua/lalin/schema_v2/effect.lua" },
+  exec = { namespace = "LalinExec", owner = "lua/lalin/schema_v2/exec.lua" },
   flow = { namespace = "LalinFlow", owner = "lua/lalin/schema_v2/flow.lua" },
   graph = { namespace = "LalinGraph", owner = "lua/lalin/schema_v2/graph.lua" },
   init = { namespace = "bootstrap", owner = "lua/lalin/schema_v2/init.lua" },
   kernel = { namespace = "LalinKernel", owner = "lua/lalin/schema_v2/kernel.lua" },
   lower = { namespace = "LalinLower", owner = "lua/lalin/schema_v2/lower.lua" },
   mem = { namespace = "LalinMem", owner = "lua/lalin/schema_v2/mem.lua" },
+  parse = { namespace = "LalinParse", owner = "lua/lalin/schema_v2/parse.lua" },
+  phase = { namespace = "LalinPhase", owner = "lua/lalin/schema/phase.lua" },
+  project = { namespace = "LalinProject", owner = "lua/lalin/schema_v2/project.lua" },
   schedule = { namespace = "LalinSchedule", owner = "lua/lalin/schema_v2/schedule.lua" },
+  sem = { namespace = "LalinSem", owner = "lua/lalin/schema_v2/sem.lua" },
+  source = { namespace = "LalinSource", owner = "lua/lalin/schema_v2/source.lua" },
   stencil = { namespace = "LalinStencil", owner = "lua/lalin/schema_v2/stencil.lua" },
   stencil_machine = { namespace = "LalinStencilMachine", owner = "lua/lalin/schema_v2/stencil_machine.lua" },
+  tree = { namespace = "LalinTree", owner = "lua/lalin/schema_v2/tree.lua" },
+  type = { namespace = "LalinType", owner = "lua/lalin/schema_v2/type.lua" },
   value = { namespace = "LalinValue", owner = "lua/lalin/schema_v2/value.lua" },
 }
 
@@ -47,8 +60,8 @@ for name in pairs(old_names) do
 end
 table.sort(duplicates)
 
-assert(#duplicates == 15, "schema ownership inventory must contain exactly 15 duplicate names, got " .. tostring(#duplicates))
-assert(#expected_names == 15)
+assert(#duplicates == 26, "schema ownership inventory must contain exactly 26 duplicate names, got " .. tostring(#duplicates))
+assert(#expected_names == 26)
 for i = 1, #expected_names do
   assert(duplicates[i] == expected_names[i], "schema ambiguity changed at slot " .. tostring(i) .. ": expected " .. expected_names[i] .. ", got " .. tostring(duplicates[i]))
 end
@@ -66,32 +79,16 @@ for i = 1, #duplicates do
     local v2_text = read_file("lua/lalin/schema_v2/" .. name .. ".lua")
     local old_namespace = old_text:match("return%s+schema%.%s*([%w_]+)")
     local v2_namespace = v2_text:match("return%s+schema%.%s*([%w_]+)")
+    if name == "phase" then
+      assert(v2_text:find('return require("lalin.schema.phase")', 1, true), "phase must consume its canonical old-schema owner")
+      v2_namespace = old_namespace
+    end
     assert(old_namespace == entry.namespace, "old schema namespace mismatch for " .. name)
     assert(v2_namespace == entry.namespace, "schema-v2 namespace mismatch for " .. name)
   end
 end
 for name in pairs(ownership) do
   assert(old_names[name] and v2_names[name], "ownership metadata names a non-duplicate module: " .. name)
-end
-
-local canonicalized = {
-  bind = { owner = "lua/lalin/schema_v2/bind.lua", removed = "lua/lalin/schema/bind.lua" },
-  check = { owner = "lua/lalin/schema_v2/check.lua", removed = "lua/lalin/schema/check.lua" },
-  core = { owner = "lua/lalin/schema_v2/core.lua", removed = "lua/lalin/schema/core.lua" },
-  parse = { owner = "lua/lalin/schema_v2/parse.lua", removed = "lua/lalin/schema/parse.lua" },
-  sem = { owner = "lua/lalin/schema_v2/sem.lua", removed = "lua/lalin/schema/sem.lua" },
-  source = { owner = "lua/lalin/schema_v2/source.lua", removed = "lua/lalin/schema/source.lua" },
-  tree = { owner = "lua/lalin/schema_v2/tree.lua", removed = "lua/lalin/schema/tree.lua" },
-  type = { owner = "lua/lalin/schema_v2/type.lua", removed = "lua/lalin/schema/type.lua" },
-  exec = { owner = "lua/lalin/schema_v2/exec.lua", removed = "lua/lalin/schema/exec.lua" },
-  phase = { owner = "lua/lalin/schema/phase.lua", removed = "lua/lalin/schema_v2/phase.lua" },
-  project = { owner = "lua/lalin/schema_v2/project.lua", removed = "lua/lalin/schema/project.lua" },
-}
-assert(v2_names.tree_code and not old_names.tree_code, "tree_code must remain schema-v2-only")
-for name, entry in pairs(canonicalized) do
-  assert(read_file(entry.owner) ~= "", "canonical owner missing: " .. entry.owner)
-  assert(not old_names[name] or entry.owner:find("/schema/", 1, true), "removed old declaration returned: " .. name)
-  assert(not v2_names[name] or entry.owner:find("/schema_v2/", 1, true), "removed schema-v2 declaration returned: " .. name)
 end
 
 local v2_init = read_file("lua/lalin/schema_v2/init.lua")
@@ -115,5 +112,5 @@ assert(v2_init:find('require("lalin.schema.luajit")', 1, true), "legacy stencil-
 assert(not v2_init:find('require("lalin.schema.luatrace")', 1, true), "LuaTrace must remain excluded from schema-v2")
 assert(not v2_init:find('require("lalin.schema.native")', 1, true), "native copy-patch must remain excluded from schema-v2")
 
-io.write("schema ownership inventory ok: 15 duplicate names; frontend and meta canonicalized\n")
+io.write("schema ownership inventory ok: 26 duplicate names, one intended owner each\n")
 

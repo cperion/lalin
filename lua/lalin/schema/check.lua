@@ -2,15 +2,6 @@ local S = require("lalin.schema.dsl")
 S.use()
 
 return schema. LalinCheck {
-  -- SwitchKeyClass: typed classification of switch key expressions.
-  -- Replaces the old SwitchKeyDecision delayed-control union.
-  -- Produced by leaf methods on Expr instead of a standalone dispatch.
-  sum. SwitchKeyClass {
-    SwitchConstKeyClass { keys [many [LalinTree.SwitchKey]], },
-    SwitchExprKeyClass { keys [many [LalinTree.SwitchKey]], },
-    SwitchCompareKeyClass { keys [many [LalinTree.SwitchKey]], comparison [LalinCore.CmpOp], },
-  },
-
   -- Typecheck input products
   product. TypeValueScope {
     interned,
@@ -299,6 +290,7 @@ return schema. LalinCheck {
     },
     TypeIssueRegionInvoke { variant_unique, reject [LalinTree.RegionInvokeReject], },
     TypeIssueUnknownVariant { variant_unique, type_name [str], variant_name [str], },
+    TypeIssueVariantBindCount { variant_unique, type_name [str], variant_name [str], expected [number], actual [number], },
     TypeIssueVariantPayloadUnsupported { variant_unique, type_name [str], variant_name [str], field_count [number], },
     TypeIssueVariantPayloadMismatch {
       variant_unique,

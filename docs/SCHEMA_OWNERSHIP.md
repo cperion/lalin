@@ -1,12 +1,12 @@
 # Schema Ownership Inventory
 
-This inventory is the OWN-0 ambiguity guard and the live cutover manifest. It records both remaining ambiguities and completed declaration removals; it does not make constructor identities interchangeable.
+This inventory is the OWN-0 ambiguity guard. It records intended ownership during the staged schema-v2 cutover; it does not move, delete, alias, or adapt schema modules.
 
 ## Rules
 
 - A compiler namespace has exactly one intended schema owner.
-- The remaining duplicate filename set is closed at **15**, including the intentional temporary `c_materialize` duplicate introduced by CMAT-1. A new duplicate is a failing test, not an implicit migration decision.
-- Schema-v2 is the intended owner for remaining duplicated compiler namespaces. Old files remain only until their dependent OWN-* cutover package reaches zero consumers.
+- The duplicate filename set is closed at **26**, including the intentional temporary `c_materialize` duplicate introduced by CMAT-1. A new duplicate is a failing test, not an implicit migration decision.
+- Except for the already-canonical `LalinPhase`, schema-v2 is the intended owner for duplicated compiler namespaces. The old files remain only until their dependent OWN-* cutover package reaches zero consumers.
 - `init.lua` is bootstrap ownership rather than an ASDL namespace. `lua/lalin/schema_v2/init.lua` is its intended owner.
 - The inventory describes target ownership. It does not make the old and schema-v2 constructor identities interchangeable.
 
@@ -14,38 +14,32 @@ This inventory is the OWN-0 ambiguity guard and the live cutover manifest. It re
 
 | Duplicate name | Namespace | Intended owner | Cutover package |
 |---|---|---|---|
+| `bind` | `LalinBind` | `lua/lalin/schema_v2/bind.lua` | OWN-FRONT |
+| `check` | `LalinCheck` | `lua/lalin/schema_v2/check.lua` | OWN-FRONT |
 | `c` | `LalinC` | `lua/lalin/schema_v2/c.lua` | OWN-C |
 | `c_materialize` | `LalinCMat` | `lua/lalin/schema_v2/c_materialize.lua` | OWN-STENCIL |
 | `code` | `LalinCode` | `lua/lalin/schema_v2/code.lua` | OWN-ANALYSIS / OWN-C |
 | `compiler` | `LalinCompiler` | `lua/lalin/schema_v2/compiler.lua` | OWN-C |
+| `core` | `LalinCore` | `lua/lalin/schema_v2/core.lua` | OWN-FRONT |
 | `effect` | `LalinEffect` | `lua/lalin/schema_v2/effect.lua` | OWN-ANALYSIS |
+| `exec` | `LalinExec` | `lua/lalin/schema_v2/exec.lua` | OWN-META |
 | `flow` | `LalinFlow` | `lua/lalin/schema_v2/flow.lua` | OWN-ANALYSIS |
 | `graph` | `LalinGraph` | `lua/lalin/schema_v2/graph.lua` | OWN-ANALYSIS |
 | `init` | bootstrap (no ASDL namespace) | `lua/lalin/schema_v2/init.lua` | OWN-CUTOVER |
 | `kernel` | `LalinKernel` | `lua/lalin/schema_v2/kernel.lua` | OWN-ANALYSIS |
 | `lower` | `LalinLower` | `lua/lalin/schema_v2/lower.lua` | OWN-ANALYSIS / OWN-C |
 | `mem` | `LalinMem` | `lua/lalin/schema_v2/mem.lua` | OWN-ANALYSIS |
+| `parse` | `LalinParse` | `lua/lalin/schema_v2/parse.lua` | OWN-FRONT |
+| `phase` | `LalinPhase` | `lua/lalin/schema/phase.lua` | OWN-META (already canonical) |
+| `project` | `LalinProject` | `lua/lalin/schema_v2/project.lua` | OWN-META |
 | `schedule` | `LalinSchedule` | `lua/lalin/schema_v2/schedule.lua` | OWN-ANALYSIS |
+| `sem` | `LalinSem` | `lua/lalin/schema_v2/sem.lua` | OWN-FRONT |
+| `source` | `LalinSource` | `lua/lalin/schema_v2/source.lua` | OWN-FRONT |
 | `stencil` | `LalinStencil` | `lua/lalin/schema_v2/stencil.lua` | OWN-STENCIL |
 | `stencil_machine` | `LalinStencilMachine` | `lua/lalin/schema_v2/stencil_machine.lua` | OWN-STENCIL |
+| `tree` | `LalinTree` | `lua/lalin/schema_v2/tree.lua` | OWN-FRONT |
+| `type` | `LalinType` | `lua/lalin/schema_v2/type.lua` | OWN-FRONT |
 | `value` | `LalinValue` | `lua/lalin/schema_v2/value.lua` | OWN-ANALYSIS |
-
-## Completed canonical removals
-
-| Namespace | Canonical owner | Removed declaration | Package |
-|---|---|---|---|
-| `LalinCore` | `lua/lalin/schema_v2/core.lua` | `lua/lalin/schema/core.lua` | OWN-FRONT |
-| `LalinParse` | `lua/lalin/schema_v2/parse.lua` | `lua/lalin/schema/parse.lua` | OWN-FRONT |
-| `LalinSource` | `lua/lalin/schema_v2/source.lua` | `lua/lalin/schema/source.lua` | OWN-FRONT |
-| `LalinType` | `lua/lalin/schema_v2/type.lua` | `lua/lalin/schema/type.lua` | OWN-FRONT |
-| `LalinBind` | `lua/lalin/schema_v2/bind.lua` | `lua/lalin/schema/bind.lua` | OWN-FRONT |
-| `LalinSem` | `lua/lalin/schema_v2/sem.lua` | `lua/lalin/schema/sem.lua` | OWN-FRONT |
-| `LalinTree` | `lua/lalin/schema_v2/tree.lua` | `lua/lalin/schema/tree.lua` | OWN-FRONT |
-| `LalinCheck` | `lua/lalin/schema_v2/check.lua` | `lua/lalin/schema/check.lua` | OWN-FRONT |
-| `LalinTreeCode` | `lua/lalin/schema_v2/tree_code.lua` | — (already schema-v2-only) | OWN-FRONT |
-| `LalinPhase` | `lua/lalin/schema/phase.lua` | `lua/lalin/schema_v2/phase.lua` | OWN-META |
-| `LalinProject` | `lua/lalin/schema_v2/project.lua` | `lua/lalin/schema/project.lua` | OWN-META |
-| `LalinExec` | `lua/lalin/schema_v2/exec.lua` | `lua/lalin/schema/exec.lua` | OWN-META |
 
 ## Host boundary
 
@@ -65,5 +59,5 @@ CMAT-1 intentionally added the canonical `lua/lalin/schema_v2/c_materialize.lua`
 
 ## Executable guard
 
-`tests/schema/test_schema_ownership_inventory.lua` computes the basename intersection of `lua/lalin/schema` and `lua/lalin/schema_v2`, asserts the exact live 15-name set (including `c_materialize`), verifies each remaining owner, asserts completed removals and schema-v2-only `tree_code`, checks the Host boundary, and checks the excluded backend set. `tests/run.lua schema` executes both `tests/schema` and `tests/schema_v2`.
+`tests/schema/test_schema_ownership_inventory.lua` computes the basename intersection of `lua/lalin/schema` and `lua/lalin/schema_v2`, asserts the exact 26-name set (including `c_materialize`), verifies each namespace and intended owner, checks the Host boundary, and checks the excluded backend set. `tests/run.lua schema` executes both `tests/schema` and `tests/schema_v2`; modules are not moved or deleted by OWN-0.
 

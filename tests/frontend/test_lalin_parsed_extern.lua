@@ -4,7 +4,8 @@ local lalin = require("lalin")
 local Document = require("lalin.syntax.document")
 local asdl = require("lalin.asdl")
 
-local T = require("lalin.schema_v2")
+local T = asdl.context()
+require("lalin.schema_projection")(T)
 local Tr = T.LalinTree
 
 local src = [=[
@@ -43,6 +44,7 @@ assert(decls[4].tag == "DeclFunc" and decls[4].name == "raw_top", "extern call w
 assert(decls[5].tag == "DeclRegion" and decls[5].qualifier[1] == "LuaState", "bridge region parses after externs")
 
 local module = lalin.syntax.to_module(decls, "LuaApiExtern", T)
+require("lalin.tree_typecheck")(T)
 assert(asdl.classof(module.items[1]) == Tr.ItemExtern, "first extern lowers to ItemExtern")
 assert(module.items[1].func.name == "lua_gettop", "extern item keeps name")
 assert(module.items[1].func.symbol == "lua_gettop", "extern item keeps C symbol")
@@ -50,7 +52,7 @@ assert(#module.items[2].func.params == 4, "lua_pcall params lower")
 assert(asdl.classof(module.items[4]) == Tr.ItemFunc, "raw_top lowers to function")
 assert(asdl.classof(module.items[5]) == Tr.ItemRegion, "LuaState.pcall lowers to region")
 
-local checked = require("lalin.frontend_pipeline")(T).typecheck_module(module, {})
+local checked = module:typecheck_tree_module()
 assert(#checked.issues == 0, "extern declarations and bridge region should typecheck")
 
 io.write("lalin parsed extern ok\n")

@@ -1,8 +1,9 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local asdl = require("lalin.asdl")
-local T = require("lalin.schema_v2")
-require("lalin.impl.tree_check.init")
+local T = asdl.context()
+require("lalin.schema_projection")(T)
+require("lalin.tree_typecheck")(T)
 
 local Check, Ty, Core = T.LalinCheck, T.LalinType, T.LalinCore
 local function source(path)
@@ -14,10 +15,10 @@ end
 
 local syntax_expr = source("lua/lalin/syntax/expr.lua")
 local to_tree = source("lua/lalin/syntax/to_tree.lua")
-local type_expr = source("lua/lalin/impl/tree_check/expr.lua")
-local type_stmt = source("lua/lalin/impl/tree_check/stmt.lua")
-local type_root = source("lua/lalin/impl/tree_check/module.lua")
-local type_type = source("lua/lalin/impl/tree_check/type.lua")
+local type_expr = source("lua/lalin/tree_typecheck_expr.lua")
+local type_stmt = source("lua/lalin/tree_typecheck_stmt.lua")
+local type_root = source("lua/lalin/tree_typecheck.lua")
+local type_type = source("lua/lalin/tree_typecheck_type.lua")
 
 assert(not syntax_expr:match("left%.tag"), "constructor parsing must not inspect ad hoc expression tags")
 assert(not syntax_expr:match("Ast%.node%(%\"VariantCtor%\""), "constructor syntax must not create a VariantCtor tag")
@@ -41,8 +42,8 @@ assert(asdl.classof(case_missing) == Check.TypeVariantCaseLookupMissing and case
 
 assert(Check.TypeVariantCaseLookupFound.typecheck_tree_ctor and Check.TypeVariantCaseLookupMissing.typecheck_tree_ctor,
   "both constructor lookup leaves must own constructor behavior")
-assert(Check.TypeVariantCaseLookupFound.tree_check_variant_arm
-  and Check.TypeVariantCaseLookupMissing.tree_check_variant_arm,
-  "both switch lookup leaves must own canonical arm behavior")
+assert(Check.TypeVariantCaseLookupFound.typecheck_tree_source_variant_arm
+  and Check.TypeVariantCaseLookupMissing.typecheck_tree_source_variant_arm,
+  "both switch lookup leaves must own source-arm behavior")
 
 io.write("lalin surface-c doctrine negatives ok\n")

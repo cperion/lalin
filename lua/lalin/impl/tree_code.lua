@@ -17,7 +17,6 @@ local Bind     = require("lalin.schema_v2.bind")
 local asdl     = require("lalin.asdl")
 local TypeSizeAlign = require("lalin.type_size_align")
 local CodeType = require("lalin.code_type")(require("lalin.schema_v2"))
-require("lalin.const_eval")(SchemaV2)
 
 ----------------------------------------------------------------------
 -- helpers
@@ -109,7 +108,7 @@ local function func_key(module_name, item_name)
 end
 
 local function code_func_id(item_name)
-  return Code.CodeFuncId(tostring(item_name))
+  return Code.CodeFuncId("fn_" .. tostring(item_name))
 end
 
 local function code_extern_id(name)
@@ -602,7 +601,6 @@ function TreeCode.TreeCodePlaceResult:tree_code_state() return self.state end
 function TreeCode.TreeCodeStmtResult:tree_code_state() return self.state end
 
 function TreeCode.TreeCodeInput:tree_code_type(ty)
-  if ty == nil then error(debug.traceback("tree_code_type requires a source type", 2), 2) end
   return type_to_code_s(self.state.abi.sigs, ty:tree_code_source_access_base()).ty
 end
 function TreeCode.TreeCodeContractInput:tree_code_type(ty)
@@ -2254,7 +2252,7 @@ function Tree.Func:lower_tree_func_to_code(input)
       unsupported(self, "non-void function without return")
     end
   end
-  local func = Code.CodeFunc(code_func_id(parts.name), parts.name, parts.linkage, transition.sig, code_params, stmt_input.state.emission.locals, entry, stmt_input.state.emission.blocks, origin_generated("function " .. parts.name))
+  local func = Code.CodeFunc(Code.CodeFuncId("fn_" .. parts.name), parts.name, parts.linkage, transition.sig, code_params, stmt_input.state.emission.locals, entry, stmt_input.state.emission.blocks, origin_generated("function " .. parts.name))
   return TreeCode.TreeCodeFuncLowerResult(func, stmt_input.state.abi, stmt_input.state.module_emission)
 end
 
@@ -2296,42 +2294,28 @@ end
 function Tree.ItemFunc:lower_tree_item_to_code(input)
   local result = self.func:lower_tree_func_to_code(input)
   local registration = TreeCode.TreeCodeModuleRegistrationFacet(result.abi.sigs, input.registration.registrations)
-  local accumulation = TreeCode.TreeCodeItemAccumulationFacet(array_append(input.accumulation.funcs, result.func), input.accumulation.types, input.accumulation.data, input.accumulation.globals)
+  local accumulation = TreeCode.TreeCodeItemAccumulationFacet(array_append(input.accumulation.funcs, result.func), input.accumulation.data, input.accumulation.globals)
   return item_lower_result(registration, result.emission, accumulation)
 end
 function Tree.ItemData:lower_tree_item_to_code(input)
   local datum = Code.CodeData(code_data_id(self.data.id), self.data.id.text, Code.CodeLinkageLocal, self.data.size, self.data.align, { Code.CodeDataBytes(0, self.data.bytes) }, origin_generated("data " .. tostring(self.data.id.text)))
-  local accumulation = TreeCode.TreeCodeItemAccumulationFacet(input.accumulation.funcs, input.accumulation.types, array_append(input.accumulation.data, datum), input.accumulation.globals)
+  local accumulation = TreeCode.TreeCodeItemAccumulationFacet(input.accumulation.funcs, array_append(input.accumulation.data, datum), input.accumulation.globals)
   return item_lower_result(input.registration, input.emission, accumulation)
 end
 function Tree.ItemConst:lower_tree_item_to_code(input)
   local result = self.c:tree_code_lower_global_to_code(input)
   local registration = TreeCode.TreeCodeModuleRegistrationFacet(result.abi.sigs, input.registration.registrations)
-  local accumulation = TreeCode.TreeCodeItemAccumulationFacet(input.accumulation.funcs, input.accumulation.types, input.accumulation.data, array_append(input.accumulation.globals, result.global))
+  local accumulation = TreeCode.TreeCodeItemAccumulationFacet(input.accumulation.funcs, input.accumulation.data, array_append(input.accumulation.globals, result.global))
   return item_lower_result(registration, result.emission, accumulation)
 end
 function Tree.ItemStatic:lower_tree_item_to_code(input)
   local result = self.s:tree_code_lower_global_to_code(input)
   local registration = TreeCode.TreeCodeModuleRegistrationFacet(result.abi.sigs, input.registration.registrations)
-  local accumulation = TreeCode.TreeCodeItemAccumulationFacet(input.accumulation.funcs, input.accumulation.types, input.accumulation.data, array_append(input.accumulation.globals, result.global))
+  local accumulation = TreeCode.TreeCodeItemAccumulationFacet(input.accumulation.funcs, input.accumulation.data, array_append(input.accumulation.globals, result.global))
   return item_lower_result(registration, result.emission, accumulation)
 end
 function Tree.ItemExtern:lower_tree_item_to_code(input) return item_lower_result(input.registration, input.emission, input.accumulation) end
-function Tree.TypeDecl:tree_code_type_decls(mod_name) return {} end
-local function named_type_decl(decl, mod_name)
-  local source_ty = Ty.TNamed(Ty.TypeRefGlobal(mod_name, decl.name))
-  return {Code.CodeTypeDecl(Code.CodeTypeId("type_" .. sanitize(mod_name) .. "_" .. sanitize(decl.name)), decl.name, Code.CodeTyNamed(mod_name, decl.name, source_ty), origin_generated("source type declaration"))}
-end
-function Tree.TypeDeclStruct:tree_code_type_decls(mod_name) return named_type_decl(self, mod_name) end
-function Tree.TypeDeclUnion:tree_code_type_decls(mod_name) return named_type_decl(self, mod_name) end
-function Tree.TypeDeclEnumSugar:tree_code_type_decls(mod_name) return named_type_decl(self, mod_name) end
-function Tree.TypeDeclTaggedUnionSugar:tree_code_type_decls(mod_name) return named_type_decl(self, mod_name) end
-function Tree.TypeDeclHandle:tree_code_type_decls(mod_name) return named_type_decl(self, mod_name) end
-function Tree.ItemType:lower_tree_item_to_code(input)
-  local types = clone_array(input.accumulation.types)
-  for _, decl in ipairs(self.t:tree_code_type_decls(input.mod_name)) do types[#types+1] = decl end
-  return item_lower_result(input.registration, input.emission, TreeCode.TreeCodeItemAccumulationFacet(input.accumulation.funcs, types, input.accumulation.data, input.accumulation.globals))
-end
+function Tree.ItemType:lower_tree_item_to_code(input) return item_lower_result(input.registration, input.emission, input.accumulation) end
 function Tree.ItemImport:lower_tree_item_to_code(input) return item_lower_result(input.registration, input.emission, input.accumulation) end
 function Tree.ItemRegion:lower_tree_item_to_code(input) unsupported(self, "region item leaked past frontend") end
 
@@ -2342,8 +2326,6 @@ function TreeCode.TreeCodeInput:tree_code_global_init_for_const(source_ty, value
 end
 function Tree.Expr:tree_code_const_eval(const_env, local_env) return self:sem_const_eval(Sem.ConstEvalInput(const_env, local_env)) end
 function Tree.Expr:sem_const_eval(input) return Sem.ConstNotFoldable("not foldable") end
-function Sem.ConstExprResult:tree_code_global_init(input, ty, value_expr, site) unsupported(value_expr, "non-constant initializer") end
-function Sem.ConstKnown:tree_code_global_init(input, ty, value_expr, site) return self.value:tree_code_global_init(input, ty, value_expr, site) end
 function Sem.ConstValue:tree_code_global_init(input, ty, value_expr, site) unsupported(value_expr, "non-scalar constant initializer") end
 function Sem.ConstInt:tree_code_global_init(input, ty, value_expr, site) return { Code.CodeDataScalar(0, ty, Core.LitInt(self.raw)) } end
 function Sem.ConstFloat:tree_code_global_init(input, ty, value_expr, site) return { Code.CodeDataScalar(0, ty, Core.LitFloat(self.raw)) } end
@@ -2431,7 +2413,7 @@ function Tree.Module:lower_tree_module_result_to_code(opts)
   local mod_name = self:tree_code_module_name()
   local parts = self:tree_code_module_parts(opts)
   local registration = TreeCode.TreeCodeModuleRegistrationFacet(parts.sigs, parts.registrations)
-  local accumulation = TreeCode.TreeCodeItemAccumulationFacet({}, {}, {}, {})
+  local accumulation = TreeCode.TreeCodeItemAccumulationFacet({}, {}, {})
   local input = TreeCode.TreeCodeItemLowerInput(parts.module_facts, registration, parts.emission, accumulation, mod_name)
   for i = 1, #(self.items or {}) do
     local result = self.items[i]:lower_tree_item_to_code(input)
@@ -2439,7 +2421,7 @@ function Tree.Module:lower_tree_module_result_to_code(opts)
   end
   local data = clone_array(input.accumulation.data)
   for i = 1, #input.emission.generated_data do data[#data + 1] = input.emission.generated_data[i] end
-  local code_module = Code.CodeModule(Code.CodeModuleId("module_" .. sanitize(opts.module_id or self:tree_code_module_name())), input.registration.sigs.code_sig_order, input.accumulation.types, data, input.accumulation.globals, input.registration.registrations.extern_order, input.accumulation.funcs, origin_generated("tree_lower module"))
+  local code_module = Code.CodeModule(Code.CodeModuleId("module_" .. sanitize(opts.module_id or self:tree_code_module_name())), input.registration.sigs.code_sig_order, {}, data, input.accumulation.globals, input.registration.registrations.extern_order, input.accumulation.funcs, origin_generated("tree_lower module"))
   local contract_state = TreeCode.TreeCodeContractState(input.registration.sigs, {})
   for i = 1, #(self.items or {}) do
     local result = self.items[i]:lower_tree_item_contracts_to_code(TreeCode.TreeCodeItemContractsInput(input.module_facts, input.registration.registrations, contract_state))

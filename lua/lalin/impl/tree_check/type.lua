@@ -112,52 +112,7 @@ function Ty.TClosure:tree_check_is_aggregate_type() return true end
 
 function Ty.Type:tree_check_is_array_type() return false end
 function Ty.TArray:tree_check_is_array_type() return true end
-
-function Ty.Type:tree_check_index_elem_type() return void_ty() end
-function Ty.TPtr:tree_check_index_elem_type() return self.elem end
-function Ty.TArray:tree_check_index_elem_type() return self.elem end
-function Ty.TSlice:tree_check_index_elem_type() return self.elem end
-function Ty.TView:tree_check_index_elem_type() return self.elem end
-function Ty.TLease:tree_check_index_elem_type() return self.base:tree_check_index_elem_type() end
-function Ty.TAccess:tree_check_index_elem_type() return self.base:tree_check_index_elem_type() end
-
-function Ty.Type:tree_check_contains_lease() return false end
-function Ty.TLease:tree_check_contains_lease() return true end
-function Ty.TAccess:tree_check_contains_lease() return self.base:tree_check_contains_lease() end
-function Ty.TPtr:tree_check_contains_lease() return self.elem:tree_check_contains_lease() end
-function Ty.TArray:tree_check_contains_lease() return self.elem:tree_check_contains_lease() end
-function Ty.TSlice:tree_check_contains_lease() return self.elem:tree_check_contains_lease() end
-function Ty.TView:tree_check_contains_lease() return self.elem:tree_check_contains_lease() end
-function Ty.TOwned:tree_check_contains_lease() return self.base:tree_check_contains_lease() end
-
-function Ty.Type:tree_check_append_lease_escape(issues, reason) end
-function Ty.TLease:tree_check_append_lease_escape(issues, reason)
-  local Check = require("lalin.schema_v2.check")
-  issues[#issues + 1] = Check.TypeIssueInvalidUnary(reason, self)
-end
-function Ty.TAccess:tree_check_append_lease_escape(issues, reason) self.base:tree_check_append_lease_escape(issues, reason) end
-
-function Ty.Type:tree_check_call_lease_escape(actual, issues) end
-function Ty.TPtr:tree_check_call_lease_escape(actual, issues)
-  actual:tree_check_append_lease_escape(issues, require("lalin.schema_v2.check").TypeUnaryLeaseEscapeCall)
-end
-function Ty.TView:tree_check_call_lease_escape(actual, issues)
-  actual:tree_check_append_lease_escape(issues, require("lalin.schema_v2.check").TypeUnaryLeaseEscapeCall)
-end
-function Ty.Type:tree_check_lease_origin_name() return nil end
-function Ty.TLease:tree_check_lease_origin_name() return self.origin.tree_check_origin_name and self.origin:tree_check_origin_name() or nil end
-function Ty.TAccess:tree_check_lease_origin_name() return self.base:tree_check_lease_origin_name() end
-
-function Ty.Type:tree_check_append_invalidation(actual_name, issues) end
-function Ty.TLease:tree_check_append_invalidation(actual_name, issues)
-  local origin = self:tree_check_lease_origin_name()
-  if origin == nil or actual_name == nil or origin == actual_name then
-    local Check = require("lalin.schema_v2.check")
-    issues[#issues+1] = Check.TypeIssueInvalidUnary(Check.TypeUnaryLeaseInvalidatingCall, self)
-  end
-end
-function Ty.TAccess:tree_check_append_invalidation(actual_name, issues) self.base:tree_check_append_invalidation(actual_name, issues) end
-
+----------------------------------------------------------------------
 -- Type size / align via layout_api
 ----------------------------------------------------------------------
 
