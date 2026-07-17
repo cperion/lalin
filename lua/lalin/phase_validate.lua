@@ -23,7 +23,15 @@ local function id_text(id)
     return tostring(id)
 end
 
+local function diagnostics_world_id(id)
+    if id == nil then return nil end
+    if is_class(id, "DiagnosticsWorldNone") then return nil end
+    if is_class(id, "DiagnosticsWorldPresent") then return id.world end
+    return id
+end
+
 local function maybe_id_text(id)
+    id = diagnostics_world_id(id)
     if id == nil then return nil end
     return id_text(id)
 end
@@ -182,8 +190,9 @@ local function validate_package(ctx, package)
         local name = id_text(machine.id)
         require_world(ctx, report, world_map, machine.input, "machine", name, "input")
         require_world(ctx, report, world_map, machine.output, "machine", name, "output")
-        if machine.diagnostics ~= nil then
-            require_world(ctx, report, world_map, machine.diagnostics, "machine", name, "diagnostic")
+        local machine_diagnostics = diagnostics_world_id(machine.diagnostics)
+        if machine_diagnostics ~= nil then
+            require_world(ctx, report, world_map, machine_diagnostics, "machine", name, "diagnostic")
         end
         validate_impl(ctx, report, machine)
     end
@@ -192,8 +201,9 @@ local function validate_package(ctx, package)
         local name = id_text(phase.id)
         require_world(ctx, report, world_map, phase.input, "phase", name, "input")
         require_world(ctx, report, world_map, phase.output, "phase", name, "output")
-        if phase.diagnostics ~= nil then
-            require_world(ctx, report, world_map, phase.diagnostics, "phase", name, "diagnostic")
+        local phase_diagnostics = diagnostics_world_id(phase.diagnostics)
+        if phase_diagnostics ~= nil then
+            require_world(ctx, report, world_map, phase_diagnostics, "phase", name, "diagnostic")
         end
 
         local machine = require_machine(ctx, report, machine_map, phase.machine, "phase", name)

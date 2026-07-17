@@ -54,6 +54,20 @@ local function phase_id(v) local P = require_phase(); return P.PhaseId(ident_tex
 local function machine_id(v) local P = require_phase(); return P.MachineId(ident_text(v, "machine name")) end
 local function root_id(v) local P = require_phase(); return P.RootId(ident_text(v, "root name")) end
 local function package_id(v) local P = require_phase(); return P.PackageId(ident_text(v, "package name")) end
+local function diagnostics_none()
+    local P = require_phase()
+    return P.DiagnosticsWorldNone or nil
+end
+local function diagnostics_present(world)
+    local P = require_phase()
+    local id = world_id(world)
+    return P.DiagnosticsWorldPresent and P.DiagnosticsWorldPresent(id) or id
+end
+local function determinism_value(flag)
+    local P = require_phase()
+    if P.PhaseDeterministic then return flag == false and P.PhaseNondeterministic or P.PhaseDeterministic end
+    return flag ~= false
+end
 
 local function cache_policy(spec)
     local P = require_phase()
@@ -178,7 +192,7 @@ local Lang = llbl.dialect "LalinPhaseDsl" {
         g.slot .name [g.name],
         g.slot .body [g.machine_body],
         emit = function(n)
-            local input, output, diagnostics, abi, impl, capabilities = nil, nil, nil, P.MachineAbiStatusReturning, nil, {}
+            local input, output, diagnostics, abi, impl, capabilities = nil, nil, diagnostics_none(), P.MachineAbiStatusReturning, nil, {}
             for i = 1, #n.body do
                 local item = unwrap(n.body[i])
                 local kind = part_kind(n.body[i])
@@ -201,7 +215,7 @@ local Lang = llbl.dialect "LalinPhaseDsl" {
         g.slot .name [g.name],
         g.slot .body [g.phase_body],
         emit = function(n)
-            local input, output, diagnostics, cache, deterministic, machine = nil, nil, nil, P.CacheIdentity, true, nil
+            local input, output, diagnostics, cache, deterministic, machine = nil, nil, diagnostics_none(), P.CacheIdentity, determinism_value(true), nil
             for i = 1, #n.body do
                 local raw = n.body[i]
                 local item = unwrap(raw)
@@ -235,7 +249,7 @@ local Lang = llbl.dialect "LalinPhaseDsl" {
 
     g.head .diagnostics {
         g.slot .world [g.name],
-        emit = function(n) return part("diagnostics", world_id(n.world)) end,
+        emit = function(n) return part("diagnostics", diagnostics_present(n.world)) end,
     },
 
     g.head .cache {
@@ -245,7 +259,7 @@ local Lang = llbl.dialect "LalinPhaseDsl" {
 
     g.head .deterministic {
         g.slot .value [g.boolean],
-        emit = function(n) return part("deterministic", n.value) end,
+        emit = function(n) return part("deterministic", determinism_value(n.value)) end,
     },
 
     g.head .abi {
