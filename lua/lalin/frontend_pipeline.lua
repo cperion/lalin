@@ -117,8 +117,12 @@ local function bind_context(T)
         )
         CompilerAbi.assert_valid_code_result(code_result, { collector = collector })
         local target = CodeType.normalize_target(opts.c_target or opts.target or opts)
-        local request = T.LalinCompiler.CompilerCCodegenRequest(code_result, target)
-        return TreeToCode:code_result_to_c(request)
+        if T.LalinCompiler.CompilerCCodegenRequest then
+            return TreeToCode:code_result_to_c(T.LalinCompiler.CompilerCCodegenRequest(code_result, target))
+        end
+        opts.c_target = target
+        opts.target = target
+        return TreeToCode:code_result_to_c(code_result, opts)
     end
 
     local function typecheck_module(module, opts)

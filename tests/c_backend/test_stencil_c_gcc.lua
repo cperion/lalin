@@ -20,7 +20,7 @@ local function int(raw) return Value.ValueExprConst(Code.CodeConstLiteral(i32, C
 local compiler = Stencil.StencilCompilerPolicy(Stencil.StencilCompilerGcc, Stencil.StencilOptO3, Stencil.StencilMachineNative, {})
 local schedule = Stencil.StencilScheduleScalar(compiler)
 local target = C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian, true)
-local function producer() return Stencil.StencilProducer(nil, Stencil.StencilProduceRange1D(i32, int(0), int(5), 1, Stencil.StencilProducerForward)) end
+local function producer() return Stencil.StencilProducer(Stencil.StencilProducerOriginNone, Stencil.StencilProduceRange1D(i32, Stencil.StencilBoundValue(int(0)), Stencil.StencilBoundValue(int(5)), 1, Stencil.StencilProducerForward)) end
 local function access(name, role) return Stencil.StencilAccess(name, role, i32, Stencil.StencilAccessDirect(Stencil.StencilLayoutContiguous(4))) end
 local function materialize(computation, symbol)
   return computation:cmat_materialize(CMat.CMatMaterializationInput(CMat.CMatKernelId(symbol))):cmat_emit_c(CMat.CMatCEmissionInput(symbol, symbol, target))
@@ -37,8 +37,8 @@ end
 
 local xs, out = access("xs", Stencil.StencilAccessRead), access("out", Stencil.StencilAccessWrite)
 local x_id, y_id = Stencil.StencilStreamId("x"), Stencil.StencilStreamId("y")
-local x = Stencil.StencilStreamDef(x_id, i32, Stencil.StencilStreamAccess(Stencil.StencilAccessRef("xs"), nil))
-local map_expr = Stencil.StencilPointBinary(Stencil.StencilBinaryMul, Stencil.StencilPointInput(Stencil.StencilAccessRef("a")), Stencil.StencilPointConst(int(3), i32), i32, nil, nil)
+local x = Stencil.StencilStreamDef(x_id, i32, Stencil.StencilStreamAccess(Stencil.StencilAccessRef("xs"), Stencil.StencilIndexProducer))
+local map_expr = Stencil.StencilPointBinary(Stencil.StencilBinaryMul, Stencil.StencilPointInput(Stencil.StencilAccessRef("a")), Stencil.StencilPointConst(int(3), i32), Stencil.StencilPointResultTyped(i32, Stencil.StencilArithmeticInferred))
 local y = Stencil.StencilStreamDef(y_id, i32, Stencil.StencilStreamMap(map_expr, { Stencil.StencilStreamParam("a", Stencil.StencilStreamRef(x_id)) }))
 local store = Stencil.StencilSinkDef(Stencil.StencilSinkId("store"), Stencil.StencilSinkOpStore(Stencil.StencilAccessRef("out"), Stencil.StencilStreamRef(y_id), Stencil.StencilStoreElementwise))
 local map_computation = Stencil.StencilComputation(Stencil.StencilMetastencilId("map"), producer(), { xs, out }, { x, y }, { store }, Stencil.StencilFusionLegality({}, {}, {}), schedule, {})
@@ -51,8 +51,8 @@ assert(output[0] == 6 and output[1] == -3 and output[2] == 12 and output[3] == 2
 map_session:free()
 
 local fold = Stencil.StencilSinkDef(Stencil.StencilSinkId("fold"), Stencil.StencilSinkOpFold(
-  Stencil.StencilStreamRef(x_id), Stencil.StencilReducer(Value.ReductionAdd, i32, int(0), nil, nil),
-  i32, Stencil.StencilReduceInitIdentity, nil))
+  Stencil.StencilStreamRef(x_id), Stencil.StencilReducer(Value.ReductionAdd, i32, int(0), Stencil.StencilArithmeticInferred),
+  i32, Stencil.StencilReduceInitIdentity, Stencil.StencilFoldReturnsValue))
 local fold_computation = Stencil.StencilComputation(Stencil.StencilMetastencilId("fold"), producer(), { xs }, { x }, { fold }, Stencil.StencilFusionLegality({}, {}, {}), schedule, {})
 local fold_session = compile(materialize(fold_computation, "cmat_fold"), "cmat_fold")
 local fold_fn = assert(fold_session:symbol("cmat_fold", "int32_t (*)(int32_t *)"))
