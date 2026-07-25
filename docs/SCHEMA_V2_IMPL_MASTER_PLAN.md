@@ -889,8 +889,9 @@ Release-level gates:
 | history-schema | V2-LOWER-SCHEMA | P0 | stencil/target schemas | Fragment consumption and typed resolution vocabulary | integrated `c10fff72` |
 | history-impl | RGN-CANON + C-TARGET | P0 | schema gates | Canonical region semantics and exact target propagation | integrated `8b60782b2`,`692c0ef32` |
 | history-impl | KRN-CANON | P0 | region/target foundation | Real lanes, bindings, effects, counters, results, proofs, and typed rejects | integrated `54aa53428` |
-| current-impl | KERNEL-STENCIL-CANON | P0 | KRN-CANON | Project real selected kernels into canonical stencil computations | ready |
-| next-impl | CMAT-FRAGMENT-CANON→LOWER-SEM | P0 | KERNEL-STENCIL-CANON | Emit and consume selected canonical function fragments | blocked on current package |
+| current-schema | V2-KERNEL-STENCIL-BRIDGE | P0 | KRN-CANON | Add exact iteration projection, canonical schedule conversion input/result, and immutable bridge construction state/contributions | reopened by end-to-end evidence; lead-owned |
+| blocked-impl | KERNEL-STENCIL-CANON | P0 | V2-KERNEL-STENCIL-BRIDGE | Project real selected kernels into canonical stencil computations | do not implement with Lua tables/hardcoded producer facts |
+| next-impl | CMAT-FRAGMENT-CANON→LOWER-SEM | P0 | KERNEL-STENCIL-CANON | Emit and consume selected canonical function fragments | blocked |
 | blocked | OWN-FRONT / OWN-META | P2 | RGN-CANON and parity matrix | Previous cutover `e76fc29cf` reverted by `de3294194` | do not resume |
 | blocked | OWN-ANALYSIS / OWN-STENCIL / OWN-C | P2 | parity blockers | Domain cutovers | do not resume |
 | final | OWN-CUTOVER | P2 | all ownership domains | Public facade and old-tree retirement | blocked |
