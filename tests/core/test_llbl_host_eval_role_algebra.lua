@@ -44,6 +44,27 @@ assert(llbl.is(used.raw, "HostEval"), "index operand should be stored as HostEva
 assert(used.event.channel == llbl.channel.index_host, "index event should use index:host")
 assert(used.event.legacy_channel == llbl.channel.index_value, "event should preserve legacy raw channel shape")
 
+-- Non-string objects indexed directly on a head enter through index:host. String,
+-- Name, and Symbol keys remain the object-language declaration-name channel.
+local direct_target = {}
+local Direct = llbl.dialect "HostEvalDirectHeadIndex" {
+  g.role. target { kind = "identity", adapter = function(_, v)
+    assert(v == direct_target, "direct head index adapter should receive the exact object")
+    return v
+  end },
+  g.head. bind {
+    g.slot. target [g.target] { channel = llbl.channel.index_host },
+    emit = function(n, _lang, meta) return { target = n.target, event = meta.events.target } end,
+  },
+}
+local direct = Direct.exports.bind [direct_target]
+assert(direct.target == direct_target, "head [object] should retain object identity")
+assert(direct.event.channel == llbl.channel.index_host, "head [object] should emit index:host")
+local direct_meta = assert(llbl.codegen.metadata(Direct.exports.bind), "compiled head should expose replay metadata")
+local reflective_direct = direct_meta.reflective [direct_target]
+assert(reflective_direct.target == direct_target, "reflective head [object] should retain object identity")
+assert(reflective_direct.event.channel == llbl.channel.index_host, "reflective head [object] should emit index:host")
+
 -- Qualified fragments and descriptor-controlled bare/HostEval splicing.
 local frag = D:fragment("items", { "a", "b" })
 assert(frag.role_id and llbl.role_id_display(frag.role_id) == "HostEvalRoleTest.items")

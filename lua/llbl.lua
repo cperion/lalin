@@ -4805,14 +4805,20 @@ local function head_event_region(head, events, param, state, start_fn, consume_f
 end
 RuntimeHead.__index = function(self, key)
   if RuntimeHead[key] then return RuntimeHead[key] end
-  local o = source.capture("head-name", { hint = key })
   local name_value, override_origin = unwrap_origin_value(key)
+  local direct_index = not is_tag(name_value, "Name")
+    and not is_tag(name_value, "Symbol")
+    and type(name_value) ~= "string"
+  local o = source.capture(direct_index and "head-index" or "head-name", { hint = key })
   o = override_origin or o
   if is_tag(name_value, "Name") then
     return consume(start_stage(self), "name", name_value, 1, o)
   end
   if is_tag(name_value, "Symbol") then
     return consume(start_stage(self), "name", llbl.name(name_value.text, { origin = o }), 1, o)
+  end
+  if direct_index then
+    return consume(start_stage(self), "index", name_value, 1, o)
   end
   return consume(start_stage(self), "name", llbl.name(name_value, { origin = o }), 1, o)
 end
@@ -5020,14 +5026,20 @@ end
 
 CompiledHead.__index = function(self, key)
   if CompiledHead[key] then return CompiledHead[key] end
-  local o = source.capture("head-name", { hint = key })
   local name_value, override_origin = unwrap_origin_value(key)
+  local direct_index = not is_tag(name_value, "Name")
+    and not is_tag(name_value, "Symbol")
+    and type(name_value) ~= "string"
+  local o = source.capture(direct_index and "head-index" or "head-name", { hint = key })
   o = override_origin or o
   if is_tag(name_value, "Name") then
     return compiled_consume(compiled_start_stage(self), "name", name_value, 1, o)
   end
   if is_tag(name_value, "Symbol") then
     return compiled_consume(compiled_start_stage(self), "name", llbl.name(name_value.text, { origin = o }), 1, o)
+  end
+  if direct_index then
+    return compiled_consume(compiled_start_stage(self), "index", name_value, 1, o)
   end
   return compiled_consume(compiled_start_stage(self), "name", llbl.name(name_value, { origin = o }), 1, o)
 end

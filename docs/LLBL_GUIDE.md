@@ -238,6 +238,19 @@ operator:decorate *
 env:lookup       unknown global as symbol
 ```
 
+A head distinguishes declaration naming from direct object indexing by key shape.
+String keys, `Name` values, and `Symbol` values remain `index:name`; indexing the
+head with any other Lua value enters `index:host` immediately. This permits typed
+identity relations without an artificial staging call:
+
+```lua
+html.button [transition] { "+" }
+```
+
+The transition object itself reaches the expected role adapter and retains its
+identity. A dynamic declaration name should be wrapped as an LLBL `Name` or
+`Symbol`, rather than relying on a non-string key.
+
 Choose channels deliberately. Diagnostics are only as good as the slot/channel
 model. Modern bracket slots should normally admit `index:host`; the expected
 role decides whether the evaluated value is a type, expression, declaration,
