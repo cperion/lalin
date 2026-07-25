@@ -887,8 +887,10 @@ Release-level gates:
 | history-schema | V2-KERNEL-SCHEMA | P0 | V2-BOOT-SCHEMA | Complete loop-analysis relations/results | integrated `9d11ac77` |
 | history-schema | V2-STENCIL-CMAT-SCHEMA | P0 | V2-KERNEL-SCHEMA | No optional soup; kernel bridge and fragment vocabulary | integrated `7f581142` |
 | history-schema | V2-LOWER-SCHEMA | P0 | stencil/target schemas | Fragment consumption and typed resolution vocabulary | integrated `c10fff72` |
-| current-impl | RGN-CANON + C-TARGET | P0 | schema gates | Canonical region semantics and exact target propagation | ready for delegated implementation |
-| next-impl | KRN-CANON→KERNEL-STENCIL-CANON→CMAT-FRAGMENT-CANON→LOWER-SEM | P0 | schema gates | Canonical semantic C chain | ready serial chain |
+| history-impl | RGN-CANON + C-TARGET | P0 | schema gates | Canonical region semantics and exact target propagation | integrated `8b60782b2`,`692c0ef32` |
+| history-impl | KRN-CANON | P0 | region/target foundation | Real lanes, bindings, effects, counters, results, proofs, and typed rejects | integrated `54aa53428` |
+| current-impl | KERNEL-STENCIL-CANON | P0 | KRN-CANON | Project real selected kernels into canonical stencil computations | ready |
+| next-impl | CMAT-FRAGMENT-CANON→LOWER-SEM | P0 | KERNEL-STENCIL-CANON | Emit and consume selected canonical function fragments | blocked on current package |
 | blocked | OWN-FRONT / OWN-META | P2 | RGN-CANON and parity matrix | Previous cutover `e76fc29cf` reverted by `de3294194` | do not resume |
 | blocked | OWN-ANALYSIS / OWN-STENCIL / OWN-C | P2 | parity blockers | Domain cutovers | do not resume |
 | final | OWN-CUTOVER | P2 | all ownership domains | Public facade and old-tree retirement | blocked |
