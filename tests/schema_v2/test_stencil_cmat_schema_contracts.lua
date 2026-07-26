@@ -10,7 +10,47 @@ local function field_names(cls)
   return table.concat(result, ",")
 end
 
-assert(field_names(Stencil.StencilKernelProjectionInput) == "module,graph,kernel,schedule,mem,effects")
+local function field_type(cls, name)
+  for _, field in ipairs(asdl.fields(cls)) do
+    if field.name == name then return tostring(field.type) end
+  end
+  error("missing field " .. name)
+end
+
+assert(field_names(Stencil.StencilKernelProjectionInput) ==
+  "module,graph,flow,semantics,kernel,schedule,compiler,target,mem,effects")
+assert(field_type(Stencil.StencilKernelProjectionInput, "schedule") ==
+  "LalinSchedule.KernelSchedule")
+assert(field_type(Stencil.StencilKernelProjectionInput, "flow") ==
+  "LalinFlow.FlowFactSet")
+assert(field_type(Stencil.StencilKernelProjectionInput, "semantics") ==
+  "LalinFlow.FlowSemanticFactSet")
+assert(field_names(Stencil.StencilKernelIteration) ==
+  "loop,counter,index_ty,start,stop,step,step_magnitude,stop_convention,order,trip")
+assert(field_names(Stencil.StencilKernelIterationInput) ==
+  "module,graph,kernel,flow,semantics")
+assert(field_names(Stencil.StencilKernelScheduleConversionInput) ==
+  "schedule,compiler,target,accesses,result")
+assert(field_names(Stencil.StencilKernelConstructionState) ==
+  "kernel,iteration,producer,access_by_lane,stream_by_value,sinks,legality,proofs,next_stream_ordinal")
+assert(Stencil.StencilKernelLoopFactFound and Stencil.StencilKernelLoopFactMissing and
+  Stencil.StencilKernelLoopFactAmbiguous)
+assert(Stencil.StencilKernelSemanticIterationFound and
+  Stencil.StencilKernelSemanticIterationMissing and
+  Stencil.StencilKernelSemanticIterationAmbiguous)
+assert(Stencil.StencilKernelInductionFound and Stencil.StencilKernelInductionMissing and
+  Stencil.StencilKernelInductionAmbiguous)
+assert(Stencil.StencilKernelStepDefinitionMissing and
+  Stencil.StencilKernelStepDefinitionFound and
+  Stencil.StencilKernelStepDefinitionAmbiguous)
+assert(Stencil.StencilKernelIterationProjected and Stencil.StencilKernelIterationRejected)
+assert(Stencil.StencilKernelScheduleConverted and Stencil.StencilKernelScheduleRejected)
+assert(Stencil.StencilKernelConstructionCollecting and
+  Stencil.StencilKernelConstructionFinalizable and
+  Stencil.StencilKernelConstructionRejected)
+assert(field_names(Stencil.StencilKernelFinalizationInput) == "schedule")
+assert(field_names(Stencil.StencilKernelComputationProjection) ==
+  "source_schedule,computation")
 assert(Stencil.StencilKernelProjected and Stencil.StencilKernelProjectionRejected)
 assert(Stencil.StencilBoundDynamic and Stencil.StencilBoundValue)
 assert(Stencil.StencilArithmeticInferred and Stencil.StencilArithmeticInteger and Stencil.StencilArithmeticFloat)

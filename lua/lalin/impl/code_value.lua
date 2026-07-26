@@ -614,17 +614,26 @@ local function loop_body_aliases(graph_loop, flow, latch)
   return aliases
 end
 
-local function closed_form_for_step(recurrence_op, init, loop_fact, exprs, ty, int_sem)
-  if recurrence_op == nil or not recurrence_op:code_value_is_int_binary() then return nil end
-  if loop_fact.counted == nil or not loop_fact.counted.stop_exclusive then return nil end
+function Flow.FlowStopExclusive:code_value_closed_form(recurrence_op, init, counted, exprs, ty, int_sem)
   return recurrence_op.op:code_value_closed_form_expr(
     expr_for(exprs, init),
-    expr_for(exprs, loop_fact.counted.start),
-    expr_for(exprs, loop_fact.counted.stop),
-    expr_for(exprs, loop_fact.counted.step),
+    expr_for(exprs, counted.start),
+    expr_for(exprs, counted.stop),
+    expr_for(exprs, counted.step),
     ty,
     int_sem
   )
+end
+
+function Flow.FlowStopInclusive:code_value_closed_form(_recurrence_op, _init, _counted, _exprs, _ty, _int_sem)
+  return nil
+end
+
+local function closed_form_for_step(recurrence_op, init, loop_fact, exprs, ty, int_sem)
+  if recurrence_op == nil or not recurrence_op:code_value_is_int_binary() then return nil end
+  if loop_fact.counted == nil then return nil end
+  return loop_fact.counted.stop_convention:code_value_closed_form(
+    recurrence_op, init, loop_fact.counted, exprs, ty, int_sem)
 end
 
 local function detect_reductions(module, graph, flow, exprs_by_func)

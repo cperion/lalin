@@ -10,7 +10,7 @@ require("lalin.impl.kernel_plan")
 local module = Code.CodeModuleId("kernel_projection")
 local a, b = Graph.GraphLoopId("loop:a"), Graph.GraphLoopId("loop:b")
 local da, db = Flow.FlowDomainLoop(a), Flow.FlowDomainLoop(b)
-local counted = Flow.FlowCountedDomain(Code.CodeValueId("start"), Code.CodeValueId("stop"), Code.CodeValueId("step"), true)
+local counted = Flow.FlowCountedDomain(Code.CodeValueId("start"), Code.CodeValueId("stop"), Code.CodeValueId("step"), Flow.FlowStopExclusive)
 local flow = Flow.FlowFactSet(module, { da, db }, {}, {
   Flow.FlowLoopFacts(a, da, counted, {}, {}, {}, {}),
   Flow.FlowLoopFacts(b, db, counted, {}, {}, {}, {}),

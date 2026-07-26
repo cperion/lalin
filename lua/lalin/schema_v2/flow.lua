@@ -210,12 +210,13 @@ return schema. LalinFlow {
     },
   },
 
+  sum. FlowStopConvention { FlowStopExclusive, FlowStopInclusive, },
   product. FlowCountedDomain {
     interned,
     start [LalinCode.CodeValueId],
     stop [LalinCode.CodeValueId],
     step [LalinCode.CodeValueId],
-    stop_exclusive [bool],
+    stop_convention [LalinFlow.FlowStopConvention],
   },
 
   sum. FlowLoopDirection { FlowLoopIncreasing, FlowLoopDecreasing, FlowLoopDirectionUnknown, },

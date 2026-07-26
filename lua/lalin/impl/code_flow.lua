@@ -461,7 +461,7 @@ local function analyze_loop(func, block_by_id, graph_loop, edge_facts, defs, typ
         if stop ~= nil then
           local _, min, max_val, max_exclusive = range_for_induction(param.value, init, stop, exclusive, consts)
           range = Flow.FlowRangeDerived(param.value, min, max_val, "primary induction of counted loop")
-          counted = counted or Flow.FlowCountedDomain(init, stop, step, exclusive == true)
+          counted = counted or Flow.FlowCountedDomain(init, stop, step, exclusive == true and Flow.FlowStopExclusive or Flow.FlowStopInclusive)
           role = Flow.FlowPrimaryInduction
         end
         inductions[#inductions + 1] = Flow.FlowInduction(param.value, types[param.value.text] or Code.CodeTyIndex, init, step, role, range)
@@ -565,6 +565,19 @@ local function direction_for(primary, consts)
   return Flow.FlowLoopDirectionUnknown
 end
 
+function Flow.FlowStopExclusive:flow_trip_expression(counted, diff_expr, step_is_one, idx_ty)
+  if step_is_one then return diff_expr end
+  return Value.ValueExprBinary(
+    Core.BinDiv, diff_expr, Value.ValueExprValue(counted.step), idx_ty)
+end
+
+function Flow.FlowStopInclusive:flow_trip_expression(counted, diff_expr, step_is_one, idx_ty)
+  local adj_step = Value.ValueExprValue(counted.step)
+  local adj_expr = Value.ValueExprBinary(Core.BinAdd, diff_expr, adj_step, idx_ty)
+  if step_is_one then return adj_expr end
+  return Value.ValueExprBinary(Core.BinDiv, adj_expr, adj_step, idx_ty)
+end
+
 local function compute_trip_expr(counted, consts)
   if counted == nil or counted.start == nil or counted.stop == nil then return nil end
   local idx_ty = Code.CodeTyIndex
@@ -573,15 +586,7 @@ local function compute_trip_expr(counted, consts)
     Value.ValueExprValue(counted.start),
     idx_ty)
   local step_is_one = counted.step and consts[counted.step.text] == 1
-  if counted.stop_exclusive then
-    if step_is_one then return diff_expr end
-    return Value.ValueExprBinary(Core.BinDiv, diff_expr, Value.ValueExprValue(counted.step), idx_ty)
-  else
-    local adj_step = Value.ValueExprValue(counted.step)
-    local adj_expr = Value.ValueExprBinary(Core.BinAdd, diff_expr, adj_step, idx_ty)
-    if step_is_one then return adj_expr end
-    return Value.ValueExprBinary(Core.BinDiv, adj_expr, adj_step, idx_ty)
-  end
+  return counted.stop_convention:flow_trip_expression(counted, diff_expr, step_is_one, idx_ty)
 end
 
 function Flow.FlowFactSet:compute_semantic_flow(module, graph)
@@ -617,9 +622,13 @@ function Flow.FlowFactSet:compute_semantic_flow(module, graph)
         trip_count = Flow.FlowTripCountUnknown("no explicit trip-count CodeValueId is available", nil)
       end
       out[#out + 1] = Flow.FlowLoopNormalizedCounted(loop.loop, loop.counted, direction, trip_count)
-      if primary ~= nil and direction == Flow.FlowLoopIncreasing and loop.counted.stop_exclusive then
-        local _, min, max_val = range_for_induction(primary.value, loop.counted.start, loop.counted.stop, true, consts)
-        out[#out + 1] = Flow.FlowLoopInductionRange(Flow.FlowInductionRangeFact(loop.loop, primary.value, min, max_val, true, "primary induction of increasing exclusive counted loop stays within [start, stop) on executed iterations"))
+      if primary ~= nil and direction == Flow.FlowLoopIncreasing
+          and loop.counted.stop_convention == Flow.FlowStopExclusive then
+        local _, min, max_val = range_for_induction(
+          primary.value, loop.counted.start, loop.counted.stop, true, consts)
+        out[#out + 1] = Flow.FlowLoopInductionRange(Flow.FlowInductionRangeFact(
+          loop.loop, primary.value, min, max_val, true,
+          "primary induction of increasing exclusive counted loop stays within [start, stop) on executed iterations"))
       end
     end
   end

@@ -55,7 +55,7 @@ local graph_loop = Graph.GraphLoop(loop_id, func_id, graph_block, { graph_block 
 local graph = Graph.CodeGraph(module_id, { Graph.CodeFuncGraph(func_id, {}, {}, {}, { graph_loop }) })
 
 local domain = Flow.FlowDomainLoop(loop_id)
-local counted = Flow.FlowCountedDomain(index, stop, step, true)
+local counted = Flow.FlowCountedDomain(index, stop, step, Flow.FlowStopExclusive)
 local flow = Flow.FlowFactSet(module_id, { domain }, {}, {
   Flow.FlowLoopFacts(loop_id, domain, counted, { graph_block }, {}, {}, {})
 }, {}, {}, {}, {}, {}, {})
