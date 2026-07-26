@@ -890,8 +890,9 @@ Release-level gates:
 | history-impl | RGN-CANON + C-TARGET | P0 | schema gates | Canonical region semantics and exact target propagation | integrated `8b60782b2`,`692c0ef32` |
 | history-impl | KRN-CANON | P0 | region/target foundation | Real lanes, bindings, effects, counters, results, proofs, and typed rejects | integrated `54aa53428` |
 | history-schema | V2-KERNEL-STENCIL-BRIDGE | P0 | KRN-CANON | Exact scoped iteration/stop/step projection, canonical schedule conversion, and immutable collecting/finalizable/rejected construction vocabulary | integrated `e2c3829b3`; independently reviewed |
-| current-impl | KERNEL-STENCIL-CANON | P0 | V2-KERNEL-STENCIL-BRIDGE | Project real selected kernels into canonical stencil computations | schema dependency complete; implementation now unblocked |
-| next-impl | CMAT-FRAGMENT-CANON→LOWER-SEM | P0 | KERNEL-STENCIL-CANON | Emit and consume selected canonical function fragments | blocked |
+| history-impl | KERNEL-STENCIL-CANON | P0 | V2-KERNEL-STENCIL-BRIDGE | Exact real-flow iteration, primary counters, target-bound schedules, immutable access/stream/sink construction, and typed module projection | integrated `43e0593b7`; independent review corrections applied |
+| current-impl | CMAT-FRAGMENT-CANON | P0 | KERNEL-STENCIL-CANON | Materialize counted producers and value-expression streams into typed CBackend fragments | unblocked; must preserve inclusive stops and control results |
+| blocked-impl | LOWER-SEM | P0 | CMAT-FRAGMENT-CANON | Consume selected canonical function fragments through strategy leaves | blocked on fragment emission |
 | blocked | OWN-FRONT / OWN-META | P2 | RGN-CANON and parity matrix | Previous cutover `e76fc29cf` reverted by `de3294194` | do not resume |
 | blocked | OWN-ANALYSIS / OWN-STENCIL / OWN-C | P2 | parity blockers | Domain cutovers | do not resume |
 | final | OWN-CUTOVER | P2 | all ownership domains | Public facade and old-tree retirement | blocked |
