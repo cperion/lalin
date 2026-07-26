@@ -10,10 +10,18 @@ require("lalin.impl.kernel_plan")
 local module = Code.CodeModuleId("kernel_projection")
 local a, b = Graph.GraphLoopId("loop:a"), Graph.GraphLoopId("loop:b")
 local da, db = Flow.FlowDomainLoop(a), Flow.FlowDomainLoop(b)
-local counted = Flow.FlowCountedDomain(Code.CodeValueId("start"), Code.CodeValueId("stop"), Code.CodeValueId("step"), Flow.FlowStopExclusive)
+local counted = Flow.FlowCountedDomain(
+  Code.CodeValueId("start"), Code.CodeValueId("stop"),
+  Code.CodeValueId("step"), Flow.FlowStopExclusive, Flow.FlowLoopIncreasing)
+local induction_a = Flow.FlowInduction(
+  Code.CodeValueId("i:a"), Code.CodeTyIndex, counted.start, counted.step,
+  Flow.FlowPrimaryInduction, Flow.FlowRangeUnknown(Code.CodeValueId("i:a")))
+local induction_b = Flow.FlowInduction(
+  Code.CodeValueId("i:b"), Code.CodeTyIndex, counted.start, counted.step,
+  Flow.FlowPrimaryInduction, Flow.FlowRangeUnknown(Code.CodeValueId("i:b")))
 local flow = Flow.FlowFactSet(module, { da, db }, {}, {
-  Flow.FlowLoopFacts(a, da, counted, {}, {}, {}, {}),
-  Flow.FlowLoopFacts(b, db, counted, {}, {}, {}, {}),
+  Flow.FlowLoopFacts(a, da, counted, {}, { induction_a }, {}, {}),
+  Flow.FlowLoopFacts(b, db, counted, {}, { induction_b }, {}, {})
 }, {}, {}, {}, {}, {}, {})
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local zero = Value.ValueExprConst(Code.CodeConstLiteral(i32, require("lalin.schema_v2.core").LitInt("0")))

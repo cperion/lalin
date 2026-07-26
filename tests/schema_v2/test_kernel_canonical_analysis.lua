@@ -55,9 +55,13 @@ local graph_loop = Graph.GraphLoop(loop_id, func_id, graph_block, { graph_block 
 local graph = Graph.CodeGraph(module_id, { Graph.CodeFuncGraph(func_id, {}, {}, {}, { graph_loop }) })
 
 local domain = Flow.FlowDomainLoop(loop_id)
-local counted = Flow.FlowCountedDomain(index, stop, step, Flow.FlowStopExclusive)
+local counted = Flow.FlowCountedDomain(
+  index, stop, step, Flow.FlowStopExclusive, Flow.FlowLoopIncreasing)
+local induction = Flow.FlowInduction(
+  index, i32, counted.start, counted.step, Flow.FlowPrimaryInduction,
+  Flow.FlowRangeUnknown(index))
 local flow = Flow.FlowFactSet(module_id, { domain }, {}, {
-  Flow.FlowLoopFacts(loop_id, domain, counted, { graph_block }, {}, {}, {})
+  Flow.FlowLoopFacts(loop_id, domain, counted, { graph_block }, { induction }, {}, {})
 }, {}, {}, {}, {}, {}, {})
 local trip = Flow.FlowTripCountExact(Code.CodeValueId("trip"), nil, nil)
 local zero = Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("0")))

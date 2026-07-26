@@ -59,6 +59,15 @@ return schema. LalinKernel {
     KernelCounterAbsent,
     KernelCounterValue { variant_unique, field. value [LalinCode.CodeValueId], },
   },
+  sum. KernelCounterContribution {
+    KernelCounterIgnored,
+    KernelCounterCandidate { variant_unique, counter [LalinKernel.KernelCounterValue], },
+  },
+  sum. KernelCounterSelection {
+    KernelCounterSelected { variant_unique, counter [LalinKernel.KernelCounterValue], },
+    KernelCounterMissing { variant_unique, reject [LalinKernel.KernelReject], },
+    KernelCounterAmbiguous { variant_unique, counters [many [LalinKernel.KernelCounterValue]], reject [LalinKernel.KernelReject], },
+  },
   sum. KernelDomain {
     KernelDomainFlow {
       variant_unique,
@@ -266,6 +275,7 @@ return schema. LalinKernel {
     loop [LalinGraph.GraphLoopId],
     domain [LalinFlow.FlowDomain],
     count [LalinKernel.KernelLoopCountEvidence],
+    counter [LalinKernel.KernelCounterSelection],
     trip [LalinKernel.KernelTripEvidence],
   },
   product. KernelLoopFactProjection {

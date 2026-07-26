@@ -14,9 +14,12 @@ assert(field_names(K.KernelModulePlanRequest) == "module,graph,flow,values,mem,e
 assert(field_names(K.KernelLoopAnalysisInput) == "module,graph,flow,values,mem,effects,fact,candidate")
 assert(field_names(K.KernelLoopPlanRequest) == "fact,candidate,analysis")
 assert(field_names(K.KernelLoopPlanBuild) == "domain,trip,counter,lanes,bindings,effects,proofs")
+assert(field_names(K.KernelLoopFactEntry) == "loop,domain,count,counter,trip")
 assert(field_names(K.KernelBody) == "domain,lanes,bindings,effects,result,equivalence")
 
 assert(K.KernelCounterAbsent and K.KernelCounterValue)
+assert(K.KernelCounterSelected and K.KernelCounterMissing and
+  K.KernelCounterAmbiguous)
 assert(K.KernelLaneProjection and K.KernelLaneFound and K.KernelLaneMissing)
 assert(K.KernelBindingProjection and K.KernelBindingFound and K.KernelBindingMissing)
 assert(K.KernelEffectProjection and K.KernelEffectFound and K.KernelEffectMissing)

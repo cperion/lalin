@@ -108,6 +108,7 @@ return schema. LalinFlow {
       stop [LalinCode.CodeValueId],
     },
     FlowTripCountIrregularExit { exit_block [LalinCode.CodeBlockId], },
+    FlowTripCountNotMaterialized { reason [str], },
   },
   sum. FlowTripCount {
     FlowTripCountExact {
@@ -211,15 +212,15 @@ return schema. LalinFlow {
   },
 
   sum. FlowStopConvention { FlowStopExclusive, FlowStopInclusive, },
+  sum. FlowLoopDirection { FlowLoopIncreasing, FlowLoopDecreasing, FlowLoopDirectionUnknown, },
   product. FlowCountedDomain {
     interned,
     start [LalinCode.CodeValueId],
     stop [LalinCode.CodeValueId],
     step [LalinCode.CodeValueId],
     stop_convention [LalinFlow.FlowStopConvention],
+    direction [LalinFlow.FlowLoopDirection],
   },
-
-  sum. FlowLoopDirection { FlowLoopIncreasing, FlowLoopDecreasing, FlowLoopDirectionUnknown, },
   sum. FlowInductionRole {
     FlowPrimaryInduction,
     FlowDerivedInduction { variant_unique, base [LalinCode.CodeValueId], },

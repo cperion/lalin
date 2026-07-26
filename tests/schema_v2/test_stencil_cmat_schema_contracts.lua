@@ -30,9 +30,9 @@ assert(field_names(Stencil.StencilKernelIteration) ==
 assert(field_names(Stencil.StencilKernelIterationInput) ==
   "module,graph,kernel,flow,semantics")
 assert(field_names(Stencil.StencilKernelScheduleConversionInput) ==
-  "schedule,compiler,target,accesses,result")
+  "kernel,schedule,compiler,target,accesses,result")
 assert(field_names(Stencil.StencilKernelConstructionState) ==
-  "kernel,iteration,producer,access_by_lane,stream_by_value,sinks,legality,proofs,next_stream_ordinal")
+  "kernel,iteration,producer,access_by_lane,stream_by_value,sinks,deferred_reductions,legality,proofs,next_stream_ordinal")
 assert(Stencil.StencilKernelLoopFactFound and Stencil.StencilKernelLoopFactMissing and
   Stencil.StencilKernelLoopFactAmbiguous)
 assert(Stencil.StencilKernelSemanticIterationFound and
@@ -48,10 +48,25 @@ assert(Stencil.StencilKernelScheduleConverted and Stencil.StencilKernelScheduleR
 assert(Stencil.StencilKernelConstructionCollecting and
   Stencil.StencilKernelConstructionFinalizable and
   Stencil.StencilKernelConstructionRejected)
+assert(Stencil.StencilKernelAccessPrepared and
+  Stencil.StencilKernelAccessPreparationRejected)
+assert(Stencil.StencilKernelStreamPrepared and
+  Stencil.StencilKernelStreamPreparationRejected)
+assert(Stencil.StencilKernelSinkPrepared and
+  Stencil.StencilKernelSinkPreparationRejected)
 assert(field_names(Stencil.StencilKernelFinalizationInput) == "schedule")
 assert(field_names(Stencil.StencilKernelComputationProjection) ==
   "source_schedule,computation")
 assert(Stencil.StencilKernelProjected and Stencil.StencilKernelProjectionRejected)
+assert(field_names(Stencil.StencilKernelModuleProjectionInput) ==
+  "module,graph,flow,semantics,kernels,schedules,compiler")
+assert(Stencil.StencilKernelModuleProjected and
+  Stencil.StencilKernelModuleProjectionRejected)
+assert(Stencil.StencilKernelModuleProjectedEntry and
+  Stencil.StencilKernelModuleRejectedEntry)
+assert(Stencil.StencilProduceCountedRange1D)
+assert(Stencil.StencilStreamValueExpr)
+assert(Stencil.StencilKernelSinkDeferredToResult)
 assert(Stencil.StencilBoundDynamic and Stencil.StencilBoundValue)
 assert(Stencil.StencilArithmeticInferred and Stencil.StencilArithmeticInteger and Stencil.StencilArithmeticFloat)
 assert(Stencil.StencilReadonlyFact and Stencil.StencilUnitStrideFact)

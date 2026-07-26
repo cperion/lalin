@@ -21,7 +21,13 @@ local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local zero = Value.ValueExprConst(Code.CodeConstLiteral(i32, require("lalin.schema_v2.core").LitInt("0")))
 local reduction = Value.ReductionFact(Value.AlgebraFactId("red:a"), domain, Code.CodeValueId("acc"), Value.ReductionAdd, zero, zero, i32, nil, nil, Value.AlgebraProofComposite({}, "proof"))
 local closed = Value.ClosedFormFact(Value.AlgebraFactId("cf:a"), reduction, zero, Value.AlgebraProofComposite({}, "closed"))
-local fact = Kernel.KernelLoopFactEntry(loop, domain, Kernel.KernelLoopCounted(Flow.FlowCountedDomain(Code.CodeValueId("start"), Code.CodeValueId("stop"), Code.CodeValueId("step"), Flow.FlowStopExclusive)), known)
+local fact = Kernel.KernelLoopFactEntry(
+  loop, domain,
+  Kernel.KernelLoopCounted(Flow.FlowCountedDomain(
+    Code.CodeValueId("start"), Code.CodeValueId("stop"),
+    Code.CodeValueId("step"), Flow.FlowStopExclusive, Flow.FlowLoopIncreasing)),
+  Kernel.KernelCounterSelected(Kernel.KernelCounterValue(Code.CodeValueId("counter"))),
+  known)
 local projection = Kernel.KernelLoopFactProjection({ fact }, { Kernel.KernelReductionByLoopEntry(loop, reduction) }, { Kernel.KernelClosedFormByLoopEntry(loop, closed) })
 local candidate = fact:kernel_candidate(projection)
 assert(asdl.classof(candidate) == Kernel.KernelLoopClosedFormCandidate)

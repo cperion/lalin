@@ -16,6 +16,10 @@ function Stencil.StencilProduceRange1D:stencil_analyze_producer(input)
   return Stencil.StencilProducerAnalysisRange1D(
     Stencil.StencilProducerExecRange1D(self.step, self.order))
 end
+function Stencil.StencilProduceCountedRange1D:stencil_analyze_producer(input)
+  return Stencil.StencilProducerAnalysisRange1D(
+    Stencil.StencilProducerExecRange1D(self.step, self.order))
+end
 function Stencil.StencilProduceRangeND:stencil_analyze_producer(input)
   return Stencil.StencilProducerAnalysisRangeND(
     Stencil.StencilProducerExecRangeND(#self.axes, execution_axes(self.axes)))

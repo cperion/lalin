@@ -245,19 +245,45 @@ local function same_canonical_value(a, b, aliases)
   return a ~= nil and b ~= nil and a == b
 end
 
-local function induction_step(param_value, back_value, defs, aliases)
-  local k = back_value and defs[back_value.text] or nil
-  if k == nil then return nil, "backedge value is not a binary recurrence" end
-  -- Check for binary add/sub
-  local op = rawget(k, "op")
-  if op == nil then return nil, "backedge value is not a binary recurrence" end
-  if op == Core.BinAdd then
-    if same_canonical_value(k.lhs, param_value, aliases) then return k.rhs, nil end
-    if same_canonical_value(k.rhs, param_value, aliases) then return k.lhs, nil end
-  elseif op == Core.BinSub then
-    if same_canonical_value(k.lhs, param_value, aliases) then return k.rhs, "subtraction induction records positive step magnitude; signed direction is not represented yet" end
+local function recurrence_direction(step, consts, positive, negative)
+  local value = step and consts[step.text] or nil
+  if value == nil or value == 0 then
+    return Flow.FlowLoopDirectionUnknown, "induction step sign is not proven"
   end
-  return nil, "binary recurrence does not reference the header parameter"
+  if value > 0 then return positive, nil end
+  return negative, nil
+end
+
+local function induction_step(param_value, back_value, defs, aliases, consts)
+  local k = back_value and defs[back_value.text] or nil
+  if k == nil then
+    return nil, "backedge value is not a binary recurrence", Flow.FlowLoopDirectionUnknown
+  end
+  -- Stage-0 flow discovery normalizes recurrence syntax and proven step sign.
+  local op = rawget(k, "op")
+  if op == nil then
+    return nil, "backedge value is not a binary recurrence", Flow.FlowLoopDirectionUnknown
+  end
+  if op == Core.BinAdd then
+    if same_canonical_value(k.lhs, param_value, aliases) then
+      local direction, note = recurrence_direction(
+        k.rhs, consts, Flow.FlowLoopIncreasing, Flow.FlowLoopDecreasing)
+      return k.rhs, note, direction
+    end
+    if same_canonical_value(k.rhs, param_value, aliases) then
+      local direction, note = recurrence_direction(
+        k.lhs, consts, Flow.FlowLoopIncreasing, Flow.FlowLoopDecreasing)
+      return k.lhs, note, direction
+    end
+  elseif op == Core.BinSub then
+    if same_canonical_value(k.lhs, param_value, aliases) then
+      local direction, note = recurrence_direction(
+        k.rhs, consts, Flow.FlowLoopDecreasing, Flow.FlowLoopIncreasing)
+      return k.rhs, note, direction
+    end
+  end
+  return nil, "binary recurrence does not reference the header parameter",
+    Flow.FlowLoopDirectionUnknown
 end
 
 local function compare_stop(cond, induction_value, defs)
@@ -453,7 +479,8 @@ local function analyze_loop(func, block_by_id, graph_loop, edge_facts, defs, typ
     local init = incoming_arg_for(edge_facts, graph_loop.header.block, param, latch.from.block)
     local back = backedge_arg_for(latch_fact, param)
     if init ~= nil and back ~= nil then
-      local step, note = induction_step(param.value, back, defs, aliases)
+      local step, note, direction = induction_step(
+        param.value, back, defs, aliases, consts)
       if step ~= nil then
         local stop, exclusive = compare_stop(cond, param.value, defs)
         local range = Flow.FlowRangeUnknown(param.value)
@@ -461,7 +488,10 @@ local function analyze_loop(func, block_by_id, graph_loop, edge_facts, defs, typ
         if stop ~= nil then
           local _, min, max_val, max_exclusive = range_for_induction(param.value, init, stop, exclusive, consts)
           range = Flow.FlowRangeDerived(param.value, min, max_val, "primary induction of counted loop")
-          counted = counted or Flow.FlowCountedDomain(init, stop, step, exclusive == true and Flow.FlowStopExclusive or Flow.FlowStopInclusive)
+          counted = counted or Flow.FlowCountedDomain(
+            init, stop, step,
+            exclusive == true and Flow.FlowStopExclusive or Flow.FlowStopInclusive,
+            direction)
           role = Flow.FlowPrimaryInduction
         end
         inductions[#inductions + 1] = Flow.FlowInduction(param.value, types[param.value.text] or Code.CodeTyIndex, init, step, role, range)
@@ -557,13 +587,6 @@ end
 -- compute_semantic_flow: FlowSemanticFactSet from FlowFactSet
 ----------------------------------------------------------------------
 
-local function direction_for(primary, consts)
-  local step_num = primary and primary.step and consts[primary.step.text] or nil
-  if step_num == nil then return Flow.FlowLoopDirectionUnknown end
-  if step_num > 0 then return Flow.FlowLoopIncreasing end
-  if step_num < 0 then return Flow.FlowLoopDecreasing end
-  return Flow.FlowLoopDirectionUnknown
-end
 
 function Flow.FlowStopExclusive:flow_trip_expression(counted, diff_expr, step_is_one, idx_ty)
   if step_is_one then return diff_expr end
@@ -613,13 +636,17 @@ function Flow.FlowFactSet:compute_semantic_flow(module, graph)
       end
       local func_id = graph_loop_func[loop.loop.text]
       local consts = func_id and consts_by_func[func_id.text] or {}
-      local direction = direction_for(primary, consts)
+      local direction = loop.counted.direction
       local trip_expr = compute_trip_expr(loop.counted, consts)
       local trip_count
       if trip_expr ~= nil then
-        trip_count = Flow.FlowTripCountUnknown("trip count expression not materialized", trip_expr)
+        trip_count = Flow.FlowTripCountRejected(
+          Flow.FlowTripCountNotMaterialized("trip-count expression has no materialized CodeValueId"),
+          trip_expr)
       else
-        trip_count = Flow.FlowTripCountUnknown("no explicit trip-count CodeValueId is available", nil)
+        trip_count = Flow.FlowTripCountRejected(
+          Flow.FlowTripCountNotMaterialized("no explicit trip-count CodeValueId is available"),
+          nil)
       end
       out[#out + 1] = Flow.FlowLoopNormalizedCounted(loop.loop, loop.counted, direction, trip_count)
       if primary ~= nil and direction == Flow.FlowLoopIncreasing

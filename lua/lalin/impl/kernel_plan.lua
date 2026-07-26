@@ -119,13 +119,46 @@ function Flow.FlowLoopFacts:kernel_count_evidence(subject)
   return Kernel.KernelLoopNotCountedEvidence(Kernel.KernelRejectNoFacts(subject, "loop is not counted"))
 end
 
+function Flow.FlowPrimaryInduction:kernel_counter_contribution(induction)
+  return Kernel.KernelCounterCandidate(Kernel.KernelCounterValue(induction.value))
+end
+function Flow.FlowDerivedInduction:kernel_counter_contribution(_induction)
+  return Kernel.KernelCounterIgnored
+end
+function Flow.FlowPointerInduction:kernel_counter_contribution(_induction)
+  return Kernel.KernelCounterIgnored
+end
+function Kernel.KernelCounterIgnored:kernel_append_counter(counters) return counters end
+function Kernel.KernelCounterCandidate:kernel_append_counter(counters)
+  return append_all(counters, { self.counter })
+end
+function Flow.FlowLoopFacts:kernel_counter_selection(subject)
+  local counters = {}
+  for _, induction in ipairs(self.inductions) do
+    counters = induction.role:kernel_counter_contribution(induction)
+      :kernel_append_counter(counters)
+  end
+  if #counters == 0 then
+    return Kernel.KernelCounterMissing(
+      Kernel.KernelRejectNoFacts(subject, "counted loop has no primary induction"))
+  end
+  if #counters > 1 then
+    return Kernel.KernelCounterAmbiguous(counters,
+      Kernel.KernelRejectNoFacts(subject, "counted loop has multiple primary inductions"))
+  end
+  return Kernel.KernelCounterSelected(counters[1])
+end
+
 function Flow.FlowFactSet:project_kernel_loop_facts(values, trips)
   local loops, reductions, closed_forms = {}, {}, {}
   for _, reduction in ipairs(values.reductions) do reductions = append_all(reductions, reduction:kernel_reduction_entries()) end
   for _, closed_form in ipairs(values.closed_forms) do closed_forms = append_all(closed_forms, closed_form:kernel_closed_form_entries()) end
   for _, loop in ipairs(self.loops) do
     local subject = Kernel.KernelSubjectLoop(loop.loop)
-    loops[#loops + 1] = Kernel.KernelLoopFactEntry(loop.loop, loop.domain, loop:kernel_count_evidence(subject), trips:lookup(loop.loop):kernel_trip_evidence(subject))
+    loops[#loops + 1] = Kernel.KernelLoopFactEntry(
+      loop.loop, loop.domain, loop:kernel_count_evidence(subject),
+      loop:kernel_counter_selection(subject),
+      trips:lookup(loop.loop):kernel_trip_evidence(subject))
   end
   return Kernel.KernelLoopFactProjection(loops, reductions, closed_forms)
 end
@@ -145,9 +178,6 @@ function Kernel.KernelTripKnown:kernel_trip_proofs(domain, proofs)
 end
 function Kernel.KernelTripUnavailable:kernel_trip_proofs(domain, proofs) return proofs end
 
-function Flow.FlowCountedDomain:kernel_counter() return Kernel.KernelCounterValue(self.start) end
-function Kernel.KernelLoopCounted:kernel_counter() return self.domain:kernel_counter() end
-function Kernel.KernelLoopNotCountedEvidence:kernel_counter() return Kernel.KernelCounterAbsent end
 
 local function planned(request, build, result, proofs)
   local fact = request.fact
@@ -173,15 +203,22 @@ function Kernel.KernelLoopPlanSkeleton:materialize_kernel_build(request, build) 
 function Kernel.KernelNoPlan:schedule_eligibility() return Kernel.KernelScheduleIneligible(self.subject, self.rejects) end
 function Kernel.KernelPlanned:schedule_eligibility() return Kernel.KernelScheduleEligible(self) end
 
-function Kernel.KernelLoopFactEntry:kernel_initial_analysis()
+function Kernel.KernelCounterMissing:kernel_initial_analysis(fact)
+  return Kernel.KernelLoopAnalysisRejected(fact, { self.reject })
+end
+function Kernel.KernelCounterAmbiguous:kernel_initial_analysis(fact)
+  return Kernel.KernelLoopAnalysisRejected(fact, { self.reject })
+end
+function Kernel.KernelCounterSelected:kernel_initial_analysis(fact)
   return Kernel.KernelLoopAnalysisReady(Kernel.KernelLoopPlanBuild(
-    self.domain,
-    self.trip,
-    self.count:kernel_counter(),
+    fact.domain, fact.trip, self.counter,
     Kernel.KernelLaneProjection({}),
     Kernel.KernelBindingProjection({}),
     Kernel.KernelEffectProjection({}),
     Kernel.KernelProofProjection({})))
+end
+function Kernel.KernelLoopFactEntry:kernel_initial_analysis()
+  return self.counter:kernel_initial_analysis(self)
 end
 
 local function append_memory_proofs(proofs, backend)
