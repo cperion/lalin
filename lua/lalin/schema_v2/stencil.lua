@@ -1336,6 +1336,8 @@ return schema. LalinStencil {
       deferred [many [LalinValue.ReductionFact]],
       result [LalinKernel.KernelResult],
     },
+    StencilKernelMissingReductionArithmetic { variant_unique, reduction [LalinValue.ReductionFact], },
+    StencilKernelAmbiguousReductionArithmetic { variant_unique, reduction [LalinValue.ReductionFact], },
     StencilKernelUnsupportedResult { variant_unique, result [LalinKernel.KernelResult], reason [str], },
     StencilKernelScheduleNotPlanned { variant_unique, schedule [LalinSchedule.KernelSchedule], reason [str], },
     StencilKernelScheduleMissing { variant_unique, kernel [LalinKernel.KernelId], },
@@ -1517,6 +1519,22 @@ return schema. LalinStencil {
     StencilKernelConstructionCollecting { variant_unique, state [LalinStencil.StencilKernelConstructionState], },
     StencilKernelConstructionFinalizable { variant_unique, state [LalinStencil.StencilKernelConstructionState], },
     StencilKernelConstructionRejected { variant_unique, state [LalinStencil.StencilKernelConstructionState], rejects [many [LalinStencil.StencilKernelProjectionReject]], },
+  },
+  sum. StencilKernelReductionArithmeticResolution {
+    StencilKernelReductionArithmeticResolved {
+      variant_unique,
+      arithmetic [LalinStencil.StencilArithmeticMode],
+    },
+    StencilKernelReductionArithmeticRejected {
+      variant_unique,
+      reject [LalinStencil.StencilKernelProjectionReject],
+    },
+  },
+  product. StencilKernelReductionFinishInput {
+    interned,
+    state [LalinStencil.StencilKernelConstructionState],
+    reduction [LalinValue.ReductionFact],
+    stream [LalinStencil.StencilStreamId],
   },
   product. StencilKernelConstructionInitInput {
     interned,

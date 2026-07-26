@@ -1,10 +1,13 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
+local asdl = require("lalin.asdl")
 require("lalin.schema_v2")
 require("lalin.impl.code_flow")
 require("lalin.impl.kernel_plan")
 require("lalin.impl.stencil_kernel")
 require("lalin.impl.lower_emit_c.materialize")
+require("lalin.impl.lower_emit_c.stencil")
+require("lalin.impl.lower_emit_c.fragment")
 
 local Code = require("lalin.schema_v2.code")
 local Core = require("lalin.schema_v2.core")
@@ -27,6 +30,8 @@ local block_id = Code.CodeBlockId("body")
 local loop_id = Graph.GraphLoopId("loop:kernel_canonical")
 local origin = Code.CodeOriginUnknown
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
+local exact_int = Code.CodeIntSemantics(
+  Code.CodeIntWrap, Code.CodeDivTrapOnZeroOrOverflow, Code.CodeShiftMaskCount)
 local ptr_ty = Code.CodeTyDataPtr(i32)
 local ptr = Code.CodeValueId("ptr")
 local index = Code.CodeValueId("i")
@@ -92,7 +97,7 @@ local reduction = Value.ReductionFact(
   zero,
   seven,
   i32,
-  nil,
+  exact_int,
   nil,
   Value.AlgebraProofFlow(domain, Value.AlgebraFlowCounted(trip)))
 local closed = Value.ClosedFormFact(
@@ -249,6 +254,9 @@ local base_local = C.CBackendLocal(
 local external_values = CMat.CMatCExternalValueBindingProjection({
   CMat.CMatCExternalValueBindingEntry(
     stop, C.CBackendLocal(C.CBackendLocalId("n"), C.CBackendName("n"), c_i32)),
+  CMat.CMatCExternalValueBindingEntry(
+    trip.count, C.CBackendLocal(
+      C.CBackendLocalId("trip"), C.CBackendName("trip"), c_i32)),
 })
 local fragment_accesses = CMat.CMatCFragmentAccessBindingProjection({
   CMat.CMatCFragmentAccessBindingEntry(
@@ -261,8 +269,16 @@ local fragment_exits = CMat.CMatCExitBindingProjection({
     CMat.CMatCExitNormal, Code.CodeBlockId("exit"),
     C.CBackendLabel("exit"), {}),
 })
+local exit_block_id = Code.CodeBlockId("exit")
+local exit_block = Code.CodeBlock(
+  exit_block_id, "exit", {}, {},
+  Code.CodeTerm(Code.CodeTermId("exit:return"), Code.CodeTermReturn({}), origin),
+  origin)
+local fragment_func = Code.CodeFunc(
+  func.id, func.name, func.linkage, func.sig, func.params, func.locals,
+  func.entry, { block, exit_block }, func.origin)
 local fragment_input = CMat.CMatCFragmentInput(
-  canonical_materialization, func, { block_id },
+  canonical_materialization, fragment_func, { block_id }, block_id,
   C.CBackendTarget(
     C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian),
   external_values, fragment_accesses, fragment_exits,
@@ -273,6 +289,77 @@ assert(fragment_input.accesses.entries[1].source.base == base_local)
 local alias = Stencil.StencilStreamAlias(
   Stencil.StencilStreamRef(computation.streams[1].id))
 assert(alias.source.stream == computation.streams[1].id)
+local fragment_emission = fragment_input:emit_cmat_fragment()
+assert(#fragment_emission.fragment.blocks == 5)
+assert(fragment_emission.fragment.entry.text == "kernel_store_entry")
+assert(#fragment_emission.fragment.block_alignments == 1)
+assert(fragment_emission.fragment.block_alignments[1].source == block_id)
+assert(fragment_emission.fragment.control == CMat.CMatCControlNone)
+assert(asdl.classof(Core.BinRem:cmat_fragment_float_spec(
+  C.CBackendScalar(Core.ScalarF32))) == CMat.CMatCBinaryRejected)
+assert(asdl.classof(
+  Stencil.StencilArithmeticFloat(Code.CodeFloatStrict)
+:cmat_fragment_reduction_spec(CMat.CMatCFragmentReductionSpecInput(
+  Value.ReductionMin, Code.CodeTyFloat(32)))) ==
+  CMat.CMatCBinaryRejected)
+local empty_cover = CMat.CMatCFragmentInput(
+  canonical_materialization, fragment_func, {}, block_id, fragment_input.target,
+  external_values, fragment_accesses, fragment_exits,
+  CMat.CMatCFragmentNamespace("empty_cover")):emit_cmat_fragment()
+assert(asdl.classof(empty_cover) == CMat.CMatCFragmentRejected)
+assert(empty_cover.issues[1].block == block_id)
+local bad_exit = CMat.CMatCExitBindingProjection({
+  CMat.CMatCExitBindingEntry(
+    CMat.CMatCExitNormal, Code.CodeBlockId("missing_exit"),
+    C.CBackendLabel("missing_exit"), {}),
+})
+local invalid_exit = CMat.CMatCFragmentInput(
+  canonical_materialization, fragment_func, { block_id }, block_id,
+  fragment_input.target, external_values, fragment_accesses, bad_exit,
+  CMat.CMatCFragmentNamespace("bad_exit")):emit_cmat_fragment()
+assert(asdl.classof(invalid_exit) == CMat.CMatCFragmentRejected)
+local ambiguous_exits = CMat.CMatCExitBindingProjection({
+  fragment_exits.entries[1], fragment_exits.entries[1],
+})
+local ambiguous_exit = CMat.CMatCFragmentInput(
+  canonical_materialization, fragment_func, { block_id }, block_id,
+  fragment_input.target, external_values, fragment_accesses, ambiguous_exits,
+  CMat.CMatCFragmentNamespace("ambiguous_exit")):emit_cmat_fragment()
+assert(asdl.classof(ambiguous_exit) == CMat.CMatCFragmentRejected)
+local typed_exit_block = Code.CodeBlock(
+  exit_block_id, "typed_exit", {
+    Code.CodeParam(Code.CodeValueId("typed_exit_arg"), "arg",
+      i32, origin),
+  }, {}, exit_block.term, origin)
+local typed_exit_func = Code.CodeFunc(
+  func.id, func.name, func.linkage, func.sig, func.params, func.locals,
+  func.entry, { block, typed_exit_block }, func.origin)
+local c_i64 = C.CBackendScalar(Core.ScalarI64)
+local mismatched_exit_projection = CMat.CMatCExitBindingProjection({
+  CMat.CMatCExitBindingEntry(
+    CMat.CMatCExitNormal, exit_block_id, C.CBackendLabel("typed_exit"), {
+      CMat.CMatCExitArgumentAtom(
+        C.CBackendAtomLiteral(c_i32, Core.LitInt("7")), c_i64),
+    }),
+})
+local mismatched_exit = CMat.CMatCFragmentInput(
+  canonical_materialization, typed_exit_func, { block_id }, block_id,
+  fragment_input.target, external_values, fragment_accesses,
+  mismatched_exit_projection,
+  CMat.CMatCFragmentNamespace("typed_exit")):emit_cmat_fragment()
+assert(asdl.classof(mismatched_exit) == CMat.CMatCFragmentRejected)
+local wrong_trip_values = CMat.CMatCExternalValueBindingProjection({
+  external_values.entries[1],
+  CMat.CMatCExternalValueBindingEntry(
+    trip.count, C.CBackendLocal(
+      C.CBackendLocalId("trip64"), C.CBackendName("trip64"), c_i64)),
+})
+local wrong_trip = CMat.CMatCFragmentInput(
+  canonical_materialization, fragment_func, { block_id }, block_id,
+  fragment_input.target, wrong_trip_values, fragment_accesses, fragment_exits,
+  CMat.CMatCFragmentNamespace("wrong_trip")):emit_cmat_fragment()
+assert(asdl.classof(wrong_trip) == CMat.CMatCFragmentRejected)
+assert(wrong_trip.issues[1].subject == "counted trip")
 
 local module_kernels = Kernel.KernelModulePlan(
   module_id, flow, values, mem, effects, { store_kernel })
@@ -348,10 +435,12 @@ local reduction_computation = reduction_projection.projection.computation
 assert(#reduction_computation.sinks == 1)
 assert(reduction_computation.sinks[1].op.reducer.reduction == Value.ReductionAdd)
 assert(reduction_computation.sinks[1].op.init == Stencil.StencilReduceInitIdentity)
+assert(reduction_computation.sinks[1].op.reducer.arithmetic ==
+  Stencil.StencilArithmeticInteger(exact_int))
 
 local other_reduction = Value.ReductionFact(
   Value.AlgebraFactId("reduction:other"), domain, stored, Value.ReductionAdd,
-  zero, seven, i32, nil, nil,
+  zero, seven, i32, exact_int, nil,
   Value.AlgebraProofFlow(domain, Value.AlgebraFlowCounted(trip)))
 local mismatch_kernel = Kernel.KernelPlanned(
   Kernel.KernelId("kernel:reduction:mismatch"), planned.subject,

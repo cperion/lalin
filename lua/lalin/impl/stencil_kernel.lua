@@ -7,6 +7,7 @@ local Code = require("lalin.schema_v2.code")
 local Graph = require("lalin.schema_v2.graph")
 local Flow = require("lalin.schema_v2.flow")
 local Mem = require("lalin.schema_v2.mem")
+local Value = require("lalin.schema_v2.value")
 local Kernel = require("lalin.schema_v2.kernel")
 local Schedule = require("lalin.schema_v2.schedule")
 local Stencil = require("lalin.schema_v2.stencil")
@@ -722,6 +723,38 @@ function Kernel.KernelResultVoid:stencil_contribute_result(input)
   end
   return Stencil.StencilKernelConstructionFinalizable(input.construction.state)
 end
+function Value.ReductionFact:stencil_reduction_arithmetic()
+  if self.int_semantics ~= nil and self.float_mode ~= nil then
+    return Stencil.StencilKernelReductionArithmeticRejected(
+      Stencil.StencilKernelAmbiguousReductionArithmetic(self))
+  end
+  if self.int_semantics ~= nil then
+    return Stencil.StencilKernelReductionArithmeticResolved(
+      Stencil.StencilArithmeticInteger(self.int_semantics))
+  end
+  if self.float_mode ~= nil then
+    return Stencil.StencilKernelReductionArithmeticResolved(
+      Stencil.StencilArithmeticFloat(self.float_mode))
+  end
+  return Stencil.StencilKernelReductionArithmeticRejected(
+    Stencil.StencilKernelMissingReductionArithmetic(self))
+end
+function Stencil.StencilKernelReductionArithmeticRejected:stencil_finish_reduction(input)
+  return Stencil.StencilKernelConstructionCollecting(input.state)
+:stencil_reject(self.reject)
+end
+function Stencil.StencilKernelReductionArithmeticResolved:stencil_finish_reduction(input)
+  local reducer = Stencil.StencilReducer(
+    input.reduction.op, input.reduction.ty, input.reduction.init, self.arithmetic)
+  local sink = Stencil.StencilSinkDef(
+    Stencil.StencilSinkId(
+      "kernel-sink:reduction:" .. sanitized(input.reduction.id.text)),
+    Stencil.StencilSinkOpFold(
+      Stencil.StencilStreamRef(input.stream), reducer, input.reduction.ty,
+      Stencil.StencilReduceInitIdentity, Stencil.StencilFoldReturnsValue))
+  return Stencil.StencilKernelConstructionFinalizable(
+    input.state:with_sinks({ sink }))
+end
 function Kernel.KernelResultReduction:stencil_contribute_result(input)
   local state = input.construction.state
   if #state.deferred_reductions > 1
@@ -741,15 +774,8 @@ function Kernel.KernelResultReduction:stencil_contribute_result(input)
   state = state:with_stream(
     Stencil.StencilKernelStateStreamInput(
       self.reduction.accumulator, binding, definition))
-  local reducer = Stencil.StencilReducer(
-    self.reduction.op, self.reduction.ty, self.reduction.init, Stencil.StencilArithmeticInferred)
-  local sink = Stencil.StencilSinkDef(
-    Stencil.StencilSinkId("kernel-sink:reduction:" .. sanitized(self.reduction.id.text)),
-    Stencil.StencilSinkOpFold(
-      Stencil.StencilStreamRef(stream_id), reducer, self.reduction.ty,
-      Stencil.StencilReduceInitIdentity, Stencil.StencilFoldReturnsValue))
-  state = state:with_sinks({ sink })
-  return Stencil.StencilKernelConstructionFinalizable(state)
+  return self.reduction:stencil_reduction_arithmetic():stencil_finish_reduction(
+    Stencil.StencilKernelReductionFinishInput(state, self.reduction, stream_id))
 end
 function Kernel.KernelResult:stencil_contribute_result(input)
   return input.construction:stencil_reject(

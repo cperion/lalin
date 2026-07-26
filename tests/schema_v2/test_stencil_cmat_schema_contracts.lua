@@ -75,7 +75,7 @@ assert(Stencil.StencilScheduleCandidateNoPlan and Stencil.StencilScheduleCandida
 assert(field_names(Stencil.StencilKernelProvenanceFacet) ==
   "kernel,iteration,accesses,streams,result")
 assert(field_names(CMat.CMatCFragmentInput) ==
-  "materialization,code_func,covered_blocks,target,values,accesses,exits,namespace")
+  "materialization,code_func,covered_blocks,replacement_source,target,values,accesses,exits,namespace")
 assert(field_names(CMat.CMatCFragment) ==
   "entry,blocks,locals,helpers,block_alignments,value_mappings,control")
 assert(CMat.CMatMaterializedKernelFragment and CMat.CMatRejectedKernelFragment)
@@ -85,6 +85,10 @@ assert(CMat.CMatCFragmentAccessDirect and CMat.CMatCFragmentAccessAddressProject
 assert(CMat.CMatCFragmentAccessBindingFound and CMat.CMatCFragmentAccessBindingMissing)
 assert(CMat.CMatCExitBindingFound and CMat.CMatCExitBindingMissing)
 assert(CMat.CMatCBlockEliminated and CMat.CMatCBlockReplacementEntry)
+assert(CMat.CMatCFragmentState and CMat.CMatCFragmentExprEmitted and
+  CMat.CMatCFragmentExprRejected)
+assert(CMat.CMatCFragmentStateReady and CMat.CMatCFragmentStateRejected)
+assert(CMat.CMatCFragmentSinkEmitted and CMat.CMatCFragmentSinkRejected)
 assert(CMat.CMatWindowIndexInBounds and CMat.CMatWindowIndexClamped)
 assert(CMat.CMatWindowIndexWrapped and CMat.CMatWindowIndexZero and CMat.CMatWindowIndexRejected)
 
