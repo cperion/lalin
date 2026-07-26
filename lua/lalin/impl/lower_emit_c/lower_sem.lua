@@ -6,6 +6,7 @@ require("lalin.impl.lower_emit_c.materialize")
 local Lower = require("lalin.schema_v2.lower")
 local Stencil = require("lalin.schema_v2.stencil")
 local CMat = require("lalin.schema_v2.c_materialize")
+local C = require("lalin.schema_v2.c")
 
 local function copy(items)
   local out = {}
@@ -196,6 +197,122 @@ function Lower.LowerCMatValueEnvironmentInput:lower_cmat_values()
   end
   return Lower.LowerCMatValuesReady(
     CMat.CMatCExternalValueBindingProjection(collection.entries))
+end
+function Lower.LowerCoverageLoop:lower_cmat_normal_exit(_coverage)
+  if #self.loop.exits ~= 1 then
+    return Lower.LowerCMatExitRequirementsRejected(
+      Lower.LowerIssueExitShapeRejected(
+        "counted kernel coverage requires one exact loop exit"))
+  end
+  return Lower.LowerCMatExitRequirementsReady(
+    Lower.LowerCMatExitRequirementProjection({
+      Lower.LowerCMatExitRequirement(
+        CMat.CMatCExitNormal, self.loop.exits[1].to.block),
+    }))
+end
+function Lower.LowerCoverageFunction:lower_cmat_normal_exit(_coverage)
+  return Lower.LowerCMatExitRequirementsRejected(
+    Lower.LowerIssueExitShapeRejected(
+      "whole-function CMat coverage has no normal continuation"))
+end
+function Lower.LowerCoverageBlock:lower_cmat_normal_exit(_coverage)
+  return Lower.LowerCMatExitRequirementsRejected(
+    Lower.LowerIssueExitShapeRejected(
+      "standalone block CMat coverage is unsupported"))
+end
+function Lower.LowerCoverageBlockRange:lower_cmat_normal_exit(_coverage)
+  return Lower.LowerCMatExitRequirementsRejected(
+    Lower.LowerIssueExitShapeRejected(
+      "standalone block-range CMat coverage is unsupported"))
+end
+function Stencil.StencilKernelResultVoid:lower_cmat_exit_requirements(coverage)
+  return coverage.origin:lower_cmat_normal_exit(coverage)
+end
+function Stencil.StencilKernelResultReduction:lower_cmat_exit_requirements(coverage)
+  return coverage.origin:lower_cmat_normal_exit(coverage)
+end
+local function binary_requirements(
+    first_role, first, second_role, second)
+  return Lower.LowerCMatExitRequirementsReady(
+    Lower.LowerCMatExitRequirementProjection({
+      Lower.LowerCMatExitRequirement(first_role, first),
+      Lower.LowerCMatExitRequirement(second_role, second),
+    }))
+end
+function Stencil.StencilKernelResultAll:lower_cmat_exit_requirements(_coverage)
+  return binary_requirements(
+    CMat.CMatCExitSuccess, self.success,
+    CMat.CMatCExitFailure, self.failure)
+end
+function Stencil.StencilKernelResultAllCompare:lower_cmat_exit_requirements(_coverage)
+  return binary_requirements(
+    CMat.CMatCExitSuccess, self.success,
+    CMat.CMatCExitFailure, self.failure)
+end
+function Stencil.StencilKernelResultAny:lower_cmat_exit_requirements(_coverage)
+  return binary_requirements(
+    CMat.CMatCExitSuccess, self.success,
+    CMat.CMatCExitFailure, self.failure)
+end
+function Stencil.StencilKernelResultFind:lower_cmat_exit_requirements(_coverage)
+  return binary_requirements(
+    CMat.CMatCExitFound, self.found,
+    CMat.CMatCExitNotFound, self.not_found)
+end
+function Lower.LowerCMatExitRequirement:lower_cmat_build_exit(input)
+  local matches = {}
+  for i = 1, #input.code_func.blocks do
+    if input.code_func.blocks[i].id == self.destination then
+      matches[#matches + 1] = input.code_func.blocks[i]
+    end
+  end
+  if #matches ~= 1 then
+    return Lower.LowerCMatExitBuildRejected(
+      Lower.LowerIssueExitRejected(
+        self.role, self.destination,
+        "control destination is absent or ambiguous"))
+  end
+  local args = {}
+  if #matches[1].params == 1 then
+    args[1] = CMat.CMatCExitArgumentControlValue
+  elseif #matches[1].params > 1 then
+    return Lower.LowerCMatExitBuildRejected(
+      Lower.LowerIssueExitRejected(
+        self.role, self.destination,
+        "initial control lowering supports at most one result parameter"))
+  end
+  local entries = copy(input.collection.entries)
+  entries[#entries + 1] = CMat.CMatCExitBindingEntry(
+    self.role, self.destination, C.CBackendLabel(self.destination.text), args)
+  return Lower.LowerCMatExitBuildReady(
+    Lower.LowerCMatExitCollection(entries))
+end
+function Lower.LowerCMatExitBuildReady:lower_cmat_continue_exits(input)
+  if input.index > #input.requirements.entries then
+    return Lower.LowerCMatExitsReady(
+      CMat.CMatCExitBindingProjection(self.collection.entries))
+  end
+  local requirement = input.requirements.entries[input.index]
+  return requirement:lower_cmat_build_exit(
+    Lower.LowerCMatExitBuildInput(
+      requirement, input.code_func, self.collection))
+:lower_cmat_continue_exits(Lower.LowerCMatExitFoldInput(
+    input.requirements, input.code_func, input.index + 1))
+end
+function Lower.LowerCMatExitBuildRejected:lower_cmat_continue_exits(_input)
+  return Lower.LowerCMatExitsRejected(self.issue)
+end
+function Lower.LowerCMatExitRequirementsReady:lower_cmat_build_exits(input)
+  return Lower.LowerCMatExitBuildReady(Lower.LowerCMatExitCollection({}))
+:lower_cmat_continue_exits(Lower.LowerCMatExitFoldInput(
+    self.requirements, input.code_func, 1))
+end
+function Lower.LowerCMatExitRequirementsRejected:lower_cmat_build_exits(_input)
+  return Lower.LowerCMatExitsRejected(self.issue)
+end
+function Lower.LowerCMatExitEnvironmentInput:lower_cmat_exits()
+  return self.provenance.result:lower_cmat_exit_requirements(self.coverage)
+:lower_cmat_build_exits(self)
 end
 
 return Lower

@@ -78,6 +78,18 @@ return schema. LalinLower {
       field. value [LalinCode.CodeValueId],
       reason [str],
     },
+    LowerIssueAccessRejected {
+      variant_unique,
+      access [LalinStencil.StencilAccessRef],
+      reason [str],
+    },
+    LowerIssueExitRejected {
+      variant_unique,
+      role [LalinCMat.CMatCExitRole],
+      destination [LalinCode.CodeBlockId],
+      reason [str],
+    },
+    LowerIssueExitShapeRejected { variant_unique, reason [str], },
     LowerIssueClosedFormUnsupported {
       variant_unique,
       fragment [LalinLower.LowerFragmentId],
@@ -414,6 +426,48 @@ return schema. LalinLower {
       accesses [LalinCMat.CMatCFragmentAccessBindingProjection],
     },
     LowerCMatAccessesRejected { variant_unique, issue [LalinLower.LowerIssue], },
+  },
+  product. LowerCMatExitRequirement {
+    interned,
+    role [LalinCMat.CMatCExitRole],
+    destination [LalinCode.CodeBlockId],
+  },
+  product. LowerCMatExitRequirementProjection {
+    interned,
+    entries [many [LalinLower.LowerCMatExitRequirement]],
+  },
+  product. LowerCMatExitCollection {
+    interned,
+    entries [many [LalinCMat.CMatCExitBindingEntry]],
+  },
+  product. LowerCMatExitBuildInput {
+    interned,
+    requirement [LalinLower.LowerCMatExitRequirement],
+    code_func [LalinCode.CodeFunc],
+    collection [LalinLower.LowerCMatExitCollection],
+  },
+  sum. LowerCMatExitBuildStep {
+    LowerCMatExitBuildReady {
+      variant_unique,
+      collection [LalinLower.LowerCMatExitCollection],
+    },
+    LowerCMatExitBuildRejected { variant_unique, issue [LalinLower.LowerIssue], },
+  },
+  product. LowerCMatExitFoldInput {
+    interned,
+    requirements [LalinLower.LowerCMatExitRequirementProjection],
+    code_func [LalinCode.CodeFunc],
+    index [number],
+  },
+  sum. LowerCMatExitRequirements {
+    LowerCMatExitRequirementsReady {
+      variant_unique,
+      requirements [LalinLower.LowerCMatExitRequirementProjection],
+    },
+    LowerCMatExitRequirementsRejected {
+      variant_unique,
+      issue [LalinLower.LowerIssue],
+    },
   },
   product. LowerCMatExitEnvironmentInput {
     interned,

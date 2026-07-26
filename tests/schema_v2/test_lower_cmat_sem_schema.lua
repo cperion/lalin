@@ -8,6 +8,8 @@ require("lalin.impl.lower_emit_c.lower_sem")
 local Code = require("lalin.schema_v2.code")
 local Graph = require("lalin.schema_v2.graph")
 local Kernel = require("lalin.schema_v2.kernel")
+local Stencil = require("lalin.schema_v2.stencil")
+local CMat = require("lalin.schema_v2.c_materialize")
 local Lower = require("lalin.schema_v2.lower")
 
 local origin = Code.CodeOriginUnknown
@@ -27,7 +29,11 @@ local func = Code.CodeFunc(
 local loop_id = Graph.GraphLoopId("lower_cmat_sem_loop")
 local loop = Graph.GraphLoop(
   loop_id, func_id, Graph.GraphBlockId(func_id, body_id),
-  { Graph.GraphBlockId(func_id, body_id) }, {}, {})
+  { Graph.GraphBlockId(func_id, body_id) }, {}, {
+    Graph.GraphEdge(
+      Graph.GraphBlockId(func_id, body_id),
+      Graph.GraphBlockId(func_id, exit_id), Graph.EdgeKindJump),
+  })
 local loops = Lower.LowerLoopByIdProjection({
   Lower.LowerLoopByIdEntry(loop_id, loop),
 })
@@ -39,6 +45,17 @@ assert(loop_cover.coverage.func == func_id)
 assert(loop_cover.coverage.replacement_source == body_id)
 assert(loop_cover.coverage.covered_blocks[1] == body_id)
 assert(loop_cover.coverage.origin.loop == loop)
+local normal_requirements = Stencil.StencilKernelResultVoid
+:lower_cmat_exit_requirements(loop_cover.coverage)
+assert(asdl.classof(normal_requirements) ==
+  Lower.LowerCMatExitRequirementsReady)
+local normal_exits = Lower.LowerCMatExitBuildReady(
+  Lower.LowerCMatExitCollection({}))
+:lower_cmat_continue_exits(Lower.LowerCMatExitFoldInput(
+  normal_requirements.requirements, func, 1))
+assert(asdl.classof(normal_exits) == Lower.LowerCMatExitsReady)
+assert(normal_exits.exits.entries[1].role == CMat.CMatCExitNormal)
+assert(normal_exits.exits.entries[1].destination == exit_id)
 
 local function_cover = Lower.LowerCoverFunction(func_id):lower_c_fragment_coverage(input)
 assert(asdl.classof(function_cover) == Lower.LowerFragmentCoverageResolved)
