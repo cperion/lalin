@@ -25,7 +25,10 @@ local function block(id)
 end
 local func = Code.CodeFunc(
   func_id, "lower_cmat_sem", Code.CodeLinkageLocal, sig_id, {}, {}, entry_id,
-  { block(entry_id), block(body_id), block(exit_id) }, origin)
+  { block(entry_id), Code.CodeBlock(
+      body_id, body_id.text, {}, {}, Code.CodeTerm(
+        Code.CodeTermId("jump_exit"), Code.CodeTermJump(exit_id, {}), origin),
+      origin), block(exit_id) }, origin)
 local loop_id = Graph.GraphLoopId("lower_cmat_sem_loop")
 local loop = Graph.GraphLoop(
   loop_id, func_id, Graph.GraphBlockId(func_id, body_id),
@@ -56,6 +59,44 @@ local normal_exits = Lower.LowerCMatExitBuildReady(
 assert(asdl.classof(normal_exits) == Lower.LowerCMatExitsReady)
 assert(normal_exits.exits.entries[1].role == CMat.CMatCExitNormal)
 assert(normal_exits.exits.entries[1].destination == exit_id)
+local i32 = Code.CodeTyInt(32, Code.CodeSigned)
+local result_value = Code.CodeValueId("result")
+local result_dest = Code.CodeBlockId("result_dest")
+local result_func = Code.CodeFunc(
+  func_id, "lower_cmat_result", Code.CodeLinkageLocal, sig_id, {}, {}, entry_id, {
+    block(entry_id), Code.CodeBlock(
+      result_dest, result_dest.text, {
+        Code.CodeParam(result_value, "result", i32, origin),
+      }, {}, term, origin),
+  }, origin)
+local function fold_exit(requirement, code_func)
+  return Lower.LowerCMatExitBuildReady(Lower.LowerCMatExitCollection({}))
+:lower_cmat_continue_exits(Lower.LowerCMatExitFoldInput(
+    Lower.LowerCMatExitRequirementProjection({ requirement }), code_func, 1))
+end
+local control_exit = fold_exit(Lower.LowerCMatExitRequirement(
+  CMat.CMatCExitFound, result_dest, Lower.LowerCMatExitControlValue), result_func)
+assert(asdl.classof(control_exit) == Lower.LowerCMatExitsReady)
+assert(control_exit.exits.entries[1].args[1] ==
+  CMat.CMatCExitArgumentControlValue)
+local no_argument_mismatch = fold_exit(Lower.LowerCMatExitRequirement(
+  CMat.CMatCExitSuccess, result_dest, Lower.LowerCMatExitNoArguments), result_func)
+assert(asdl.classof(no_argument_mismatch) == Lower.LowerCMatExitsRejected)
+local source_arg_func = Code.CodeFunc(
+  func_id, "lower_cmat_source_arg", Code.CodeLinkageLocal, sig_id, {
+    Code.CodeParam(result_value, "result", i32, origin),
+  }, {}, body_id, {
+    Code.CodeBlock(body_id, body_id.text, {}, {}, Code.CodeTerm(
+      Code.CodeTermId("jump_arg"),
+      Code.CodeTermJump(exit_id, { result_value }), origin), origin),
+    Code.CodeBlock(exit_id, exit_id.text, {
+      Code.CodeParam(result_value, "result", i32, origin),
+    }, {}, term, origin),
+  }, origin)
+local source_arg_rejected = fold_exit(Lower.LowerCMatExitRequirement(
+  CMat.CMatCExitNormal, exit_id, Lower.LowerCMatExitSourceEdge(body_id)),
+  source_arg_func)
+assert(asdl.classof(source_arg_rejected) == Lower.LowerCMatExitsRejected)
 
 local function_cover = Lower.LowerCoverFunction(func_id):lower_c_fragment_coverage(input)
 assert(asdl.classof(function_cover) == Lower.LowerFragmentCoverageResolved)

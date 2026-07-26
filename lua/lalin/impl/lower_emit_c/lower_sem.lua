@@ -7,6 +7,7 @@ local Lower = require("lalin.schema_v2.lower")
 local Stencil = require("lalin.schema_v2.stencil")
 local CMat = require("lalin.schema_v2.c_materialize")
 local C = require("lalin.schema_v2.c")
+local Code = require("lalin.schema_v2.code")
 
 local function copy(items)
   local out = {}
@@ -159,13 +160,11 @@ end
 function Lower.LowerCBlockOutsideCoverage:lower_cmat_value_contribution(input)
   return Lower.LowerCValueAvailable(input.value)
 end
-function Lower.LowerCBlockParamSite:lower_cmat_value_contribution(input)
-  return input.coverage:lower_c_block_coverage(self.block)
-:lower_cmat_value_contribution(input)
+function Lower.LowerCBlockParamSite:lower_cmat_value_contribution(_input)
+  return Lower.LowerCValueUnavailable
 end
-function Lower.LowerCInstructionSite:lower_cmat_value_contribution(input)
-  return input.coverage:lower_c_block_coverage(self.block)
-:lower_cmat_value_contribution(input)
+function Lower.LowerCInstructionSite:lower_cmat_value_contribution(_input)
+  return Lower.LowerCValueUnavailable
 end
 function Lower.LowerCValueAvailable:lower_cmat_collect_value(collection)
   local entries = copy(collection.entries)
@@ -207,7 +206,8 @@ function Lower.LowerCoverageLoop:lower_cmat_normal_exit(_coverage)
   return Lower.LowerCMatExitRequirementsReady(
     Lower.LowerCMatExitRequirementProjection({
       Lower.LowerCMatExitRequirement(
-        CMat.CMatCExitNormal, self.loop.exits[1].to.block),
+        CMat.CMatCExitNormal, self.loop.exits[1].to.block,
+        Lower.LowerCMatExitSourceEdge(self.loop.exits[1].from.block))
     }))
 end
 function Lower.LowerCoverageFunction:lower_cmat_normal_exit(_coverage)
@@ -229,35 +229,143 @@ function Stencil.StencilKernelResultVoid:lower_cmat_exit_requirements(coverage)
   return coverage.origin:lower_cmat_normal_exit(coverage)
 end
 function Stencil.StencilKernelResultReduction:lower_cmat_exit_requirements(coverage)
-  return coverage.origin:lower_cmat_normal_exit(coverage)
-end
-local function binary_requirements(
-    first_role, first, second_role, second)
+  if #coverage.origin.loop.exits ~= 1 then
+    return Lower.LowerCMatExitRequirementsRejected(
+      Lower.LowerIssueExitShapeRejected(
+        "reduction coverage requires one exact loop exit"))
+  end
   return Lower.LowerCMatExitRequirementsReady(
     Lower.LowerCMatExitRequirementProjection({
-      Lower.LowerCMatExitRequirement(first_role, first),
-      Lower.LowerCMatExitRequirement(second_role, second),
+      Lower.LowerCMatExitRequirement(
+        CMat.CMatCExitNormal, coverage.origin.loop.exits[1].to.block,
+        Lower.LowerCMatExitControlValue),
+    }))
+end
+local function binary_requirements(
+    first_role, first, second_role, second, argument_plan)
+  return Lower.LowerCMatExitRequirementsReady(
+    Lower.LowerCMatExitRequirementProjection({
+      Lower.LowerCMatExitRequirement(first_role, first, argument_plan),
+      Lower.LowerCMatExitRequirement(second_role, second, argument_plan),
     }))
 end
 function Stencil.StencilKernelResultAll:lower_cmat_exit_requirements(_coverage)
   return binary_requirements(
     CMat.CMatCExitSuccess, self.success,
-    CMat.CMatCExitFailure, self.failure)
+    CMat.CMatCExitFailure, self.failure, Lower.LowerCMatExitNoArguments)
 end
 function Stencil.StencilKernelResultAllCompare:lower_cmat_exit_requirements(_coverage)
   return binary_requirements(
     CMat.CMatCExitSuccess, self.success,
-    CMat.CMatCExitFailure, self.failure)
+    CMat.CMatCExitFailure, self.failure, Lower.LowerCMatExitNoArguments)
 end
 function Stencil.StencilKernelResultAny:lower_cmat_exit_requirements(_coverage)
   return binary_requirements(
     CMat.CMatCExitSuccess, self.success,
-    CMat.CMatCExitFailure, self.failure)
+    CMat.CMatCExitFailure, self.failure, Lower.LowerCMatExitNoArguments)
 end
 function Stencil.StencilKernelResultFind:lower_cmat_exit_requirements(_coverage)
   return binary_requirements(
     CMat.CMatCExitFound, self.found,
-    CMat.CMatCExitNotFound, self.not_found)
+    CMat.CMatCExitNotFound, self.not_found, Lower.LowerCMatExitControlValue)
+end
+local function append_exit(requirement, collection, args)
+  local entries = copy(collection.entries)
+  entries[#entries + 1] = CMat.CMatCExitBindingEntry(
+    requirement.role, requirement.destination,
+    C.CBackendLabel(requirement.destination.text), args)
+  return Lower.LowerCMatExitBuildReady(
+    Lower.LowerCMatExitCollection(entries))
+end
+local function exit_rejected(requirement, reason)
+  return Lower.LowerCMatExitBuildRejected(
+    Lower.LowerIssueExitRejected(
+      requirement.role, requirement.destination, reason))
+end
+function Code.CodeTermJump:lower_cmat_exit_arguments(input)
+  if self.dest == input.destination then
+    return Lower.LowerCMatExitArgumentsResolved(self.args)
+  end
+  return Lower.LowerCMatExitArgumentsRejected(
+    "source jump does not target the required destination")
+end
+local function branch_exit_arguments(input, first_dest, first_args, second_dest, second_args)
+  local matches = {}
+  if first_dest == input.destination then matches[#matches + 1] = first_args end
+  if second_dest == input.destination then matches[#matches + 1] = second_args end
+  if #matches == 1 then return Lower.LowerCMatExitArgumentsResolved(matches[1]) end
+  return Lower.LowerCMatExitArgumentsRejected(
+    "source branch does not have one exact required edge")
+end
+function Code.CodeTermBranch:lower_cmat_exit_arguments(input)
+  return branch_exit_arguments(
+    input, self.then_dest, self.then_args, self.else_dest, self.else_args)
+end
+local function switch_exit_arguments(input, cases, default_dest, default_args)
+  local matches = {}
+  for i = 1, #cases do
+    if cases[i].dest == input.destination then matches[#matches + 1] = cases[i].args end
+  end
+  if default_dest == input.destination then matches[#matches + 1] = default_args end
+  if #matches == 1 then return Lower.LowerCMatExitArgumentsResolved(matches[1]) end
+  return Lower.LowerCMatExitArgumentsRejected(
+    "source switch does not have one exact required edge")
+end
+function Code.CodeTermSwitch:lower_cmat_exit_arguments(input)
+  return switch_exit_arguments(input, self.cases, self.default_dest, self.default_args)
+end
+function Code.CodeTermVariantSwitch:lower_cmat_exit_arguments(input)
+  return switch_exit_arguments(input, self.cases, self.default_dest, self.default_args)
+end
+function Code.CodeTermReturn:lower_cmat_exit_arguments(_input)
+  return Lower.LowerCMatExitArgumentsRejected("return has no block destination")
+end
+function Code.CodeTermTrap:lower_cmat_exit_arguments(_input)
+  return Lower.LowerCMatExitArgumentsRejected("trap has no block destination")
+end
+function Code.CodeTermUnreachable:lower_cmat_exit_arguments(_input)
+  return Lower.LowerCMatExitArgumentsRejected("unreachable has no block destination")
+end
+function Lower.LowerCMatExitArgumentsResolved:lower_cmat_finish_source_exit(input)
+  if #self.args ~= 0 then
+    return exit_rejected(input.requirement,
+      "initial normal CMat exit cannot preserve covered source arguments")
+  end
+  return append_exit(input.requirement, input.collection, {})
+end
+function Lower.LowerCMatExitArgumentsRejected:lower_cmat_finish_source_exit(input)
+  return exit_rejected(input.requirement, self.reason)
+end
+function Lower.LowerCMatExitNoArguments:lower_cmat_build_exit(input, destination)
+  if #destination.params ~= 0 then
+    return exit_rejected(input.requirement,
+      "control branch requires a zero-parameter destination")
+  end
+  return append_exit(input.requirement, input.collection, {})
+end
+function Lower.LowerCMatExitControlValue:lower_cmat_build_exit(input, destination)
+  if #destination.params ~= 1 then
+    return exit_rejected(input.requirement,
+      "control result requires exactly one destination parameter")
+  end
+  return append_exit(input.requirement, input.collection, {
+    CMat.CMatCExitArgumentControlValue,
+  })
+end
+function Lower.LowerCMatExitSourceEdge:lower_cmat_build_exit(input, _destination)
+  local sources = {}
+  for i = 1, #input.code_func.blocks do
+    if input.code_func.blocks[i].id == self.source then
+      sources[#sources + 1] = input.code_func.blocks[i]
+    end
+  end
+  if #sources ~= 1 then
+    return exit_rejected(input.requirement,
+      "normal exit source block is absent or ambiguous")
+  end
+  return sources[1].term.op:lower_cmat_exit_arguments(
+    Lower.LowerCMatSourceExitInput(self.source, input.requirement.destination))
+:lower_cmat_finish_source_exit(input)
 end
 function Lower.LowerCMatExitRequirement:lower_cmat_build_exit(input)
   local matches = {}
@@ -267,25 +375,9 @@ function Lower.LowerCMatExitRequirement:lower_cmat_build_exit(input)
     end
   end
   if #matches ~= 1 then
-    return Lower.LowerCMatExitBuildRejected(
-      Lower.LowerIssueExitRejected(
-        self.role, self.destination,
-        "control destination is absent or ambiguous"))
+    return exit_rejected(self, "control destination is absent or ambiguous")
   end
-  local args = {}
-  if #matches[1].params == 1 then
-    args[1] = CMat.CMatCExitArgumentControlValue
-  elseif #matches[1].params > 1 then
-    return Lower.LowerCMatExitBuildRejected(
-      Lower.LowerIssueExitRejected(
-        self.role, self.destination,
-        "initial control lowering supports at most one result parameter"))
-  end
-  local entries = copy(input.collection.entries)
-  entries[#entries + 1] = CMat.CMatCExitBindingEntry(
-    self.role, self.destination, C.CBackendLabel(self.destination.text), args)
-  return Lower.LowerCMatExitBuildReady(
-    Lower.LowerCMatExitCollection(entries))
+  return self.argument_plan:lower_cmat_build_exit(input, matches[1])
 end
 function Lower.LowerCMatExitBuildReady:lower_cmat_continue_exits(input)
   if input.index > #input.requirements.entries then

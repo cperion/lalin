@@ -427,10 +427,31 @@ return schema. LalinLower {
     },
     LowerCMatAccessesRejected { variant_unique, issue [LalinLower.LowerIssue], },
   },
+  sum. LowerCMatExitArgumentPlan {
+    LowerCMatExitNoArguments,
+    LowerCMatExitControlValue,
+    LowerCMatExitSourceEdge {
+      variant_unique,
+      source [LalinCode.CodeBlockId],
+    },
+  },
   product. LowerCMatExitRequirement {
     interned,
     role [LalinCMat.CMatCExitRole],
     destination [LalinCode.CodeBlockId],
+    argument_plan [LalinLower.LowerCMatExitArgumentPlan],
+  },
+  product. LowerCMatSourceExitInput {
+    interned,
+    source [LalinCode.CodeBlockId],
+    destination [LalinCode.CodeBlockId],
+  },
+  sum. LowerCMatExitArgumentResolution {
+    LowerCMatExitArgumentsResolved {
+      variant_unique,
+      args [many [LalinCode.CodeValueId]],
+    },
+    LowerCMatExitArgumentsRejected { variant_unique, reason [str], },
   },
   product. LowerCMatExitRequirementProjection {
     interned,
@@ -474,7 +495,6 @@ return schema. LalinLower {
     provenance [LalinStencil.StencilKernelProvenanceFacet],
     coverage [LalinLower.LowerFragmentCoverage],
     code_func [LalinCode.CodeFunc],
-    values [LalinCMat.CMatCExternalValueBindingProjection],
   },
   sum. LowerCMatExitEnvironment {
     LowerCMatExitsReady {
