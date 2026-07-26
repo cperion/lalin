@@ -20,6 +20,16 @@ function Stencil.StencilProduceCountedRange1D:stencil_analyze_producer(input)
   return Stencil.StencilProducerAnalysisRange1D(
     Stencil.StencilProducerExecRange1D(self.step, self.order))
 end
+function Stencil.StencilProduceCountedWindow1D:stencil_analyze_producer(input)
+  local axis = Stencil.StencilProducerAxis(
+    self.index_ty, self.start, self.stop, self.step, self.order,
+    Stencil.StencilIndexAnonymous)
+  return Stencil.StencilProducerAnalysisWindowND(
+    Stencil.StencilProducerExecWindowND(1, {
+      Stencil.StencilProducerExecutionAxis(
+        axis.index_ty, axis.step, "start", "stop"),
+    }, { self.window }))
+end
 function Stencil.StencilProduceRangeND:stencil_analyze_producer(input)
   return Stencil.StencilProducerAnalysisRangeND(
     Stencil.StencilProducerExecRangeND(#self.axes, execution_axes(self.axes)))

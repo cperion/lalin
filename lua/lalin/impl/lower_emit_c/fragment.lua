@@ -1,11 +1,13 @@
 -- Canonical kernel CMat fragment emission for exact scalar counted loops.
 require("lalin.schema_v2")
 require("lalin.impl.lower_emit_c.code_to_c")
+require("lalin.impl.lower_emit_c.materialize")
 
 local Code = require("lalin.schema_v2.code")
 local Core = require("lalin.schema_v2.core")
 local Value = require("lalin.schema_v2.value")
 local Mem = require("lalin.schema_v2.mem")
+local Flow = require("lalin.schema_v2.flow")
 local Kernel = require("lalin.schema_v2.kernel")
 local Stencil = require("lalin.schema_v2.stencil")
 local CMat = require("lalin.schema_v2.c_materialize")
@@ -99,27 +101,51 @@ function Stencil.StencilStreamByKernelValueProjection:cmat_fragment_lookup_sourc
     require("lalin.schema_v2.kernel").KernelValueId(value.text))
 end
 
+function CMat.CMatCFragmentCFG:cmat_fragment_append_stmt(stmt)
+  return CMat.CMatCFragmentCFG(self.completed, CMat.CMatCOpenBlock(
+    self.open.label, self.open.params, append(self.open.stmts, stmt)), self.next_block)
+end
+function CMat.CMatCFragmentCFGSealInput:cmat_fragment_seal()
+  local state, cfg = self.state, self.state.cfg
+  local block = C.CBackendBlock(
+    cfg.open.label, cfg.open.params, cfg.open.stmts, self.term)
+  local next_cfg = CMat.CMatCFragmentCFG(
+    append(cfg.completed, block),
+    CMat.CMatCOpenBlock(self.next_label, self.next_params, {}),
+    cfg.next_block + 1)
+  return CMat.CMatCFragmentState(
+    state.request, state.provenance, state.index, state.ordinal,
+    state.values, state.streams, state.window, state.locals,
+    state.entry_stmts, next_cfg, state.helpers, state.next_local)
+end
+function CMat.CMatCFragmentState:cmat_fragment_with_window(window)
+  return CMat.CMatCFragmentState(
+    self.request, self.provenance, self.index, self.ordinal,
+    self.values, self.streams, window, self.locals, self.entry_stmts,
+    self.cfg, self.helpers, self.next_local)
+end
+
 function CMat.CMatCFragmentState:cmat_fragment_allocate(stem, ty)
   local id = C.CBackendLocalId(prefix(self) .. "_" .. stem .. tostring(self.next_local))
   local c_local = C.CBackendLocal(id, C.CBackendName(id.text), ty)
   return CMat.CMatCFragmentLocalAllocation(CMat.CMatCFragmentState(
     self.request, self.provenance, self.index, self.ordinal,
-    self.values, self.streams, append(self.locals, c_local),
-    self.entry_stmts, self.body_stmts, self.helpers, self.next_local + 1), c_local)
+    self.values, self.streams, self.window, append(self.locals, c_local),
+    self.entry_stmts, self.cfg, self.helpers, self.next_local + 1), c_local)
 end
 
 function CMat.CMatCFragmentState:cmat_fragment_add_entry(stmt)
   return CMat.CMatCFragmentState(
     self.request, self.provenance, self.index, self.ordinal,
-    self.values, self.streams, self.locals, append(self.entry_stmts, stmt),
-    self.body_stmts, self.helpers, self.next_local)
+    self.values, self.streams, self.window, self.locals,
+    append(self.entry_stmts, stmt), self.cfg, self.helpers, self.next_local)
 end
 
 function CMat.CMatCFragmentState:cmat_fragment_add_body(stmt)
   return CMat.CMatCFragmentState(
     self.request, self.provenance, self.index, self.ordinal,
-    self.values, self.streams, self.locals, self.entry_stmts,
-    append(self.body_stmts, stmt), self.helpers, self.next_local)
+    self.values, self.streams, self.window, self.locals, self.entry_stmts,
+    self.cfg:cmat_fragment_append_stmt(stmt), self.helpers, self.next_local)
 end
 
 function CMat.CMatCFragmentState:cmat_fragment_add_helper(spec)
@@ -132,8 +158,8 @@ function CMat.CMatCFragmentState:cmat_fragment_add_helper(spec)
   local use = C.CBackendHelperUse(id, spec)
   return CMat.CMatCFragmentHelperAllocation(CMat.CMatCFragmentState(
     self.request, self.provenance, self.index, self.ordinal,
-    self.values, self.streams, self.locals, self.entry_stmts,
-    self.body_stmts, append(self.helpers, use), self.next_local), id)
+    self.values, self.streams, self.window, self.locals, self.entry_stmts,
+    self.cfg, append(self.helpers, use), self.next_local), id)
 end
 
 function CMat.CMatCFragmentState:cmat_fragment_bind_stream(source, stream, atom, ty)
@@ -143,7 +169,7 @@ function CMat.CMatCFragmentState:cmat_fragment_bind_stream(source, stream, atom,
       CMat.CMatCFragmentValueEntry(source, atom, ty))),
     CMat.CMatCFragmentStreamProjection(append(self.streams.entries,
       CMat.CMatCFragmentStreamEntry(stream, source, atom, ty))),
-    self.locals, self.entry_stmts, self.body_stmts, self.helpers, self.next_local)
+    self.window, self.locals, self.entry_stmts, self.cfg, self.helpers, self.next_local)
 end
 
 function CMat.CMatCFragmentState:cmat_fragment_seed_counter()
@@ -154,7 +180,7 @@ function CMat.CMatCFragmentState:cmat_fragment_seed_counter()
     CMat.CMatCFragmentValueProjection(append(self.values.entries,
       CMat.CMatCFragmentValueEntry(
         iteration.counter, C.CBackendAtomLocal(self.index.id), ty))),
-    self.streams, self.locals, self.entry_stmts, self.body_stmts,
+    self.streams, self.window, self.locals, self.entry_stmts, self.cfg,
     self.helpers, self.next_local)
 end
 
@@ -510,6 +536,401 @@ function CMat.CMatCFragmentStreamFound:cmat_fragment_bind_alias(state, entry)
     self.entry.atom, self.entry.ty))
 end
 
+function Core.BinaryOp:cmat_window_binary_spec(ty)
+  return C.CBackendHelperIntBinary(self, ty, C.CBackendIntWrap)
+end
+function Core.BinRem:cmat_window_binary_spec(ty)
+  return C.CBackendHelperDivRem(
+    self, ty, C.CBackendDivTrapOnZeroOrOverflow)
+end
+function CMat.CMatCFragmentState:cmat_window_binary(input)
+  local allocation = self:cmat_fragment_allocate(input.stem, input.ty)
+  local helper = allocation.state:cmat_fragment_add_helper(
+    input.op:cmat_window_binary_spec(input.ty))
+  local state = helper.state:cmat_fragment_add_body(C.CBackendHelperCall(
+    allocation.c_local.id, helper.helper, { input.left, input.right }))
+  return CMat.CMatCFragmentExprEmitted(
+    state, C.CBackendAtomLocal(allocation.c_local.id), input.ty)
+end
+function CMat.CMatCFragmentState:cmat_window_compare(input)
+  local allocation = self:cmat_fragment_allocate(input.stem, C.CBackendBool8)
+  local state = allocation.state:cmat_fragment_add_body(C.CBackendAssign(
+    allocation.c_local.id, C.CBackendRCompare(
+      input.cmp, input.operand_ty, input.left, input.right)))
+  return CMat.CMatCFragmentExprEmitted(
+    state, C.CBackendAtomLocal(allocation.c_local.id), C.CBackendBool8)
+end
+function CMat.CMatCFragmentState:cmat_window_select(input)
+  local allocation = self:cmat_fragment_allocate(input.stem, input.ty)
+  local state = allocation.state:cmat_fragment_add_body(C.CBackendAssign(
+    allocation.c_local.id, C.CBackendRSelect(
+      input.ty, input.condition, input.then_value, input.else_value)))
+  return CMat.CMatCFragmentExprEmitted(
+    state, C.CBackendAtomLocal(allocation.c_local.id), input.ty)
+end
+function Stencil.StencilStreamWindowAccess:cmat_window_offset(entry)
+  local offset = 0
+  local found = 0
+  for i = 1, #self.offsets do
+    if self.offsets[i].axis.index == 1 then
+      offset = self.offsets[i].offset
+      found = found + 1
+    else
+      return CMat.CMatCWindowOffsetRejected(
+        CMat.CMatCEmissionInvalidWindow(
+          entry.definition, "window access references a non-primary axis"))
+    end
+  end
+  if found > 1 then
+    return CMat.CMatCWindowOffsetRejected(
+      CMat.CMatCEmissionInvalidWindow(
+        entry.definition, "window access repeats the primary axis"))
+  end
+  return CMat.CMatCWindowOffsetResolved(offset)
+end
+function CMat.CMatCWindowOffsetRejected:cmat_emit_window_load(_request)
+  return CMat.CMatCFragmentStateRejected({ self.issue })
+end
+function CMat.CMatCWindowOffsetResolved:cmat_emit_window_load(request)
+  return request.state.window:cmat_emit_window_load(CMat.CMatCWindowLoadInput(
+    request.state, request.stream, request.access, self.offset))
+end
+function CMat.CMatCFragmentNoWindow:cmat_emit_window_load(input)
+  return CMat.CMatCFragmentStateRejected({
+    CMat.CMatCEmissionInvalidWindow(
+      input.stream.definition, "window stream lacks a window producer")
+  })
+end
+local function window_request_state(request, state)
+  return CMat.CMatCWindowLoadInput(
+    state, request.stream, request.access, request.offset)
+end
+local function window_positive_position(request, magnitude)
+  local context, state = request.state.window, request.state
+  local ty = context.index_ty
+  local zero = C.CBackendAtomLiteral(ty, Core.LitInt("0"))
+  local amount = C.CBackendAtomLiteral(ty, Core.LitInt(tostring(magnitude)))
+  local remaining = state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_remaining", Core.BinSub, context.trip,
+    C.CBackendAtomLocal(state.ordinal.id), ty))
+  local inside = remaining.state:cmat_window_compare(CMat.CMatCWindowCompareInput(
+    "window_inside", Core.CmpLt, amount, remaining.atom, ty))
+  local masked = inside.state:cmat_window_select(CMat.CMatCWindowSelectInput(
+    "window_masked_offset", inside.atom, amount, zero, ty))
+  local target = masked.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_target", Core.BinAdd,
+    C.CBackendAtomLocal(masked.state.ordinal.id), masked.atom, ty))
+  return CMat.CMatCWindowPosition(target.state, inside.atom, target.atom)
+end
+local function window_negative_position(request, magnitude)
+  local context, state = request.state.window, request.state
+  local ty = context.index_ty
+  local zero = C.CBackendAtomLiteral(ty, Core.LitInt("0"))
+  local amount = C.CBackendAtomLiteral(ty, Core.LitInt(tostring(magnitude)))
+  local inside = state:cmat_window_compare(CMat.CMatCWindowCompareInput(
+    "window_inside", Core.CmpGe, C.CBackendAtomLocal(state.ordinal.id), amount, ty))
+  local masked = inside.state:cmat_window_select(CMat.CMatCWindowSelectInput(
+    "window_masked_offset", inside.atom, amount, zero, ty))
+  local target = masked.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_target", Core.BinSub,
+    C.CBackendAtomLocal(masked.state.ordinal.id), masked.atom, ty))
+  return CMat.CMatCWindowPosition(target.state, inside.atom, target.atom)
+end
+local function window_position(request)
+  if request.offset >= 0 then
+    return window_positive_position(request, request.offset)
+  end
+  return window_negative_position(request, -request.offset)
+end
+local function window_actual(position, request)
+  local context = position.state.window
+  local actual = position.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_index", Core.BinAdd, context.start, position.target_ordinal,
+    context.index_ty))
+  return CMat.CMatCWindowResolvedLoadInput(
+    window_request_state(request, actual.state), actual.atom)
+end
+local function validate_window_offset(request, limit)
+  local offset = request.offset
+  if offset ~= offset or offset == math.huge or offset == -math.huge
+      or offset ~= math.floor(offset) or math.abs(offset) > limit then
+    return CMat.CMatCWindowOffsetInvalid(
+      CMat.CMatCEmissionInvalidWindow(request.stream.definition,
+        "window offset is not a finite representable index integer"))
+  end
+  return CMat.CMatCWindowOffsetValid(request)
+end
+function C.CBackendType:cmat_validate_window_offset(request)
+  return CMat.CMatCWindowOffsetInvalid(
+    CMat.CMatCEmissionInvalidWindow(request.stream.definition,
+      "window index type cannot represent scalar offsets"))
+end
+function C.CBackendScalar:cmat_validate_window_offset(request)
+  return self.scalar:cmat_validate_window_offset(request)
+end
+function Core.Scalar:cmat_validate_window_offset(request)
+  return CMat.CMatCWindowOffsetInvalid(
+    CMat.CMatCEmissionInvalidWindow(request.stream.definition,
+      "window index scalar cannot represent signed offsets"))
+end
+function Core.ScalarI8:cmat_validate_window_offset(request)
+  return validate_window_offset(request, 127)
+end
+function Core.ScalarI16:cmat_validate_window_offset(request)
+  return validate_window_offset(request, 32767)
+end
+function Core.ScalarI32:cmat_validate_window_offset(request)
+  return validate_window_offset(request, 2147483647)
+end
+function Core.ScalarI64:cmat_validate_window_offset(request)
+  return validate_window_offset(request, 9007199254740991)
+end
+function CMat.CMatCWindowOffsetInvalid:cmat_emit_validated_window_load(_window)
+  return CMat.CMatCWindowLoadRejected({ self.issue })
+end
+function CMat.CMatCFragmentWindow1D:cmat_emit_window_load(input)
+  return self.index_ty:cmat_validate_window_offset(input)
+:cmat_emit_validated_window_load(self)
+:cmat_bind_window_stream(input.stream)
+end
+function CMat.CMatCWindowOffsetValid:cmat_emit_validated_window_load(window)
+  local input = self.request
+  if input.offset < -window.window.before or input.offset > window.window.after then
+    return CMat.CMatCWindowLoadRejected({
+      CMat.CMatCEmissionInvalidWindow(input.stream.definition,
+        "window access offset exceeds the declared extent")
+    })
+  end
+  return window.window.boundary:cmat_emit_window_boundary(input)
+end
+function Stencil.StencilWindowBoundaryReject:cmat_emit_window_boundary(request)
+  if request.offset ~= 0 then
+    return CMat.CMatCWindowLoadRejected({
+      CMat.CMatCEmissionInvalidWindow(request.stream.definition,
+        "reject boundary requires an in-bounds proof for nonzero offsets")
+    })
+  end
+  return CMat.CMatCWindowResolvedLoadInput(
+    request, C.CBackendAtomLocal(request.state.index.id))
+:cmat_emit_resolved_window_load()
+end
+function Stencil.StencilWindowBoundaryClamp:cmat_emit_window_boundary(request)
+  local position = window_position(request)
+  local context, ty = position.state.window, position.state.window.index_ty
+  local zero = C.CBackendAtomLiteral(ty, Core.LitInt("0"))
+  local selected
+  if request.offset >= 0 then
+    local one = C.CBackendAtomLiteral(ty, Core.LitInt("1"))
+    local last = position.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+      "window_last", Core.BinSub, context.trip, one, ty))
+    selected = last.state:cmat_window_select(CMat.CMatCWindowSelectInput(
+      "window_clamped", position.condition, position.target_ordinal, last.atom, ty))
+  else
+    selected = position.state:cmat_window_select(CMat.CMatCWindowSelectInput(
+      "window_clamped", position.condition, position.target_ordinal, zero, ty))
+  end
+  return window_actual(
+    CMat.CMatCWindowPosition(selected.state, position.condition, selected.atom),
+    request):cmat_emit_resolved_window_load()
+end
+local function window_positive_wrapped_position(request, magnitude)
+  local context, ty = request.state.window, request.state.window.index_ty
+  local zero = C.CBackendAtomLiteral(ty, Core.LitInt("0"))
+  local amount = C.CBackendAtomLiteral(ty, Core.LitInt(tostring(magnitude)))
+  local remainder = request.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_offset_rem", Core.BinRem, amount, context.trip, ty))
+  local remaining = remainder.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_remaining", Core.BinSub, context.trip,
+    C.CBackendAtomLocal(remainder.state.ordinal.id), ty))
+  local direct_case = remaining.state:cmat_window_compare(CMat.CMatCWindowCompareInput(
+    "window_direct", Core.CmpLt, remainder.atom, remaining.atom, ty))
+  local direct_amount = direct_case.state:cmat_window_select(
+    CMat.CMatCWindowSelectInput(
+      "window_direct_amount", direct_case.atom, remainder.atom, zero, ty))
+  local direct = direct_amount.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_direct_target", Core.BinAdd,
+    C.CBackendAtomLocal(direct_amount.state.ordinal.id), direct_amount.atom, ty))
+  local wrapped_amount = direct.state:cmat_window_select(CMat.CMatCWindowSelectInput(
+    "window_wrapped_amount", direct_case.atom, zero, remainder.atom, ty))
+  local wrapped_remaining = wrapped_amount.state:cmat_window_select(
+    CMat.CMatCWindowSelectInput(
+      "window_wrapped_remaining", direct_case.atom, zero, remaining.atom, ty))
+  local wrapped = wrapped_remaining.state:cmat_window_binary(
+    CMat.CMatCWindowBinaryInput(
+      "window_wrapped_target", Core.BinSub,
+      wrapped_amount.atom, wrapped_remaining.atom, ty))
+  local target = wrapped.state:cmat_window_select(CMat.CMatCWindowSelectInput(
+    "window_target", direct_case.atom, direct.atom, wrapped.atom, ty))
+  return CMat.CMatCWindowPosition(target.state, direct_case.atom, target.atom)
+end
+local function window_negative_wrapped_position(request, magnitude)
+  local context, ty = request.state.window, request.state.window.index_ty
+  local zero = C.CBackendAtomLiteral(ty, Core.LitInt("0"))
+  local amount = C.CBackendAtomLiteral(ty, Core.LitInt(tostring(magnitude)))
+  local remainder = request.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_offset_rem", Core.BinRem, amount, context.trip, ty))
+  local direct_case = remainder.state:cmat_window_compare(CMat.CMatCWindowCompareInput(
+    "window_direct", Core.CmpLe, remainder.atom,
+    C.CBackendAtomLocal(remainder.state.ordinal.id), ty))
+  local direct_amount = direct_case.state:cmat_window_select(
+    CMat.CMatCWindowSelectInput(
+      "window_direct_amount", direct_case.atom, remainder.atom, zero, ty))
+  local direct = direct_amount.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_direct_target", Core.BinSub,
+    C.CBackendAtomLocal(direct_amount.state.ordinal.id), direct_amount.atom, ty))
+  local wrapped_amount = direct.state:cmat_window_select(CMat.CMatCWindowSelectInput(
+    "window_wrapped_amount", direct_case.atom, zero, remainder.atom, ty))
+  local wrapped_ordinal = wrapped_amount.state:cmat_window_select(
+    CMat.CMatCWindowSelectInput(
+      "window_wrapped_ordinal", direct_case.atom, zero,
+      C.CBackendAtomLocal(wrapped_amount.state.ordinal.id), ty))
+  local delta = wrapped_ordinal.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_wrap_delta", Core.BinSub, wrapped_amount.atom, wrapped_ordinal.atom, ty))
+  local wrapped = delta.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_wrapped_target", Core.BinSub, context.trip, delta.atom, ty))
+  local target = wrapped.state:cmat_window_select(CMat.CMatCWindowSelectInput(
+    "window_target", direct_case.atom, direct.atom, wrapped.atom, ty))
+  return CMat.CMatCWindowPosition(target.state, direct_case.atom, target.atom)
+end
+function Stencil.StencilWindowBoundaryWrap:cmat_emit_window_boundary(request)
+  local position
+  if request.offset >= 0 then
+    position = window_positive_wrapped_position(request, request.offset)
+  else
+    position = window_negative_wrapped_position(request, -request.offset)
+  end
+  return window_actual(position, request):cmat_emit_resolved_window_load()
+end
+function Stencil.StencilWindowBoundaryZero:cmat_emit_window_boundary(request)
+  local position = window_position(request)
+  local actual = window_actual(position, request)
+  return CMat.CMatCWindowGuardedLoadInput(
+    actual.request, actual.index, position.condition)
+:cmat_emit_guarded_window_load()
+end
+function Stencil.StencilStreamWindowAccess:cmat_fragment_emit_stream(state, entry)
+  return self:cmat_window_offset(entry):cmat_emit_window_load(
+    CMat.CMatCWindowLoadRequest(state, entry, self.access))
+end
+function CMat.CMatCWindowLoadRejected:cmat_bind_window_stream(_stream)
+  return CMat.CMatCFragmentStateRejected(self.issues)
+end
+function CMat.CMatCWindowLoadEmitted:cmat_bind_window_stream(stream)
+  return CMat.CMatCFragmentStateReady(self.state:cmat_fragment_bind_stream(
+    stream.source, Stencil.StencilStreamRef(stream.definition.id),
+    self.atom, self.ty))
+end
+function CMat.CMatCFragmentAccessBindingMissing:cmat_resolved_window_load(_input)
+  return CMat.CMatCWindowLoadRejected({
+    CMat.CMatCEmissionMissingAccess(self.access)
+  })
+end
+function CMat.CMatCFragmentPlaceRejected:cmat_finish_window_load(_input)
+  return CMat.CMatCWindowLoadRejected(self.issues)
+end
+function CMat.CMatCFragmentPlaceEmitted:cmat_finish_window_load(input)
+  local ty = input.request.stream.definition.ty:code_to_c_backend_type()
+  local allocation = self.state:cmat_fragment_allocate("window_load", ty)
+  local state = allocation.state:cmat_fragment_add_body(
+    C.CBackendPlaceLoad(allocation.c_local.id, self.place))
+  return CMat.CMatCWindowLoadEmitted(
+    state, C.CBackendAtomLocal(allocation.c_local.id), ty)
+end
+function CMat.CMatCFragmentAccessBindingFound:cmat_resolved_window_load(input)
+  local ty = input.request.stream.definition.ty:code_to_c_backend_type()
+  return self:cmat_fragment_access_place(CMat.CMatCFragmentAccessPlaceInput(
+    input.request.state, input.index, input.request.state.index.ty, ty))
+:cmat_finish_window_load(input)
+end
+function CMat.CMatCWindowResolvedLoadInput:cmat_emit_resolved_window_load()
+  return self.request.state.request.accesses:cmat_fragment_lookup(self.request.access)
+:cmat_resolved_window_load(self)
+end
+function C.CBackendType:cmat_window_zero_atom()
+  return CMat.CMatCAtomRejected(CMat.CMatCEmissionInvalidKernel(
+    "window zero boundary cannot represent this element type"))
+end
+function C.CBackendScalar:cmat_window_zero_atom()
+  return self.scalar:cmat_window_zero_scalar(self)
+end
+function Core.Scalar:cmat_window_zero_scalar(_ty)
+  return CMat.CMatCAtomRejected(CMat.CMatCEmissionInvalidKernel(
+    "window zero boundary requires a numeric scalar"))
+end
+function Core.ScalarBool:cmat_window_zero_scalar(ty)
+  return CMat.CMatCAtomEmitted(C.CBackendAtomLiteral(ty, Core.LitBool(false)), ty)
+end
+function Core.ScalarI8:cmat_window_zero_scalar(ty) return CMat.CMatCAtomEmitted(C.CBackendAtomLiteral(ty, Core.LitInt("0")), ty) end
+function Core.ScalarI16:cmat_window_zero_scalar(ty) return CMat.CMatCAtomEmitted(C.CBackendAtomLiteral(ty, Core.LitInt("0")), ty) end
+function Core.ScalarI32:cmat_window_zero_scalar(ty) return CMat.CMatCAtomEmitted(C.CBackendAtomLiteral(ty, Core.LitInt("0")), ty) end
+function Core.ScalarI64:cmat_window_zero_scalar(ty) return CMat.CMatCAtomEmitted(C.CBackendAtomLiteral(ty, Core.LitInt("0")), ty) end
+function Core.ScalarU8:cmat_window_zero_scalar(ty) return CMat.CMatCAtomEmitted(C.CBackendAtomLiteral(ty, Core.LitInt("0")), ty) end
+function Core.ScalarU16:cmat_window_zero_scalar(ty) return CMat.CMatCAtomEmitted(C.CBackendAtomLiteral(ty, Core.LitInt("0")), ty) end
+function Core.ScalarU32:cmat_window_zero_scalar(ty) return CMat.CMatCAtomEmitted(C.CBackendAtomLiteral(ty, Core.LitInt("0")), ty) end
+function Core.ScalarU64:cmat_window_zero_scalar(ty) return CMat.CMatCAtomEmitted(C.CBackendAtomLiteral(ty, Core.LitInt("0")), ty) end
+function Core.ScalarIndex:cmat_window_zero_scalar(ty) return CMat.CMatCAtomEmitted(C.CBackendAtomLiteral(ty, Core.LitInt("0")), ty) end
+function Core.ScalarF32:cmat_window_zero_scalar(ty) return CMat.CMatCAtomEmitted(C.CBackendAtomLiteral(ty, Core.LitFloat("0.0")), ty) end
+function Core.ScalarF64:cmat_window_zero_scalar(ty) return CMat.CMatCAtomEmitted(C.CBackendAtomLiteral(ty, Core.LitFloat("0.0")), ty) end
+function CMat.CMatCFragmentAccessBindingMissing:cmat_guarded_window_load(_input)
+  return CMat.CMatCWindowLoadRejected({
+    CMat.CMatCEmissionMissingAccess(self.access)
+  })
+end
+function CMat.CMatCFragmentPlaceRejected:cmat_finish_guarded_window_load(_input)
+  return CMat.CMatCWindowLoadRejected(self.issues)
+end
+function CMat.CMatCAtomRejected:cmat_finish_window_zero(_input)
+  return CMat.CMatCWindowLoadRejected({ self.issue })
+end
+function CMat.CMatCAtomEmitted:cmat_finish_window_zero(input)
+  local state = input.guarded.request.state
+  state = state:cmat_fragment_add_body(
+    C.CBackendAssign(input.result.id, C.CBackendRAtom(self.atom)))
+  state = CMat.CMatCFragmentCFGSealInput(
+    state, C.CBackendGoto(input.join_label, {}), input.join_label, {})
+:cmat_fragment_seal()
+  return CMat.CMatCWindowLoadEmitted(
+    state, C.CBackendAtomLocal(input.result.id), input.result.ty)
+end
+function CMat.CMatCFragmentPlaceEmitted:cmat_finish_guarded_window_load(input)
+  local state = self.state:cmat_fragment_add_body(
+    C.CBackendPlaceLoad(input.result.id, self.place))
+  state = CMat.CMatCFragmentCFGSealInput(
+    state, C.CBackendGoto(input.join_label, {}), input.zero_label, {})
+:cmat_fragment_seal()
+  local exact = CMat.CMatCWindowGuardedPlaceInput(
+    CMat.CMatCWindowGuardedLoadInput(
+      CMat.CMatCWindowLoadInput(
+        state, input.guarded.request.stream, input.guarded.request.access,
+        input.guarded.request.offset),
+      input.guarded.index, input.guarded.condition),
+    input.result, input.zero_label, input.join_label)
+  return input.result.ty:cmat_window_zero_atom():cmat_finish_window_zero(exact)
+end
+function CMat.CMatCFragmentAccessBindingFound:cmat_guarded_window_load(input)
+  local ty = input.request.stream.definition.ty:code_to_c_backend_type()
+  local allocation = input.request.state:cmat_fragment_allocate("window_load", ty)
+  local state = allocation.state
+  local ordinal = state.cfg.next_block
+  local load_label = C.CBackendLabel(prefix(state) .. "_window_load_" .. ordinal)
+  local zero_label = C.CBackendLabel(prefix(state) .. "_window_zero_" .. ordinal)
+  local join_label = C.CBackendLabel(prefix(state) .. "_window_join_" .. ordinal)
+  state = CMat.CMatCFragmentCFGSealInput(
+    state, C.CBackendIfGoto(input.condition, load_label, {}, zero_label, {}),
+    load_label, {}):cmat_fragment_seal()
+  local request = CMat.CMatCWindowLoadInput(
+    state, input.request.stream, input.request.access, input.request.offset)
+  local guarded = CMat.CMatCWindowGuardedLoadInput(
+    request, input.index, input.condition)
+  return self:cmat_fragment_access_place(CMat.CMatCFragmentAccessPlaceInput(
+    state, input.index, state.index.ty, ty))
+:cmat_finish_guarded_window_load(CMat.CMatCWindowGuardedPlaceInput(
+  guarded, allocation.c_local, zero_label, join_label))
+end
+function CMat.CMatCWindowGuardedLoadInput:cmat_emit_guarded_window_load()
+  return self.request.state.request.accesses:cmat_fragment_lookup(self.request.access)
+:cmat_guarded_window_load(self)
+end
 function Stencil.StencilIndexProducer:cmat_fragment_index(state, _def)
   return CMat.CMatCFragmentExprEmitted(
     state, C.CBackendAtomLocal(state.index.id), state.index.ty)
@@ -635,11 +1056,300 @@ end
 function CMat.CMatCFragmentStateReady:cmat_fragment_apply_sink(sink)
   return sink.op:cmat_fragment_emit_sink(self.state, sink)
 end
+function Stencil.StencilPredicate:cmat_fragment_predicate(input)
+  return CMat.CMatCFragmentPredicateRejected({
+    CMat.CMatCEmissionUnsupportedPredicate(
+      self, "predicate is outside scalar control fragment emission")
+  })
+end
+function CMat.CMatCAtomRejected:cmat_fragment_nonzero_predicate(_input)
+  return CMat.CMatCFragmentPredicateRejected({ self.issue })
+end
+function CMat.CMatCAtomEmitted:cmat_fragment_nonzero_predicate(input)
+  local emitted = input.state:cmat_window_compare(CMat.CMatCWindowCompareInput(
+    "predicate", Core.CmpNe, input.source, self.atom, input.source_ty))
+  return CMat.CMatCFragmentPredicateEmitted(emitted.state, emitted.atom)
+end
+function Stencil.StencilPredNonZero:cmat_fragment_predicate(input)
+  return input.source_ty:cmat_window_zero_atom()
+:cmat_fragment_nonzero_predicate(input)
+end
+function CMat.CMatCFragmentExprRejected:cmat_fragment_compare_predicate(_input)
+  return CMat.CMatCFragmentPredicateRejected(self.issues)
+end
+function CMat.CMatCFragmentExprEmitted:cmat_fragment_compare_predicate(input)
+  if self.ty ~= input.source.source_ty then
+    return CMat.CMatCFragmentPredicateRejected({
+      CMat.CMatCEmissionTypeMismatch(
+        "predicate constant", input.source.source_ty, self.ty)
+    })
+  end
+  local emitted = self.state:cmat_window_compare(CMat.CMatCWindowCompareInput(
+    "predicate", input.cmp, input.source.source, self.atom, self.ty))
+  return CMat.CMatCFragmentPredicateEmitted(emitted.state, emitted.atom)
+end
+function Stencil.StencilPredCompareConst:cmat_fragment_predicate(input)
+  return self.value:cmat_fragment_expr(input.state)
+:cmat_fragment_compare_predicate(
+  CMat.CMatCFragmentPredicateCompareInput(input, self.cmp))
+end
+function CMat.CMatCFragmentStreamMissing:cmat_control_predicate(_input)
+  return CMat.CMatCFragmentSinkRejected({
+    CMat.CMatCEmissionMissingStream(self.stream)
+  })
+end
+function CMat.CMatCFragmentStreamFound:cmat_control_predicate(input)
+  return input.pred:cmat_fragment_predicate(CMat.CMatCFragmentPredicateInput(
+    input.control.state, self.entry.atom, self.entry.ty))
+:cmat_finish_control_predicate(CMat.CMatCControlPredicateInput(
+  input.control, self, input.pred))
+end
+function CMat.CMatCFragmentPredicateRejected:cmat_finish_control_predicate(_input)
+  return CMat.CMatCFragmentSinkRejected(self.issues)
+end
+function CMat.CMatCFragmentPredicateEmitted:cmat_finish_control_predicate(input)
+  return self.state.provenance.result:cmat_prepare_control_exits(
+    CMat.CMatCControlExitInput(
+      self.state, input.control.sink, self.condition,
+      self.state.provenance.result))
+end
 function Stencil.StencilSinkOp:cmat_fragment_emit_sink(_state, sink)
   return CMat.CMatCFragmentSinkRejected({
     CMat.CMatCEmissionUnsupportedSink(
       sink, "sink operation is outside scalar counted fragment emission")
   })
+end
+function CMat.CMatCFragmentStreamMissing:cmat_control_all_compare_left(_input)
+  return CMat.CMatCFragmentSinkRejected({
+    CMat.CMatCEmissionMissingStream(self.stream)
+  })
+end
+function CMat.CMatCFragmentStreamFound:cmat_control_all_compare_left(input)
+  return input.control.state.streams:cmat_fragment_lookup(input.operation.right)
+:cmat_control_all_compare_right(CMat.CMatCControlAllCompareInput(
+  input.control, input.operation, self))
+end
+function CMat.CMatCFragmentStreamMissing:cmat_control_all_compare_right(_input)
+  return CMat.CMatCFragmentSinkRejected({
+    CMat.CMatCEmissionMissingStream(self.stream)
+  })
+end
+function CMat.CMatCFragmentStreamFound:cmat_control_all_compare_right(input)
+  if input.left.entry.ty ~= self.entry.ty then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionTypeMismatch(
+        "all-compare operands", input.left.entry.ty, self.entry.ty)
+    })
+  end
+  local emitted = input.control.state:cmat_window_compare(
+    CMat.CMatCWindowCompareInput(
+      "all_compare", input.operation.cmp, input.left.entry.atom,
+      self.entry.atom, self.entry.ty))
+  return emitted.state.provenance.result:cmat_prepare_control_exits(
+    CMat.CMatCControlExitInput(
+      emitted.state, input.control.sink, emitted.atom,
+      emitted.state.provenance.result))
+end
+function Stencil.StencilSinkOpAllCompare:cmat_fragment_emit_sink(state, sink)
+  return state.streams:cmat_fragment_lookup(self.left)
+:cmat_control_all_compare_left(CMat.CMatCControlAllCompareRequest(
+  CMat.CMatCControlSinkInput(state, sink), self))
+end
+function Stencil.StencilSinkOpAll:cmat_fragment_emit_sink(state, sink)
+  return state.streams:cmat_fragment_lookup(self.src):cmat_control_predicate(
+    CMat.CMatCControlPredicateRequest(
+      CMat.CMatCControlSinkInput(state, sink), self.pred))
+end
+function Stencil.StencilSinkOpAny:cmat_fragment_emit_sink(state, sink)
+  return state.streams:cmat_fragment_lookup(self.src):cmat_control_predicate(
+    CMat.CMatCControlPredicateRequest(
+      CMat.CMatCControlSinkInput(state, sink), self.pred))
+end
+function Stencil.StencilSinkOpFind:cmat_fragment_emit_sink(state, sink)
+  return state.streams:cmat_fragment_lookup(self.src):cmat_control_predicate(
+    CMat.CMatCControlPredicateRequest(
+      CMat.CMatCControlSinkInput(state, sink), self.pred))
+end
+function Stencil.StencilKernelResultProvenance:cmat_prepare_control_exits(input)
+  return CMat.CMatCFragmentSinkRejected({
+    CMat.CMatCEmissionInvalidControl(
+      input.sink, "control sink disagrees with result provenance")
+  })
+end
+function CMat.CMatCExitBindingMissing:cmat_prepare_control_second(_input)
+  return CMat.CMatCFragmentSinkRejected({
+    CMat.CMatCEmissionMissingExit(self.role)
+  })
+end
+function CMat.CMatCExitBindingAmbiguous:cmat_prepare_control_second(_input)
+  return CMat.CMatCFragmentSinkRejected({
+    CMat.CMatCEmissionInvalidKernel(
+      "control exit role is ambiguous")
+  })
+end
+function CMat.CMatCExitBindingFound:cmat_prepare_control_second(input)
+  return input.provenance:cmat_prepare_second_control_exit(
+    CMat.CMatCControlSecondExitInput(input, self))
+end
+function CMat.CMatCExitBindingMissing:cmat_finish_control_exits(_input)
+  return CMat.CMatCFragmentSinkRejected({
+    CMat.CMatCEmissionMissingExit(self.role)
+  })
+end
+function CMat.CMatCExitBindingAmbiguous:cmat_finish_control_exits(_input)
+  return CMat.CMatCFragmentSinkRejected({
+    CMat.CMatCEmissionInvalidKernel(
+      "control exit role is ambiguous")
+  })
+end
+function CMat.CMatCExitBindingFound:cmat_finish_control_exits(input)
+  return input.control.provenance:cmat_finish_control_exits(
+    CMat.CMatCControlResolvedExitsInput(input.control, input.first, self))
+end
+function Stencil.StencilKernelResultAll:cmat_prepare_control_exits(input)
+  local op = input.sink.op
+  if input.sink.id ~= self.sink or op.src ~= self.src
+      or op.pred ~= self.pred then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionInvalidControl(
+        input.sink, "all sink identity disagrees with provenance")
+    })
+  end
+  return input.state.request.exits:cmat_fragment_lookup(CMat.CMatCExitSuccess)
+:cmat_prepare_control_second(input)
+end
+function Stencil.StencilKernelResultAll:cmat_prepare_second_control_exit(input)
+  if input.first.entry.destination ~= self.success then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionInvalidExit(
+        input.first.entry.destination, "all success destination mismatch")
+    })
+  end
+  return input.control.state.request.exits:cmat_fragment_lookup(CMat.CMatCExitFailure)
+:cmat_finish_control_exits(input)
+end
+function Stencil.StencilKernelResultAll:cmat_finish_control_exits(input)
+  if input.second.entry.destination ~= self.failure then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionInvalidExit(
+        input.second.entry.destination, "all failure destination mismatch")
+    })
+  end
+  return CMat.CMatCFragmentControlSinkEmitted(CMat.CMatCFragmentBodyAll(
+    input.control.state, input.control.condition, input.first, input.second))
+end
+function Stencil.StencilKernelResultAllCompare:cmat_prepare_control_exits(input)
+  local op = input.sink.op
+  if input.sink.id ~= self.sink or op.left ~= self.left
+      or op.right ~= self.right or op.cmp ~= self.cmp then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionInvalidControl(
+        input.sink, "all-compare sink identity disagrees with provenance")
+    })
+  end
+  return input.state.request.exits:cmat_fragment_lookup(CMat.CMatCExitSuccess)
+:cmat_prepare_control_second(input)
+end
+function Stencil.StencilKernelResultAllCompare:cmat_prepare_second_control_exit(input)
+  if input.first.entry.destination ~= self.success then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionInvalidExit(
+        input.first.entry.destination, "all-compare success destination mismatch")
+    })
+  end
+  return input.control.state.request.exits:cmat_fragment_lookup(CMat.CMatCExitFailure)
+:cmat_finish_control_exits(input)
+end
+function Stencil.StencilKernelResultAllCompare:cmat_finish_control_exits(input)
+  if input.second.entry.destination ~= self.failure then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionInvalidExit(
+        input.second.entry.destination, "all-compare failure destination mismatch")
+    })
+  end
+  return CMat.CMatCFragmentControlSinkEmitted(
+    CMat.CMatCFragmentBodyAllCompare(
+      input.control.state, input.control.condition, input.first, input.second))
+end
+function Stencil.StencilKernelResultAny:cmat_prepare_control_exits(input)
+  local op = input.sink.op
+  if input.sink.id ~= self.sink or op.src ~= self.src
+      or op.pred ~= self.pred then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionInvalidControl(
+        input.sink, "any sink identity disagrees with provenance")
+    })
+  end
+  return input.state.request.exits:cmat_fragment_lookup(CMat.CMatCExitSuccess)
+:cmat_prepare_control_second(input)
+end
+function Stencil.StencilKernelResultAny:cmat_prepare_second_control_exit(input)
+  if input.first.entry.destination ~= self.success then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionInvalidExit(
+        input.first.entry.destination, "any success destination mismatch")
+    })
+  end
+  return input.control.state.request.exits:cmat_fragment_lookup(CMat.CMatCExitFailure)
+:cmat_finish_control_exits(input)
+end
+function Stencil.StencilKernelResultAny:cmat_finish_control_exits(input)
+  if input.second.entry.destination ~= self.failure then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionInvalidExit(
+        input.second.entry.destination, "any failure destination mismatch")
+    })
+  end
+  return CMat.CMatCFragmentControlSinkEmitted(CMat.CMatCFragmentBodyAny(
+    input.control.state, input.control.condition, input.first, input.second))
+end
+function Stencil.StencilKernelResultFind:cmat_prepare_control_exits(input)
+  local op = input.sink.op
+  if input.sink.id ~= self.sink or op.src ~= self.src
+      or op.pred ~= self.pred or op.not_found ~= self.not_found_value
+      or self.found_value ~= input.state.provenance.iteration.counter then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionInvalidControl(
+        input.sink, "find sink identity disagrees with provenance")
+    })
+  end
+  return input.state.request.exits:cmat_fragment_lookup(CMat.CMatCExitFound)
+:cmat_prepare_control_second(input)
+end
+function Stencil.StencilKernelResultFind:cmat_prepare_second_control_exit(input)
+  if input.first.entry.destination ~= self.found then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionInvalidExit(
+        input.first.entry.destination, "find found destination mismatch")
+    })
+  end
+  return input.control.state.request.exits:cmat_fragment_lookup(
+    CMat.CMatCExitNotFound):cmat_finish_control_exits(input)
+end
+function Stencil.StencilKernelResultFind:cmat_finish_control_exits(input)
+  if input.second.entry.destination ~= self.not_found then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionInvalidExit(
+        input.second.entry.destination, "find not-found destination mismatch")
+    })
+  end
+  return self.not_found_value:cmat_fragment_entry_expr(input.control.state)
+:cmat_finish_find_control(CMat.CMatCControlFindValueInput(
+  input.control, input.first, input.second))
+end
+function CMat.CMatCFragmentExprRejected:cmat_finish_find_control(_input)
+  return CMat.CMatCFragmentSinkRejected(self.issues)
+end
+function CMat.CMatCFragmentExprEmitted:cmat_finish_find_control(input)
+  if self.ty ~= self.state.index.ty then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionTypeMismatch(
+        "find not-found value", self.state.index.ty, self.ty)
+    })
+  end
+  return CMat.CMatCFragmentControlSinkEmitted(CMat.CMatCFragmentBodyFind(
+    self.state, input.control.condition, input.found, input.not_found,
+    C.CBackendAtomLocal(self.state.index.id), self.atom, self.ty))
 end
 function Stencil.StencilSinkOpStore:cmat_fragment_emit_sink(state, sink)
   return state.streams:cmat_fragment_lookup(self.value)
@@ -738,13 +1448,13 @@ function CMat.CMatCBinarySelected:cmat_fragment_update_fold(input)
     state, input.sink, input.operation, input.stream, input.accumulator, input.ty)
   return state.provenance.result:cmat_fragment_finish_fold(finish)
 end
-function Kernel.KernelResult:cmat_fragment_finish_fold(input)
+function Stencil.StencilKernelResultProvenance:cmat_fragment_finish_fold(input)
   return CMat.CMatCFragmentSinkRejected({
     CMat.CMatCEmissionInvalidKernel("fold sink has no reduction kernel result")
   })
 end
-function Kernel.KernelResultReduction:cmat_fragment_finish_fold(input)
-  if self.reduction.op ~= input.operation.reducer.reduction then
+function Stencil.StencilKernelResultReduction:cmat_fragment_finish_fold(input)
+  if self.reduction ~= input.operation.reducer.reduction then
     return CMat.CMatCFragmentSinkRejected({
       CMat.CMatCEmissionInvalidKernel("fold reducer does not match kernel result")
     })
@@ -752,7 +1462,7 @@ function Kernel.KernelResultReduction:cmat_fragment_finish_fold(input)
   local atom = C.CBackendAtomLocal(input.accumulator.id)
   return CMat.CMatCFragmentSinkEmitted(
     input.state, CMat.CMatCControlValue(atom, input.ty), {
-      CMat.CMatCValueMapping(self.reduction.accumulator, input.accumulator),
+      CMat.CMatCValueMapping(self.accumulator, input.accumulator),
     })
 end
 
@@ -837,29 +1547,101 @@ end
 function CMat.CMatCFragmentBoundRejected:cmat_fragment_continue_trip(_continuation)
   return CMat.CMatCFragmentRejected(self.issues)
 end
+function CMat.CMatCFragmentCountedPlan:cmat_fragment_materialization()
+  return self.materialization
+end
+function Code.CodeType:cmat_fragment_validate_window_plan(_input)
+  return CMat.CMatCFragmentStateRejected({
+    CMat.CMatCEmissionInvalidKernel(
+      "window index type is outside signed scalar emission")
+  })
+end
+function Code.CodeTyInt:cmat_fragment_validate_window_plan(input)
+  return self.signedness:cmat_fragment_validate_window_signedness(input)
+end
+function Code.CodeTyIndex:cmat_fragment_validate_window_plan(_input)
+  return CMat.CMatCFragmentStateRejected({
+    CMat.CMatCEmissionInvalidKernel(
+      "initial window emission rejects unsigned CodeTyIndex offsets")
+  })
+end
+function Code.CodeSigned:cmat_fragment_validate_window_signedness(input)
+  return CMat.CMatCFragmentStateReady(input.state)
+end
+function Code.CodeUnsigned:cmat_fragment_validate_window_signedness(_input)
+  return CMat.CMatCFragmentStateRejected({
+    CMat.CMatCEmissionInvalidKernel(
+      "initial window emission requires a signed index type")
+  })
+end
+function CMat.CMatCFragmentWindowPlan:cmat_fragment_materialization()
+  return self.materialization
+end
+function CMat.CMatCFragmentCountedPlan:cmat_fragment_prepare_body(input)
+  return CMat.CMatCFragmentStateReady(input.state)
+end
+function CMat.CMatCFragmentStateRejected:cmat_fragment_install_window(_input)
+  return self
+end
+function CMat.CMatCFragmentStateReady:cmat_fragment_install_window(input)
+  return CMat.CMatCFragmentStateReady(self.state:cmat_fragment_with_window(
+    CMat.CMatCFragmentWindow1D(
+      input.plan.axis, input.plan.window, input.body.start.atom,
+      input.body.trip.atom, input.body.start.ty)))
+end
+function CMat.CMatCFragmentWindowPlan:cmat_fragment_prepare_body(input)
+  if input.start.ty ~= self.materialization.provenance.iteration.index_ty:code_to_c_backend_type()
+      or input.trip.ty ~= input.start.ty then
+    return CMat.CMatCFragmentStateRejected({
+      CMat.CMatCEmissionInvalidKernel(
+        "window start/trip types disagree with exact iteration")
+    })
+  end
+  if self.axis.step ~= 1 or self.axis.order ~= Stencil.StencilProducerForward then
+    return CMat.CMatCFragmentStateRejected({
+      CMat.CMatCEmissionUnsupportedProducer(
+        self.materialization.kernel.computation.producer.shape,
+        "initial window emission requires a forward unit-step axis")
+    })
+  end
+  return self.axis.index_ty:cmat_fragment_validate_window_plan(input)
+:cmat_fragment_install_window(
+  CMat.CMatCFragmentWindowInstallInput(self, input))
+end
 function CMat.CMatCFragmentBoundEmitted:cmat_fragment_continue_trip(continuation)
-  local trip = continuation.materialization.provenance.iteration.trip
-:cmat_fragment_trip(self.state)
+  local materialization = continuation.plan:cmat_fragment_materialization()
+  local trip = materialization.provenance.iteration.trip:cmat_fragment_trip(self.state)
   return trip:cmat_fragment_continue_body(CMat.CMatCFragmentTripContinuation(
-    continuation.materialization, self, trip))
+    continuation.plan, self, trip))
 end
 function CMat.CMatCFragmentBoundRejected:cmat_fragment_continue_body(_continuation)
   return CMat.CMatCFragmentRejected(self.issues)
 end
 function CMat.CMatCFragmentBoundEmitted:cmat_fragment_continue_body(continuation)
-  local materialization = continuation.materialization
-  local step = CMat.CMatCFragmentStateReady(self.state)
+  return continuation.plan:cmat_fragment_prepare_body(
+    CMat.CMatCFragmentPlanBodyInput(
+      self.state, continuation.start, self))
+:cmat_fragment_continue_prepared_body(continuation)
+end
+function CMat.CMatCFragmentStateRejected:cmat_fragment_continue_prepared_body(_continuation)
+  return CMat.CMatCFragmentRejected(self.issues)
+end
+function CMat.CMatCFragmentStateReady:cmat_fragment_continue_prepared_body(continuation)
+  local materialization = continuation.plan:cmat_fragment_materialization()
+  local step = self
   for i = 1, #materialization.provenance.streams.entries do
     step = step:cmat_fragment_apply_stream(materialization.provenance.streams.entries[i])
   end
   if #materialization.kernel.computation.sinks ~= 1 then
     return CMat.CMatCFragmentRejected({
-      CMat.CMatCEmissionInvalidKernel("scalar counted fragment requires exactly one sink")
+      CMat.CMatCEmissionInvalidKernel(
+        "scalar counted fragment requires exactly one sink")
     })
   end
   local body = CMat.CMatCFragmentBodyInput(
-    materialization, self.state, continuation.start, self)
-  return step:cmat_fragment_apply_sink(materialization.kernel.computation.sinks[1])
+    continuation.plan, self.state, continuation.start, continuation.trip)
+  return step:cmat_fragment_apply_sink(
+    materialization.kernel.computation.sinks[1])
 :cmat_fragment_finish_body(body)
 end
 
@@ -867,10 +1649,225 @@ function CMat.CMatCFragmentSinkRejected:cmat_fragment_finish_body(_body)
   return CMat.CMatCFragmentRejected(self.issues)
 end
 function CMat.CMatCFragmentSinkEmitted:cmat_fragment_finish_body(body)
+  return CMat.CMatCFragmentBodyContinue(
+    self.state, self.control, self.value_mappings)
+:cmat_fragment_finish_body_plan(body)
+end
+function CMat.CMatCFragmentBodyContinue:cmat_fragment_finish_body_plan(body)
   local loop = CMat.CMatCCountedLoopAssemblyInput(
     self.state, body.start, body.trip, self)
   return self.state.request.exits:cmat_fragment_lookup(CMat.CMatCExitNormal)
 :cmat_fragment_finish_counted(loop)
+end
+function CMat.CMatCFragmentControlSinkEmitted:cmat_fragment_finish_body(body)
+  return self.body:cmat_fragment_finish_body_plan(body)
+end
+function CMat.CMatCExitBindingFound:cmat_control_mapping()
+  return CMat.CMatCControlExitMapping(
+    self.entry.role, self.entry.destination, self.entry.label)
+end
+function CMat.CMatCFragmentBodyFind:cmat_fragment_finish_body_plan(body)
+  local collection = CMat.CMatCExitArgumentCollectionReady({})
+  local control = CMat.CMatCControlValue(self.found_value, self.ty)
+  for i = 1, #self.found.entry.args do
+    collection = self.found.entry.args[i]:cmat_fragment_exit_atom(
+      CMat.CMatCExitArgumentInput(self.state, control))
+:cmat_fragment_collect_exit(collection)
+  end
+  return collection:cmat_finish_find_found(
+    CMat.CMatCFindExitCollectionInput(self, body.start, body.trip, collection))
+end
+function CMat.CMatCExitArgumentCollectionRejected:cmat_finish_find_found(_input)
+  return CMat.CMatCFragmentRejected(self.issues)
+end
+function CMat.CMatCExitArgumentCollectionReady:cmat_finish_find_found(input)
+  local collection = CMat.CMatCExitArgumentCollectionReady({})
+  local control = CMat.CMatCControlValue(
+    input.body.not_found_value, input.body.ty)
+  for i = 1, #input.body.not_found.entry.args do
+    collection = input.body.not_found.entry.args[i]:cmat_fragment_exit_atom(
+      CMat.CMatCExitArgumentInput(input.body.state, control))
+:cmat_fragment_collect_exit(collection)
+  end
+  return collection:cmat_finish_find_not_found(CMat.CMatCFindLoopAssemblyInput(
+    input.body, input.start, input.trip, self, collection))
+end
+function CMat.CMatCExitArgumentCollectionRejected:cmat_finish_find_not_found(_input)
+  return CMat.CMatCFragmentRejected(self.issues)
+end
+function CMat.CMatCExitArgumentCollectionReady:cmat_finish_find_not_found(input)
+  local body = input.body
+  local control = CMat.CMatCControlFind(
+    body.condition, body.found:cmat_control_mapping(),
+    body.not_found:cmat_control_mapping(), body.found_value,
+    body.not_found_value, body.ty)
+  return CMat.CMatCControlLoopAssemblyInput(
+    body.state, input.start, input.trip, body.condition,
+    CMat.CMatCControlContinueWhenFalse, body.found, body.not_found,
+    input.found.values, self.values, control):cmat_fragment_assemble_control_loop()
+end
+function CMat.CMatCFragmentBodyAll:cmat_fragment_finish_body_plan(body)
+  local control = CMat.CMatCControlAll(
+    self.condition, self.success:cmat_control_mapping(),
+    self.failure:cmat_control_mapping())
+  return CMat.CMatCControlLoopAssemblyInput(
+    self.state, body.start, body.trip, self.condition,
+    CMat.CMatCControlContinueWhenTrue, self.failure, self.success, {}, {}, control)
+:cmat_fragment_assemble_control_loop()
+end
+function CMat.CMatCFragmentBodyAllCompare:cmat_fragment_finish_body_plan(body)
+  local control = CMat.CMatCControlAllCompare(
+    self.condition, self.success:cmat_control_mapping(),
+    self.failure:cmat_control_mapping())
+  return CMat.CMatCControlLoopAssemblyInput(
+    self.state, body.start, body.trip, self.condition,
+    CMat.CMatCControlContinueWhenTrue, self.failure, self.success, {}, {}, control)
+:cmat_fragment_assemble_control_loop()
+end
+function CMat.CMatCFragmentBodyAny:cmat_fragment_finish_body_plan(body)
+  local control = CMat.CMatCControlAny(
+    self.condition, self.success:cmat_control_mapping(),
+    self.failure:cmat_control_mapping())
+  return CMat.CMatCControlLoopAssemblyInput(
+    self.state, body.start, body.trip, self.condition,
+    CMat.CMatCControlContinueWhenFalse, self.success, self.failure, {}, {}, control)
+:cmat_fragment_assemble_control_loop()
+end
+function CMat.CMatCControlContinueWhenTrue:cmat_control_body_term(input)
+  return C.CBackendIfGoto(
+    input.condition, input.advance, {}, input.early, input.early_args)
+end
+function CMat.CMatCControlContinueWhenFalse:cmat_control_body_term(input)
+  return C.CBackendIfGoto(
+    input.condition, input.early, input.early_args, input.advance, {})
+end
+function CMat.CMatCCodeBlockMissing:cmat_validate_control_exit(_input)
+  return CMat.CMatCControlExitRejected(CMat.CMatCEmissionInvalidExit(
+    self.block, "control exit destination is absent from the owning function"))
+end
+function CMat.CMatCCodeBlockFound:cmat_validate_control_exit(input)
+  if #input.arguments ~= #self.block.params then
+    return CMat.CMatCControlExitRejected(CMat.CMatCEmissionInvalidExit(
+      self.block.id, "control exit argument count does not match block parameters"))
+  end
+  for i = 1, #input.arguments do
+    local expected = self.block.params[i].ty:code_to_c_backend_type()
+    if input.arguments[i].ty ~= expected then
+      return CMat.CMatCControlExitRejected(CMat.CMatCEmissionTypeMismatch(
+        "control exit argument", expected, input.arguments[i].ty))
+    end
+  end
+  return CMat.CMatCControlExitValid
+end
+function CMat.CMatCControlExitRejected:cmat_validate_second_control_exit(_input)
+  return CMat.CMatCControlAssemblyRejected({ self.issue })
+end
+function CMat.CMatCControlExitValid:cmat_validate_second_control_exit(input)
+  return input.exhausted:cmat_finish_control_exit_validation(input.assembly)
+end
+function CMat.CMatCControlExitRejected:cmat_finish_control_exit_validation(_assembly)
+  return CMat.CMatCControlAssemblyRejected({ self.issue })
+end
+function CMat.CMatCControlExitValid:cmat_finish_control_exit_validation(assembly)
+  return CMat.CMatCControlAssemblyValid(assembly)
+end
+function CMat.CMatCControlLoopAssemblyInput:cmat_validate_control_assembly()
+  local early = self.state.request.code_func
+:cmat_fragment_block_lookup(self.early.entry.destination)
+:cmat_validate_control_exit(CMat.CMatCControlExitValidationInput(self.early_args))
+  local exhausted = self.state.request.code_func
+:cmat_fragment_block_lookup(self.exhausted.entry.destination)
+:cmat_validate_control_exit(CMat.CMatCControlExitValidationInput(self.exhausted_args))
+  return early:cmat_validate_second_control_exit(
+    CMat.CMatCControlExitPairValidationInput(self, exhausted))
+end
+function CMat.CMatCControlLoopAssemblyInput:cmat_fragment_assemble_control_loop()
+  return self:cmat_validate_control_assembly()
+:cmat_fragment_assemble_control_loop()
+end
+function CMat.CMatCControlAssemblyRejected:cmat_fragment_assemble_control_loop()
+  return CMat.CMatCFragmentRejected(self.issues)
+end
+function CMat.CMatCControlAssemblyValid:cmat_fragment_assemble_control_loop()
+  local self = self.assembly
+  local early_atoms, exhausted_atoms = {}, {}
+  for i = 1, #self.early_args do early_atoms[i] = self.early_args[i].atom end
+  for i = 1, #self.exhausted_args do exhausted_atoms[i] = self.exhausted_args[i].atom end
+  local state = self.state
+  local iteration = state.provenance.iteration
+  local index_ty = state.index.ty
+  if self.start.ty ~= index_ty or self.trip.ty ~= index_ty then
+    return CMat.CMatCFragmentRejected({
+      CMat.CMatCEmissionTypeMismatch(
+        "control loop bound", index_ty, self.start.ty)
+    })
+  end
+  local test_cond = state:cmat_fragment_allocate("test", C.CBackendBool8)
+  state = test_cond.state
+  local advance_cond = state:cmat_fragment_allocate("advance", C.CBackendBool8)
+  state = advance_cond.state
+  local ordinal_add = state:cmat_fragment_add_helper(
+    C.CBackendHelperIntBinary(Core.BinAdd, index_ty, C.CBackendIntWrap))
+  state = ordinal_add.state
+  local index_step = state:cmat_fragment_add_helper(
+    C.CBackendHelperIntBinary(
+      iteration.order:cmat_fragment_step_op(), index_ty, C.CBackendIntWrap))
+  state = index_step.state
+  local ns = state.request.namespace.prefix
+  local entry_label = C.CBackendLabel(ns .. "_entry")
+  local test_label = C.CBackendLabel(ns .. "_test")
+  local body_label = C.CBackendLabel(ns .. "_body")
+  local advance_label = C.CBackendLabel(ns .. "_advance")
+  local step_label = C.CBackendLabel(ns .. "_step")
+  local zero = C.CBackendAtomLiteral(index_ty, Core.LitInt("0"))
+  local one = C.CBackendAtomLiteral(index_ty, Core.LitInt("1"))
+  local magnitude = C.CBackendAtomLiteral(
+    index_ty, Core.LitInt(tostring(iteration.step_magnitude)))
+  local entry_stmts = copy(state.entry_stmts)
+  entry_stmts[#entry_stmts + 1] = C.CBackendAssign(
+    state.index.id, C.CBackendRAtom(self.start.atom))
+  entry_stmts[#entry_stmts + 1] = C.CBackendAssign(
+    state.ordinal.id, C.CBackendRAtom(zero))
+  local test_stmts = { C.CBackendAssign(test_cond.c_local.id, C.CBackendRCompare(
+    Core.CmpLt, index_ty, C.CBackendAtomLocal(state.ordinal.id), self.trip.atom)) }
+  local advance_stmts = {
+    C.CBackendHelperCall(state.ordinal.id, ordinal_add.helper,
+      { C.CBackendAtomLocal(state.ordinal.id), one }),
+    C.CBackendAssign(advance_cond.c_local.id, C.CBackendRCompare(
+      Core.CmpLt, index_ty, C.CBackendAtomLocal(state.ordinal.id), self.trip.atom)),
+  }
+  local step_stmts = { C.CBackendHelperCall(state.index.id, index_step.helper,
+    { C.CBackendAtomLocal(state.index.id), magnitude }) }
+  local body_term = self.polarity:cmat_control_body_term(
+    CMat.CMatCControlBodyTermInput(
+      self.condition, advance_label, self.early.entry.label, early_atoms))
+  local blocks = {
+    C.CBackendBlock(entry_label, {}, entry_stmts, C.CBackendGoto(test_label, {})),
+    C.CBackendBlock(test_label, {}, test_stmts, C.CBackendIfGoto(
+      C.CBackendAtomLocal(test_cond.c_local.id), body_label, {},
+      self.exhausted.entry.label, exhausted_atoms)),
+  }
+  for i = 1, #state.cfg.completed do blocks[#blocks + 1] = state.cfg.completed[i] end
+  blocks[#blocks + 1] = C.CBackendBlock(
+    state.cfg.open.label, state.cfg.open.params, state.cfg.open.stmts, body_term)
+  blocks[#blocks + 1] = C.CBackendBlock(advance_label, {}, advance_stmts, C.CBackendIfGoto(
+    C.CBackendAtomLocal(advance_cond.c_local.id), step_label, {},
+    self.exhausted.entry.label, exhausted_atoms))
+  blocks[#blocks + 1] = C.CBackendBlock(
+    step_label, {}, step_stmts, C.CBackendGoto(body_label, {}))
+  local alignments = {}
+  for i = 1, #state.request.covered_blocks do
+    local source = state.request.covered_blocks[i]
+    if source == state.request.replacement_source then
+      alignments[#alignments + 1] = CMat.CMatCBlockReplacementEntry(source, entry_label)
+    else
+      alignments[#alignments + 1] = CMat.CMatCBlockEliminated(source)
+    end
+  end
+  return CMat.CMatCFragmentEmitted(CMat.CMatCFragment(
+    entry_label, blocks, state.locals, state.helpers, alignments, {
+      CMat.CMatCValueMapping(iteration.counter, state.index),
+    }, self.control))
 end
 function Stencil.StencilProducerForward:cmat_fragment_step_op() return Core.BinAdd end
 function Stencil.StencilProducerBackward:cmat_fragment_step_op() return Core.BinSub end
@@ -936,7 +1933,7 @@ end
 function CMat.CMatCControlValue:cmat_fragment_control_atom()
   return CMat.CMatCAtomEmitted(self.atom, self.ty)
 end
-function CMat.CMatCControlBranch:cmat_fragment_control_atom()
+function CMat.CMatCControlResult:cmat_fragment_control_atom()
   return CMat.CMatCAtomRejected(CMat.CMatCEmissionInvalidKernel(
     "branch control cannot be used as a scalar exit argument"))
 end
@@ -971,7 +1968,7 @@ function CMat.CMatCExitBindingFound:cmat_fragment_finish_counted(input)
   local collection = CMat.CMatCExitArgumentCollectionReady({})
   for i = 1, #self.entry.args do
     collection = self.entry.args[i]:cmat_fragment_exit_atom(
-      CMat.CMatCExitArgumentInput(input.state, input.sink.control))
+      CMat.CMatCExitArgumentInput(input.state, input.body.control))
 :cmat_fragment_collect_exit(collection)
   end
   return collection:cmat_fragment_finish_exit(
@@ -982,7 +1979,7 @@ function CMat.CMatCExitArgumentCollectionRejected:cmat_fragment_finish_exit(_con
 end
 function CMat.CMatCExitArgumentCollectionReady:cmat_fragment_finish_exit(context)
   return context.loop.state.request.code_func
-:cmat_fragment_block_lookup(context.exit.entry.source)
+:cmat_fragment_block_lookup(context.exit.entry.destination)
 :cmat_fragment_validate_exit(CMat.CMatCTypedExitAssemblyInput(context, self))
 end
 function CMat.CMatCCodeBlockMissing:cmat_fragment_validate_exit(_input)
@@ -1070,11 +2067,15 @@ function CMat.CMatCExitArgumentCollectionReady:cmat_fragment_build_exit(context)
     C.CBackendBlock(entry_label, {}, entry_stmts, C.CBackendGoto(test_label, {})),
     C.CBackendBlock(test_label, {}, test_stmts, C.CBackendIfGoto(
       C.CBackendAtomLocal(test_cond.c_local.id), body_label, {}, exit.label, exit_args)),
-    C.CBackendBlock(body_label, {}, state.body_stmts, C.CBackendGoto(advance_label, {})),
-    C.CBackendBlock(advance_label, {}, advance_stmts, C.CBackendIfGoto(
-      C.CBackendAtomLocal(advance_cond.c_local.id), step_label, {}, exit.label, exit_args)),
-    C.CBackendBlock(step_label, {}, step_stmts, C.CBackendGoto(body_label, {})),
   }
+  for i = 1, #state.cfg.completed do blocks[#blocks + 1] = state.cfg.completed[i] end
+  blocks[#blocks + 1] = C.CBackendBlock(
+    state.cfg.open.label, state.cfg.open.params, state.cfg.open.stmts,
+    C.CBackendGoto(advance_label, {}))
+  blocks[#blocks + 1] = C.CBackendBlock(advance_label, {}, advance_stmts, C.CBackendIfGoto(
+    C.CBackendAtomLocal(advance_cond.c_local.id), step_label, {}, exit.label, exit_args))
+  blocks[#blocks + 1] = C.CBackendBlock(
+    step_label, {}, step_stmts, C.CBackendGoto(body_label, {}))
   local alignments = {}
   for i = 1, #state.request.covered_blocks do
     local source = state.request.covered_blocks[i]
@@ -1084,11 +2085,11 @@ function CMat.CMatCExitArgumentCollectionReady:cmat_fragment_build_exit(context)
       alignments[#alignments + 1] = CMat.CMatCBlockEliminated(source)
     end
   end
-  local mappings = copy(input.sink.value_mappings)
+  local mappings = copy(input.body.value_mappings)
   mappings[#mappings + 1] = CMat.CMatCValueMapping(iteration.counter, state.index)
   return CMat.CMatCFragmentEmitted(CMat.CMatCFragment(
     entry_label, blocks, state.locals, state.helpers, alignments,
-    mappings, input.sink.control))
+    mappings, input.body.control))
 end
 
 
@@ -1098,23 +2099,379 @@ function Stencil.StencilProducerShape:cmat_fragment_shape(_materialization, _sta
       self, "producer is outside exact scalar counted fragment emission")
   })
 end
+function Stencil.StencilKernelCountedDomain1D:cmat_fragment_window_plan(input)
+  return CMat.CMatCFragmentRejected({
+    CMat.CMatCEmissionUnsupportedProducer(
+      input.shape, "window producer lacks exact window provenance")
+  })
+end
+function Stencil.StencilKernelCountedWindow1D:cmat_fragment_window_plan(input)
+  local iteration = input.materialization.provenance.iteration
+  if self.source.domain ~= Flow.FlowDomainLoop(iteration.loop)
+      or self.window.before < 0 or self.window.after < 0
+      or self.window.before ~= math.floor(self.window.before)
+      or self.window.after ~= math.floor(self.window.after) then
+    return CMat.CMatCFragmentRejected({
+      CMat.CMatCEmissionUnsupportedProducer(
+        input.shape, "window provenance has an invalid domain or extent")
+    })
+  end
+  if self.window ~= input.shape.window then
+    return CMat.CMatCFragmentRejected({
+      CMat.CMatCEmissionUnsupportedProducer(
+        input.shape, "window producer disagrees with provenance")
+    })
+  end
+  if input.shape.index_ty ~= iteration.index_ty
+      or input.shape.step ~= iteration.step_magnitude
+      or input.shape.order ~= iteration.order
+      or input.shape.stop_convention ~= iteration.stop_convention
+      or input.shape.trip ~= iteration.trip then
+    return CMat.CMatCFragmentRejected({
+      CMat.CMatCEmissionUnsupportedProducer(
+        input.shape, "window producer disagrees with exact counted iteration")
+    })
+  end
+  local axis = Stencil.StencilProducerAxis(
+    input.shape.index_ty, input.shape.start, input.shape.stop,
+    input.shape.step, input.shape.order, Stencil.StencilIndexAnonymous)
+  local start = input.shape.start:cmat_fragment_bound(input.state)
+  return start:cmat_fragment_continue_trip(
+    CMat.CMatCFragmentStartContinuation(
+      CMat.CMatCFragmentWindowPlan(
+        input.materialization, axis, input.shape.window), start))
+end
+function Stencil.StencilProduceCountedWindow1D:cmat_fragment_shape(materialization, state)
+  return materialization.provenance.domain:cmat_fragment_window_plan(
+    CMat.CMatCFragmentWindowPlanInput(materialization, state, self))
+end
 function Stencil.StencilProduceCountedRange1D:cmat_fragment_shape(materialization, state)
   local start = self.start:cmat_fragment_bound(state)
   return start:cmat_fragment_continue_trip(
-    CMat.CMatCFragmentStartContinuation(materialization, start))
+    CMat.CMatCFragmentStartContinuation(
+      CMat.CMatCFragmentCountedPlan(materialization), start))
+end
+function Stencil.StencilKernelResultVoid:cmat_expected_result_sink()
+  return CMat.CMatCResultSinkNotRequired
+end
+function Stencil.StencilKernelResultReduction:cmat_expected_result_sink()
+  return CMat.CMatCResultSinkNotRequired
+end
+function Stencil.StencilKernelResultAll:cmat_expected_result_sink()
+  return CMat.CMatCResultSinkRequired(Stencil.StencilSinkDef(
+    self.sink, Stencil.StencilSinkOpAll(self.src, self.pred)))
+end
+function Stencil.StencilKernelResultAny:cmat_expected_result_sink()
+  return CMat.CMatCResultSinkRequired(Stencil.StencilSinkDef(
+    self.sink, Stencil.StencilSinkOpAny(self.src, self.pred)))
+end
+function Stencil.StencilKernelResultAllCompare:cmat_expected_result_sink()
+  return CMat.CMatCResultSinkRequired(Stencil.StencilSinkDef(
+    self.sink, Stencil.StencilSinkOpAllCompare(self.left, self.right, self.cmp)))
+end
+function Stencil.StencilKernelResultFind:cmat_expected_result_sink()
+  return CMat.CMatCResultSinkRequired(Stencil.StencilSinkDef(
+    self.sink, Stencil.StencilSinkOpFind(
+      self.src, self.pred, self.not_found_value)))
+end
+function CMat.CMatCResultSinkNotRequired:cmat_validate_result_sink(input)
+  return input.collection
+end
+function CMat.CMatCResultSinkRequired:cmat_validate_result_sink(input)
+  local count = 0
+  for i = 1, #input.computation.sinks do
+    if input.computation.sinks[i] == self.sink then count = count + 1 end
+  end
+  if count == 1 then return input.collection end
+  local issues = copy(input.collection.issues)
+  issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+    "control result provenance lacks one exact computation sink")
+  return CMat.CMatCMaterializationIssueCollection(issues)
+end
+local function validate_result_stream(input, stream, value)
+  local count = 0
+  for i = 1, #input.streams.entries do
+    local entry = input.streams.entries[i]
+    if entry.definition.id == stream.stream and entry.source == value then
+      count = count + 1
+    end
+  end
+  if count == 1 then return input.collection end
+  local issues = copy(input.collection.issues)
+  issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+    "kernel result source lacks one exact provenance stream relation")
+  return CMat.CMatCMaterializationIssueCollection(issues)
+end
+function Stencil.StencilKernelResultVoid:cmat_validate_result_streams(input)
+  return input.collection
+end
+function Stencil.StencilKernelResultReduction:cmat_validate_result_streams(input)
+  return validate_result_stream(input, self.stream, self.accumulator)
+end
+function Stencil.StencilKernelResultAll:cmat_validate_result_streams(input)
+  return validate_result_stream(input, self.src, self.src_value)
+end
+function Stencil.StencilKernelResultAny:cmat_validate_result_streams(input)
+  return validate_result_stream(input, self.src, self.src_value)
+end
+function Stencil.StencilKernelResultFind:cmat_validate_result_streams(input)
+  return validate_result_stream(input, self.src, self.src_value)
+end
+function Stencil.StencilKernelResultAllCompare:cmat_validate_result_streams(input)
+  local collection = validate_result_stream(input, self.left, self.left_value)
+  return validate_result_stream(
+    CMat.CMatCMaterializationStreamValidationInput(input.streams, collection),
+    self.right, self.right_value)
 end
 
+function C.CBackendType:cmat_fragment_size(_target) return 0 end
+function C.CBackendScalar:cmat_fragment_size(target)
+  return self.scalar:cmat_fragment_size(target)
+end
+function C.CBackendDataPtr:cmat_fragment_size(target)
+  return target.pointer_bits / 8
+end
+function Core.Scalar:cmat_fragment_size(_target) return 0 end
+function Core.ScalarBool:cmat_fragment_size(_target) return 1 end
+function Core.ScalarI8:cmat_fragment_size(_target) return 1 end
+function Core.ScalarU8:cmat_fragment_size(_target) return 1 end
+function Core.ScalarI16:cmat_fragment_size(_target) return 2 end
+function Core.ScalarU16:cmat_fragment_size(_target) return 2 end
+function Core.ScalarI32:cmat_fragment_size(_target) return 4 end
+function Core.ScalarU32:cmat_fragment_size(_target) return 4 end
+function Core.ScalarF32:cmat_fragment_size(_target) return 4 end
+function Core.ScalarI64:cmat_fragment_size(_target) return 8 end
+function Core.ScalarU64:cmat_fragment_size(_target) return 8 end
+function Core.ScalarF64:cmat_fragment_size(_target) return 8 end
+function Core.ScalarIndex:cmat_fragment_size(target)
+  return target.index_bits / 8
+end
+function Stencil.StencilAccessLayout:cmat_fragment_direct_stride() return 0 end
+function Stencil.StencilAccessDirect:cmat_fragment_direct_stride()
+  return self.base:cmat_fragment_direct_stride()
+end
+function Stencil.StencilAccessLayoutBase:cmat_fragment_direct_stride() return 0 end
+function Stencil.StencilLayoutContiguous:cmat_fragment_direct_stride()
+  return self.stride
+end
+
+function CMat.CMatMaterializedKernelFragment:cmat_validate_fragment_materialization(request)
+  local computation = self.kernel.computation
+  local collection = self.provenance.result:cmat_expected_result_sink()
+:cmat_validate_result_sink(CMat.CMatCMaterializationSinkValidationInput(
+    computation, CMat.CMatCMaterializationIssueCollection({})))
+  collection = self.provenance.result:cmat_validate_result_streams(
+    CMat.CMatCMaterializationStreamValidationInput(
+      self.provenance.streams, collection))
+  local issues = copy(collection.issues)
+  local iteration = self.provenance.iteration
+  local expected_loop = CMat.CMatLoopNest({
+    CMat.CMatLoopAxis(
+      Stencil.StencilAxisRef(1), CMat.CMatLocalId("i1"),
+      iteration.index_ty, iteration.step_magnitude,
+      iteration.order:cmat_loop_order()),
+  }, computation.schedule:cmat_schedule_policy())
+  if self.kernel.loop ~= expected_loop
+      or self.kernel.schedule ~= computation.schedule then
+    issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+      "CMat loop or schedule plan disagrees with exact kernel provenance")
+  end
+  if #self.kernel.proofs ~= #computation.proofs then
+    issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+      "CMat proof plan disagrees with the computation")
+  else
+    for i = 1, #self.kernel.proofs do
+      if self.kernel.proofs[i] ~= computation.proofs[i] then
+        issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+          "CMat proof plan disagrees with the computation")
+      end
+    end
+  end
+  for i = 1, #computation.streams do
+    local count = 0
+    for j = 1, #self.provenance.streams.entries do
+      if self.provenance.streams.entries[j].definition == computation.streams[i] then
+        count = count + 1
+      end
+    end
+    if count ~= 1 then
+      issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+        "computation stream lacks one exact provenance relation")
+    end
+  end
+  for i = 1, #self.provenance.streams.entries do
+    local count = 0
+    for j = 1, #computation.streams do
+      if computation.streams[j] == self.provenance.streams.entries[i].definition then
+        count = count + 1
+      end
+    end
+    if count ~= 1 then
+      issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+        "provenance stream is absent or duplicated in the computation")
+    end
+  end
+  for i = 1, #computation.accesses do
+    local count = 0
+    for j = 1, #self.provenance.accesses.entries do
+      if self.provenance.accesses.entries[j].access == computation.accesses[i] then
+        count = count + 1
+      end
+    end
+    if count ~= 1 then
+      issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+        "computation access lacks one exact lane provenance relation")
+    end
+  end
+  for i = 1, #self.provenance.accesses.entries do
+    local count = 0
+    for j = 1, #computation.accesses do
+      if computation.accesses[j] == self.provenance.accesses.entries[i].access then
+        count = count + 1
+      end
+    end
+    if count ~= 1 then
+      issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+        "lane provenance access is absent or duplicated in the computation")
+    end
+  end
+  for i = 1, #computation.streams do
+    local expected = computation.streams[i]:cmat_stream_materialization()
+    local count = 0
+    for j = 1, #self.kernel.streams do
+      if self.kernel.streams[j] == expected then count = count + 1 end
+    end
+    if count ~= 1 then
+      issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+        "CMat stream plan lacks one exact computation stream")
+    end
+  end
+  for i = 1, #self.kernel.streams do
+    local count = 0
+    for j = 1, #computation.streams do
+      if self.kernel.streams[i] == computation.streams[j]:cmat_stream_materialization() then
+        count = count + 1
+      end
+    end
+    if count ~= 1 then
+      issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+        "CMat stream plan entry has no exact computation stream")
+    end
+  end
+  for i = 1, #computation.sinks do
+    local expected = computation.sinks[i]:cmat_sink_materialization()
+    local count = 0
+    for j = 1, #self.kernel.sinks do
+      if self.kernel.sinks[j] == expected then count = count + 1 end
+    end
+    if count ~= 1 then
+      issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+        "CMat sink plan lacks one exact computation sink")
+    end
+  end
+  for i = 1, #self.kernel.sinks do
+    local count = 0
+    for j = 1, #computation.sinks do
+      if self.kernel.sinks[i] == computation.sinks[j]:cmat_sink_materialization() then
+        count = count + 1
+      end
+    end
+    if count ~= 1 then
+      issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+        "CMat sink plan entry has no exact computation sink")
+    end
+  end
+  for i = 1, #computation.accesses do
+    local expected = computation.accesses[i]:cmat_canonical_binding(
+      CMat.CMatAccessBindingInput(CMat.CMatLocalId(computation.accesses[i].name)))
+    local count = 0
+    for j = 1, #self.kernel.accesses do
+      if self.kernel.accesses[j] == expected then
+        count = count + 1
+      end
+    end
+    if count ~= 1 then
+      issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+        "CMat access plan lacks one exact computation access")
+    end
+  end
+  for i = 1, #self.kernel.accesses do
+    local count = 0
+    for j = 1, #computation.accesses do
+      local expected = computation.accesses[j]:cmat_canonical_binding(
+        CMat.CMatAccessBindingInput(
+          CMat.CMatLocalId(computation.accesses[j].name)))
+      if expected == self.kernel.accesses[i] then
+        count = count + 1
+      end
+    end
+    if count ~= 1 then
+      issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+        "CMat access plan entry has no exact computation access")
+    end
+  end
+  for i = 1, #request.accesses.entries do
+    local binding = request.accesses.entries[i]
+    local matches = 0
+    for j = 1, #self.provenance.accesses.entries do
+      local provenance = self.provenance.accesses.entries[j]
+      local expected_ty = provenance.access.ty:code_to_c_backend_type()
+      local expected_size = expected_ty:cmat_fragment_size(request.target)
+      local expected_stride = provenance.access.layout:cmat_fragment_direct_stride()
+      local alignment_matches = 0
+      for k = 1, #provenance.lane.backend_info do
+        local info = provenance.lane.backend_info[k]
+        if info.access == binding.mem_access
+            and info.alignment == binding.alignment then
+          alignment_matches = alignment_matches + 1
+        end
+      end
+      if provenance.lane.id == binding.lane
+          and provenance.access.name == binding.access.name
+          and binding.elem_size == expected_size
+          and binding.stride == expected_stride
+          and expected_size > 0 and expected_stride > 0
+          and alignment_matches == 1 then
+        for k = 1, #provenance.lane.accesses do
+          if provenance.lane.accesses[k] == binding.mem_access then
+            matches = matches + 1
+          end
+        end
+      end
+    end
+    if matches ~= 1 then
+      issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+        "fragment access disagrees with lane and memory provenance")
+    end
+  end
+  if #issues ~= 0 then
+    return CMat.CMatCFragmentMaterializationRejected(issues)
+  end
+  return CMat.CMatCFragmentMaterializationValid(self)
+end
 function CMat.CMatMaterializedKernelFragment:cmat_emit_fragment(request)
-  local index_ty = self.provenance.iteration.index_ty:code_to_c_backend_type()
+  return self:cmat_validate_fragment_materialization(request)
+:cmat_emit_valid_fragment(request)
+end
+function CMat.CMatCFragmentMaterializationRejected:cmat_emit_valid_fragment(_request)
+  return CMat.CMatCFragmentRejected(self.issues)
+end
+function CMat.CMatCFragmentMaterializationValid:cmat_emit_valid_fragment(request)
+  local materialization = self.materialization
+  local index_ty = materialization.provenance.iteration.index_ty:code_to_c_backend_type()
   local index_id = C.CBackendLocalId(request.namespace.prefix .. "_index")
   local ordinal_id = C.CBackendLocalId(request.namespace.prefix .. "_ordinal")
   local index = C.CBackendLocal(index_id, C.CBackendName(index_id.text), index_ty)
   local ordinal = C.CBackendLocal(ordinal_id, C.CBackendName(ordinal_id.text), index_ty)
   local state = CMat.CMatCFragmentState(
-    request, self.provenance, index, ordinal,
+    request, materialization.provenance, index, ordinal,
     request.values:cmat_fragment_values(), CMat.CMatCFragmentStreamProjection({}),
-    { index, ordinal }, {}, {}, {}, 1):cmat_fragment_seed_counter()
-  return self.kernel.computation.producer.shape:cmat_fragment_shape(self, state)
+    CMat.CMatCFragmentNoWindow, { index, ordinal }, {},
+    CMat.CMatCFragmentCFG({}, CMat.CMatCOpenBlock(
+      C.CBackendLabel(request.namespace.prefix .. "_body"), {}, {}), 1),
+    {}, 1):cmat_fragment_seed_counter()
+  return materialization.kernel.computation.producer.shape:cmat_fragment_shape(
+    materialization, state)
 end
 function CMat.CMatRejectedKernelFragment:cmat_emit_fragment(_request)
   local issues = {}
@@ -1143,6 +2500,14 @@ local function has_id(ids, id)
   for i = 1, #ids do if ids[i] == id then return true end end
   return false
 end
+local function collides_with_generated_label(text, prefix)
+  return text == prefix .. "_entry"
+      or text == prefix .. "_test"
+      or text == prefix .. "_body"
+      or text == prefix .. "_advance"
+      or text == prefix .. "_step"
+      or text:sub(1, #prefix + 8) == prefix .. "_window_"
+end
 
 function CMat.CMatCFragmentInput:cmat_fragment_validate()
   local issues = {}
@@ -1164,13 +2529,28 @@ function CMat.CMatCFragmentInput:cmat_fragment_validate()
     end
   end
   for i = 1, #self.exits.entries do
-    local source = self.exits.entries[i].source
-    if not has_block(self.code_func.blocks, source) then
+    local destination = self.exits.entries[i].destination
+    if not has_block(self.code_func.blocks, destination) then
       issues[#issues + 1] = CMat.CMatCEmissionInvalidExit(
-        source, "exit source is absent from the owning function")
-    elseif has_id(self.covered_blocks, source) then
+        destination, "exit destination is absent from the owning function")
+    elseif has_id(self.covered_blocks, destination) then
       issues[#issues + 1] = CMat.CMatCEmissionInvalidExit(
-        source, "exit source is inside the replaced cover")
+        destination, "exit destination is inside the replaced cover")
+    end
+  end
+  local generated_prefix = self.namespace.prefix
+  for i = 1, #self.reserved_labels do
+    if collides_with_generated_label(
+        self.reserved_labels[i].text, generated_prefix) then
+      issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+        "fragment namespace collides with a reserved function label")
+    end
+  end
+  for i = 1, #self.exits.entries do
+    local label = self.exits.entries[i].label.text
+    if collides_with_generated_label(label, generated_prefix) then
+      issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
+        "fragment namespace collides with an exit label")
     end
   end
   if #issues ~= 0 then return CMat.CMatCFragmentInputRejected(issues) end

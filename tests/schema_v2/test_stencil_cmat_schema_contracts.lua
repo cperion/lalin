@@ -32,7 +32,7 @@ assert(field_names(Stencil.StencilKernelIterationInput) ==
 assert(field_names(Stencil.StencilKernelScheduleConversionInput) ==
   "kernel,schedule,compiler,target,accesses,result")
 assert(field_names(Stencil.StencilKernelConstructionState) ==
-  "kernel,iteration,producer,access_by_lane,stream_by_value,sinks,deferred_reductions,legality,proofs,next_stream_ordinal")
+  "kernel,iteration,domain,producer,access_by_lane,stream_by_value,result_streams,sinks,deferred_reductions,legality,proofs,next_stream_ordinal")
 assert(Stencil.StencilKernelLoopFactFound and Stencil.StencilKernelLoopFactMissing and
   Stencil.StencilKernelLoopFactAmbiguous)
 assert(Stencil.StencilKernelSemanticIterationFound and
@@ -64,7 +64,8 @@ assert(Stencil.StencilKernelModuleProjected and
   Stencil.StencilKernelModuleProjectionRejected)
 assert(Stencil.StencilKernelModuleProjectedEntry and
   Stencil.StencilKernelModuleRejectedEntry)
-assert(Stencil.StencilProduceCountedRange1D)
+assert(Stencil.StencilProduceCountedRange1D and
+  Stencil.StencilProduceCountedWindow1D)
 assert(Stencil.StencilStreamValueExpr)
 assert(Stencil.StencilKernelSinkDeferredToResult)
 assert(Stencil.StencilBoundDynamic and Stencil.StencilBoundValue)
@@ -73,9 +74,9 @@ assert(Stencil.StencilReadonlyFact and Stencil.StencilUnitStrideFact)
 assert(Stencil.StencilScheduleCandidateNoPlan and Stencil.StencilScheduleCandidatePlanned)
 
 assert(field_names(Stencil.StencilKernelProvenanceFacet) ==
-  "kernel,iteration,accesses,streams,result")
+  "kernel,iteration,domain,accesses,streams,result")
 assert(field_names(CMat.CMatCFragmentInput) ==
-  "materialization,code_func,covered_blocks,replacement_source,target,values,accesses,exits,namespace")
+  "materialization,code_func,covered_blocks,replacement_source,target,values,accesses,exits,namespace,reserved_labels")
 assert(field_names(CMat.CMatCFragment) ==
   "entry,blocks,locals,helpers,block_alignments,value_mappings,control")
 assert(CMat.CMatMaterializedKernelFragment and CMat.CMatRejectedKernelFragment)
@@ -89,8 +90,12 @@ assert(CMat.CMatCFragmentState and CMat.CMatCFragmentExprEmitted and
   CMat.CMatCFragmentExprRejected)
 assert(CMat.CMatCFragmentStateReady and CMat.CMatCFragmentStateRejected)
 assert(CMat.CMatCFragmentSinkEmitted and CMat.CMatCFragmentSinkRejected)
-assert(CMat.CMatWindowIndexInBounds and CMat.CMatWindowIndexClamped)
-assert(CMat.CMatWindowIndexWrapped and CMat.CMatWindowIndexZero and CMat.CMatWindowIndexRejected)
+assert(CMat.CMatCFragmentCFG and CMat.CMatCOpenBlock)
+assert(CMat.CMatCWindowLoadEmitted and CMat.CMatCWindowLoadRejected)
+assert(CMat.CMatCWindowOffsetResolved and CMat.CMatCWindowOffsetRejected)
+assert(CMat.CMatCFragmentPredicateEmitted and CMat.CMatCFragmentPredicateRejected)
+assert(CMat.CMatCControlAll and CMat.CMatCControlAllCompare and
+  CMat.CMatCControlAny and CMat.CMatCControlFind)
 
 local function source(path)
   local f = assert(io.open(path, "rb"))

@@ -27,11 +27,14 @@ function Stencil.StencilLayoutSoAComponent:cmat_restrict_capability() return CMa
 function Stencil.StencilAccessDirect:cmat_restrict_capability() return self.base:cmat_restrict_capability() end
 function Stencil.StencilAccessDescribed:cmat_restrict_capability() return self.base:cmat_restrict_capability() end
 
+function Stencil.StencilAccess:cmat_canonical_binding(input)
+  return CMat.CMatAccessBinding(
+    Stencil.StencilAccessRef(self.name), self, input.local_id, self.ty, self.layout,
+    self.role:cmat_mutability(), self.layout:cmat_restrict_capability(),
+    self.role:cmat_const_capability(), Stencil.StencilAlignmentUnknown)
+end
 function Stencil.StencilValidationAccepted:cmat_bind(access, input)
-  return CMat.CMatAccessBound(CMat.CMatAccessBinding(
-    Stencil.StencilAccessRef(access.name), access, input.local_id, access.ty, access.layout,
-    access.role:cmat_mutability(), access.layout:cmat_restrict_capability(),
-    access.role:cmat_const_capability(), Stencil.StencilAlignmentUnknown))
+  return CMat.CMatAccessBound(access:cmat_canonical_binding(input))
 end
 function Stencil.StencilValidationRejected:cmat_bind(access, input)
   return CMat.CMatAccessBindingRejected(
@@ -51,6 +54,11 @@ function Stencil.StencilProduceRange1D:cmat_loop_plan()
 end
 function Stencil.StencilProduceCountedRange1D:cmat_loop_plan()
   return CMat.CMatLoopPlanned({ axis(1, self.index_ty, self.step, self.order) })
+end
+function Stencil.StencilProduceCountedWindow1D:cmat_loop_plan()
+  return CMat.CMatLoopPlanned({
+    axis(1, self.index_ty, self.step, self.order),
+  })
 end
 local function axes_plan(axes)
   local result = {}
@@ -89,6 +97,7 @@ function Stencil.StencilSinkOpScan:cmat_sink_materialization(id) return CMat.CMa
 function Stencil.StencilSinkOpScatterStore:cmat_sink_materialization(id) return CMat.CMatSinkStoreResult(Stencil.StencilSinkRef(id), self.dst) end
 function Stencil.StencilSinkOpScatterFold:cmat_sink_materialization(id) return CMat.CMatSinkStoreResult(Stencil.StencilSinkRef(id), self.dst) end
 function Stencil.StencilSinkOpAll:cmat_sink_materialization(id) return CMat.CMatSinkControlResult(Stencil.StencilSinkRef(id)) end
+function Stencil.StencilSinkOpAllCompare:cmat_sink_materialization(id) return CMat.CMatSinkControlResult(Stencil.StencilSinkRef(id)) end
 function Stencil.StencilSinkOpAny:cmat_sink_materialization(id) return CMat.CMatSinkControlResult(Stencil.StencilSinkRef(id)) end
 function Stencil.StencilSinkOpFind:cmat_sink_materialization(id) return CMat.CMatSinkControlResult(Stencil.StencilSinkRef(id)) end
 

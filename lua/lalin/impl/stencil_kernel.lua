@@ -375,20 +375,28 @@ end
 
 function Stencil.StencilKernelConstructionState:with_access(input)
   return Stencil.StencilKernelConstructionState(
-    self.kernel, self.iteration, self.producer,
+    self.kernel, self.iteration, self.domain, self.producer,
     Stencil.StencilAccessByKernelLaneProjection(append_one(
       self.access_by_lane.entries,
       Stencil.StencilAccessByKernelLaneEntry(input.lane, input.access))),
-    self.stream_by_value, self.sinks, self.deferred_reductions,
+    self.stream_by_value, self.result_streams, self.sinks, self.deferred_reductions,
     self.legality, self.proofs, self.next_stream_ordinal)
 end
 function Stencil.StencilKernelConstructionState:with_stream(input)
   return Stencil.StencilKernelConstructionState(
-    self.kernel, self.iteration, self.producer, self.access_by_lane,
+    self.kernel, self.iteration, self.domain, self.producer, self.access_by_lane,
     Stencil.StencilStreamByKernelValueProjection(append_one(
       self.stream_by_value.entries,
       Stencil.StencilStreamByKernelValueEntry(
         input.source, input.binding, input.definition))),
+    self.result_streams, self.sinks, self.deferred_reductions,
+    self.legality, self.proofs,
+    self.next_stream_ordinal + 1)
+end
+function Stencil.StencilKernelConstructionState:with_result_stream(definition)
+  return Stencil.StencilKernelConstructionState(
+    self.kernel, self.iteration, self.domain, self.producer, self.access_by_lane,
+    self.stream_by_value, append_one(self.result_streams, definition),
     self.sinks, self.deferred_reductions, self.legality, self.proofs,
     self.next_stream_ordinal + 1)
 end
@@ -396,14 +404,14 @@ function Stencil.StencilKernelConstructionState:with_sinks(sinks)
   local combined = self.sinks
   for _, sink in ipairs(sinks) do combined = append_one(combined, sink) end
   return Stencil.StencilKernelConstructionState(
-    self.kernel, self.iteration, self.producer, self.access_by_lane,
-    self.stream_by_value, combined, self.deferred_reductions,
+    self.kernel, self.iteration, self.domain, self.producer, self.access_by_lane,
+    self.stream_by_value, self.result_streams, combined, self.deferred_reductions,
     self.legality, self.proofs, self.next_stream_ordinal)
 end
 function Stencil.StencilKernelConstructionState:with_deferred_reduction(reduction)
   return Stencil.StencilKernelConstructionState(
-    self.kernel, self.iteration, self.producer, self.access_by_lane,
-    self.stream_by_value, self.sinks,
+    self.kernel, self.iteration, self.domain, self.producer, self.access_by_lane,
+    self.stream_by_value, self.result_streams, self.sinks,
     append_one(self.deferred_reductions, reduction),
     self.legality, self.proofs, self.next_stream_ordinal)
 end
@@ -418,27 +426,114 @@ function Stencil.StencilKernelConstructionRejected:stencil_reject(reject)
   return Stencil.StencilKernelConstructionRejected(self.state, append_one(self.rejects, reject))
 end
 
-function Stencil.StencilKernelIteration:stencil_kernel_producer()
-  return Stencil.StencilProducer(
-    Stencil.StencilProducerOriginFlow(Flow.FlowDomainLoop(self.loop)),
+function Flow.FlowFactSet:stencil_domain_shape_lookup(domain)
+  local facts = {}
+  for i = 1, #self.domain_shapes do
+    if self.domain_shapes[i].domain == domain then
+      facts[#facts + 1] = self.domain_shapes[i]
+    end
+  end
+  if #facts == 0 then return Stencil.StencilKernelDomainShapeMissing(domain) end
+  if #facts > 1 then
+    return Stencil.StencilKernelDomainShapeAmbiguous(domain, facts)
+  end
+  return Stencil.StencilKernelDomainShapeFound(facts[1])
+end
+function Flow.FlowDomainForward:stencil_producer_order()
+  return Stencil.StencilProducerForward
+end
+function Flow.FlowDomainBackward:stencil_producer_order()
+  return Stencil.StencilProducerBackward
+end
+function Flow.FlowWindowBoundaryReject:stencil_window_boundary()
+  return Stencil.StencilWindowBoundaryReject
+end
+function Flow.FlowWindowBoundaryClamp:stencil_window_boundary()
+  return Stencil.StencilWindowBoundaryClamp
+end
+function Flow.FlowWindowBoundaryWrap:stencil_window_boundary()
+  return Stencil.StencilWindowBoundaryWrap
+end
+function Flow.FlowWindowBoundaryZero:stencil_window_boundary()
+  return Stencil.StencilWindowBoundaryZero
+end
+function Flow.FlowDomainShape:stencil_resolve_kernel_domain(input)
+  return Stencil.StencilKernelDomainRejected(
+    Stencil.StencilKernelUnsupportedDomainShape(
+      self, "domain shape is outside scalar counted projection"))
+end
+function Flow.FlowDomainShapeRange1D:stencil_resolve_kernel_domain(input)
+  local iteration = input.iteration
+  if self.index_ty ~= iteration.index_ty
+      or self.start ~= Value.ValueExprValue(iteration.start)
+      or self.stop ~= Value.ValueExprValue(iteration.stop)
+      or self.step ~= iteration.step_magnitude
+      or self.order:stencil_producer_order() ~= iteration.order then
+    return Stencil.StencilKernelDomainRejected(
+      Stencil.StencilKernelUnsupportedDomainShape(
+        self, "range shape disagrees with exact counted iteration"))
+  end
+  local producer = Stencil.StencilProducer(
+    Stencil.StencilProducerOriginFlow(input.source.domain),
     Stencil.StencilProduceCountedRange1D(
-      self.index_ty,
-      Stencil.StencilBoundValue(require("lalin.schema_v2.value").ValueExprValue(self.start)),
-      Stencil.StencilBoundValue(require("lalin.schema_v2.value").ValueExprValue(self.stop)),
-      self.step_magnitude, self.order, self.stop_convention, self.trip))
+      iteration.index_ty, Stencil.StencilBoundValue(Value.ValueExprValue(iteration.start)),
+      Stencil.StencilBoundValue(Value.ValueExprValue(iteration.stop)),
+      iteration.step_magnitude, iteration.order, iteration.stop_convention, iteration.trip))
+  return Stencil.StencilKernelDomainResolved(
+    Stencil.StencilKernelCountedDomain1D(input.source), producer)
+end
+function Flow.FlowDomainShapeWindowND:stencil_resolve_kernel_domain(input)
+  local iteration = input.iteration
+  if #self.axes ~= 1 or #self.windows ~= 1
+      or self.axes[1].index_ty ~= iteration.index_ty
+      or self.axes[1].start ~= Value.ValueExprValue(iteration.start)
+      or self.axes[1].stop ~= Value.ValueExprValue(iteration.stop)
+      or self.axes[1].step ~= iteration.step_magnitude
+      or self.axes[1].order:stencil_producer_order() ~= iteration.order then
+    return Stencil.StencilKernelDomainRejected(
+      Stencil.StencilKernelUnsupportedDomainShape(
+        self, "initial counted-window projection requires one exact axis and window"))
+  end
+  local source_window = self.windows[1]
+  local window = Stencil.StencilWindowAxis(
+    source_window.before, source_window.after,
+    source_window.boundary:stencil_window_boundary())
+  local axis = Stencil.StencilProducerAxis(
+    iteration.index_ty, Stencil.StencilBoundValue(Value.ValueExprValue(iteration.start)),
+    Stencil.StencilBoundValue(Value.ValueExprValue(iteration.stop)),
+    iteration.step_magnitude, iteration.order, Stencil.StencilIndexAnonymous)
+  local producer = Stencil.StencilProducer(
+    Stencil.StencilProducerOriginFlow(input.source.domain),
+    Stencil.StencilProduceCountedWindow1D(
+      iteration.index_ty, axis.start, axis.stop, axis.step, axis.order,
+      iteration.stop_convention, iteration.trip, window))
+  return Stencil.StencilKernelDomainResolved(
+    Stencil.StencilKernelCountedWindow1D(input.source, window), producer)
+end
+function Stencil.StencilKernelDomainShapeFound:stencil_resolve_kernel_domain(iteration)
+  return self.fact.shape:stencil_resolve_kernel_domain(
+    Stencil.StencilKernelDomainProjectionInput(iteration, self.fact))
+end
+function Stencil.StencilKernelDomainShapeMissing:stencil_resolve_kernel_domain(_input)
+  return Stencil.StencilKernelDomainRejected(
+    Stencil.StencilKernelMissingDomainShape(self.domain))
+end
+function Stencil.StencilKernelDomainShapeAmbiguous:stencil_resolve_kernel_domain(_input)
+  return Stencil.StencilKernelDomainRejected(
+    Stencil.StencilKernelAmbiguousDomainShape(self.domain, #self.facts))
 end
 function Kernel.KernelEquivalenceProof:stencil_initialize_construction(input)
   return Stencil.StencilKernelConstructionCollecting(Stencil.StencilKernelConstructionState(
-    input.kernel, input.iteration, input.producer,
+    input.kernel, input.iteration, input.domain, input.producer,
     Stencil.StencilAccessByKernelLaneProjection({}),
-    Stencil.StencilStreamByKernelValueProjection({}), {}, {},
+    Stencil.StencilStreamByKernelValueProjection({}), {}, {}, {},
     Stencil.StencilFusionLegality({}, {}, {}), self.proofs, 1))
 end
 function Kernel.KernelEquivalenceRejected:stencil_initialize_construction(input)
   local state = Stencil.StencilKernelConstructionState(
-    input.kernel, input.iteration, input.producer,
+    input.kernel, input.iteration, input.domain, input.producer,
     Stencil.StencilAccessByKernelLaneProjection({}),
-    Stencil.StencilStreamByKernelValueProjection({}), {}, {},
+    Stencil.StencilStreamByKernelValueProjection({}), {}, {}, {},
     Stencil.StencilFusionLegality({}, {}, {}), {}, 1)
   return Stencil.StencilKernelConstructionRejected(state, {
     Stencil.StencilKernelEquivalenceRejected(self.failures),
@@ -590,11 +685,132 @@ function Kernel.KernelExprAlgebra:stencil_prepare_stream(input)
   return Stencil.StencilKernelStreamPrepared(input.source, input.binding, Stencil.StencilStreamDef(
     input.id, input.binding.ty, Stencil.StencilStreamValueExpr(self.expr, input.binding.ty)))
 end
+function Stencil.StencilKernelCountedDomain1D:stencil_lane_stream(input)
+  local stream, access = input.stream, input.access
+  return Stencil.StencilKernelStreamPrepared(
+    stream.source, stream.binding, Stencil.StencilStreamDef(
+      stream.id, stream.binding.ty, Stencil.StencilStreamAccess(
+        Stencil.StencilAccessRef(access.entry.access.name),
+        Stencil.StencilIndexExplicit(
+          Stencil.StencilIndexPoint(stream.binding.expr.index)))))
+end
+function Value.ValueExpr:stencil_project_window_index(input)
+  return Stencil.StencilKernelWindowIndexRejected(
+    Stencil.StencilKernelUnsupportedWindowIndex(
+      self, "window load index is not counter-relative"))
+end
+function Value.ValueExprValue:stencil_project_window_index(input)
+  if self.value == input.iteration.counter then
+    return Stencil.StencilKernelWindowIndexCenter
+  end
+  return Stencil.StencilKernelWindowIndexRejected(
+    Stencil.StencilKernelUnsupportedWindowIndex(
+      self, "window load index is not the primary counter"))
+end
+function Stencil.StencilKernelWindowIndexRejected:stencil_apply_window_offset(_input)
+  return self
+end
+function Stencil.StencilKernelWindowIndexOffset:stencil_apply_window_offset(input)
+  return Stencil.StencilKernelWindowIndexRejected(
+    Stencil.StencilKernelUnsupportedWindowIndex(
+      input.window.index, "nested counter-relative window offset is unsupported"))
+end
+function Stencil.StencilKernelWindowIndexCenter:stencil_apply_window_offset(input)
+  return input.expr:stencil_window_offset_literal(input)
+end
+function Value.ValueExpr:stencil_window_offset_literal(input)
+  return Stencil.StencilKernelWindowIndexRejected(
+    Stencil.StencilKernelUnsupportedWindowIndex(
+      input.window.index, "window offset is not an integer literal"))
+end
+function Value.ValueExprConst:stencil_window_offset_literal(input)
+  return self.const:stencil_window_offset_literal(input)
+end
+function Code.CodeConst:stencil_window_offset_literal(input)
+  return Stencil.StencilKernelWindowIndexRejected(
+    Stencil.StencilKernelUnsupportedWindowIndex(
+      input.window.index, "window offset constant is not a scalar literal"))
+end
+function Code.CodeConstLiteral:stencil_window_offset_literal(input)
+  return self.literal:stencil_window_offset_literal(input)
+end
+function Core.Literal:stencil_window_offset_literal(input)
+  return Stencil.StencilKernelWindowIndexRejected(
+    Stencil.StencilKernelUnsupportedWindowIndex(
+      input.window.index, "window offset literal is not an integer"))
+end
+function Core.LitInt:stencil_window_offset_literal(input)
+  local raw, first, sign = self.raw, 1, 1
+  local head = raw:sub(1, 1)
+  if head == "-" then sign, first = -1, 2
+  elseif head == "+" then first = 2 end
+  if first > #raw then
+    return Stencil.StencilKernelWindowIndexRejected(
+      Stencil.StencilKernelUnsupportedWindowIndex(
+        input.window.index, "window offset integer is malformed"))
+  end
+  local amount = 0
+  for i = first, #raw do
+    local digit = raw:byte(i) - 48
+    if digit < 0 or digit > 9
+        or amount > math.floor((9007199254740991 - digit) / 10) then
+      return Stencil.StencilKernelWindowIndexRejected(
+        Stencil.StencilKernelUnsupportedWindowIndex(
+          input.window.index, "window offset integer is malformed"))
+    end
+    amount = amount * 10 + digit
+  end
+  amount = amount * sign
+  return Stencil.StencilKernelWindowIndexOffset(
+    input.direction:stencil_window_offset_amount(amount))
+end
+function Stencil.StencilKernelWindowOffsetAdd:stencil_window_offset_amount(amount)
+  return amount
+end
+function Stencil.StencilKernelWindowOffsetSubtract:stencil_window_offset_amount(amount)
+  return -amount
+end
+function Value.ValueExprAdd:stencil_project_window_index(input)
+  return self.a:stencil_project_window_index(input):stencil_apply_window_offset(
+    Stencil.StencilKernelWindowOffsetApplyInput(
+      self.b, Stencil.StencilKernelWindowOffsetAdd, input))
+end
+function Value.ValueExprSub:stencil_project_window_index(input)
+  return self.a:stencil_project_window_index(input):stencil_apply_window_offset(
+    Stencil.StencilKernelWindowOffsetApplyInput(
+      self.b, Stencil.StencilKernelWindowOffsetSubtract, input))
+end
+function Stencil.StencilKernelWindowIndexRejected:stencil_window_lane_stream(_input)
+  return Stencil.StencilKernelStreamPreparationRejected(self.reject)
+end
+function Stencil.StencilKernelWindowIndexCenter:stencil_window_lane_stream(input)
+  return Stencil.StencilKernelWindowIndexOffset(0):stencil_window_lane_stream(input)
+end
+function Stencil.StencilKernelWindowIndexOffset:stencil_window_lane_stream(input)
+  local stream, access = input.stream, input.access
+  local window = stream.construction.state.domain.window
+  if self.offset < -window.before or self.offset > window.after then
+    return Stencil.StencilKernelStreamPreparationRejected(
+      Stencil.StencilKernelUnsupportedWindowIndex(
+        stream.binding.expr.index, "window offset exceeds declared extent"))
+  end
+  return Stencil.StencilKernelStreamPrepared(
+    stream.source, stream.binding, Stencil.StencilStreamDef(
+      stream.id, stream.binding.ty, Stencil.StencilStreamWindowAccess(
+        Stencil.StencilAccessRef(access.entry.access.name), {
+          Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), self.offset),
+        })))
+end
+function Stencil.StencilKernelCountedWindow1D:stencil_lane_stream(input)
+  local stream = input.stream
+  local projection = stream.binding.expr.index:stencil_project_window_index(
+    Stencil.StencilKernelWindowIndexInput(
+      stream.construction.state.iteration, self.window, stream.binding.expr.index))
+  return projection:stencil_window_lane_stream(input)
+end
 function Stencil.StencilAccessByKernelLaneFound:stencil_lane_stream(input)
-  return Stencil.StencilKernelStreamPrepared(input.source, input.binding, Stencil.StencilStreamDef(
-    input.id, input.binding.ty, Stencil.StencilStreamAccess(
-      Stencil.StencilAccessRef(self.entry.access.name),
-      Stencil.StencilIndexExplicit(Stencil.StencilIndexPoint(input.binding.expr.index)))))
+  return input.construction.state.domain:stencil_lane_stream(
+    Stencil.StencilKernelLaneStreamInput(input, self))
 end
 function Stencil.StencilAccessByKernelLaneMissing:stencil_lane_stream(input)
   return Stencil.StencilKernelStreamPreparationRejected(
@@ -715,6 +931,133 @@ function Stencil.StencilKernelConstructionFinalizable:stencil_contribute_sink(_i
 end
 function Stencil.StencilKernelConstructionRejected:stencil_contribute_sink(_input) return self end
 
+function Kernel.KernelExprValue:stencil_prepare_result_stream(input)
+  return input.construction.state.kernel.body.bindings:lookup(self.value)
+:stencil_prepare_result_binding(
+    Stencil.StencilKernelResultBindingInput(input, self))
+end
+function Kernel.KernelBindingMissing:stencil_prepare_result_binding(input)
+  return Stencil.StencilKernelResultStreamRejected(
+    Stencil.StencilKernelUnsupportedResultExpr(
+      input.expr, "control result value has no kernel binding"))
+end
+function Kernel.KernelBindingFound:stencil_prepare_result_binding(input)
+  if self.entry.value ~= input.result.source then
+    return Stencil.StencilKernelResultStreamRejected(
+      Stencil.StencilKernelUnsupportedResultExpr(
+        input.expr, "control result source disagrees with its kernel binding"))
+  end
+  return self.entry.binding.expr:stencil_prepare_bound_result_expr(
+    Stencil.StencilKernelResultBoundExprInput(
+      input.result, self.entry.binding))
+end
+function Kernel.KernelExpr:stencil_prepare_bound_result_expr(input)
+  return Stencil.StencilKernelResultStreamRejected(
+    Stencil.StencilKernelUnsupportedResultExpr(
+      self, "control result binding expression is not scalar"))
+end
+function Kernel.KernelExprValue:stencil_prepare_bound_result_expr(input)
+  local definition = Stencil.StencilStreamDef(
+    input.result.id, input.binding.ty, Stencil.StencilStreamValueExpr(
+      Value.ValueExprValue(self.value), input.binding.ty))
+  return Stencil.StencilKernelResultStreamPrepared(
+    Stencil.StencilStreamByKernelValueEntry(
+      input.result.source, input.binding, definition))
+end
+function Kernel.KernelExprAlgebra:stencil_prepare_bound_result_expr(input)
+  local definition = Stencil.StencilStreamDef(
+    input.result.id, input.binding.ty,
+    Stencil.StencilStreamValueExpr(self.expr, input.binding.ty))
+  return Stencil.StencilKernelResultStreamPrepared(
+    Stencil.StencilStreamByKernelValueEntry(
+      input.result.source, input.binding, definition))
+end
+function Kernel.KernelExpr:stencil_prepare_result_stream(_input)
+  return Stencil.StencilKernelResultStreamRejected(
+    Stencil.StencilKernelUnsupportedResultExpr(
+      self, "control result expression is outside direct lane-load projection"))
+end
+function Stencil.StencilAccessByKernelLaneMissing:stencil_prepare_result_lane(input)
+  return Stencil.StencilKernelResultStreamRejected(
+    Stencil.StencilKernelUnsupportedResultExpr(
+      input.expr, "control result lane has no projected access"))
+end
+function Stencil.StencilKernelCountedDomain1D:stencil_prepare_result_lane(input)
+  local result, access, expr = input.result, input.access, input.expr
+  local ty = access.entry.access.ty
+  local definition = Stencil.StencilStreamDef(
+    result.id, ty, Stencil.StencilStreamAccess(
+      Stencil.StencilAccessRef(access.entry.access.name),
+      Stencil.StencilIndexExplicit(Stencil.StencilIndexPoint(expr.index))))
+  local binding = Kernel.KernelBinding(
+    Kernel.KernelValueId("kernel-result:" .. result.id.text), ty, expr)
+  return Stencil.StencilKernelResultStreamPrepared(
+    Stencil.StencilStreamByKernelValueEntry(
+      result.source, binding, definition))
+end
+function Stencil.StencilKernelWindowIndexRejected:stencil_prepare_window_result_lane(_input)
+  return Stencil.StencilKernelResultStreamRejected(self.reject)
+end
+function Stencil.StencilKernelWindowIndexCenter:stencil_prepare_window_result_lane(input)
+  return Stencil.StencilKernelWindowIndexOffset(0)
+:stencil_prepare_window_result_lane(input)
+end
+function Stencil.StencilKernelWindowIndexOffset:stencil_prepare_window_result_lane(input)
+  local result, access, expr = input.result, input.access, input.expr
+  local window = result.construction.state.domain.window
+  if self.offset < -window.before or self.offset > window.after then
+    return Stencil.StencilKernelResultStreamRejected(
+      Stencil.StencilKernelUnsupportedWindowIndex(
+        expr.index, "window result offset exceeds declared extent"))
+  end
+  local ty = access.entry.access.ty
+  local definition = Stencil.StencilStreamDef(
+    result.id, ty, Stencil.StencilStreamWindowAccess(
+      Stencil.StencilAccessRef(access.entry.access.name), {
+        Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), self.offset),
+      }))
+  local binding = Kernel.KernelBinding(
+    Kernel.KernelValueId("kernel-result:" .. result.id.text), ty, expr)
+  return Stencil.StencilKernelResultStreamPrepared(
+    Stencil.StencilStreamByKernelValueEntry(
+      result.source, binding, definition))
+end
+function Stencil.StencilKernelCountedWindow1D:stencil_prepare_result_lane(input)
+  local result, expr = input.result, input.expr
+  local projection = expr.index:stencil_project_window_index(
+    Stencil.StencilKernelWindowIndexInput(
+      result.construction.state.iteration, self.window, expr.index))
+  return projection:stencil_prepare_window_result_lane(input)
+end
+function Stencil.StencilAccessByKernelLaneFound:stencil_prepare_result_lane(input)
+  return input.result.construction.state.domain:stencil_prepare_result_lane(
+    Stencil.StencilKernelResultLaneStreamInput(input.result, self, input.expr))
+end
+function Kernel.KernelExprLaneLoad:stencil_prepare_result_stream(input)
+  return input.construction.state.access_by_lane:lookup(self.lane)
+:stencil_prepare_result_lane(
+  Stencil.StencilKernelResultLaneLookupInput(input, self))
+end
+function Stencil.StencilKernelConstructionCollecting:stencil_add_result_stream(definition)
+  return Stencil.StencilKernelConstructionCollecting(
+    self.state:with_result_stream(definition))
+end
+function Stencil.StencilKernelConstructionFinalizable:stencil_add_result_stream(_definition)
+  return self:stencil_reject(
+    Stencil.StencilKernelConstructionIncomplete(self.state.kernel.id))
+end
+function Stencil.StencilKernelConstructionRejected:stencil_add_result_stream(_definition)
+  return self
+end
+function Stencil.StencilKernelResultStreamRejected:stencil_apply_control_stream(input)
+  return input.construction:stencil_reject(self.reject)
+end
+function Stencil.StencilKernelResultStreamPrepared:stencil_apply_control_stream(input)
+  local construction = input.construction:stencil_add_result_stream(self.entry)
+  return input.result:stencil_finish_control_result(
+    Stencil.StencilKernelControlFinishInput(
+      construction, input.sink, self.entry.definition))
+end
 function Kernel.KernelResultVoid:stencil_contribute_result(input)
   if #input.construction.state.deferred_reductions > 0 then
     return input.construction:stencil_reject(
@@ -722,6 +1065,91 @@ function Kernel.KernelResultVoid:stencil_contribute_result(input)
         input.construction.state.deferred_reductions, self))
   end
   return Stencil.StencilKernelConstructionFinalizable(input.construction.state)
+end
+function Kernel.KernelResultAll:stencil_contribute_result(input)
+  local sink = Stencil.StencilSinkId("kernel-sink:all")
+  local stream = Stencil.StencilStreamId("kernel-stream:all")
+  return self.src:stencil_prepare_result_stream(
+    Stencil.StencilKernelResultStreamInput(
+      input.construction, stream, self.src_value))
+:stencil_apply_control_stream(
+  Stencil.StencilKernelControlStreamUse(input.construction, self, sink))
+end
+function Kernel.KernelResultAll:stencil_finish_control_result(input)
+  local sink = Stencil.StencilSinkDef(input.sink,
+    Stencil.StencilSinkOpAll(Stencil.StencilStreamRef(input.stream.id), self.pred))
+  return Stencil.StencilKernelConstructionFinalizable(
+    input.construction.state:with_sinks({ sink }))
+end
+function Kernel.KernelResultAny:stencil_contribute_result(input)
+  local sink = Stencil.StencilSinkId("kernel-sink:any")
+  local stream = Stencil.StencilStreamId("kernel-stream:any")
+  return self.src:stencil_prepare_result_stream(
+    Stencil.StencilKernelResultStreamInput(
+      input.construction, stream, self.src_value))
+:stencil_apply_control_stream(
+  Stencil.StencilKernelControlStreamUse(input.construction, self, sink))
+end
+function Kernel.KernelResultAny:stencil_finish_control_result(input)
+  local sink = Stencil.StencilSinkDef(input.sink,
+    Stencil.StencilSinkOpAny(Stencil.StencilStreamRef(input.stream.id), self.pred))
+  return Stencil.StencilKernelConstructionFinalizable(
+    input.construction.state:with_sinks({ sink }))
+end
+function Kernel.KernelResultFind:stencil_contribute_result(input)
+  local counter = input.construction.state.iteration.counter
+  if self.found_value ~= counter then
+    return input.construction:stencil_reject(
+      Stencil.StencilKernelFindValueMismatch(
+        counter, self.found_value))
+  end
+  local sink = Stencil.StencilSinkId("kernel-sink:find")
+  local stream = Stencil.StencilStreamId("kernel-stream:find")
+  return self.src:stencil_prepare_result_stream(
+    Stencil.StencilKernelResultStreamInput(
+      input.construction, stream, self.src_value))
+:stencil_apply_control_stream(
+  Stencil.StencilKernelControlStreamUse(input.construction, self, sink))
+end
+function Kernel.KernelResultFind:stencil_finish_control_result(input)
+  local sink = Stencil.StencilSinkDef(input.sink, Stencil.StencilSinkOpFind(
+    Stencil.StencilStreamRef(input.stream.id), self.pred, self.not_found_value))
+  return Stencil.StencilKernelConstructionFinalizable(
+    input.construction.state:with_sinks({ sink }))
+end
+function Stencil.StencilKernelResultStreamRejected:stencil_prepare_all_compare_right(input)
+  return input.construction:stencil_reject(self.reject)
+end
+function Stencil.StencilKernelResultStreamPrepared:stencil_prepare_all_compare_right(input)
+  local construction = input.construction:stencil_add_result_stream(self.entry)
+  return input.result.right:stencil_prepare_result_stream(
+    Stencil.StencilKernelResultStreamInput(
+      construction, input.right_id, input.result.right_value))
+:stencil_finish_all_compare(
+  Stencil.StencilKernelAllCompareRightInput(
+    construction, input.result, input.sink, self.entry.definition, input.right_id))
+end
+function Stencil.StencilKernelResultStreamRejected:stencil_finish_all_compare(input)
+  return input.construction:stencil_reject(self.reject)
+end
+function Stencil.StencilKernelResultStreamPrepared:stencil_finish_all_compare(input)
+  local construction = input.construction:stencil_add_result_stream(self.entry)
+  local sink = Stencil.StencilSinkDef(input.sink, Stencil.StencilSinkOpAllCompare(
+    Stencil.StencilStreamRef(input.left.id),
+    Stencil.StencilStreamRef(self.entry.definition.id), input.result.cmp))
+  return Stencil.StencilKernelConstructionFinalizable(
+    construction.state:with_sinks({ sink }))
+end
+function Kernel.KernelResultAllCompare:stencil_contribute_result(input)
+  local sink = Stencil.StencilSinkId("kernel-sink:all-compare")
+  local left = Stencil.StencilStreamId("kernel-stream:all-compare:left")
+  local right = Stencil.StencilStreamId("kernel-stream:all-compare:right")
+  return self.left:stencil_prepare_result_stream(
+    Stencil.StencilKernelResultStreamInput(
+      input.construction, left, self.left_value))
+:stencil_prepare_all_compare_right(
+  Stencil.StencilKernelAllCompareLeftInput(
+    input.construction, self, sink, right))
 end
 function Value.ReductionFact:stencil_reduction_arithmetic()
   if self.int_semantics ~= nil and self.float_mode ~= nil then
@@ -776,6 +1204,47 @@ function Kernel.KernelResultReduction:stencil_contribute_result(input)
       self.reduction.accumulator, binding, definition))
   return self.reduction:stencil_reduction_arithmetic():stencil_finish_reduction(
     Stencil.StencilKernelReductionFinishInput(state, self.reduction, stream_id))
+end
+function Kernel.KernelResultVoid:stencil_result_provenance(_state)
+  return Stencil.StencilKernelResultVoid
+end
+function Kernel.KernelResultReduction:stencil_result_provenance(_state)
+  local suffix = sanitized(self.reduction.id.text)
+  return Stencil.StencilKernelResultReduction(
+    Stencil.StencilSinkId("kernel-sink:reduction:" .. suffix),
+    self.reduction.op, self.reduction.accumulator,
+    Stencil.StencilStreamRef(Stencil.StencilStreamId(
+      "kernel-stream:reduction:" .. suffix)))
+end
+function Kernel.KernelResultAll:stencil_result_provenance(_state)
+  return Stencil.StencilKernelResultAll(
+    Stencil.StencilSinkId("kernel-sink:all"),
+    Stencil.StencilStreamRef(Stencil.StencilStreamId("kernel-stream:all")),
+    self.src_value, self.pred,
+    self.success, self.failure)
+end
+function Kernel.KernelResultAny:stencil_result_provenance(_state)
+  return Stencil.StencilKernelResultAny(
+    Stencil.StencilSinkId("kernel-sink:any"),
+    Stencil.StencilStreamRef(Stencil.StencilStreamId("kernel-stream:any")),
+    self.src_value, self.pred,
+    self.success, self.failure)
+end
+function Kernel.KernelResultAllCompare:stencil_result_provenance(_state)
+  return Stencil.StencilKernelResultAllCompare(
+    Stencil.StencilSinkId("kernel-sink:all-compare"),
+    Stencil.StencilStreamRef(Stencil.StencilStreamId(
+      "kernel-stream:all-compare:left")), self.left_value,
+    Stencil.StencilStreamRef(Stencil.StencilStreamId(
+      "kernel-stream:all-compare:right")), self.right_value,
+    self.cmp, self.success, self.failure)
+end
+function Kernel.KernelResultFind:stencil_result_provenance(_state)
+  return Stencil.StencilKernelResultFind(
+    Stencil.StencilSinkId("kernel-sink:find"),
+    Stencil.StencilStreamRef(Stencil.StencilStreamId("kernel-stream:find")),
+    self.src_value, self.pred,
+    self.found_value, self.found, self.not_found, self.not_found_value)
 end
 function Kernel.KernelResult:stencil_contribute_result(input)
   return input.construction:stencil_reject(
@@ -840,9 +1309,16 @@ function Stencil.StencilKernelScheduleRejected:stencil_finalize(construction)
 end
 function Stencil.StencilKernelScheduleConverted:stencil_finalize(construction)
   local state = construction.state
-  local accesses, streams = {}, {}
+  local accesses, streams, stream_entries = {}, {}, {}
   for _, entry in ipairs(state.access_by_lane.entries) do accesses[#accesses + 1] = entry.access end
-  for _, entry in ipairs(state.stream_by_value.entries) do streams[#streams + 1] = entry.definition end
+  for _, entry in ipairs(state.stream_by_value.entries) do
+    streams[#streams + 1] = entry.definition
+    stream_entries[#stream_entries + 1] = entry
+  end
+  for _, entry in ipairs(state.result_streams) do
+    streams[#streams + 1] = entry.definition
+    stream_entries[#stream_entries + 1] = entry
+  end
   local computation = Stencil.StencilComputation(
     Stencil.StencilMetastencilId("kernel-computation:" .. sanitized(state.kernel.id.text)),
     state.producer, accesses, streams, state.sinks, state.legality, self.schedule, state.proofs)
@@ -850,8 +1326,9 @@ function Stencil.StencilKernelScheduleConverted:stencil_finalize(construction)
     Stencil.StencilKernelComputationProjection(
       self.source,
       Stencil.StencilKernelProvenanceFacet(
-        state.kernel, state.iteration, state.access_by_lane,
-        state.stream_by_value, state.kernel.body.result),
+        state.kernel, state.iteration, state.domain, state.access_by_lane,
+        Stencil.StencilStreamByKernelValueProjection(stream_entries),
+        state.kernel.body.result:stencil_result_provenance(state)),
       computation))
 end
 function Stencil.StencilKernelConstructionCollecting:stencil_finalize(_input)
@@ -869,25 +1346,37 @@ end
 function Stencil.StencilKernelIterationRejected:stencil_continue_projection(input)
   return Stencil.StencilKernelProjectionRejected(input.kernel, { self.reject })
 end
-function Stencil.StencilKernelIterationProjected:stencil_continue_projection(input)
-  local producer = self.iteration:stencil_kernel_producer()
-  local construction = input.kernel.body.equivalence:stencil_initialize_construction(
-    Stencil.StencilKernelConstructionInitInput(input.kernel, self.iteration, producer))
-  for _, entry in ipairs(input.kernel.body.lanes.entries) do
+function Stencil.StencilKernelDomainRejected:stencil_continue_domain(input)
+  return Stencil.StencilKernelProjectionRejected(
+    input.projection.kernel, { self.reject })
+end
+function Stencil.StencilKernelDomainResolved:stencil_continue_domain(input)
+  local projection, iteration = input.projection, input.iteration
+  local construction = projection.kernel.body.equivalence:stencil_initialize_construction(
+    Stencil.StencilKernelConstructionInitInput(
+      projection.kernel, iteration, self.domain, self.producer))
+  for _, entry in ipairs(projection.kernel.body.lanes.entries) do
     construction = construction:stencil_contribute_access(
-      Stencil.StencilKernelAccessContributionInput(entry.lane, input.mem))
+      Stencil.StencilKernelAccessContributionInput(entry.lane, projection.mem))
   end
-  for _, entry in ipairs(input.kernel.body.bindings.entries) do
+  for _, entry in ipairs(projection.kernel.body.bindings.entries) do
     construction = construction:stencil_contribute_stream(
       Stencil.StencilKernelStreamContributionInput(entry))
   end
-  for _, entry in ipairs(input.kernel.body.effects.entries) do
+  for _, entry in ipairs(projection.kernel.body.effects.entries) do
     construction = construction:stencil_contribute_sink(
       Stencil.StencilKernelSinkContributionInput(entry.effect))
   end
-  construction = input.kernel.body.result:stencil_contribute_result(
+  construction = projection.kernel.body.result:stencil_contribute_result(
     Stencil.StencilKernelResultContributionInput(construction))
-  return construction:stencil_finish_projection(input)
+  return construction:stencil_finish_projection(projection)
+end
+function Stencil.StencilKernelIterationProjected:stencil_continue_projection(input)
+  local domain = Flow.FlowDomainLoop(self.iteration.loop)
+  return input.flow:stencil_domain_shape_lookup(domain)
+:stencil_resolve_kernel_domain(self.iteration)
+:stencil_continue_domain(
+  Stencil.StencilKernelDomainContinuationInput(input, self.iteration))
 end
 function Stencil.StencilKernelProjectionInput:project_kernel_stencil()
   local expected = self.module.id

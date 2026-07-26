@@ -183,12 +183,17 @@ return schema. LalinKernel {
     KernelResultFind {
       variant_unique,
       src [LalinKernel.KernelExpr],
+      src_value [LalinCode.CodeValueId],
       pred [LalinStencil.StencilPredicate],
-      not_found [LalinValue.ValueExpr],
+      found_value [LalinCode.CodeValueId],
+      found [LalinCode.CodeBlockId],
+      not_found [LalinCode.CodeBlockId],
+      not_found_value [LalinValue.ValueExpr],
     },
     KernelResultAll {
       variant_unique,
       src [LalinKernel.KernelExpr],
+      src_value [LalinCode.CodeValueId],
       pred [LalinStencil.StencilPredicate],
       success [LalinCode.CodeBlockId],
       failure [LalinCode.CodeBlockId],
@@ -196,7 +201,9 @@ return schema. LalinKernel {
     KernelResultAllCompare {
       variant_unique,
       left [LalinKernel.KernelExpr],
+      left_value [LalinCode.CodeValueId],
       right [LalinKernel.KernelExpr],
+      right_value [LalinCode.CodeValueId],
       cmp [LalinCore.CmpOp],
       success [LalinCode.CodeBlockId],
       failure [LalinCode.CodeBlockId],
@@ -204,6 +211,7 @@ return schema. LalinKernel {
     KernelResultAny {
       variant_unique,
       src [LalinKernel.KernelExpr],
+      src_value [LalinCode.CodeValueId],
       pred [LalinStencil.StencilPredicate],
       success [LalinCode.CodeBlockId],
       failure [LalinCode.CodeBlockId],

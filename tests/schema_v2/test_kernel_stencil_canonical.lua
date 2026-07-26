@@ -85,7 +85,11 @@ local induction = Flow.FlowInduction(
   Flow.FlowRangeUnknown(index))
 local flow = Flow.FlowFactSet(module_id, { domain }, {}, {
   Flow.FlowLoopFacts(loop_id, domain, counted, { graph_block }, { induction }, {}, {})
-}, {}, {}, {}, {}, {}, {})
+}, {}, {
+  Flow.FlowDomainShapeFact(domain, Flow.FlowDomainShapeRange1D(
+    i32, Value.ValueExprValue(start), Value.ValueExprValue(stop),
+    1, Flow.FlowDomainForward), {}, Flow.FlowFactCheckerDerived),
+}, {}, {}, {}, {})
 local trip = Flow.FlowTripCountExact(Code.CodeValueId("trip"), nil, nil)
 local zero = Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("0")))
 local seven = Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("7")))
@@ -247,6 +251,119 @@ assert(#computation.streams == 3)
 assert(#computation.sinks == 1)
 assert(computation.sinks[1].op.dst.name == computation.accesses[1].name)
 assert(computation.schedule.compiler == compiler)
+
+local control_success = Code.CodeBlockId("control_success")
+local control_failure = Code.CodeBlockId("control_failure")
+local control_result = Kernel.KernelResultAll(
+  Kernel.KernelExprValue(stored), stored, Stencil.StencilPredNonZero,
+  control_success, control_failure)
+local control_kernel = Kernel.KernelPlanned(
+  Kernel.KernelId("kernel:control-all"), planned.subject, Kernel.KernelBody(
+    planned.body.domain, planned.body.lanes, planned.body.bindings,
+    Kernel.KernelEffectProjection({}), control_result, planned.body.equivalence))
+local control_schedule = Schedule.SchedulePlanned(
+  Schedule.ScheduleId("schedule:control-all:scalar"), control_kernel.id,
+  Schedule.ScheduleScalarIndex, {}, {})
+local control_projected = Stencil.StencilKernelProjectionInput(
+  module, graph, flow, semantics, control_kernel, control_schedule, compiler, target,
+  mem, effects):project_kernel_stencil()
+assert(asdl.classof(control_projected) == Stencil.StencilKernelProjected)
+local control_projection = control_projected.projection
+local control_provenance = control_projection.provenance.result
+assert(asdl.classof(control_provenance) == Stencil.StencilKernelResultAll)
+assert(control_provenance.src_value == stored)
+assert(control_provenance.pred == Stencil.StencilPredNonZero)
+assert(control_provenance.success == control_success)
+assert(control_provenance.failure == control_failure)
+local control_stream = control_projection.provenance.streams.entries[4]
+assert(control_stream.source == stored)
+assert(control_stream.binding == planned.body.bindings.entries[3].binding)
+assert(control_stream.definition == control_projection.computation.streams[4])
+assert(control_projection.computation.sinks[1] ==
+  Stencil.StencilSinkDef(control_provenance.sink,
+    Stencil.StencilSinkOpAll(control_provenance.src, control_provenance.pred)))
+
+local find_kernel = Kernel.KernelPlanned(
+  Kernel.KernelId("kernel:find"), planned.subject, Kernel.KernelBody(
+    planned.body.domain, planned.body.lanes, planned.body.bindings,
+    Kernel.KernelEffectProjection({}), Kernel.KernelResultFind(
+      Kernel.KernelExprValue(stored), stored, Stencil.StencilPredNonZero, index,
+      control_success, control_failure, zero), planned.body.equivalence))
+local find_schedule = Schedule.SchedulePlanned(
+  Schedule.ScheduleId("schedule:find"), find_kernel.id,
+  Schedule.ScheduleScalarIndex, {}, {})
+local find_projected = Stencil.StencilKernelProjectionInput(
+  module, graph, flow, semantics, find_kernel, find_schedule,
+  compiler, target, mem, effects):project_kernel_stencil()
+assert(asdl.classof(find_projected) == Stencil.StencilKernelProjected)
+assert(find_projected.projection.provenance.result.src_value == stored)
+assert(find_projected.projection.provenance.result.found_value == index)
+
+local mismatched_find = Kernel.KernelPlanned(
+  Kernel.KernelId("kernel:find-mismatch"), planned.subject, Kernel.KernelBody(
+    planned.body.domain, planned.body.lanes, planned.body.bindings,
+    Kernel.KernelEffectProjection({}), Kernel.KernelResultFind(
+      Kernel.KernelExprValue(stored), stored, Stencil.StencilPredNonZero, stored,
+      control_success, control_failure, zero), planned.body.equivalence))
+local mismatched_find_schedule = Schedule.SchedulePlanned(
+  Schedule.ScheduleId("schedule:find-mismatch"), mismatched_find.id,
+  Schedule.ScheduleScalarIndex, {}, {})
+local find_rejected = Stencil.StencilKernelProjectionInput(
+  module, graph, flow, semantics, mismatched_find, mismatched_find_schedule,
+  compiler, target, mem, effects):project_kernel_stencil()
+assert(asdl.classof(find_rejected) == Stencil.StencilKernelProjectionRejected)
+assert(asdl.classof(find_rejected.rejects[1]) ==
+  Stencil.StencilKernelFindValueMismatch)
+
+local window_source = Code.CodeValueId("window_source")
+local window_index = Value.ValueExprSub(
+  Value.ValueExprValue(index),
+  Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("1"))),
+  i32, exact_int)
+local window_shape = Flow.FlowDomainShapeWindowND({
+  Flow.FlowDomainAxis(
+    i32, Value.ValueExprValue(start), Value.ValueExprValue(stop),
+    1, Flow.FlowDomainForward, nil),
+}, { Flow.FlowWindowAxis(1, 1, Flow.FlowWindowBoundaryZero) })
+local window_flow = Flow.FlowFactSet(module_id, { domain }, {}, {
+  Flow.FlowLoopFacts(loop_id, domain, counted, { graph_block }, { induction }, {}, {})
+}, {}, {
+  Flow.FlowDomainShapeFact(domain, window_shape, {}, Flow.FlowFactCheckerDerived),
+}, {}, {}, {}, {})
+local window_semantics = window_flow:compute_semantic_flow(module, graph)
+local window_result = Kernel.KernelResultAll(
+  Kernel.KernelExprLaneLoad(planned.body.lanes.entries[1].lane, window_index),
+  window_source, Stencil.StencilPredNonZero, control_success, control_failure)
+local window_kernel = Kernel.KernelPlanned(
+  Kernel.KernelId("kernel:control-window"), planned.subject, Kernel.KernelBody(
+    planned.body.domain, planned.body.lanes, planned.body.bindings,
+    Kernel.KernelEffectProjection({}), window_result, planned.body.equivalence))
+local window_schedule = Schedule.SchedulePlanned(
+  Schedule.ScheduleId("schedule:control-window:scalar"), window_kernel.id,
+  Schedule.ScheduleScalarIndex, {}, {})
+local window_projected = Stencil.StencilKernelProjectionInput(
+  module, graph, window_flow, window_semantics, window_kernel, window_schedule,
+  compiler, target, mem, effects):project_kernel_stencil()
+assert(asdl.classof(window_projected) == Stencil.StencilKernelProjected)
+local window_projection = window_projected.projection
+assert(asdl.classof(window_projection.provenance.domain) ==
+  Stencil.StencilKernelCountedWindow1D)
+assert(window_projection.provenance.domain.window.before == 1)
+assert(window_projection.provenance.domain.window.after == 1)
+assert(asdl.classof(window_projection.computation.producer.shape) ==
+  Stencil.StencilProduceCountedWindow1D)
+local window_streams = {}
+for i = 1, #window_projection.provenance.streams.entries do
+  local entry = window_projection.provenance.streams.entries[i]
+  if entry.source == window_source then
+    window_streams[#window_streams + 1] = entry
+  end
+end
+assert(#window_streams == 1)
+local window_stream = window_streams[1]
+assert(asdl.classof(window_stream.definition.op) ==
+  Stencil.StencilStreamWindowAccess)
+assert(window_stream.definition.op.offsets[1].offset == -1)
 local c_i32 = C.CBackendScalar(Core.ScalarI32)
 local c_ptr = C.CBackendDataPtr(c_i32)
 local base_local = C.CBackendLocal(
@@ -282,7 +399,7 @@ local fragment_input = CMat.CMatCFragmentInput(
   C.CBackendTarget(
     C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian),
   external_values, fragment_accesses, fragment_exits,
-  CMat.CMatCFragmentNamespace("kernel_store"))
+  CMat.CMatCFragmentNamespace("kernel_store"), {})
 assert(fragment_input.materialization == canonical_materialization)
 assert(fragment_input.accesses.entries[1].mem_access == access_id)
 assert(fragment_input.accesses.entries[1].source.base == base_local)
@@ -305,7 +422,7 @@ assert(asdl.classof(
 local empty_cover = CMat.CMatCFragmentInput(
   canonical_materialization, fragment_func, {}, block_id, fragment_input.target,
   external_values, fragment_accesses, fragment_exits,
-  CMat.CMatCFragmentNamespace("empty_cover")):emit_cmat_fragment()
+  CMat.CMatCFragmentNamespace("empty_cover"), {}):emit_cmat_fragment()
 assert(asdl.classof(empty_cover) == CMat.CMatCFragmentRejected)
 assert(empty_cover.issues[1].block == block_id)
 local bad_exit = CMat.CMatCExitBindingProjection({
@@ -316,7 +433,7 @@ local bad_exit = CMat.CMatCExitBindingProjection({
 local invalid_exit = CMat.CMatCFragmentInput(
   canonical_materialization, fragment_func, { block_id }, block_id,
   fragment_input.target, external_values, fragment_accesses, bad_exit,
-  CMat.CMatCFragmentNamespace("bad_exit")):emit_cmat_fragment()
+  CMat.CMatCFragmentNamespace("bad_exit"), {}):emit_cmat_fragment()
 assert(asdl.classof(invalid_exit) == CMat.CMatCFragmentRejected)
 local ambiguous_exits = CMat.CMatCExitBindingProjection({
   fragment_exits.entries[1], fragment_exits.entries[1],
@@ -324,7 +441,7 @@ local ambiguous_exits = CMat.CMatCExitBindingProjection({
 local ambiguous_exit = CMat.CMatCFragmentInput(
   canonical_materialization, fragment_func, { block_id }, block_id,
   fragment_input.target, external_values, fragment_accesses, ambiguous_exits,
-  CMat.CMatCFragmentNamespace("ambiguous_exit")):emit_cmat_fragment()
+  CMat.CMatCFragmentNamespace("ambiguous_exit"), {}):emit_cmat_fragment()
 assert(asdl.classof(ambiguous_exit) == CMat.CMatCFragmentRejected)
 local typed_exit_block = Code.CodeBlock(
   exit_block_id, "typed_exit", {
@@ -346,7 +463,7 @@ local mismatched_exit = CMat.CMatCFragmentInput(
   canonical_materialization, typed_exit_func, { block_id }, block_id,
   fragment_input.target, external_values, fragment_accesses,
   mismatched_exit_projection,
-  CMat.CMatCFragmentNamespace("typed_exit")):emit_cmat_fragment()
+  CMat.CMatCFragmentNamespace("typed_exit"), {}):emit_cmat_fragment()
 assert(asdl.classof(mismatched_exit) == CMat.CMatCFragmentRejected)
 local wrong_trip_values = CMat.CMatCExternalValueBindingProjection({
   external_values.entries[1],
@@ -357,7 +474,7 @@ local wrong_trip_values = CMat.CMatCExternalValueBindingProjection({
 local wrong_trip = CMat.CMatCFragmentInput(
   canonical_materialization, fragment_func, { block_id }, block_id,
   fragment_input.target, wrong_trip_values, fragment_accesses, fragment_exits,
-  CMat.CMatCFragmentNamespace("wrong_trip")):emit_cmat_fragment()
+  CMat.CMatCFragmentNamespace("wrong_trip"), {}):emit_cmat_fragment()
 assert(asdl.classof(wrong_trip) == CMat.CMatCFragmentRejected)
 assert(wrong_trip.issues[1].subject == "counted trip")
 
