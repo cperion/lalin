@@ -707,6 +707,14 @@ End-to-end evidence after `KERNEL-STENCIL-CANON` showed that the original fragme
 
 The repaired boundary retains a named `StencilKernelProvenanceFacet`, source-aligned stream relations, a real alias leaf, canonical materialized/rejected kernel-fragment alternatives, direct versus address-projected access sources, exact external-value/access/exit projections, a namespace, fragment entry, eliminated/replacement block alignments, value mappings, and control results. CMat consumes these facts; LOWER constructs and later merges them. Integrated `5ff1f314b`; independently reviewed and corrected for address-free direct accesses and provenance-preserving rejection.
 
+### V2-WINDOW-CONTROL-PROVENANCE — Preserve window and early-exit meaning
+
+End-to-end review after `CMAT-COUNTED-FRAGMENT` proved that window/control implementation is not schema-ready. `FlowFactSet.domain_shapes` can retain a window, but canonical stencil provenance discards it; counted producers cannot carry a window contract; lane-load projection loses affine counter offsets; `KernelResultFind` lacks exact found/not-found destinations and found-value identity; all/any/all-compare/find are not projected to sink-aligned provenance; and flat `body_stmts` cannot represent guarded zero loads or early exits.
+
+The gate must add exact domain-shape lookup alternatives, a counted-window producer, typed counter-relative index projection, sink-aligned result provenance, exact control destinations, immutable open/completed CBackend CFG state, guarded window-load results, typed predicate emission, result-specific control plans, and exact exit-role validation. Initial scope is canonical kernel fragments only: scalar forward unit-step 1D, direct contiguous accesses, clamp/wrap/zero, compile-time rejection for unproved reject boundaries, and all/any/all-compare/find. ND/tiled/vector/scan/scatter and standalone authored CMat remain out of scope. No old `lower_to_c` or inline CMat adapters may participate.
+
+The existing `CMatWindowIndexDecision` and generic `CMatCControlBranch` are insufficient and must be replaced, not wrapped. Zero boundaries must branch before the load. Exact trip evidence controls wrap and empty-domain behavior. Window index recognition belongs on concrete `ValueExpr` leaves; result and boundary behavior belongs on concrete ASDL leaves.
+
 ### V2-LOWER-SCHEMA — Define fragment consumption
 
 Define function-plan projections/lookups, fragment emission input/alternatives, immutable function emission state/result, typed carrier/address resolutions, and exact target-carrying module emission input.
@@ -720,8 +728,11 @@ After the schema gates, implement concrete leaf methods in this order:
 3. `KERNEL-STENCIL-CANON` — project planned kernels into canonical `StencilComputation`.
 4. `V2-CMAT-FRAGMENT-PROVENANCE` — preserve exact kernel/value/lane/access/result/exit identity through materialization.
 5. `CMAT-COUNTED-FRAGMENT` — emit exact scalar counted-loop fragments and value-expression streams.
-6. `CMAT-WINDOW-CONTROL` — emit stateful window boundaries and store/fold/early-exit control results.
-7. `LOWER-SEM` — consume every selected function fragment through its concrete strategy leaf.
+6. `V2-WINDOW-CONTROL-PROVENANCE` — close the reopened window/control schema gate.
+7. `KRN-WINDOW-CONTROL` — retain domain windows, affine offsets, exact result destinations, and sink-aligned provenance.
+8. `CMAT-WINDOW-CFG` — emit immutable guarded clamp/wrap/zero window-load CFG; reject unsupported boundaries precisely.
+9. `CMAT-CONTROL-FRAGMENT` — emit all/any/all-compare/find predicates, early exits, empty-domain behavior, and control mappings.
+10. `LOWER-SEM` — consume every selected function fragment through its concrete strategy leaf.
 
 Canonical-only fresh-process tests must inspect intermediate ASDL products and assert that forbidden old modules were never loaded. `RGN-CANON` gates `OWN-FRONT`; `C-TARGET` gates `OWN-C`; the kernel/stencil/CMat/lower chain gates `OWN-ANALYSIS` and `OWN-STENCIL`. Ownership deletion does not resume until the public runtime matrix passes through the canonical bootstrap.
 
@@ -901,8 +912,11 @@ Release-level gates:
 | history-impl | KERNEL-STENCIL-CANON | P0 | V2-KERNEL-STENCIL-BRIDGE | Exact real-flow iteration, primary counters, target-bound schedules, immutable access/stream/sink construction, and typed module projection | integrated `43e0593b7`; independent review corrections applied |
 | history-schema | V2-CMAT-FRAGMENT-PROVENANCE | P0 | KERNEL-STENCIL-CANON | Preserve kernel/iteration/access/source/result provenance and exact value/access/exit/namespace/alignment fragment contracts | integrated `5ff1f314b`; independent review corrections applied |
 | history-impl | CMAT-COUNTED-FRAGMENT | P0 | V2-CMAT-FRAGMENT-PROVENANCE | Exact scalar counted loops; value/alias/access streams; byte-stride scaling; stores; explicit-semantics folds; typed bounds, covers, exits, and rejects | integrated `776d78ad1`; independent blocker review clean; schema-v2 50/50 and C backend 30/30 |
-| current-schema+impl | CMAT-WINDOW-CONTROL | P0 | CMAT-COUNTED-FRAGMENT | Add immutable CFG-producing window and early-exit semantics, then emit control mappings | unblocked |
-| blocked-impl | LOWER-SEM | P0 | CMAT-WINDOW-CONTROL | Construct fragment environments, merge selected fragments, and wire continuations | blocked on complete window/control fragment emission |
+| current-schema | V2-WINDOW-CONTROL-PROVENANCE | P0 | CMAT-COUNTED-FRAGMENT | Exact counted-window, affine-index, sink-result, immutable CFG, guarded-load, predicate, control-plan, and exit-role vocabulary | reopened after end-to-end audit; current schema loses required provenance |
+| blocked-impl | KRN-WINDOW-CONTROL | P0 | V2-WINDOW-CONTROL-PROVENANCE | Project exact domain windows, counter-relative loads, and all/any/all-compare/find sink provenance | blocked on schema gate |
+| blocked-impl | CMAT-WINDOW-CFG | P0 | KRN-WINDOW-CONTROL | Emit scalar forward unit-step 1D clamp/wrap/zero guarded loads with immutable CFG | blocked on canonical projection |
+| blocked-impl | CMAT-CONTROL-FRAGMENT | P0 | CMAT-WINDOW-CFG | Emit predicates, early exits, empty-domain semantics, and exact control mappings | blocked on immutable window/control CFG |
+| blocked-impl | LOWER-SEM | P0 | CMAT-CONTROL-FRAGMENT | Construct fragment environments, merge selected fragments, and wire continuations | blocked on complete window/control fragment emission |
 | blocked | OWN-FRONT / OWN-META | P2 | RGN-CANON and parity matrix | Previous cutover `e76fc29cf` reverted by `de3294194` | do not resume |
 | blocked | OWN-ANALYSIS / OWN-STENCIL / OWN-C | P2 | parity blockers | Domain cutovers | do not resume |
 | final | OWN-CUTOVER | P2 | all ownership domains | Public facade and old-tree retirement | blocked |
