@@ -701,6 +701,12 @@ Add module/graph to kernel planning, one-loop analysis input/result, lane/bindin
 
 Define kernel-to-stencil projection input/result, normalize main-path producer bound/index/arithmetic/stride/capability alternatives, and add typed CMat fragment input/emission carrying blocks, locals, helpers, mappings, and control results. Reuse canonical window-boundary leaves; do not copy old inline Lua protocols.
 
+### V2-CMAT-FRAGMENT-PROVENANCE — Preserve exact fragment inputs
+
+End-to-end evidence after `KERNEL-STENCIL-CANON` showed that the original fragment vocabulary lost the planned kernel, counted iteration, lane/access identity, source `CodeValueId` relations, result provenance, exits, and collision-free namespace. It also overloaded one-element zip as alias and required an unavailable `FlowAddressId` for direct scalar accesses.
+
+The repaired boundary retains a named `StencilKernelProvenanceFacet`, source-aligned stream relations, a real alias leaf, canonical materialized/rejected kernel-fragment alternatives, direct versus address-projected access sources, exact external-value/access/exit projections, a namespace, fragment entry, eliminated/replacement block alignments, value mappings, and control results. CMat consumes these facts; LOWER constructs and later merges them. Integrated `5ff1f314b`; independently reviewed and corrected for address-free direct accesses and provenance-preserving rejection.
+
 ### V2-LOWER-SCHEMA — Define fragment consumption
 
 Define function-plan projections/lookups, fragment emission input/alternatives, immutable function emission state/result, typed carrier/address resolutions, and exact target-carrying module emission input.
@@ -712,8 +718,10 @@ After the schema gates, implement concrete leaf methods in this order:
 1. `RGN-CANON` and `C-TARGET` in parallel.
 2. `KRN-CANON` — populate complete canonical loop facts.
 3. `KERNEL-STENCIL-CANON` — project planned kernels into canonical `StencilComputation`.
-4. `CMAT-FRAGMENT-CANON` — emit typed CBackend fragments, including window boundary behavior and sink/control results.
-5. `LOWER-SEM` — consume every selected function fragment through its concrete strategy leaf.
+4. `V2-CMAT-FRAGMENT-PROVENANCE` — preserve exact kernel/value/lane/access/result/exit identity through materialization.
+5. `CMAT-COUNTED-FRAGMENT` — emit exact scalar counted-loop fragments and value-expression streams.
+6. `CMAT-WINDOW-CONTROL` — emit stateful window boundaries and store/fold/early-exit control results.
+7. `LOWER-SEM` — consume every selected function fragment through its concrete strategy leaf.
 
 Canonical-only fresh-process tests must inspect intermediate ASDL products and assert that forbidden old modules were never loaded. `RGN-CANON` gates `OWN-FRONT`; `C-TARGET` gates `OWN-C`; the kernel/stencil/CMat/lower chain gates `OWN-ANALYSIS` and `OWN-STENCIL`. Ownership deletion does not resume until the public runtime matrix passes through the canonical bootstrap.
 
@@ -891,8 +899,10 @@ Release-level gates:
 | history-impl | KRN-CANON | P0 | region/target foundation | Real lanes, bindings, effects, counters, results, proofs, and typed rejects | integrated `54aa53428` |
 | history-schema | V2-KERNEL-STENCIL-BRIDGE | P0 | KRN-CANON | Exact scoped iteration/stop/step projection, canonical schedule conversion, and immutable collecting/finalizable/rejected construction vocabulary | integrated `e2c3829b3`; independently reviewed |
 | history-impl | KERNEL-STENCIL-CANON | P0 | V2-KERNEL-STENCIL-BRIDGE | Exact real-flow iteration, primary counters, target-bound schedules, immutable access/stream/sink construction, and typed module projection | integrated `43e0593b7`; independent review corrections applied |
-| current-impl | CMAT-FRAGMENT-CANON | P0 | KERNEL-STENCIL-CANON | Materialize counted producers and value-expression streams into typed CBackend fragments | unblocked; must preserve inclusive stops and control results |
-| blocked-impl | LOWER-SEM | P0 | CMAT-FRAGMENT-CANON | Consume selected canonical function fragments through strategy leaves | blocked on fragment emission |
+| history-schema | V2-CMAT-FRAGMENT-PROVENANCE | P0 | KERNEL-STENCIL-CANON | Preserve kernel/iteration/access/source/result provenance and exact value/access/exit/namespace/alignment fragment contracts | integrated `5ff1f314b`; independent review corrections applied |
+| current-impl | CMAT-COUNTED-FRAGMENT | P0 | V2-CMAT-FRAGMENT-PROVENANCE | Emit exact scalar counted loops and canonical `StencilStreamValueExpr`/alias/access/store/fold fragments | unblocked; inclusive/exclusive behavior remains leaf-owned |
+| next-schema+impl | CMAT-WINDOW-CONTROL | P0 | CMAT-COUNTED-FRAGMENT | Add immutable CFG-producing window and early-exit semantics, then emit control mappings | blocked on counted fragment |
+| blocked-impl | LOWER-SEM | P0 | CMAT-WINDOW-CONTROL | Construct fragment environments, merge selected fragments, and wire continuations | blocked on complete fragment emission |
 | blocked | OWN-FRONT / OWN-META | P2 | RGN-CANON and parity matrix | Previous cutover `e76fc29cf` reverted by `de3294194` | do not resume |
 | blocked | OWN-ANALYSIS / OWN-STENCIL / OWN-C | P2 | parity blockers | Domain cutovers | do not resume |
 | final | OWN-CUTOVER | P2 | all ownership domains | Public facade and old-tree retirement | blocked |
