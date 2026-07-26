@@ -73,6 +73,11 @@ return schema. LalinLower {
       fragment [LalinLower.LowerFragmentId],
       block [LalinCode.CodeBlockId],
     },
+    LowerIssueValueUnavailable {
+      variant_unique,
+      field. value [LalinCode.CodeValueId],
+      reason [str],
+    },
     LowerIssueClosedFormUnsupported {
       variant_unique,
       fragment [LalinLower.LowerFragmentId],
@@ -375,6 +380,14 @@ return schema. LalinLower {
       issue [LalinLower.LowerIssue],
     },
   },
+  sum. LowerCBlockCoverageDecision {
+    LowerCBlockCovered,
+    LowerCBlockOutsideCoverage,
+  },
+  product. LowerCMatValueCollection {
+    interned,
+    entries [many [LalinCMat.CMatCExternalValueBindingEntry]],
+  },
   product. LowerCMatValueEnvironmentInput {
     interned,
     baseline [LalinLower.LowerCFunctionEmission],
@@ -569,6 +582,36 @@ return schema. LalinLower {
     LowerCValueTypeFound { variant_unique, entry [LalinLower.LowerCValueTypeEntry], },
     LowerCValueTypeMissing { variant_unique, field. value [LalinCode.CodeValueId], },
   },
+  sum. LowerCValueDefinitionSite {
+    LowerCFunctionParamSite,
+    LowerCBlockParamSite { variant_unique, block [LalinCode.CodeBlockId], },
+    LowerCInstructionSite {
+      variant_unique,
+      block [LalinCode.CodeBlockId],
+      inst [LalinCode.CodeInstId],
+    },
+  },
+  product. LowerCValueSiteEntry {
+    interned,
+    field. value [LalinCode.CodeValueId],
+    site [LalinLower.LowerCValueDefinitionSite],
+  },
+  product. LowerCValueSiteProjection {
+    interned,
+    entries [many [LalinLower.LowerCValueSiteEntry]],
+  },
+  product. LowerCValueAvailabilityInput {
+    interned,
+    coverage [LalinLower.LowerFragmentCoverage],
+    field. value [LalinLower.LowerCValueTypeEntry],
+  },
+  sum. LowerCValueAvailabilityContribution {
+    LowerCValueAvailable {
+      variant_unique,
+      field. value [LalinLower.LowerCValueTypeEntry],
+    },
+    LowerCValueUnavailable,
+  },
   product. LowerCInstructionInput {
     interned,
     signatures [LalinLower.LowerCSignatureProjection],
@@ -596,6 +639,7 @@ return schema. LalinLower {
     helpers [many [LalinC.CBackendHelperUse]],
     locals [many [LalinC.CBackendLocal]],
     values [LalinLower.LowerCValueTypeProjection],
+    value_sites [many [LalinLower.LowerCValueSiteEntry]],
   },
   product. LowerCTermEmission {
     interned,
@@ -610,6 +654,7 @@ return schema. LalinLower {
     func [LalinC.CBackendFunc],
     helpers [many [LalinC.CBackendHelperUse]],
     value_types [LalinLower.LowerCValueTypeProjection],
+    value_sites [LalinLower.LowerCValueSiteProjection],
   },
   product. LowerCModuleEmission {
     interned,

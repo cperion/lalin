@@ -143,5 +143,59 @@ function Lower.LowerCoverBlockRange:lower_c_fragment_coverage(input)
   return Lower.LowerFragmentCoverageResolved(Lower.LowerFragmentCoverage(
     self.func, Lower.LowerCoverageBlockRange, copy(blocks), self.entry))
 end
+function Lower.LowerFragmentCoverage:lower_c_block_coverage(block)
+  for i = 1, #self.covered_blocks do
+    if self.covered_blocks[i] == block then return Lower.LowerCBlockCovered end
+  end
+  return Lower.LowerCBlockOutsideCoverage
+end
+function Lower.LowerCFunctionParamSite:lower_cmat_value_contribution(input)
+  return Lower.LowerCValueAvailable(input.value)
+end
+function Lower.LowerCBlockCovered:lower_cmat_value_contribution(_input)
+  return Lower.LowerCValueUnavailable
+end
+function Lower.LowerCBlockOutsideCoverage:lower_cmat_value_contribution(input)
+  return Lower.LowerCValueAvailable(input.value)
+end
+function Lower.LowerCBlockParamSite:lower_cmat_value_contribution(input)
+  return input.coverage:lower_c_block_coverage(self.block)
+:lower_cmat_value_contribution(input)
+end
+function Lower.LowerCInstructionSite:lower_cmat_value_contribution(input)
+  return input.coverage:lower_c_block_coverage(self.block)
+:lower_cmat_value_contribution(input)
+end
+function Lower.LowerCValueAvailable:lower_cmat_collect_value(collection)
+  local entries = copy(collection.entries)
+  entries[#entries + 1] = CMat.CMatCExternalValueBindingEntry(
+    self.value.value, self.value.c_local)
+  return Lower.LowerCMatValueCollection(entries)
+end
+function Lower.LowerCValueUnavailable:lower_cmat_collect_value(collection)
+  return collection
+end
+function Lower.LowerCMatValueEnvironmentInput:lower_cmat_values()
+  local collection = Lower.LowerCMatValueCollection({})
+  for i = 1, #self.baseline.value_types.entries do
+    local value = self.baseline.value_types.entries[i]
+    local sites = {}
+    for j = 1, #self.baseline.value_sites.entries do
+      if self.baseline.value_sites.entries[j].value == value.value then
+        sites[#sites + 1] = self.baseline.value_sites.entries[j]
+      end
+    end
+    if #sites ~= 1 then
+      return Lower.LowerCMatValuesRejected(
+        Lower.LowerIssueValueUnavailable(
+          value.value, "value definition site is absent or ambiguous"))
+    end
+    collection = sites[1].site:lower_cmat_value_contribution(
+      Lower.LowerCValueAvailabilityInput(self.coverage, value))
+:lower_cmat_collect_value(collection)
+  end
+  return Lower.LowerCMatValuesReady(
+    CMat.CMatCExternalValueBindingProjection(collection.entries))
+end
 
 return Lower

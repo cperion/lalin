@@ -56,7 +56,8 @@ function Code.CodeParam:lower_c_value_entry()
 end
 
 function Code.CodeBlock:lower_c_block(input)
-  local values, stmts, helpers, locals = input.values, {}, {}, {}
+  local values, stmts, helpers, locals, value_sites =
+    input.values, {}, {}, {}, {}
   local params = {}
   for i = 1, #self.params do
     local entry = self.params[i]:lower_c_value_entry()
@@ -68,11 +69,17 @@ function Code.CodeBlock:lower_c_block(input)
     append_helpers(helpers, result.helpers)
     append_items(locals, result.locals)
     values = append_values(values, result.definitions)
+    for j = 1, #result.definitions do
+      value_sites[#value_sites + 1] = Lower.LowerCValueSiteEntry(
+        result.definitions[j].value,
+        Lower.LowerCInstructionSite(self.id, self.insts[i].id))
+    end
   end
   if self.term == nil then error("validated C lowering received unterminated block " .. self.id.text, 2) end
   local term = self.term:lower_to_c_backend_term(Lower.LowerCTermInput(values))
   local block = C.CBackendBlock(C.CBackendLabel(self.id.text), params, stmts, term.term)
-  return Lower.LowerCBlockEmission(block, helpers, locals, values)
+  return Lower.LowerCBlockEmission(
+    block, helpers, locals, values, value_sites)
 end
 
 function Code.CodeLinkage:lower_c_visibility() return Core.VisibilityLocal end
@@ -82,16 +89,23 @@ function Code.CodeLinkageImport:lower_c_visibility() return Core.VisibilityLocal
 function Code.CodeLinkageDeclaration:lower_c_visibility() return Core.VisibilityLocal end
 
 function Code.CodeFunc:lower_c_function(input)
-  local value_entries, params, locals = {}, {}, {}
+  local value_entries, params, locals, value_sites = {}, {}, {}, {}
   for i = 1, #self.params do
     local entry = self.params[i]:lower_c_value_entry()
     value_entries[#value_entries + 1], params[#params + 1] = entry, entry.c_local
+    value_sites[#value_sites + 1] = Lower.LowerCValueSiteEntry(
+      entry.value, Lower.LowerCFunctionParamSite)
   end
   for i = 1, #self.locals do
     locals[#locals + 1] = C.CBackendLocal(self.locals[i].id:code_to_c_local_id(), C.CBackendName(self.locals[i].name), self.locals[i].ty:code_to_c_backend_type())
   end
   for i = 1, #self.blocks do
-    for j = 1, #self.blocks[i].params do value_entries[#value_entries + 1] = self.blocks[i].params[j]:lower_c_value_entry() end
+    for j = 1, #self.blocks[i].params do
+      local entry = self.blocks[i].params[j]:lower_c_value_entry()
+      value_entries[#value_entries + 1] = entry
+      value_sites[#value_sites + 1] = Lower.LowerCValueSiteEntry(
+        entry.value, Lower.LowerCBlockParamSite(self.blocks[i].id))
+    end
   end
   local values = Lower.LowerCValueTypeProjection(value_entries)
   local blocks, helpers = {}, {}
@@ -101,11 +115,13 @@ function Code.CodeFunc:lower_c_function(input)
     append_helpers(helpers, result.helpers)
     append_items(locals, result.locals)
     values = result.values
+    append_items(value_sites, result.value_sites)
   end
   local entry = C.CBackendLabel(self.entry.text)
   local sig_id = input.signatures:lower_c_signature_lookup(self.sig):lower_c_sig_id()
   local func = C.CBackendFunc(C.CBackendName(self.name), self.name, self.linkage:lower_c_visibility(), sig_id, params, locals, C.CBackendBodyBlocks(entry, blocks))
-  return Lower.LowerCFunctionEmission(func, helpers, values)
+  return Lower.LowerCFunctionEmission(
+    func, helpers, values, Lower.LowerCValueSiteProjection(value_sites))
 end
 
 function Code.CodeDataInit:lower_code_data_init_to_c() error("missing lower_code_data_init_to_c leaf method", 2) end
