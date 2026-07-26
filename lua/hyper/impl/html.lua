@@ -28,10 +28,13 @@ function M.install(T)
   function Html.HtmlTransitionButton:materialize_html_fragment(input)
     local address = self.target.transition:counter_address(input.deployment)
     local children = materialize_children(Html, self.children, input)
+    local configuration_name = escape(input.deployment.configuration_field)
+    local configuration_ref = escape(input.configuration_ref.value)
     local revision_name = escape(input.deployment.revision_field)
     local revision = escape(input.revision.value)
     return Html.HtmlFragment(table.concat({
       '<form method="post" action="', escape(address.text), '">',
+      '<input type="hidden" name="', configuration_name, '" value="', configuration_ref, '">',
       '<input type="hidden" name="', revision_name, '" value="', revision, '">',
       '<button type="submit">', children.bytes, '</button></form>',
     }))

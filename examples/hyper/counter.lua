@@ -5,14 +5,20 @@ local H = hypermedia.Core
 
 local configuration = H.CounterConfiguration(H.CounterState(0), H.CounterRevision(0))
 local deployment = H.CounterDeployment(
+  H.TransitionAddress("/"),
+  H.TransitionAddress("/_h/config/"),
   H.TransitionAddress("/_h/increment"),
   H.TransitionAddress("/_h/decrement"),
+  "_configuration",
   "_revision"
- )
+)
 
 local document = configuration:render_counter()
 local artifact = document:materialize_html(
-  hypermedia.Html.HtmlMaterializationInput(deployment, configuration.revision)
+  hypermedia.Html.HtmlMaterializationInput(
+    deployment, H.ConfigurationRef("00000000000000000000000000000000.1"),
+    configuration.revision
+  )
  )
 
 io.write(artifact.bytes, "\n")

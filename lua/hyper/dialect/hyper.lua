@@ -2,6 +2,7 @@ local llbl = require("llbl")
 local g = llbl.grammar
 local Schema = require("hyper.schema")
 local H = Schema.Core
+local counter_transition_machine = require("hyper.machine.counter_transition")
 
 local function transition_adapter(ctx, value)
   if H.TransitionRef:isclassof(value) then return value end
@@ -12,8 +13,8 @@ local function transition_adapter(ctx, value)
 end
 
 local definition_origin = H.SourceOrigin(llbl.origin("counter-transition-definition"))
-local increment = H.TransitionRef(H.CounterIncrement, definition_origin)
-local decrement = H.TransitionRef(H.CounterDecrement, definition_origin)
+local increment = H.TransitionRef(H.CounterIncrement, counter_transition_machine, definition_origin)
+local decrement = H.TransitionRef(H.CounterDecrement, counter_transition_machine, definition_origin)
 
 local Dialect = llbl.dialect "Hyper" {
   g.role. transition_ref {

@@ -4,11 +4,14 @@
 
 **Runtime target:** LuaJIT, initially hosted by Luvit
 
-**Implementation status:** the first closed counter slice lives under `lua/hyper`.
-It proves direct `head [object]` delivery through `index:host`, typed ASDL counter
-transitions, leaf-owned publication, and plain HTML materialization. Luvit hosting,
-page/view configuration spines, typed forms, and HTMX delivery remain subsequent
-slices.
+**Implementation status:** the first executable counter path lives under `lua/hyper`.
+It proves direct `head [object]` delivery through `index:host`, a closed static
+application schema, LLBL-region-backed transitions, typed configuration updates, an
+immutable server-held `ConfigurationStore` with opaque references and bounded
+retention, typed HTTP resolution/form decoding, plain HTML materialization, and a
+real Luvit round trip. General application-schema
+generation, page/view mount spines, authored typed forms, and HTMX delivery remain
+subsequent slices.
 
 **Central decision:** the authoritative semantic hypermedia state is an immutable
 `ActiveConfiguration`. The browser's current page is its client-visible

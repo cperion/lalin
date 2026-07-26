@@ -24,6 +24,7 @@ return S.schema("HyperHtml", {
 
   S.product("HtmlMaterializationInput", {
     S.field("deployment", "HyperCore.CounterDeployment"),
+    S.field("configuration_ref", "HyperCore.ConfigurationRef"),
     S.field("revision", "HyperCore.CounterRevision"),
   }),
 
