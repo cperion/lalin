@@ -4,6 +4,7 @@ require("lalin.schema_v2")
 require("lalin.impl.code_flow")
 require("lalin.impl.kernel_plan")
 require("lalin.impl.stencil_kernel")
+require("lalin.impl.lower_emit_c.materialize")
 
 local Code = require("lalin.schema_v2.code")
 local Core = require("lalin.schema_v2.core")
@@ -14,8 +15,10 @@ local Mem = require("lalin.schema_v2.mem")
 local Effect = require("lalin.schema_v2.effect")
 local Kernel = require("lalin.schema_v2.kernel")
 local Stencil = require("lalin.schema_v2.stencil")
+local CMat = require("lalin.schema_v2.c_materialize")
 local Schedule = require("lalin.schema_v2.schedule")
 local Backend = require("lalin.schema_v2.backend")
+local C = require("lalin.schema_v2.c")
 
 local module_id = Code.CodeModuleId("kernel_canonical")
 local func_id = Code.CodeFuncId("fn:kernel_canonical")
@@ -220,6 +223,15 @@ local projected = Stencil.StencilKernelProjectionInput(
   mem, effects):project_kernel_stencil()
 local computation = projected.projection.computation
 assert(projected.projection.source_schedule == scalar_schedule)
+assert(projected.projection.provenance.kernel == store_kernel)
+assert(projected.projection.provenance.iteration.counter == index)
+assert(projected.projection.provenance.accesses.entries[1].lane ==
+  store_kernel.body.lanes.entries[1].lane)
+assert(projected.projection.provenance.streams.entries[3].source == stored)
+local canonical_materialization = projected.projection:cmat_materialize_kernel(
+  CMat.CMatKernelMaterializationInput(CMat.CMatKernelId("kernel:store")))
+assert(canonical_materialization.provenance == projected.projection.provenance)
+assert(canonical_materialization.kernel.computation == computation)
 assert(computation.producer.shape.step == 1)
 assert(computation.producer.shape.stop_convention ==
   Stencil.StencilIterationStopExclusive)
@@ -230,6 +242,37 @@ assert(#computation.streams == 3)
 assert(#computation.sinks == 1)
 assert(computation.sinks[1].op.dst.name == computation.accesses[1].name)
 assert(computation.schedule.compiler == compiler)
+local c_i32 = C.CBackendScalar(Core.ScalarI32)
+local c_ptr = C.CBackendDataPtr(c_i32)
+local base_local = C.CBackendLocal(
+  C.CBackendLocalId("ptr"), C.CBackendName("ptr"), c_ptr)
+local external_values = CMat.CMatCExternalValueBindingProjection({
+  CMat.CMatCExternalValueBindingEntry(
+    stop, C.CBackendLocal(C.CBackendLocalId("n"), C.CBackendName("n"), c_i32)),
+})
+local fragment_accesses = CMat.CMatCFragmentAccessBindingProjection({
+  CMat.CMatCFragmentAccessBindingEntry(
+    Stencil.StencilAccessRef(computation.accesses[1].name),
+    store_kernel.body.lanes.entries[1].lane.id, access_id,
+    CMat.CMatCFragmentAccessDirect(base_local), 4, 4, Mem.MemAlignKnown(4)),
+})
+local fragment_exits = CMat.CMatCExitBindingProjection({
+  CMat.CMatCExitBindingEntry(
+    CMat.CMatCExitNormal, Code.CodeBlockId("exit"),
+    C.CBackendLabel("exit"), {}),
+})
+local fragment_input = CMat.CMatCFragmentInput(
+  canonical_materialization, func, { block_id },
+  C.CBackendTarget(
+    C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian),
+  external_values, fragment_accesses, fragment_exits,
+  CMat.CMatCFragmentNamespace("kernel_store"))
+assert(fragment_input.materialization == canonical_materialization)
+assert(fragment_input.accesses.entries[1].mem_access == access_id)
+assert(fragment_input.accesses.entries[1].source.base == base_local)
+local alias = Stencil.StencilStreamAlias(
+  Stencil.StencilStreamRef(computation.streams[1].id))
+assert(alias.source.stream == computation.streams[1].id)
 
 local module_kernels = Kernel.KernelModulePlan(
   module_id, flow, values, mem, effects, { store_kernel })

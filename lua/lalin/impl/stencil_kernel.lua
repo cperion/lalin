@@ -386,7 +386,8 @@ function Stencil.StencilKernelConstructionState:with_stream(input)
     self.kernel, self.iteration, self.producer, self.access_by_lane,
     Stencil.StencilStreamByKernelValueProjection(append_one(
       self.stream_by_value.entries,
-      Stencil.StencilStreamByKernelValueEntry(input.binding, input.definition))),
+      Stencil.StencilStreamByKernelValueEntry(
+        input.source, input.binding, input.definition))),
     self.sinks, self.deferred_reductions, self.legality, self.proofs,
     self.next_stream_ordinal + 1)
 end
@@ -580,16 +581,16 @@ end
 function Stencil.StencilKernelConstructionRejected:stencil_contribute_access(_input) return self end
 
 function Kernel.KernelExprValue:stencil_prepare_stream(input)
-  return Stencil.StencilKernelStreamPrepared(input.binding, Stencil.StencilStreamDef(
+  return Stencil.StencilKernelStreamPrepared(input.source, input.binding, Stencil.StencilStreamDef(
     input.id, input.binding.ty, Stencil.StencilStreamValueExpr(
       require("lalin.schema_v2.value").ValueExprValue(self.value), input.binding.ty)))
 end
 function Kernel.KernelExprAlgebra:stencil_prepare_stream(input)
-  return Stencil.StencilKernelStreamPrepared(input.binding, Stencil.StencilStreamDef(
+  return Stencil.StencilKernelStreamPrepared(input.source, input.binding, Stencil.StencilStreamDef(
     input.id, input.binding.ty, Stencil.StencilStreamValueExpr(self.expr, input.binding.ty)))
 end
 function Stencil.StencilAccessByKernelLaneFound:stencil_lane_stream(input)
-  return Stencil.StencilKernelStreamPrepared(input.binding, Stencil.StencilStreamDef(
+  return Stencil.StencilKernelStreamPrepared(input.source, input.binding, Stencil.StencilStreamDef(
     input.id, input.binding.ty, Stencil.StencilStreamAccess(
       Stencil.StencilAccessRef(self.entry.access.name),
       Stencil.StencilIndexExplicit(Stencil.StencilIndexPoint(input.binding.expr.index)))))
@@ -602,10 +603,9 @@ function Kernel.KernelExprLaneLoad:stencil_prepare_stream(input)
   return input.construction.state.access_by_lane:lookup(self.lane):stencil_lane_stream(input)
 end
 function Stencil.StencilStreamByKernelValueFound:stencil_alias_stream(input)
-  return Stencil.StencilKernelStreamPrepared(input.binding, Stencil.StencilStreamDef(
-    input.id, input.binding.ty, Stencil.StencilStreamZip({
-      Stencil.StencilStreamRef(self.entry.definition.id),
-    })))
+  return Stencil.StencilKernelStreamPrepared(input.source, input.binding, Stencil.StencilStreamDef(
+    input.id, input.binding.ty,
+    Stencil.StencilStreamAlias(Stencil.StencilStreamRef(self.entry.definition.id))))
 end
 function Stencil.StencilStreamByKernelValueMissing:stencil_alias_stream(input)
   return Stencil.StencilKernelStreamPreparationRejected(
@@ -617,7 +617,8 @@ end
 function Stencil.StencilKernelStreamPrepared:stencil_apply_stream(construction)
   return Stencil.StencilKernelConstructionCollecting(
     construction.state:with_stream(
-      Stencil.StencilKernelStateStreamInput(self.binding, self.definition)))
+      Stencil.StencilKernelStateStreamInput(
+        self.source, self.binding, self.definition)))
 end
 function Stencil.StencilKernelStreamPreparationRejected:stencil_apply_stream(construction)
   return construction:stencil_reject(self.reject)
@@ -628,17 +629,19 @@ function Stencil.StencilStreamByKernelValueFound:stencil_contribute_binding(inpu
 end
 function Stencil.StencilStreamByKernelValueMissing:stencil_contribute_binding(input)
   local contribution = input.contribution
+  local source = contribution.entry.value
+  local binding = contribution.entry.binding
   local id = Stencil.StencilStreamId(
-    "kernel-stream:" .. sanitized(contribution.binding.id.text) .. ":" ..
+    "kernel-stream:" .. sanitized(binding.id.text) .. ":" ..
       input.construction.state.next_stream_ordinal)
   local expr_input = Stencil.StencilKernelBindingExprInput(
-    input.construction, contribution.binding, id)
-  return contribution.binding.expr:stencil_prepare_stream(expr_input)
+    input.construction, source, binding, id)
+  return binding.expr:stencil_prepare_stream(expr_input)
     :stencil_apply_stream(input.construction)
 end
 function Stencil.StencilKernelConstructionCollecting:stencil_contribute_stream(input)
   local cursor = Stencil.StencilKernelStreamContributionCursor(self, input)
-  return self.state.stream_by_value:lookup(input.binding.id)
+  return self.state.stream_by_value:lookup(input.entry.binding.id)
     :stencil_contribute_binding(cursor)
 end
 function Stencil.StencilKernelConstructionFinalizable:stencil_contribute_stream(_input)
@@ -736,7 +739,8 @@ function Kernel.KernelResultReduction:stencil_contribute_result(input)
   local definition = Stencil.StencilStreamDef(stream_id, self.reduction.ty,
     Stencil.StencilStreamValueExpr(self.reduction.contribution, self.reduction.ty))
   state = state:with_stream(
-    Stencil.StencilKernelStateStreamInput(binding, definition))
+    Stencil.StencilKernelStateStreamInput(
+      self.reduction.accumulator, binding, definition))
   local reducer = Stencil.StencilReducer(
     self.reduction.op, self.reduction.ty, self.reduction.init, Stencil.StencilArithmeticInferred)
   local sink = Stencil.StencilSinkDef(
@@ -817,7 +821,12 @@ function Stencil.StencilKernelScheduleConverted:stencil_finalize(construction)
     Stencil.StencilMetastencilId("kernel-computation:" .. sanitized(state.kernel.id.text)),
     state.producer, accesses, streams, state.sinks, state.legality, self.schedule, state.proofs)
   return Stencil.StencilKernelProjected(
-    Stencil.StencilKernelComputationProjection(self.source, computation))
+    Stencil.StencilKernelComputationProjection(
+      self.source,
+      Stencil.StencilKernelProvenanceFacet(
+        state.kernel, state.iteration, state.access_by_lane,
+        state.stream_by_value, state.kernel.body.result),
+      computation))
 end
 function Stencil.StencilKernelConstructionCollecting:stencil_finalize(_input)
   return Stencil.StencilKernelProjectionRejected(self.state.kernel, {
@@ -844,7 +853,7 @@ function Stencil.StencilKernelIterationProjected:stencil_continue_projection(inp
   end
   for _, entry in ipairs(input.kernel.body.bindings.entries) do
     construction = construction:stencil_contribute_stream(
-      Stencil.StencilKernelStreamContributionInput(entry.binding))
+      Stencil.StencilKernelStreamContributionInput(entry))
   end
   for _, entry in ipairs(input.kernel.body.effects.entries) do
     construction = construction:stencil_contribute_sink(

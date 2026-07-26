@@ -1,5 +1,6 @@
 -- Typed stencil-to-C materialization.  CBackend emission begins at CMAT-3.
 require("lalin.schema_v2")
+require("lalin.impl.stencil_plan")
 local Stencil = require("lalin.schema_v2.stencil")
 local CMat = require("lalin.schema_v2.c_materialize")
 
@@ -46,6 +47,9 @@ local function axis(index, ty, step, order)
   return CMat.CMatLoopAxis(Stencil.StencilAxisRef(index), CMat.CMatLocalId("i" .. tostring(index)), ty, step, order:cmat_loop_order())
 end
 function Stencil.StencilProduceRange1D:cmat_loop_plan()
+  return CMat.CMatLoopPlanned({ axis(1, self.index_ty, self.step, self.order) })
+end
+function Stencil.StencilProduceCountedRange1D:cmat_loop_plan()
   return CMat.CMatLoopPlanned({ axis(1, self.index_ty, self.step, self.order) })
 end
 local function axes_plan(axes)
@@ -128,4 +132,16 @@ function CMat.CMatLoopPlanned:cmat_materialize_computation(computation, input)
 end
 function Stencil.StencilComputation:cmat_materialize(input)
   return self.producer.shape:cmat_loop_plan():cmat_materialize_computation(self, input)
+end
+function CMat.CMatMaterializedFused:cmat_attach_kernel_provenance(provenance)
+  return CMat.CMatMaterializedKernelFragment(self.kernel, provenance)
+end
+function CMat.CMatRejectedComputation:cmat_attach_kernel_provenance(provenance)
+  return CMat.CMatRejectedKernelFragment(
+    self.computation, provenance, self.issues)
+end
+function Stencil.StencilKernelComputationProjection:cmat_materialize_kernel(input)
+  return self.computation:cmat_materialize(
+    CMat.CMatMaterializationInput(input.kernel))
+:cmat_attach_kernel_provenance(self.provenance)
 end

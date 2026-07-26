@@ -367,6 +367,7 @@ return schema. LalinStencil {
       field. value [LalinValue.ValueExpr],
       ty [LalinCode.CodeType],
     },
+    StencilStreamAlias { variant_unique, source [LalinStencil.StencilStreamRef], },
     StencilStreamMap {
       variant_unique,
       field. expr [LalinStencil.StencilPointExpr],
@@ -1475,6 +1476,7 @@ return schema. LalinStencil {
   },
   product. StencilStreamByKernelValueEntry {
     interned,
+    source [LalinCode.CodeValueId],
     binding [LalinKernel.KernelBinding],
     definition [LalinStencil.StencilStreamDef],
   },
@@ -1507,6 +1509,7 @@ return schema. LalinStencil {
   },
   product. StencilKernelStateStreamInput {
     interned,
+    source [LalinCode.CodeValueId],
     binding [LalinKernel.KernelBinding],
     definition [LalinStencil.StencilStreamDef],
   },
@@ -1559,7 +1562,7 @@ return schema. LalinStencil {
   },
   product. StencilKernelStreamContributionInput {
     interned,
-    binding [LalinKernel.KernelBinding],
+    entry [LalinKernel.KernelBindingByCodeValueEntry],
   },
   product. StencilKernelStreamContributionCursor {
     interned,
@@ -1569,11 +1572,17 @@ return schema. LalinStencil {
   product. StencilKernelBindingExprInput {
     interned,
     construction [LalinStencil.StencilKernelConstruction],
+    source [LalinCode.CodeValueId],
     binding [LalinKernel.KernelBinding],
     field. id [LalinStencil.StencilStreamId],
   },
   sum. StencilKernelStreamPreparation {
-    StencilKernelStreamPrepared { variant_unique, binding [LalinKernel.KernelBinding], definition [LalinStencil.StencilStreamDef], },
+    StencilKernelStreamPrepared {
+      variant_unique,
+      source [LalinCode.CodeValueId],
+      binding [LalinKernel.KernelBinding],
+      definition [LalinStencil.StencilStreamDef],
+    },
     StencilKernelStreamPreparationRejected { variant_unique, reject [LalinStencil.StencilKernelProjectionReject], },
   },
   product. StencilKernelSinkContributionInput {
@@ -1622,9 +1631,18 @@ return schema. LalinStencil {
     schedule [LalinStencil.StencilKernelScheduleConversion],
   },
 
+  product. StencilKernelProvenanceFacet {
+    interned,
+    kernel [LalinKernel.KernelPlanned],
+    iteration [LalinStencil.StencilKernelIteration],
+    accesses [LalinStencil.StencilAccessByKernelLaneProjection],
+    streams [LalinStencil.StencilStreamByKernelValueProjection],
+    result [LalinKernel.KernelResult],
+  },
   product. StencilKernelComputationProjection {
     interned,
     source_schedule [LalinSchedule.SchedulePlanned],
+    provenance [LalinStencil.StencilKernelProvenanceFacet],
     computation [LalinStencil.StencilComputation],
   },
 

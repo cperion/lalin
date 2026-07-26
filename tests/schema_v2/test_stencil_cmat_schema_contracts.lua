@@ -56,7 +56,7 @@ assert(Stencil.StencilKernelSinkPrepared and
   Stencil.StencilKernelSinkPreparationRejected)
 assert(field_names(Stencil.StencilKernelFinalizationInput) == "schedule")
 assert(field_names(Stencil.StencilKernelComputationProjection) ==
-  "source_schedule,computation")
+  "source_schedule,provenance,computation")
 assert(Stencil.StencilKernelProjected and Stencil.StencilKernelProjectionRejected)
 assert(field_names(Stencil.StencilKernelModuleProjectionInput) ==
   "module,graph,flow,semantics,kernels,schedules,compiler")
@@ -72,11 +72,19 @@ assert(Stencil.StencilArithmeticInferred and Stencil.StencilArithmeticInteger an
 assert(Stencil.StencilReadonlyFact and Stencil.StencilUnitStrideFact)
 assert(Stencil.StencilScheduleCandidateNoPlan and Stencil.StencilScheduleCandidatePlanned)
 
-assert(field_names(CMat.CMatCFragmentInput) == "materialization,code_func,covered_blocks,target,carriers,addresses")
-assert(field_names(CMat.CMatCFragment) == "blocks,locals,helpers,block_mappings,value_mappings,control")
+assert(field_names(Stencil.StencilKernelProvenanceFacet) ==
+  "kernel,iteration,accesses,streams,result")
+assert(field_names(CMat.CMatCFragmentInput) ==
+  "materialization,code_func,covered_blocks,target,values,accesses,exits,namespace")
+assert(field_names(CMat.CMatCFragment) ==
+  "entry,blocks,locals,helpers,block_alignments,value_mappings,control")
+assert(CMat.CMatMaterializedKernelFragment and CMat.CMatRejectedKernelFragment)
 assert(CMat.CMatCFragmentEmitted and CMat.CMatCFragmentRejected)
-assert(CMat.CMatCCarrierBindingFound and CMat.CMatCCarrierBindingMissing)
-assert(CMat.CMatCAddressBindingFound and CMat.CMatCAddressBindingMissing)
+assert(CMat.CMatCExternalValueBindingFound and CMat.CMatCExternalValueBindingMissing)
+assert(CMat.CMatCFragmentAccessDirect and CMat.CMatCFragmentAccessAddressProjected)
+assert(CMat.CMatCFragmentAccessBindingFound and CMat.CMatCFragmentAccessBindingMissing)
+assert(CMat.CMatCExitBindingFound and CMat.CMatCExitBindingMissing)
+assert(CMat.CMatCBlockEliminated and CMat.CMatCBlockReplacementEntry)
 assert(CMat.CMatWindowIndexInBounds and CMat.CMatWindowIndexClamped)
 assert(CMat.CMatWindowIndexWrapped and CMat.CMatWindowIndexZero and CMat.CMatWindowIndexRejected)
 

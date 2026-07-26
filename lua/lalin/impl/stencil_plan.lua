@@ -108,7 +108,9 @@ function Stencil.StencilSinkScatterReduce:stencil_build_descriptor(input)
 end
 
 function CMat.CMatMaterializedFused:stencil_codegen_plan() return Stencil.StencilCodegenCMat(self) end
+function CMat.CMatMaterializedKernelFragment:stencil_codegen_plan() return Stencil.StencilCodegenCMat(self) end
 function CMat.CMatRejectedComputation:stencil_codegen_plan() return Stencil.StencilCodegenCMat(self) end
+function CMat.CMatRejectedKernelFragment:stencil_codegen_plan() return Stencil.StencilCodegenCMat(self) end
 function Stencil.StencilSelected:stencil_codegen(input)
   return input.computation:cmat_materialize(input.materialization):stencil_codegen_plan()
 end

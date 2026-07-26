@@ -118,11 +118,23 @@ return schema. LalinCMat {
     CMatIssueMissingProof { variant_unique, requirement [LalinStencil.StencilProofRequirement], reason [str], },
   },
   product. CMatMaterializationInput { interned, kernel [LalinCMat.CMatKernelId], },
+  product. CMatKernelMaterializationInput { interned, kernel [LalinCMat.CMatKernelId], },
   sum. CMatMaterialization {
     CMatMaterializedFused { variant_unique, kernel [LalinCMat.CMatFusedKernel], },
+    CMatMaterializedKernelFragment {
+      variant_unique,
+      kernel [LalinCMat.CMatFusedKernel],
+      provenance [LalinStencil.StencilKernelProvenanceFacet],
+    },
     CMatRejectedComputation {
       variant_unique,
       computation [LalinStencil.StencilComputation],
+      issues [many [LalinCMat.CMatMaterializationIssue]],
+    },
+    CMatRejectedKernelFragment {
+      variant_unique,
+      computation [LalinStencil.StencilComputation],
+      provenance [LalinStencil.StencilKernelProvenanceFacet],
       issues [many [LalinCMat.CMatMaterializationIssue]],
     },
   },
@@ -141,6 +153,9 @@ return schema. LalinCMat {
     CMatCEmissionUnsupportedPoint { variant_unique, field. expr [LalinStencil.StencilPointExpr], reason [str], },
     CMatCEmissionUnsupportedValue { variant_unique, field. value [LalinValue.ValueExpr], reason [str], },
     CMatCEmissionInvalidKernel { variant_unique, reason [str], },
+    CMatCEmissionMissingValue { variant_unique, field. value [LalinCode.CodeValueId], },
+    CMatCEmissionMissingAccess { variant_unique, access [LalinStencil.StencilAccessRef], },
+    CMatCEmissionMissingExit { variant_unique, role [LalinCMat.CMatCExitRole], },
     CMatCEmissionValidationRejected { variant_unique, issues [many [LalinC.CBackendValidationIssue]], },
   },
   sum. CMatCEmission {
@@ -252,19 +267,76 @@ return schema. LalinCMat {
     CMatCSinkRejected { variant_unique, issues [many [LalinCMat.CMatCEmissionIssue]], },
   },
 
-  product. CMatCCarrierBindingEntry { interned, carrier [LalinFlow.FlowCarrierId], c_local [LalinC.CBackendLocal], },
-  product. CMatCCarrierBindingProjection { interned, entries [many [LalinCMat.CMatCCarrierBindingEntry]], },
-  sum. CMatCCarrierBindingLookup {
-    CMatCCarrierBindingFound { variant_unique, entry [LalinCMat.CMatCCarrierBindingEntry], },
-    CMatCCarrierBindingMissing { variant_unique, carrier [LalinFlow.FlowCarrierId], },
+  product. CMatCExternalValueBindingEntry {
+    interned,
+    field. value [LalinCode.CodeValueId],
+    c_local [LalinC.CBackendLocal],
   },
-  product. CMatCAddressBindingEntry { interned, address [LalinFlow.FlowAddressId], c_local [LalinC.CBackendLocal], },
-  product. CMatCAddressBindingProjection { interned, entries [many [LalinCMat.CMatCAddressBindingEntry]], },
-  sum. CMatCAddressBindingLookup {
-    CMatCAddressBindingFound { variant_unique, entry [LalinCMat.CMatCAddressBindingEntry], },
-    CMatCAddressBindingMissing { variant_unique, address [LalinFlow.FlowAddressId], },
+  product. CMatCExternalValueBindingProjection {
+    interned,
+    entries [many [LalinCMat.CMatCExternalValueBindingEntry]],
   },
-  product. CMatCBlockMapping { interned, source [LalinCode.CodeBlockId], replacement [LalinC.CBackendBlock], },
+  sum. CMatCExternalValueBindingLookup {
+    CMatCExternalValueBindingFound { variant_unique, entry [LalinCMat.CMatCExternalValueBindingEntry], },
+    CMatCExternalValueBindingMissing { variant_unique, field. value [LalinCode.CodeValueId], },
+  },
+  sum. CMatCFragmentAccessSource {
+    CMatCFragmentAccessDirect { variant_unique, base [LalinC.CBackendLocal], },
+    CMatCFragmentAccessAddressProjected {
+      variant_unique,
+      address [LalinFlow.FlowAddressId],
+      base [LalinC.CBackendLocal],
+    },
+  },
+  product. CMatCFragmentAccessBindingEntry {
+    interned,
+    access [LalinStencil.StencilAccessRef],
+    lane [LalinKernel.KernelLaneId],
+    mem_access [LalinMem.MemAccessId],
+    source [LalinCMat.CMatCFragmentAccessSource],
+    elem_size [number],
+    stride [number],
+    alignment [LalinMem.MemAlignment],
+  },
+  product. CMatCFragmentAccessBindingProjection {
+    interned,
+    entries [many [LalinCMat.CMatCFragmentAccessBindingEntry]],
+  },
+  sum. CMatCFragmentAccessBindingLookup {
+    CMatCFragmentAccessBindingFound { variant_unique, entry [LalinCMat.CMatCFragmentAccessBindingEntry], },
+    CMatCFragmentAccessBindingMissing { variant_unique, access [LalinStencil.StencilAccessRef], },
+  },
+  sum. CMatCExitRole {
+    CMatCExitNormal,
+    CMatCExitSuccess,
+    CMatCExitFailure,
+    CMatCExitFound,
+    CMatCExitNotFound,
+  },
+  product. CMatCExitBindingEntry {
+    interned,
+    role [LalinCMat.CMatCExitRole],
+    source [LalinCode.CodeBlockId],
+    label [LalinC.CBackendLabel],
+    args [many [LalinC.CBackendAtom]],
+  },
+  product. CMatCExitBindingProjection {
+    interned,
+    entries [many [LalinCMat.CMatCExitBindingEntry]],
+  },
+  sum. CMatCExitBindingLookup {
+    CMatCExitBindingFound { variant_unique, entry [LalinCMat.CMatCExitBindingEntry], },
+    CMatCExitBindingMissing { variant_unique, role [LalinCMat.CMatCExitRole], },
+  },
+  product. CMatCFragmentNamespace { interned, prefix [str], },
+  sum. CMatCBlockAlignment {
+    CMatCBlockEliminated { variant_unique, source [LalinCode.CodeBlockId], },
+    CMatCBlockReplacementEntry {
+      variant_unique,
+      source [LalinCode.CodeBlockId],
+      replacement [LalinC.CBackendLabel],
+    },
+  },
   product. CMatCValueMapping { interned, field. value [LalinCode.CodeValueId], c_local [LalinC.CBackendLocal], },
   sum. CMatCControlResult {
     CMatCControlNone,
@@ -277,15 +349,18 @@ return schema. LalinCMat {
     code_func [LalinCode.CodeFunc],
     covered_blocks [many [LalinCode.CodeBlockId]],
     target [LalinC.CBackendTarget],
-    carriers [LalinCMat.CMatCCarrierBindingProjection],
-    addresses [LalinCMat.CMatCAddressBindingProjection],
+    values [LalinCMat.CMatCExternalValueBindingProjection],
+    accesses [LalinCMat.CMatCFragmentAccessBindingProjection],
+    exits [LalinCMat.CMatCExitBindingProjection],
+    namespace [LalinCMat.CMatCFragmentNamespace],
   },
   product. CMatCFragment {
     interned,
+    entry [LalinC.CBackendLabel],
     blocks [many [LalinC.CBackendBlock]],
     locals [many [LalinC.CBackendLocal]],
     helpers [many [LalinC.CBackendHelperUse]],
-    block_mappings [many [LalinCMat.CMatCBlockMapping]],
+    block_alignments [many [LalinCMat.CMatCBlockAlignment]],
     value_mappings [many [LalinCMat.CMatCValueMapping]],
     control [LalinCMat.CMatCControlResult],
   },
