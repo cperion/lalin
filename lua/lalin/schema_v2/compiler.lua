@@ -45,6 +45,7 @@ return schema. LalinCompiler {
     interned,
     result [LalinCompiler.CodeResult],
     target [LalinC.CBackendTarget],
+    compiler [LalinStencil.StencilCompilerPolicy],
   },
 
   sum. TreeCodeImplementation {

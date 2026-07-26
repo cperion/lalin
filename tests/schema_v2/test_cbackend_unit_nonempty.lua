@@ -113,7 +113,9 @@ local lower_module = Lower.LowerModule(
 )
 local c_target = C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian, true)
 local function lower_input(module)
-  return Lower.LowerCModuleInput(Lower.LowerBackSpine(module, Graph.CodeGraph(module.id, {}), c_target), lower_module)
+  return Lower.LowerCModuleInput(
+    Lower.LowerBackSpine(module, Graph.CodeGraph(module.id, {}), c_target),
+    lower_module, Lower.LowerKernelCMatProjection({}))
 end
 
 local c_unit = lower_module:emit_c(lower_input(code_module))

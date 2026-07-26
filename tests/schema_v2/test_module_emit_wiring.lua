@@ -111,7 +111,9 @@ local code_module = Code.CodeModule(
 ----------------------------------------------------------------------
 
 local c_target = C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian, true)
-local input = Lower.LowerCModuleInput(Lower.LowerBackSpine(code_module, Graph.CodeGraph(code_module.id, {}), c_target), lower_module)
+local input = Lower.LowerCModuleInput(
+  Lower.LowerBackSpine(code_module, Graph.CodeGraph(code_module.id, {}), c_target),
+  lower_module, Lower.LowerKernelCMatProjection({}))
 local emission = lower_module:lower_c_module(input)
 assert(asdl.classof(emission) == Lower.LowerCModuleEmission, "module lowering must return typed emission")
 local c_unit = emission.unit

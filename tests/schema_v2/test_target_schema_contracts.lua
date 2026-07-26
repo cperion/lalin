@@ -21,8 +21,8 @@ local function field_names(cls)
 end
 assert(field_names(C.CBackendTarget) == "dialect,platform,pointer_bits,index_bits,endian")
 assert(field_names(Compiler.CompilerCodeGenerationInput) == "module,contracts,target")
-assert(field_names(Compiler.CompilerCCodegenRequest) == "result,target")
-assert(field_names(Lower.LowerCModuleInput) == "spine,plan")
+assert(field_names(Compiler.CompilerCCodegenRequest) == "result,target,compiler")
+assert(field_names(Lower.LowerCModuleInput) == "spine,plan,materializations")
 
 local function source(path)
   local f = assert(io.open(path, "rb"))

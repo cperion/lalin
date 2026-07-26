@@ -44,7 +44,9 @@ local target = Schedule.ScheduleTarget(Backend.BackTargetModel(Backend.BackTarge
 local schedules = Schedule.ScheduleModulePlan(id, target, {})
 local lower_module = Lower.LowerModule(id, Lower.LowerTargetC, kernels, schedules, Lower.LowerCarrierPlanProjection({}), Lower.LowerAddressPlanProjection({}), Lower.LowerFunctionPlanProjection({}), {})
 local c_target = C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian, true)
-local input = Lower.LowerCModuleInput(Lower.LowerBackSpine(module, Graph.CodeGraph(id, {}), c_target), lower_module)
+local input = Lower.LowerCModuleInput(
+  Lower.LowerBackSpine(module, Graph.CodeGraph(id, {}), c_target), lower_module,
+  Lower.LowerKernelCMatProjection({}))
 local module_result = lower_module:lower_c_module(input)
 assert(asdl.classof(module_result) == Lower.LowerCModuleEmission)
 assert(asdl.classof(module_result.unit) == C.CBackendUnit)

@@ -6,6 +6,7 @@ local Compiler = require("lalin.schema_v2.compiler")
 local Sem = require("lalin.schema_v2.sem")
 local Code = require("lalin.schema_v2.code")
 local Tr = require("lalin.schema_v2.tree")
+local Stencil = require("lalin.schema_v2.stencil")
 require("lalin.backend_target_model")(T) -- installs CBackendTarget:host_target_model for canonical target propagation
 -- Ensure all phase methods are installed
 require("lalin.impl.tree_surface")
@@ -45,7 +46,10 @@ local function compile_validated(input)
   local kernels = mem:plan_kernels(code_module, graph, flow, values, effects)
   local schedules = kernels:plan_schedules(code_module, flow, values, mem, effects)
   local code_result = Compiler.CodeResult(code_module, contracts, Sem.LayoutEnv({}))
-  local request = Compiler.CompilerCCodegenRequest(code_result, input.target)
+  local request = Compiler.CompilerCCodegenRequest(
+    code_result, input.target, Stencil.StencilCompilerPolicy(
+      Stencil.StencilCompilerGcc, Stencil.StencilOptO3,
+      Stencil.StencilMachineNative, {}))
   local backend = require("lalin.compiler_schema_v2_c_backend").code_result_to_c(request)
   local Cemit = require("lalin.schema_v2.cemit")
   local Lower_schema = require("lalin.schema_v2.lower")

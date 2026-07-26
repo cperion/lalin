@@ -118,7 +118,12 @@ local function bind_context(T)
         CompilerAbi.assert_valid_code_result(code_result, { collector = collector })
         local target = CodeType.normalize_target(opts.c_target or opts.target or opts)
         if T.LalinCompiler.CompilerCCodegenRequest then
-            return TreeToCode:code_result_to_c(T.LalinCompiler.CompilerCCodegenRequest(code_result, target))
+            return TreeToCode:code_result_to_c(
+                T.LalinCompiler.CompilerCCodegenRequest(
+                    code_result, target, T.LalinStencil.StencilCompilerPolicy(
+                        T.LalinStencil.StencilCompilerGcc,
+                        T.LalinStencil.StencilOptO3,
+                        T.LalinStencil.StencilMachineNative, {})))
         end
         opts.c_target = target
         opts.target = target

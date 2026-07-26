@@ -53,6 +53,30 @@ return schema. LalinLower {
     LowerIssueCarrierMissing { variant_unique, carrier [LalinFlow.FlowCarrierId], },
     LowerIssueAddressMissing { variant_unique, address [LalinFlow.FlowAddressId], },
     LowerIssueFragmentRejected { variant_unique, fragment [LalinLower.LowerFragmentId], reason [str], },
+    LowerIssueCMatRejected {
+      variant_unique,
+      fragment [LalinLower.LowerFragmentId],
+      issue [LalinCMat.CMatCEmissionIssue],
+    },
+    LowerIssueCoverageRejected {
+      variant_unique,
+      cover [LalinLower.LowerCover],
+      reason [str],
+    },
+    LowerIssueAssemblyCollision {
+      variant_unique,
+      fragment [LalinLower.LowerFragmentId],
+      field. name [str],
+    },
+    LowerIssueExternalPredecessor {
+      variant_unique,
+      fragment [LalinLower.LowerFragmentId],
+      block [LalinCode.CodeBlockId],
+    },
+    LowerIssueClosedFormUnsupported {
+      variant_unique,
+      fragment [LalinLower.LowerFragmentId],
+    },
   },
   product. LowerScheduleByKernelEntry {
     interned,
@@ -276,6 +300,234 @@ return schema. LalinLower {
     LowerAddressPlaceResolved { variant_unique, place [LalinC.CBackendPlace], },
     LowerAddressPlaceRejected { variant_unique, issue [LalinLower.LowerIssue], },
   },
+  sum. LowerKernelCMatState {
+    LowerKernelCMatReady {
+      variant_unique,
+      projection [LalinStencil.StencilKernelComputationProjection],
+      materialization [LalinCMat.CMatMaterialization],
+    },
+    LowerKernelCMatRejected {
+      variant_unique,
+      rejects [many [LalinStencil.StencilKernelProjectionReject]],
+    },
+    LowerKernelCMatUnavailable { variant_unique, reason [str], },
+  },
+  product. LowerKernelCMatEntry {
+    interned,
+    kernel [LalinKernel.KernelId],
+    state [LalinLower.LowerKernelCMatState],
+  },
+  product. LowerKernelCMatProjection {
+    interned,
+    entries [many [LalinLower.LowerKernelCMatEntry]],
+  },
+  sum. LowerKernelCMatLookup {
+    LowerKernelCMatFound { variant_unique, entry [LalinLower.LowerKernelCMatEntry], },
+    LowerKernelCMatMissing { variant_unique, kernel [LalinKernel.KernelId], },
+    LowerKernelCMatAmbiguous { variant_unique, kernel [LalinKernel.KernelId], count [number], },
+  },
+  product. LowerKernelCMatPreparationInput {
+    interned,
+    field. module [LalinCode.CodeModule],
+    graph [LalinGraph.CodeGraph],
+    kernels [LalinKernel.KernelModulePlan],
+    schedules [LalinSchedule.ScheduleModulePlan],
+    semantics [LalinFlow.FlowSemanticFactSet],
+    compiler [LalinStencil.StencilCompilerPolicy],
+  },
+  sum. LowerKernelCMatPreparation {
+    LowerKernelCMatPrepared {
+      variant_unique,
+      projection [LalinLower.LowerKernelCMatProjection],
+    },
+    LowerKernelCMatPreparationRejected {
+      variant_unique,
+      expected [LalinCode.CodeModuleId],
+      actual [LalinCode.CodeModuleId],
+    },
+    LowerKernelCMatPreparationFacetRejected { variant_unique, reason [str], },
+  },
+  sum. LowerFragmentCoverageOrigin {
+    LowerCoverageFunction,
+    LowerCoverageLoop { variant_unique, loop [LalinGraph.GraphLoop], },
+    LowerCoverageBlock,
+    LowerCoverageBlockRange,
+  },
+  product. LowerFragmentCoverage {
+    interned,
+    func [LalinCode.CodeFuncId],
+    origin [LalinLower.LowerFragmentCoverageOrigin],
+    covered_blocks [many [LalinCode.CodeBlockId]],
+    replacement_source [LalinCode.CodeBlockId],
+  },
+  product. LowerFragmentCoverageInput {
+    interned,
+    code_func [LalinCode.CodeFunc],
+    loops [LalinLower.LowerLoopByIdProjection],
+  },
+  sum. LowerFragmentCoverageResolution {
+    LowerFragmentCoverageResolved {
+      variant_unique,
+      coverage [LalinLower.LowerFragmentCoverage],
+    },
+    LowerFragmentCoverageRejected {
+      variant_unique,
+      issue [LalinLower.LowerIssue],
+    },
+  },
+  product. LowerCMatValueEnvironmentInput {
+    interned,
+    baseline [LalinLower.LowerCFunctionEmission],
+    coverage [LalinLower.LowerFragmentCoverage],
+  },
+  sum. LowerCMatValueEnvironment {
+    LowerCMatValuesReady {
+      variant_unique,
+      values [LalinCMat.CMatCExternalValueBindingProjection],
+    },
+    LowerCMatValuesRejected { variant_unique, issue [LalinLower.LowerIssue], },
+  },
+  product. LowerCMatAccessEnvironmentInput {
+    interned,
+    materialization [LalinCMat.CMatMaterializedKernelFragment],
+    coverage [LalinLower.LowerFragmentCoverage],
+    values [LalinCMat.CMatCExternalValueBindingProjection],
+    addresses [LalinLower.LowerAddressPlanProjection],
+    target [LalinC.CBackendTarget],
+  },
+  sum. LowerCMatAccessEnvironment {
+    LowerCMatAccessesReady {
+      variant_unique,
+      accesses [LalinCMat.CMatCFragmentAccessBindingProjection],
+    },
+    LowerCMatAccessesRejected { variant_unique, issue [LalinLower.LowerIssue], },
+  },
+  product. LowerCMatExitEnvironmentInput {
+    interned,
+    provenance [LalinStencil.StencilKernelProvenanceFacet],
+    coverage [LalinLower.LowerFragmentCoverage],
+    code_func [LalinCode.CodeFunc],
+    values [LalinCMat.CMatCExternalValueBindingProjection],
+  },
+  sum. LowerCMatExitEnvironment {
+    LowerCMatExitsReady {
+      variant_unique,
+      exits [LalinCMat.CMatCExitBindingProjection],
+    },
+    LowerCMatExitsRejected { variant_unique, issue [LalinLower.LowerIssue], },
+  },
+  product. LowerCNamespaceSupply { interned, field. next [number], },
+  product. LowerCNamespaceAllocation {
+    interned,
+    supply [LalinLower.LowerCNamespaceSupply],
+    namespace [LalinCMat.CMatCFragmentNamespace],
+  },
+  product. LowerCMatEnvironmentInput {
+    interned,
+    fragment [LalinLower.LowerFragment],
+    materialization [LalinCMat.CMatMaterializedKernelFragment],
+    coverage [LalinLower.LowerFragmentCoverage],
+    code_func [LalinCode.CodeFunc],
+    baseline [LalinLower.LowerCFunctionEmission],
+    addresses [LalinLower.LowerAddressPlanProjection],
+    namespace [LalinCMat.CMatCFragmentNamespace],
+    target [LalinC.CBackendTarget],
+  },
+  sum. LowerCMatEnvironment {
+    LowerCMatEnvironmentReady {
+      variant_unique,
+      request [LalinCMat.CMatCFragmentInput],
+    },
+    LowerCMatEnvironmentRejected { variant_unique, issue [LalinLower.LowerIssue], },
+  },
+  sum. LowerCSourceBlockDisposition {
+    LowerCRetainedBlock { variant_unique, block [LalinCode.CodeBlockId], },
+    LowerCEliminatedBlock { variant_unique, block [LalinCode.CodeBlockId], },
+    LowerCReplacementBlock {
+      variant_unique,
+      block [LalinCode.CodeBlockId],
+      label [LalinC.CBackendLabel],
+    },
+  },
+  product. LowerCLocalSubstitutionEntry {
+    interned,
+    source [LalinC.CBackendLocalId],
+    replacement [LalinC.CBackendLocal],
+  },
+  product. LowerCLocalSubstitutionProjection {
+    interned,
+    entries [many [LalinLower.LowerCLocalSubstitutionEntry]],
+  },
+  sum. LowerCLocalSubstitutionLookup {
+    LowerCLocalSubstitutionFound {
+      variant_unique,
+      entry [LalinLower.LowerCLocalSubstitutionEntry],
+    },
+    LowerCLocalSubstitutionMissing { variant_unique, source [LalinC.CBackendLocalId], },
+    LowerCLocalSubstitutionAmbiguous {
+      variant_unique,
+      source [LalinC.CBackendLocalId],
+      count [number],
+    },
+  },
+  sum. LowerCEmittedFragment {
+    LowerCCodeFragment {
+      variant_unique,
+      fragment [LalinLower.LowerFragment],
+      coverage [LalinLower.LowerFragmentCoverage],
+    },
+    LowerCKernelCMatFragment {
+      variant_unique,
+      fragment [LalinLower.LowerFragment],
+      coverage [LalinLower.LowerFragmentCoverage],
+      cmat [LalinCMat.CMatCFragment],
+    },
+    LowerCRejectedFragment {
+      variant_unique,
+      fragment [LalinLower.LowerFragmentId],
+      issue [LalinLower.LowerIssue],
+    },
+  },
+  product. LowerCFunctionAssembly {
+    interned,
+    code_func [LalinCode.CodeFunc],
+    baseline [LalinLower.LowerCFunctionEmission],
+    plan [LalinLower.LowerFuncPlan],
+    fragments [many [LalinLower.LowerCEmittedFragment]],
+    dispositions [many [LalinLower.LowerCSourceBlockDisposition]],
+    blocks [many [LalinC.CBackendBlock]],
+    locals [many [LalinC.CBackendLocal]],
+    helpers [many [LalinC.CBackendHelperUse]],
+    substitutions [LalinLower.LowerCLocalSubstitutionProjection],
+    controls [many [LalinCMat.CMatCControlResult]],
+    namespace_supply [LalinLower.LowerCNamespaceSupply],
+  },
+  sum. LowerCFunctionAssemblyResult {
+    LowerCFunctionAssemblyReady {
+      variant_unique,
+      assembly [LalinLower.LowerCFunctionAssembly],
+    },
+    LowerCFunctionAssemblyRejected {
+      variant_unique,
+      func [LalinCode.CodeFuncId],
+      issues [many [LalinLower.LowerIssue]],
+    },
+  },
+  product. LowerCFunctionAssemblyInput {
+    interned,
+    spine [LalinLower.LowerBackSpine],
+    code_func [LalinCode.CodeFunc],
+    plan [LalinLower.LowerFuncPlan],
+    baseline [LalinLower.LowerCFunctionEmission],
+    materializations [LalinLower.LowerKernelCMatProjection],
+    signatures [LalinLower.LowerCSignatureProjection],
+    carriers [LalinLower.LowerCarrierPlanProjection],
+    addresses [LalinLower.LowerAddressPlanProjection],
+  },
+  product. LowerCRewriteInput {
+    interned,
+    substitutions [LalinLower.LowerCLocalSubstitutionProjection],
+  },
   product. LowerBackSpine {
     interned,
     code_module [LalinCode.CodeModule],
@@ -286,6 +538,7 @@ return schema. LalinLower {
     interned,
     spine [LalinLower.LowerBackSpine],
     plan [LalinLower.LowerModule],
+    materializations [LalinLower.LowerKernelCMatProjection],
   },
   product. LowerCSignatureEntry {
     interned,
@@ -363,6 +616,16 @@ return schema. LalinLower {
     unit [LalinC.CBackendUnit],
     signatures [LalinLower.LowerCSignatureProjection],
     functions [many [LalinLower.LowerCFunctionEmission]],
+  },
+  sum. LowerCModuleResult {
+    LowerCModuleEmitted {
+      variant_unique,
+      emission [LalinLower.LowerCModuleEmission],
+    },
+    LowerCModuleRejected {
+      variant_unique,
+      issues [many [LalinLower.LowerIssue]],
+    },
   },
   product. LowerFragment {
     interned,

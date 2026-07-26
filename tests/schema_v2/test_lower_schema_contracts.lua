@@ -10,7 +10,8 @@ local function field_names(cls)
   return table.concat(result, ",")
 end
 
-assert(field_names(Lower.LowerCModuleInput) == "spine,plan")
+assert(field_names(Lower.LowerCModuleInput) ==
+  "spine,plan,materializations")
 assert(field_names(Lower.LowerFragmentEmissionInput) == "spine,code_func,plan,fragment,signatures,carriers,addresses")
 assert(field_names(Lower.LowerCFragment) == "blocks,locals,helpers,block_mappings,value_mappings")
 assert(field_names(Lower.LowerModule) == "module,target,kernels,schedules,carriers,addresses,funcs,issues")
@@ -23,6 +24,11 @@ assert(Lower.LowerClosedFormFragmentEmitted)
 assert(Lower.LowerKernelFragmentEmitted)
 assert(Lower.LowerFragmentEmissionRejected)
 assert(Lower.LowerFunctionEmitted and Lower.LowerFunctionEmissionRejected)
+assert(Lower.LowerKernelCMatPrepared and Lower.LowerKernelCMatPreparationRejected)
+assert(Lower.LowerFragmentCoverageResolved and Lower.LowerFragmentCoverageRejected)
+assert(Lower.LowerCMatEnvironmentReady and Lower.LowerCMatEnvironmentRejected)
+assert(Lower.LowerCFunctionAssemblyReady and Lower.LowerCFunctionAssemblyRejected)
+assert(Lower.LowerCModuleEmitted and Lower.LowerCModuleRejected)
 assert(Lower.LowerBackEmitInput == nil, "obsolete generic lower input must be removed")
 assert(Lower.LowerCEmitInput == nil, "obsolete generic C emit input must be removed")
 

@@ -23,9 +23,15 @@ function M.code_result_to_c(request)
     local effects = graph:compute_effects(module, mem, code_result.contracts)
     local kernels = mem:plan_kernels(module, graph, flow, values, effects)
     local schedules = kernels:plan_schedules(module, flow, values, mem, effects)
-    local lower_plan = module:plan_lowering(graph, kernels, schedules, Lower.LowerTargetC)
+    local semantics = flow:compute_semantic_flow(module, graph)
+    local prepared = Lower.LowerKernelCMatPreparationInput(
+      module, graph, kernels, schedules, semantics, request.compiler)
+:lower_prepare_cmat()
+    local lower_plan = module:plan_lowering(
+      graph, kernels, schedules, Lower.LowerTargetC)
     local spine = Lower.LowerBackSpine(module, graph, target)
-    local emission = lower_plan:lower_c_module(Lower.LowerCModuleInput(spine, lower_plan))
+    local emission = lower_plan:lower_c_module(
+      Lower.LowerCModuleInput(spine, lower_plan, prepared.projection))
     local unit = emission.unit
     local validation = require("lalin.impl.lower_emit_c.validate").validate(unit)
     return Compiler.CompilerCBackendResult(unit, validation)

@@ -11,6 +11,7 @@ require("lalin.impl.lower_emit_c.code_to_c")
 require("lalin.impl.lower_emit_c.materialize")
 require("lalin.impl.lower_emit_c.stencil")
 require("lalin.impl.lower_emit_c.fragment")
+require("lalin.impl.lower_emit_c.lower_sem")
 
 function Lower.LowerCSignatureProjection:lower_c_signature_lookup(sig)
   for i = 1, #self.entries do

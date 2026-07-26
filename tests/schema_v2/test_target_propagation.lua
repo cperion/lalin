@@ -11,6 +11,7 @@ local Mem = T.LalinMem
 local Effect = T.LalinEffect
 local Kernel = T.LalinKernel
 local Schedule = T.LalinSchedule
+local Stencil = T.LalinStencil
 local Backend = T.LalinBackend
 
 require("lalin.impl.lower_emit_c")
@@ -32,7 +33,8 @@ local schedules = Schedule.ScheduleModulePlan(module_id, Schedule.ScheduleTarget
 local plan = Lower.LowerModule(module_id, Lower.LowerTargetC, kernels, schedules,
   Lower.LowerCarrierPlanProjection({}), Lower.LowerAddressPlanProjection({}),
   Lower.LowerFunctionPlanProjection({}), {})
-local input = Lower.LowerCModuleInput(spine, plan)
+local input = Lower.LowerCModuleInput(
+  spine, plan, Lower.LowerKernelCMatProjection({}))
 assert(input.spine.target == target, "LowerCModuleInput must retain spine target")
 
 local emission = plan:lower_c_module(input)
@@ -41,7 +43,9 @@ assert(emission.unit.target == target, "CBackendUnit must retain exact target id
 
 local request = Compiler.CompilerCCodegenRequest(
   Compiler.CodeResult(module, Code.CodeContractFactSet(module_id, {}), T.LalinSem.LayoutEnv({})),
-  target)
+  target, Stencil.StencilCompilerPolicy(
+    Stencil.StencilCompilerGcc, Stencil.StencilOptO3,
+    Stencil.StencilMachineNative, {}))
 assert(request.target == target, "CompilerCCodegenRequest must retain exact target identity")
 
 local function atomic_report(dialect)
