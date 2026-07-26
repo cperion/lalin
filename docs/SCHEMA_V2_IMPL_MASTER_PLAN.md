@@ -900,9 +900,9 @@ Release-level gates:
 | history-schema | V2-KERNEL-STENCIL-BRIDGE | P0 | KRN-CANON | Exact scoped iteration/stop/step projection, canonical schedule conversion, and immutable collecting/finalizable/rejected construction vocabulary | integrated `e2c3829b3`; independently reviewed |
 | history-impl | KERNEL-STENCIL-CANON | P0 | V2-KERNEL-STENCIL-BRIDGE | Exact real-flow iteration, primary counters, target-bound schedules, immutable access/stream/sink construction, and typed module projection | integrated `43e0593b7`; independent review corrections applied |
 | history-schema | V2-CMAT-FRAGMENT-PROVENANCE | P0 | KERNEL-STENCIL-CANON | Preserve kernel/iteration/access/source/result provenance and exact value/access/exit/namespace/alignment fragment contracts | integrated `5ff1f314b`; independent review corrections applied |
-| current-impl | CMAT-COUNTED-FRAGMENT | P0 | V2-CMAT-FRAGMENT-PROVENANCE | Emit exact scalar counted loops and canonical `StencilStreamValueExpr`/alias/access/store/fold fragments | unblocked; inclusive/exclusive behavior remains leaf-owned |
-| next-schema+impl | CMAT-WINDOW-CONTROL | P0 | CMAT-COUNTED-FRAGMENT | Add immutable CFG-producing window and early-exit semantics, then emit control mappings | blocked on counted fragment |
-| blocked-impl | LOWER-SEM | P0 | CMAT-WINDOW-CONTROL | Construct fragment environments, merge selected fragments, and wire continuations | blocked on complete fragment emission |
+| history-impl | CMAT-COUNTED-FRAGMENT | P0 | V2-CMAT-FRAGMENT-PROVENANCE | Exact scalar counted loops; value/alias/access streams; byte-stride scaling; stores; explicit-semantics folds; typed bounds, covers, exits, and rejects | integrated `776d78ad1`; independent blocker review clean; schema-v2 50/50 and C backend 30/30 |
+| current-schema+impl | CMAT-WINDOW-CONTROL | P0 | CMAT-COUNTED-FRAGMENT | Add immutable CFG-producing window and early-exit semantics, then emit control mappings | unblocked |
+| blocked-impl | LOWER-SEM | P0 | CMAT-WINDOW-CONTROL | Construct fragment environments, merge selected fragments, and wire continuations | blocked on complete window/control fragment emission |
 | blocked | OWN-FRONT / OWN-META | P2 | RGN-CANON and parity matrix | Previous cutover `e76fc29cf` reverted by `de3294194` | do not resume |
 | blocked | OWN-ANALYSIS / OWN-STENCIL / OWN-C | P2 | parity blockers | Domain cutovers | do not resume |
 | final | OWN-CUTOVER | P2 | all ownership domains | Public facade and old-tree retirement | blocked |
