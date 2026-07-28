@@ -412,10 +412,124 @@ return schema. LalinLower {
     },
     LowerCMatValuesRejected { variant_unique, issue [LalinLower.LowerIssue], },
   },
+  product. LowerCMatAccessFact {
+    interned,
+    binding [LalinCMat.CMatAccessBinding],
+    provenance [LalinStencil.StencilAccessByKernelLaneEntry],
+    mem_access [LalinMem.MemAccessId],
+    alignment [LalinMem.MemAlignment],
+    elem_size [number],
+    stride [number],
+  },
+  product. LowerCMatAccessSourceInput {
+    interned,
+    fact [LalinLower.LowerCMatAccessFact],
+    values [LalinCMat.CMatCExternalValueBindingProjection],
+    addresses [LalinLower.LowerAddressPlanProjection],
+  },
+  sum. LowerCMatAccessSourceResolution {
+    LowerCMatAccessSourceReady {
+      variant_unique,
+      source [LalinCMat.CMatCFragmentAccessSource],
+    },
+    LowerCMatAccessSourceRejected {
+      variant_unique,
+      issue [LalinLower.LowerIssue],
+    },
+  },
+  product. LowerCMatDirectAccessInput {
+    interned,
+    access [LalinStencil.StencilAccessRef],
+    values [LalinCMat.CMatCExternalValueBindingProjection],
+    expected [LalinC.CBackendType],
+  },
+  product. LowerAddressByLaneEntry {
+    interned,
+    field. lane [LalinKernel.KernelLaneId],
+    plan [LalinLower.LowerAddressPlan],
+    use [LalinLower.LowerAddressLaneUse],
+  },
+  sum. LowerAddressByLaneLookup {
+    LowerAddressByLaneFound {
+      variant_unique,
+      entry [LalinLower.LowerAddressByLaneEntry],
+    },
+    LowerAddressByLaneMissing {
+      variant_unique,
+      field. lane [LalinKernel.KernelLaneId],
+    },
+    LowerAddressByLaneAmbiguous {
+      variant_unique,
+      field. lane [LalinKernel.KernelLaneId],
+      count [number],
+    },
+    LowerAddressByLaneInvalidRelation {
+      variant_unique,
+      field. lane [LalinKernel.KernelLaneId],
+      reason [str],
+    },
+  },
+  product. LowerCMatAccessCollection {
+    interned,
+    entries [many [LalinCMat.CMatCFragmentAccessBindingEntry]],
+  },
+  product. LowerCMatAccessFinishInput {
+    interned,
+    fact [LalinLower.LowerCMatAccessFact],
+    collection [LalinLower.LowerCMatAccessCollection],
+  },
+  sum. LowerCMatAccessBuildStep {
+    LowerCMatAccessBuildReady {
+      variant_unique,
+      collection [LalinLower.LowerCMatAccessCollection],
+    },
+    LowerCMatAccessBuildRejected {
+      variant_unique,
+      issue [LalinLower.LowerIssue],
+    },
+  },
+  sum. LowerCMatAccessRelationValidation {
+    LowerCMatAccessRelationValid,
+    LowerCMatAccessRelationRejected {
+      variant_unique,
+      issue [LalinLower.LowerIssue],
+    },
+  },
+  product. LowerCMatAccessEvidence {
+    interned,
+    request [LalinLower.LowerCMatAccessBuildRequest],
+    binding [LalinCMat.CMatAccessBinding],
+    provenance [LalinStencil.StencilAccessByKernelLaneEntry],
+    mem_access [LalinMem.MemAccessId],
+    backend [LalinMem.MemBackendAccessInfo],
+    elem_size [number],
+    stride [number],
+    collection [LalinLower.LowerCMatAccessCollection],
+    next_index [number],
+  },
+  sum. LowerCMatAccessPatternAdmission {
+    LowerCMatAccessPatternAdmitted,
+    LowerCMatAccessPatternRejected {
+      variant_unique,
+      issue [LalinLower.LowerIssue],
+    },
+  },
+  product. LowerCMatAccessBuildRequest {
+    interned,
+    bindings [many [LalinCMat.CMatAccessBinding]],
+    provenance [LalinStencil.StencilAccessByKernelLaneProjection],
+    values [LalinCMat.CMatCExternalValueBindingProjection],
+    addresses [LalinLower.LowerAddressPlanProjection],
+    target [LalinC.CBackendTarget],
+  },
+  product. LowerCMatAccessFoldInput {
+    interned,
+    request [LalinLower.LowerCMatAccessBuildRequest],
+    index [number],
+  },
   product. LowerCMatAccessEnvironmentInput {
     interned,
     materialization [LalinCMat.CMatMaterializedKernelFragment],
-    coverage [LalinLower.LowerFragmentCoverage],
     values [LalinCMat.CMatCExternalValueBindingProjection],
     addresses [LalinLower.LowerAddressPlanProjection],
     target [LalinC.CBackendTarget],

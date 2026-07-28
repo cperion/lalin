@@ -2,12 +2,15 @@
 require("lalin.schema_v2")
 require("lalin.impl.stencil_kernel")
 require("lalin.impl.lower_emit_c.materialize")
+require("lalin.impl.lower_emit_c.code_to_c")
+require("lalin.impl.lower_emit_c.fragment")
 
 local Lower = require("lalin.schema_v2.lower")
 local Stencil = require("lalin.schema_v2.stencil")
 local CMat = require("lalin.schema_v2.c_materialize")
 local C = require("lalin.schema_v2.c")
 local Code = require("lalin.schema_v2.code")
+local Mem = require("lalin.schema_v2.mem")
 
 local function copy(items)
   local out = {}
@@ -405,6 +408,257 @@ end
 function Lower.LowerCMatExitEnvironmentInput:lower_cmat_exits()
   return self.provenance.result:lower_cmat_exit_requirements(self.coverage)
 :lower_cmat_build_exits(self)
+end
+local function access_issue(access, reason)
+  return Lower.LowerIssueAccessRejected(access, reason)
+end
+function CMat.CMatCExternalValueBindingFound:lower_cmat_direct_access(input)
+  if self.entry.c_local.ty ~= input.expected then
+    return Lower.LowerCMatAccessSourceRejected(access_issue(
+      input.access, "direct access base has the wrong projected pointer type"))
+  end
+  return Lower.LowerCMatAccessSourceReady(
+    CMat.CMatCFragmentAccessDirect(self.entry.c_local))
+end
+function CMat.CMatCExternalValueBindingMissing:lower_cmat_direct_access(input)
+  return Lower.LowerCMatAccessSourceRejected(access_issue(
+    input.access, "direct access base is unavailable at fragment entry"))
+end
+function Mem.MemBaseValue:lower_cmat_direct_access(input)
+  return input.values:cmat_fragment_lookup(self.value)
+:lower_cmat_direct_access(input)
+end
+function Mem.MemBaseArgument:lower_cmat_direct_access(input)
+  return input.values:cmat_fragment_lookup(self.value)
+:lower_cmat_direct_access(input)
+end
+function Mem.MemBaseLocal:lower_cmat_direct_access(input)
+  return Lower.LowerCMatAccessSourceRejected(access_issue(
+    input.access, "local memory bases are not yet admitted to CMat fragments"))
+end
+function Mem.MemBaseGlobal:lower_cmat_direct_access(input)
+  return Lower.LowerCMatAccessSourceRejected(access_issue(
+    input.access, "global memory bases require an explicit C backend projection"))
+end
+function Mem.MemBaseData:lower_cmat_direct_access(input)
+  return Lower.LowerCMatAccessSourceRejected(access_issue(
+    input.access, "data memory bases require an explicit C backend projection"))
+end
+function Mem.MemBaseProjection:lower_cmat_direct_access(input)
+  return Lower.LowerCMatAccessSourceRejected(access_issue(
+    input.access, "projected memory bases require an explicit offset projection"))
+end
+function Mem.MemBaseUnknown:lower_cmat_direct_access(input)
+  return Lower.LowerCMatAccessSourceRejected(access_issue(
+    input.access, "unknown memory base: " .. self.reason))
+end
+function Lower.LowerAddressPlanProjection:lower_cmat_lane_lookup(lane)
+  local entries = {}
+  for i = 1, #self.plans do
+    local plan = self.plans[i]
+    for j = 1, #plan.lanes do
+      local use = plan.lanes[j]
+      if use.lane == lane then
+        if use.address ~= plan.address then
+          return Lower.LowerAddressByLaneInvalidRelation(
+            lane, "lane use names a different address than its owning plan")
+        end
+        entries[#entries + 1] = Lower.LowerAddressByLaneEntry(
+          lane, plan, use)
+      end
+    end
+  end
+  if #entries == 0 then return Lower.LowerAddressByLaneMissing(lane) end
+  if #entries > 1 then
+    return Lower.LowerAddressByLaneAmbiguous(lane, #entries)
+  end
+  return Lower.LowerAddressByLaneFound(entries[1])
+end
+function Lower.LowerAddressByLaneFound:lower_cmat_access_source(input)
+  return Lower.LowerCMatAccessSourceRejected(access_issue(
+    input.fact.binding.access,
+    "address-projected lanes require relative-index and assembly semantics"))
+end
+function Lower.LowerAddressByLaneAmbiguous:lower_cmat_access_source(input)
+  return Lower.LowerCMatAccessSourceRejected(access_issue(
+    input.fact.binding.access, "multiple address relations serve the lane"))
+end
+function Lower.LowerAddressByLaneInvalidRelation:lower_cmat_access_source(input)
+  return Lower.LowerCMatAccessSourceRejected(access_issue(
+    input.fact.binding.access, "invalid address relation: " .. self.reason))
+end
+function Lower.LowerAddressByLaneMissing:lower_cmat_access_source(input)
+  local expected = C.CBackendDataPtr(
+    input.fact.binding.ty:code_to_c_backend_type())
+  return input.fact.provenance.lane.base:lower_cmat_direct_access(
+    Lower.LowerCMatDirectAccessInput(
+      input.fact.binding.access, input.values, expected))
+end
+function Lower.LowerCMatAccessSourceInput:lower_cmat_access_source()
+  return self.addresses:lower_cmat_lane_lookup(self.fact.provenance.lane.id)
+:lower_cmat_access_source(self)
+end
+function Lower.LowerCMatAccessSourceReady:lower_cmat_finish_access(input)
+  local entries = copy(input.collection.entries)
+  entries[#entries + 1] = CMat.CMatCFragmentAccessBindingEntry(
+    input.fact.binding.access, input.fact.provenance.lane.id,
+    input.fact.mem_access, self.source, input.fact.elem_size,
+    input.fact.stride, input.fact.alignment)
+  return Lower.LowerCMatAccessBuildReady(
+    Lower.LowerCMatAccessCollection(entries))
+end
+function Lower.LowerCMatAccessSourceRejected:lower_cmat_finish_access(_input)
+  return Lower.LowerCMatAccessBuildRejected(self.issue)
+end
+function Lower.LowerCMatAccessBuildRejected:lower_cmat_continue_accesses(_input)
+  return Lower.LowerCMatAccessesRejected(self.issue)
+end
+function Lower.LowerCMatAccessBuildRequest:lower_validate_access_relation()
+  for i = 1, #self.bindings do
+    local matches = 0
+    for j = 1, #self.provenance.entries do
+      if self.provenance.entries[j].access == self.bindings[i].source then
+        matches = matches + 1
+      end
+    end
+    if matches ~= 1 then
+      return Lower.LowerCMatAccessRelationRejected(access_issue(
+        self.bindings[i].access,
+        "access binding does not have one exact provenance relation"))
+    end
+  end
+  for i = 1, #self.provenance.entries do
+    local matches = 0
+    for j = 1, #self.bindings do
+      if self.bindings[j].source == self.provenance.entries[i].access then
+        matches = matches + 1
+      end
+    end
+    if matches ~= 1 then
+      return Lower.LowerCMatAccessRelationRejected(access_issue(
+        Stencil.StencilAccessRef(self.provenance.entries[i].access.name),
+        "access provenance does not have one exact materialized binding"))
+    end
+  end
+  return Lower.LowerCMatAccessRelationValid
+end
+function Lower.LowerCMatAccessRelationValid:lower_cmat_build_accesses(request)
+  return Lower.LowerCMatAccessBuildReady(
+    Lower.LowerCMatAccessCollection({}))
+:lower_cmat_continue_accesses(Lower.LowerCMatAccessFoldInput(request, 1))
+end
+function Lower.LowerCMatAccessRelationRejected:lower_cmat_build_accesses(_request)
+  return Lower.LowerCMatAccessesRejected(self.issue)
+end
+function Mem.MemDerefBytesUnavailable:lower_cmat_admit_access_pattern(evidence)
+  return Lower.LowerCMatAccessPatternRejected(access_issue(
+    evidence.binding.access, "backend dereference width is unavailable"))
+end
+function Mem.MemDerefBytesKnown:lower_cmat_admit_access_pattern(evidence)
+  if self.bytes ~= evidence.elem_size then
+    return Lower.LowerCMatAccessPatternRejected(access_issue(
+      evidence.binding.access,
+      "backend dereference width disagrees with the element size"))
+  end
+  return evidence.provenance.lane.pattern:lower_cmat_admit_access_pattern(evidence)
+end
+function Mem.MemAccessScalar:lower_cmat_admit_access_pattern(evidence)
+  if evidence.stride ~= evidence.elem_size then
+    return Lower.LowerCMatAccessPatternRejected(access_issue(
+      evidence.binding.access, "scalar access requires unit element stride"))
+  end
+  return Lower.LowerCMatAccessPatternAdmitted
+end
+function Mem.MemAccessContiguous:lower_cmat_admit_access_pattern(evidence)
+  if evidence.stride ~= evidence.elem_size then
+    return Lower.LowerCMatAccessPatternRejected(access_issue(
+      evidence.binding.access, "contiguous access has invalid element stride"))
+  end
+  return Lower.LowerCMatAccessPatternAdmitted
+end
+function Mem.MemAccessStrided:lower_cmat_admit_access_pattern(evidence)
+  if self.stride_elems <= 0
+      or evidence.stride ~= self.stride_elems * evidence.elem_size then
+    return Lower.LowerCMatAccessPatternRejected(access_issue(
+      evidence.binding.access, "strided access disagrees with memory evidence"))
+  end
+  return Lower.LowerCMatAccessPatternAdmitted
+end
+function Mem.MemAccessGather:lower_cmat_admit_access_pattern(evidence)
+  return Lower.LowerCMatAccessPatternRejected(access_issue(
+    evidence.binding.access, "gather access is outside scalar direct scope"))
+end
+function Mem.MemAccessScatter:lower_cmat_admit_access_pattern(evidence)
+  return Lower.LowerCMatAccessPatternRejected(access_issue(
+    evidence.binding.access, "scatter access is outside scalar direct scope"))
+end
+function Mem.MemAccessUnknown:lower_cmat_admit_access_pattern(evidence)
+  return Lower.LowerCMatAccessPatternRejected(access_issue(
+    evidence.binding.access, "unknown access pattern is not admissible"))
+end
+function Lower.LowerCMatAccessPatternRejected:lower_cmat_continue_pattern(_evidence)
+  return Lower.LowerCMatAccessesRejected(self.issue)
+end
+function Lower.LowerCMatAccessPatternAdmitted:lower_cmat_continue_pattern(evidence)
+  local fact = Lower.LowerCMatAccessFact(
+    evidence.binding, evidence.provenance, evidence.mem_access,
+    evidence.backend.alignment, evidence.elem_size, evidence.stride)
+  local source_input = Lower.LowerCMatAccessSourceInput(
+    fact, evidence.request.values, evidence.request.addresses)
+  return source_input:lower_cmat_access_source()
+:lower_cmat_finish_access(Lower.LowerCMatAccessFinishInput(
+    fact, evidence.collection))
+:lower_cmat_continue_accesses(Lower.LowerCMatAccessFoldInput(
+    evidence.request, evidence.next_index))
+end
+function Lower.LowerCMatAccessBuildReady:lower_cmat_continue_accesses(input)
+  local request = input.request
+  if input.index > #request.bindings then
+    return Lower.LowerCMatAccessesReady(
+      CMat.CMatCFragmentAccessBindingProjection(self.collection.entries))
+  end
+  local binding = request.bindings[input.index]
+  local provenance = {}
+  for i = 1, #request.provenance.entries do
+    local entry = request.provenance.entries[i]
+    if entry.access == binding.source then provenance[#provenance + 1] = entry end
+  end
+  local lane = provenance[1].lane
+  if lane.elem_ty ~= binding.ty then
+    return Lower.LowerCMatAccessesRejected(access_issue(
+      binding.access, "lane element type disagrees with materialized access"))
+  end
+  if #lane.accesses ~= 1 then
+    return Lower.LowerCMatAccessesRejected(access_issue(
+      binding.access, "initial CMat access requires one exact lane MemAccessId"))
+  end
+  if #lane.backend_info ~= 1
+      or lane.backend_info[1].access ~= lane.accesses[1] then
+    return Lower.LowerCMatAccessesRejected(access_issue(
+      binding.access, "lane requires one exact backend access fact"))
+  end
+  local elem_size = binding.ty:code_to_c_backend_type()
+:cmat_fragment_size(request.target)
+  local stride = binding.layout:cmat_fragment_direct_stride()
+  if elem_size <= 0 or stride <= 0 or stride % elem_size ~= 0 then
+    return Lower.LowerCMatAccessesRejected(access_issue(
+      binding.access, "access layout is not direct scalar memory"))
+  end
+  local evidence = Lower.LowerCMatAccessEvidence(
+    request, binding, provenance[1], lane.accesses[1], lane.backend_info[1],
+    elem_size, stride, self.collection, input.index + 1)
+  return lane.backend_info[1].deref_bytes
+:lower_cmat_admit_access_pattern(evidence)
+:lower_cmat_continue_pattern(evidence)
+end
+function Lower.LowerCMatAccessBuildRequest:lower_cmat_accesses()
+  return self:lower_validate_access_relation():lower_cmat_build_accesses(self)
+end
+function Lower.LowerCMatAccessEnvironmentInput:lower_cmat_accesses()
+  return Lower.LowerCMatAccessBuildRequest(
+    self.materialization.kernel.accesses,
+    self.materialization.provenance.accesses,
+    self.values, self.addresses, self.target):lower_cmat_accesses()
 end
 
 return Lower
