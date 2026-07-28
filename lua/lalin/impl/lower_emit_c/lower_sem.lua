@@ -11,6 +11,7 @@ local CMat = require("lalin.schema_v2.c_materialize")
 local C = require("lalin.schema_v2.c")
 local Code = require("lalin.schema_v2.code")
 local Mem = require("lalin.schema_v2.mem")
+local Graph = require("lalin.schema_v2.graph")
 
 local function copy(items)
   local out = {}
@@ -169,32 +170,505 @@ function Lower.LowerFragmentCoverage:lower_c_block_coverage(block)
   end
   return Lower.LowerCBlockOutsideCoverage
 end
+local function contains(items, value)
+  for i = 1, #items do if items[i] == value then return true end end
+  return false
+end
+local function find_dominators(entries, block)
+  local found = {}
+  for i = 1, #entries do
+    if entries[i].block == block then found[#found + 1] = entries[i] end
+  end
+  return found
+end
+function Code.CodeTermJump:lower_c_incoming_edges(source)
+  return { Lower.LowerCIncomingEdgeArguments(source, self.dest, self.args) }
+end
+function Code.CodeTermBranch:lower_c_incoming_edges(source)
+  return {
+    Lower.LowerCIncomingEdgeArguments(source, self.then_dest, self.then_args),
+    Lower.LowerCIncomingEdgeArguments(source, self.else_dest, self.else_args),
+  }
+end
+local function switch_edges(source, cases, default_dest, default_args)
+  local entries = {}
+  for i = 1, #cases do
+    entries[#entries + 1] = Lower.LowerCIncomingEdgeArguments(
+      source, cases[i].dest, cases[i].args)
+  end
+  entries[#entries + 1] = Lower.LowerCIncomingEdgeArguments(
+    source, default_dest, default_args)
+  return entries
+end
+function Code.CodeTermSwitch:lower_c_incoming_edges(source)
+  return switch_edges(source, self.cases, self.default_dest, self.default_args)
+end
+function Code.CodeTermVariantSwitch:lower_c_incoming_edges(source)
+  return switch_edges(source, self.cases, self.default_dest, self.default_args)
+end
+function Code.CodeTermReturn:lower_c_incoming_edges(_source) return {} end
+function Code.CodeTermTrap:lower_c_incoming_edges(_source) return {} end
+function Code.CodeTermUnreachable:lower_c_incoming_edges(_source) return {} end
+function Code.CodeFunc:lower_c_incoming_edges()
+  local entries = {}
+  for i = 1, #self.blocks do
+    local additions = self.blocks[i].term.op:lower_c_incoming_edges(self.blocks[i].id)
+    for j = 1, #additions do entries[#entries + 1] = additions[j] end
+  end
+  return entries
+end
+function Lower.LowerCDominanceConstructionInput:lower_c_dominance()
+  if self.graph.func ~= self.code_func.id then
+    return Lower.LowerCDominanceRejected(Lower.LowerIssueDominanceRejected(
+      self.code_func.id, "function graph identity mismatch"))
+  end
+  local blocks = {}
+  for i = 1, #self.code_func.blocks do
+    local id = self.code_func.blocks[i].id
+    if contains(blocks, id) then
+      return Lower.LowerCDominanceRejected(Lower.LowerIssueDominanceRejected(
+        self.code_func.id, "duplicate block identity"))
+    end
+    blocks[#blocks + 1] = id
+  end
+  if not contains(blocks, self.code_func.entry) then
+    return Lower.LowerCDominanceRejected(Lower.LowerIssueDominanceRejected(
+      self.code_func.id, "function entry block is absent"))
+  end
+  local edges = self.code_func:lower_c_incoming_edges()
+  for i = 1, #self.graph.edges do
+    local edge = self.graph.edges[i]
+    if edge.from.func ~= self.code_func.id or edge.to.func ~= self.code_func.id
+        or not contains(blocks, edge.from.block)
+        or not contains(blocks, edge.to.block) then
+      return Lower.LowerCDominanceRejected(Lower.LowerIssueDominanceRejected(
+        self.code_func.id, "graph edge escapes the exact function block set"))
+    end
+  end
+  for i = 1, #edges do
+    if not contains(blocks, edges[i].source)
+        or not contains(blocks, edges[i].destination) then
+      return Lower.LowerCDominanceRejected(Lower.LowerIssueDominanceRejected(
+        self.code_func.id, "terminator edge names an absent block"))
+    end
+    local matches = 0
+    local expected = 0
+    for j = 1, #self.graph.edges do
+      local edge = self.graph.edges[j]
+      if edge.from.block == edges[i].source
+          and edge.to.block == edges[i].destination then
+        matches = matches + 1
+      end
+    end
+    for j = 1, #edges do
+      if edges[j].source == edges[i].source
+          and edges[j].destination == edges[i].destination then
+        expected = expected + 1
+      end
+    end
+    if matches ~= expected then
+      return Lower.LowerCDominanceRejected(Lower.LowerIssueDominanceRejected(
+        self.code_func.id, "graph omits or duplicates a terminator edge"))
+    end
+  end
+  for i = 1, #self.graph.edges do
+    local matches = 0
+    for j = 1, #edges do
+      if self.graph.edges[i].from.block == edges[j].source
+          and self.graph.edges[i].to.block == edges[j].destination then
+        matches = matches + 1
+      end
+    end
+    if matches == 0 then
+      return Lower.LowerCDominanceRejected(Lower.LowerIssueDominanceRejected(
+        self.code_func.id, "graph contains a non-terminator edge"))
+    end
+  end
+  local reachable = { self.code_func.entry }
+  for _ = 1, #blocks do
+    local additions = {}
+    for i = 1, #edges do
+      local edge = edges[i]
+      if contains(reachable, edge.source)
+          and not contains(reachable, edge.destination)
+          and not contains(additions, edge.destination) then
+        additions[#additions + 1] = edge.destination
+      end
+    end
+    if #additions == 0 then break end
+    for i = 1, #blocks do
+      if contains(additions, blocks[i]) then reachable[#reachable + 1] = blocks[i] end
+    end
+  end
+  local entries = {}
+  for i = 1, #reachable do
+    local dominators
+    if reachable[i] == self.code_func.entry then dominators = { reachable[i] }
+    else dominators = copy(reachable) end
+    entries[i] = Lower.LowerCDominatorEntry(reachable[i], dominators)
+  end
+  local limit = #reachable * #reachable + 1
+  for _ = 1, limit do
+    local next_entries = {}
+    local changes = 0
+    for i = 1, #reachable do
+      local block = reachable[i]
+      local dominators
+      if block == self.code_func.entry then
+        dominators = { block }
+      else
+        local predecessors = {}
+        for j = 1, #edges do
+          local edge = edges[j]
+          if edge.destination == block and contains(reachable, edge.source)
+              and not contains(predecessors, edge.source) then
+            predecessors[#predecessors + 1] = edge.source
+          end
+        end
+        dominators = { block }
+        for j = 1, #reachable do
+          local candidate = reachable[j]
+          local in_every = #predecessors > 0
+          for k = 1, #predecessors do
+            local predecessor = find_dominators(entries, predecessors[k])
+            if #predecessor ~= 1
+                or not contains(predecessor[1].dominators, candidate) then
+              in_every = false
+            end
+          end
+          if in_every and candidate ~= block then
+            dominators[#dominators + 1] = candidate
+          end
+        end
+      end
+      local previous = find_dominators(entries, block)
+      if #previous ~= 1 or #previous[1].dominators ~= #dominators then
+        changes = changes + 1
+      else
+        for j = 1, #dominators do
+          if not contains(previous[1].dominators, dominators[j]) then
+            changes = changes + 1
+          end
+        end
+      end
+      next_entries[i] = Lower.LowerCDominatorEntry(block, dominators)
+    end
+    entries = next_entries
+    if changes == 0 then
+      return Lower.LowerCDominanceReady(
+        Lower.LowerCDominanceProjection(
+          self.code_func, self.graph, entries))
+    end
+  end
+  return Lower.LowerCDominanceRejected(Lower.LowerIssueDominanceRejected(
+    self.code_func.id, "dominance fixed point did not converge"))
+end
+function Lower.LowerCDominanceProjection:lower_c_dominance_lookup(query)
+  local blocks = find_dominators(self.entries, query.block)
+  if #blocks ~= 1 then
+    return Lower.LowerCDominanceMissing(
+      "queried block is absent or ambiguous in dominance projection")
+  end
+  if contains(blocks[1].dominators, query.dominator) then
+    return Lower.LowerCDominates
+  end
+  return Lower.LowerCDoesNotDominate
+end
+function Lower.LowerCFunctionParamSite:lower_c_resolve_incoming(input)
+  return Lower.LowerCIncomingArgumentResolved(
+    Lower.LowerCIncomingBlockArgument(
+      input.source, input.ordinal, input.value, self,
+      Lower.LowerCSourceFunctionParam))
+end
+function Lower.LowerCBlockParamSite:lower_c_resolve_incoming(input)
+  local continuation = Lower.LowerCDominatingIncomingArgumentInput(input, self.block)
+  return input.dominance:lower_c_dominance_lookup(
+    Lower.LowerCDominanceQuery(self.block, input.source))
+:lower_c_resolve_incoming(continuation)
+end
+function Lower.LowerCInstructionSite:lower_c_resolve_incoming(input)
+  local continuation = Lower.LowerCDominatingIncomingArgumentInput(input, self.block)
+  return input.dominance:lower_c_dominance_lookup(
+    Lower.LowerCDominanceQuery(self.block, input.source))
+:lower_c_resolve_incoming(continuation)
+end
+function Lower.LowerCDominates:lower_c_resolve_incoming(input)
+  return Lower.LowerCIncomingArgumentResolved(
+    Lower.LowerCIncomingBlockArgument(
+      input.request.source, input.request.ordinal, input.request.value,
+      input.request.definition, Lower.LowerCSourceDominates(
+        input.dominator, input.request.source)))
+end
+function Lower.LowerCDoesNotDominate:lower_c_resolve_incoming(input)
+  return Lower.LowerCIncomingArgumentRejected(
+    Lower.LowerIssueEntryAdapterRejected(
+      input.request.func, input.request.replacement,
+      "incoming argument definition does not dominate its source edge"))
+end
+function Lower.LowerCDominanceMissing:lower_c_resolve_incoming(input)
+  return Lower.LowerCIncomingArgumentRejected(
+    Lower.LowerIssueEntryAdapterRejected(
+      input.request.func, input.request.replacement,
+      "incoming argument source is absent from dominance evidence"))
+end
+function Lower.LowerCIncomingArgumentResolved:lower_c_collect_incoming(collection)
+  local entries = copy(collection.entries)
+  entries[#entries + 1] = self.argument
+  return Lower.LowerCIncomingArgumentsCollecting(entries)
+end
+function Lower.LowerCIncomingArgumentRejected:lower_c_collect_incoming(_collection)
+  return Lower.LowerCIncomingArgumentsRejected(self.issue)
+end
+function Lower.LowerCIncomingArgumentsCollecting:lower_c_add_incoming(resolution)
+  return resolution:lower_c_collect_incoming(self)
+end
+function Lower.LowerCIncomingArgumentsRejected:lower_c_add_incoming(_resolution)
+  return self
+end
+function Lower.LowerCIncomingArgumentsRejected:lower_c_finish_adapters(_input)
+  return Lower.LowerCReplacementEntryAdapterRejected(self.issue)
+end
+function Lower.LowerCIncomingArgumentsCollecting:lower_c_finish_adapters(input)
+  local adapters = {}
+  for i = 1, #input.parameters do
+    local incoming = {}
+    for j = 1, #self.entries do
+      if self.entries[j].ordinal == input.parameters[i].ordinal then
+        incoming[#incoming + 1] = self.entries[j]
+      end
+    end
+    adapters[#adapters + 1] = Lower.LowerCReplacementParamAdapter(
+      input.parameters[i], incoming)
+  end
+  return Lower.LowerCReplacementEntryAdapterReady(
+    Lower.LowerCReplacementEntryProjection(
+      input.request.code_func, input.request.replacement, adapters))
+end
+function Lower.LowerCReplacementEntryAdapterInput:lower_c_entry_adapters()
+  if self.baseline.source ~= self.code_func
+      or self.dominance.source ~= self.code_func then
+    return Lower.LowerCReplacementEntryAdapterRejected(
+      Lower.LowerIssueEntryAdapterRejected(
+        self.code_func.id, self.replacement,
+        "baseline function identity mismatch"))
+  end
+  local blocks = {}
+  for i = 1, #self.code_func.blocks do
+    if self.code_func.blocks[i].id == self.replacement then
+      blocks[#blocks + 1] = self.code_func.blocks[i]
+    end
+  end
+  if #blocks ~= 1 then
+    return Lower.LowerCReplacementEntryAdapterRejected(
+      Lower.LowerIssueEntryAdapterRejected(
+        self.code_func.id, self.replacement,
+        "replacement source block is absent or ambiguous"))
+  end
+  local incoming_edges = {}
+  local edges = self.code_func:lower_c_incoming_edges()
+  for i = 1, #edges do
+    if edges[i].destination == self.replacement then
+      incoming_edges[#incoming_edges + 1] = edges[i]
+    end
+  end
+  if #blocks[1].params > 0 and self.replacement == self.code_func.entry then
+    return Lower.LowerCReplacementEntryAdapterRejected(
+      Lower.LowerIssueEntryAdapterRejected(
+        self.code_func.id, self.replacement,
+        "parameterized function-entry replacement lacks an initializer"))
+  end
+  if #blocks[1].params > 0 and #incoming_edges == 0 then
+    return Lower.LowerCReplacementEntryAdapterRejected(
+      Lower.LowerIssueEntryAdapterRejected(
+        self.code_func.id, self.replacement,
+        "parameterized replacement block has no incoming edge"))
+  end
+  for i = 1, #incoming_edges do
+    if #incoming_edges[i].args ~= #blocks[1].params then
+      return Lower.LowerCReplacementEntryAdapterRejected(
+        Lower.LowerIssueEntryAdapterRejected(
+          self.code_func.id, self.replacement,
+          "incoming edge argument count disagrees with replacement parameters"))
+    end
+  end
+  local baseline_parameters = {}
+  for ordinal = 1, #blocks[1].params do
+    local parameter = blocks[1].params[ordinal]
+    local baseline_params = {}
+    for i = 1, #self.baseline.block_params.entries do
+      local entry = self.baseline.block_params.entries[i]
+      if entry.block == self.replacement and entry.ordinal == ordinal
+          and entry.value.value == parameter.value then
+        baseline_params[#baseline_params + 1] = entry
+      end
+    end
+    if #baseline_params ~= 1
+        or baseline_params[1].value.code_ty ~= parameter.ty
+        or baseline_params[1].parameter.ty ~=
+          parameter.ty:code_to_c_backend_type() then
+      return Lower.LowerCReplacementEntryAdapterRejected(
+        Lower.LowerIssueEntryAdapterRejected(
+          self.code_func.id, self.replacement,
+          "replacement parameter lacks one exact baseline C parameter"))
+    end
+    baseline_parameters[#baseline_parameters + 1] = baseline_params[1]
+  end
+  local collection = Lower.LowerCIncomingArgumentsCollecting({})
+  for i = 1, #incoming_edges do
+    for ordinal = 1, #blocks[1].params do
+      local parameter = blocks[1].params[ordinal]
+      local values = {}
+      for j = 1, #self.baseline.value_types.entries do
+        if self.baseline.value_types.entries[j].value ==
+            incoming_edges[i].args[ordinal] then
+          values[#values + 1] = self.baseline.value_types.entries[j]
+        end
+      end
+      local sites = {}
+      if #values == 1 then
+        for j = 1, #self.baseline.value_sites.entries do
+          if self.baseline.value_sites.entries[j].value == values[1].value then
+            sites[#sites + 1] = self.baseline.value_sites.entries[j]
+          end
+        end
+      end
+      if #values ~= 1 or #sites ~= 1 or values[1].code_ty ~= parameter.ty then
+        return Lower.LowerCReplacementEntryAdapterRejected(
+          Lower.LowerIssueEntryAdapterRejected(
+            self.code_func.id, self.replacement,
+            "incoming argument lacks one exact typed definition site"))
+      end
+      local request = Lower.LowerCIncomingArgumentInput(
+        self.code_func.id, self.replacement, incoming_edges[i].source,
+        ordinal, values[1], sites[1].site, self.dominance)
+      collection = collection:lower_c_add_incoming(
+        sites[1].site:lower_c_resolve_incoming(request))
+    end
+  end
+  return collection:lower_c_finish_adapters(
+    Lower.LowerCAdapterFinishInput(self, blocks[1], baseline_parameters))
+end
 function Lower.LowerCFunctionParamSite:lower_cmat_value_contribution(input)
-  return Lower.LowerCValueAvailable(input.value)
+  return Lower.LowerCValueAvailable(Lower.LowerCEntryValueBinding(
+    input.value, Lower.LowerCEntryFunctionParam))
 end
-function Lower.LowerCBlockCovered:lower_cmat_value_contribution(_input)
+function Lower.LowerCBlockParamSite:lower_c_entry_value_source(candidate)
+  if self.block == candidate.replacement then
+    local adapters = {}
+    for i = 1, #candidate.adapters.entries do
+      if candidate.adapters.entries[i].parameter.value.value ==
+          candidate.value.value then
+        adapters[#adapters + 1] = candidate.adapters.entries[i]
+      end
+    end
+    if #adapters ~= 1 then return Lower.LowerCValueUnavailable end
+    return Lower.LowerCValueAvailable(Lower.LowerCEntryValueBinding(
+      candidate.value, Lower.LowerCEntryReplacementBlockParam(adapters[1])))
+  end
+  return Lower.LowerCValueAvailable(Lower.LowerCEntryValueBinding(
+    candidate.value, Lower.LowerCEntryDominatingBlockParam(self.block)))
+end
+function Lower.LowerCInstructionSite:lower_c_entry_value_source(candidate)
+  if self.block == candidate.replacement then return Lower.LowerCValueUnavailable end
+  return Lower.LowerCValueAvailable(Lower.LowerCEntryValueBinding(
+    candidate.value, Lower.LowerCEntryDominatingInstruction(self.block, self.inst)))
+end
+function Lower.LowerCDominates:lower_cmat_value_contribution(candidate)
+  return candidate.site:lower_c_entry_value_source(candidate)
+end
+function Lower.LowerCDoesNotDominate:lower_cmat_value_contribution(_candidate)
   return Lower.LowerCValueUnavailable
 end
-function Lower.LowerCBlockOutsideCoverage:lower_cmat_value_contribution(input)
-  return Lower.LowerCValueAvailable(input.value)
-end
-function Lower.LowerCBlockParamSite:lower_cmat_value_contribution(_input)
+function Lower.LowerCDominanceMissing:lower_cmat_value_contribution(_candidate)
   return Lower.LowerCValueUnavailable
 end
-function Lower.LowerCInstructionSite:lower_cmat_value_contribution(_input)
-  return Lower.LowerCValueUnavailable
+function Lower.LowerCBlockParamSite:lower_cmat_value_contribution(input)
+  local candidate = Lower.LowerCEntryAvailabilityCandidate(
+    input.value, self, input.coverage.replacement_source, input.adapters)
+  return input.dominance:lower_c_dominance_lookup(Lower.LowerCDominanceQuery(
+    self.block, input.coverage.replacement_source))
+:lower_cmat_value_contribution(candidate)
+end
+function Lower.LowerCInstructionSite:lower_cmat_value_contribution(input)
+  local candidate = Lower.LowerCEntryAvailabilityCandidate(
+    input.value, self, input.coverage.replacement_source, input.adapters)
+  return input.dominance:lower_c_dominance_lookup(Lower.LowerCDominanceQuery(
+    self.block, input.coverage.replacement_source))
+:lower_cmat_value_contribution(candidate)
 end
 function Lower.LowerCValueAvailable:lower_cmat_collect_value(collection)
   local entries = copy(collection.entries)
+  local availability = copy(collection.availability)
   entries[#entries + 1] = CMat.CMatCExternalValueBindingEntry(
-    self.value.value, self.value.c_local)
-  return Lower.LowerCMatValueCollection(entries)
+    self.binding.value.value, self.binding.value.c_local)
+  availability[#availability + 1] = self.binding
+  return Lower.LowerCMatValueCollection(entries, availability)
 end
 function Lower.LowerCValueUnavailable:lower_cmat_collect_value(collection)
   return collection
 end
 function Lower.LowerCMatValueEnvironmentInput:lower_cmat_values()
-  local collection = Lower.LowerCMatValueCollection({})
+  if self.code_func.id ~= self.coverage.func
+      or self.baseline.source ~= self.code_func
+      or self.dominance.source ~= self.code_func
+      or self.adapters.source ~= self.code_func
+      or self.adapters.block ~= self.coverage.replacement_source then
+    return Lower.LowerCMatValuesRejected(
+      Lower.LowerIssueValueEnvironmentRejected(
+        self.coverage.func,
+        "value environment function or replacement identity mismatch"))
+  end
+  local replacement = find_dominators(
+    self.dominance.entries, self.coverage.replacement_source)
+  if #replacement ~= 1 then
+    return Lower.LowerCMatValuesRejected(
+      Lower.LowerIssueDominanceRejected(
+        self.coverage.func,
+        "replacement entry is absent or ambiguous in dominance projection"))
+  end
+  local replacement_params = {}
+  for i = 1, #self.baseline.block_params.entries do
+    if self.baseline.block_params.entries[i].block ==
+        self.coverage.replacement_source then
+      replacement_params[#replacement_params + 1] =
+        self.baseline.block_params.entries[i]
+    end
+  end
+  if #replacement_params ~= #self.adapters.entries then
+    return Lower.LowerCMatValuesRejected(
+      Lower.LowerIssueValueEnvironmentRejected(
+        self.coverage.func,
+        "replacement adapter cardinality disagrees with baseline parameters"))
+  end
+  for i = 1, #replacement_params do
+    local matches = 0
+    for j = 1, #self.adapters.entries do
+      if self.adapters.entries[j].parameter == replacement_params[i] then
+        matches = matches + 1
+      end
+    end
+    if matches ~= 1 then
+      return Lower.LowerCMatValuesRejected(
+        Lower.LowerIssueValueUnavailable(
+          replacement_params[i].value.value,
+          "replacement parameter adapter is absent or ambiguous"))
+    end
+  end
+  for i = 1, #self.adapters.entries do
+    local matches = 0
+    for j = 1, #replacement_params do
+      if self.adapters.entries[i].parameter == replacement_params[j] then
+        matches = matches + 1
+      end
+    end
+    if matches ~= 1 then
+      return Lower.LowerCMatValuesRejected(
+        Lower.LowerIssueValueEnvironmentRejected(
+          self.coverage.func,
+          "replacement adapter does not belong to the baseline block"))
+    end
+  end
+  local collection = Lower.LowerCMatValueCollection({}, {})
   for i = 1, #self.baseline.value_types.entries do
     local value = self.baseline.value_types.entries[i]
     local sites = {}
@@ -209,11 +683,13 @@ function Lower.LowerCMatValueEnvironmentInput:lower_cmat_values()
           value.value, "value definition site is absent or ambiguous"))
     end
     collection = sites[1].site:lower_cmat_value_contribution(
-      Lower.LowerCValueAvailabilityInput(self.coverage, value))
+      Lower.LowerCValueAvailabilityInput(
+        self.coverage, value, self.dominance, self.adapters))
 :lower_cmat_collect_value(collection)
   end
   return Lower.LowerCMatValuesReady(
-    CMat.CMatCExternalValueBindingProjection(collection.entries))
+    CMat.CMatCExternalValueBindingProjection(collection.entries),
+    Lower.LowerCEntryValueProjection(collection.availability))
 end
 function Lower.LowerCoverageLoop:lower_cmat_normal_exit(_coverage)
   if #self.loop.exits ~= 1 then

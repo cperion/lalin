@@ -78,6 +78,11 @@ return schema. LalinLower {
       field. value [LalinCode.CodeValueId],
       reason [str],
     },
+    LowerIssueValueEnvironmentRejected {
+      variant_unique,
+      func [LalinCode.CodeFuncId],
+      reason [str],
+    },
     LowerIssueAccessRejected {
       variant_unique,
       access [LalinStencil.StencilAccessRef],
@@ -96,6 +101,17 @@ return schema. LalinLower {
       actual [LalinCode.CodeModuleId],
     },
     LowerIssuePreparationFacetRejected { variant_unique, reason [str], },
+    LowerIssueDominanceRejected {
+      variant_unique,
+      func [LalinCode.CodeFuncId],
+      reason [str],
+    },
+    LowerIssueEntryAdapterRejected {
+      variant_unique,
+      func [LalinCode.CodeFuncId],
+      block [LalinCode.CodeBlockId],
+      reason [str],
+    },
     LowerIssueClosedFormUnsupported {
       variant_unique,
       fragment [LalinLower.LowerFragmentId],
@@ -407,19 +423,194 @@ return schema. LalinLower {
     LowerCBlockCovered,
     LowerCBlockOutsideCoverage,
   },
+  product. LowerCIncomingEdgeArguments {
+    interned,
+    source [LalinCode.CodeBlockId],
+    destination [LalinCode.CodeBlockId],
+    args [many [LalinCode.CodeValueId]],
+  },
+  product. LowerCBlockParamEntry {
+    interned,
+    block [LalinCode.CodeBlockId],
+    ordinal [number],
+    field. value [LalinLower.LowerCValueTypeEntry],
+    parameter [LalinC.CBackendBlockParam],
+  },
+  product. LowerCBlockParamProjection {
+    interned,
+    entries [many [LalinLower.LowerCBlockParamEntry]],
+  },
+  sum. LowerCSourceValueEvidence {
+    LowerCSourceFunctionParam,
+    LowerCSourceDominates {
+      variant_unique,
+      dominator [LalinCode.CodeBlockId],
+      block [LalinCode.CodeBlockId],
+    },
+  },
+  product. LowerCIncomingBlockArgument {
+    interned,
+    source [LalinCode.CodeBlockId],
+    ordinal [number],
+    field. value [LalinLower.LowerCValueTypeEntry],
+    definition [LalinLower.LowerCValueDefinitionSite],
+    evidence [LalinLower.LowerCSourceValueEvidence],
+  },
+  product. LowerCIncomingArgumentInput {
+    interned,
+    func [LalinCode.CodeFuncId],
+    replacement [LalinCode.CodeBlockId],
+    source [LalinCode.CodeBlockId],
+    ordinal [number],
+    field. value [LalinLower.LowerCValueTypeEntry],
+    definition [LalinLower.LowerCValueDefinitionSite],
+    dominance [LalinLower.LowerCDominanceProjection],
+  },
+  product. LowerCDominatingIncomingArgumentInput {
+    interned,
+    request [LalinLower.LowerCIncomingArgumentInput],
+    dominator [LalinCode.CodeBlockId],
+  },
+  sum. LowerCIncomingArgumentResolution {
+    LowerCIncomingArgumentResolved {
+      variant_unique,
+      argument [LalinLower.LowerCIncomingBlockArgument],
+    },
+    LowerCIncomingArgumentRejected {
+      variant_unique,
+      issue [LalinLower.LowerIssue],
+    },
+  },
+  sum. LowerCIncomingArgumentCollection {
+    LowerCIncomingArgumentsCollecting {
+      variant_unique,
+      entries [many [LalinLower.LowerCIncomingBlockArgument]],
+    },
+    LowerCIncomingArgumentsRejected {
+      variant_unique,
+      issue [LalinLower.LowerIssue],
+    },
+  },
+  product. LowerCAdapterFinishInput {
+    interned,
+    request [LalinLower.LowerCReplacementEntryAdapterInput],
+    block [LalinCode.CodeBlock],
+    parameters [many [LalinLower.LowerCBlockParamEntry]],
+  },
+  product. LowerCReplacementParamAdapter {
+    interned,
+    parameter [LalinLower.LowerCBlockParamEntry],
+    incoming [many [LalinLower.LowerCIncomingBlockArgument]],
+  },
+  product. LowerCReplacementEntryProjection {
+    interned,
+    source [LalinCode.CodeFunc],
+    block [LalinCode.CodeBlockId],
+    entries [many [LalinLower.LowerCReplacementParamAdapter]],
+  },
+  product. LowerCReplacementEntryAdapterInput {
+    interned,
+    code_func [LalinCode.CodeFunc],
+    baseline [LalinLower.LowerCFunctionEmission],
+    replacement [LalinCode.CodeBlockId],
+    dominance [LalinLower.LowerCDominanceProjection],
+  },
+  sum. LowerCReplacementEntryAdapterConstruction {
+    LowerCReplacementEntryAdapterReady {
+      variant_unique,
+      projection [LalinLower.LowerCReplacementEntryProjection],
+    },
+    LowerCReplacementEntryAdapterRejected {
+      variant_unique,
+      issue [LalinLower.LowerIssue],
+    },
+  },
+  product. LowerCDominatorEntry {
+    interned,
+    block [LalinCode.CodeBlockId],
+    dominators [many [LalinCode.CodeBlockId]],
+  },
+  product. LowerCDominanceProjection {
+    interned,
+    source [LalinCode.CodeFunc],
+    graph [LalinGraph.CodeFuncGraph],
+    entries [many [LalinLower.LowerCDominatorEntry]],
+  },
+  product. LowerCDominanceConstructionInput {
+    interned,
+    code_func [LalinCode.CodeFunc],
+    graph [LalinGraph.CodeFuncGraph],
+  },
+  sum. LowerCDominanceConstruction {
+    LowerCDominanceReady {
+      variant_unique,
+      dominance [LalinLower.LowerCDominanceProjection],
+    },
+    LowerCDominanceRejected {
+      variant_unique,
+      issue [LalinLower.LowerIssue],
+    },
+  },
+  product. LowerCDominanceQuery {
+    interned,
+    dominator [LalinCode.CodeBlockId],
+    block [LalinCode.CodeBlockId],
+  },
+  sum. LowerCDominanceLookup {
+    LowerCDominates,
+    LowerCDoesNotDominate,
+    LowerCDominanceMissing { variant_unique, reason [str], },
+  },
+  sum. LowerCEntryValueSource {
+    LowerCEntryFunctionParam,
+    LowerCEntryDominatingBlockParam {
+      variant_unique,
+      block [LalinCode.CodeBlockId],
+    },
+    LowerCEntryReplacementBlockParam {
+      variant_unique,
+      adapter [LalinLower.LowerCReplacementParamAdapter],
+    },
+    LowerCEntryDominatingInstruction {
+      variant_unique,
+      block [LalinCode.CodeBlockId],
+      inst [LalinCode.CodeInstId],
+    },
+  },
+  product. LowerCEntryValueBinding {
+    interned,
+    field. value [LalinLower.LowerCValueTypeEntry],
+    source [LalinLower.LowerCEntryValueSource],
+  },
+  product. LowerCEntryValueProjection {
+    interned,
+    entries [many [LalinLower.LowerCEntryValueBinding]],
+  },
+  product. LowerCEntryAvailabilityCandidate {
+    interned,
+    field. value [LalinLower.LowerCValueTypeEntry],
+    site [LalinLower.LowerCValueDefinitionSite],
+    replacement [LalinCode.CodeBlockId],
+    adapters [LalinLower.LowerCReplacementEntryProjection],
+  },
   product. LowerCMatValueCollection {
     interned,
     entries [many [LalinCMat.CMatCExternalValueBindingEntry]],
+    availability [many [LalinLower.LowerCEntryValueBinding]],
   },
   product. LowerCMatValueEnvironmentInput {
     interned,
+    code_func [LalinCode.CodeFunc],
     baseline [LalinLower.LowerCFunctionEmission],
     coverage [LalinLower.LowerFragmentCoverage],
+    dominance [LalinLower.LowerCDominanceProjection],
+    adapters [LalinLower.LowerCReplacementEntryProjection],
   },
   sum. LowerCMatValueEnvironment {
     LowerCMatValuesReady {
       variant_unique,
       values [LalinCMat.CMatCExternalValueBindingProjection],
+      availability [LalinLower.LowerCEntryValueProjection],
     },
     LowerCMatValuesRejected { variant_unique, issue [LalinLower.LowerIssue], },
   },
@@ -803,11 +994,13 @@ return schema. LalinLower {
     interned,
     coverage [LalinLower.LowerFragmentCoverage],
     field. value [LalinLower.LowerCValueTypeEntry],
+    dominance [LalinLower.LowerCDominanceProjection],
+    adapters [LalinLower.LowerCReplacementEntryProjection],
   },
   sum. LowerCValueAvailabilityContribution {
     LowerCValueAvailable {
       variant_unique,
-      field. value [LalinLower.LowerCValueTypeEntry],
+      binding [LalinLower.LowerCEntryValueBinding],
     },
     LowerCValueUnavailable,
   },
@@ -854,6 +1047,8 @@ return schema. LalinLower {
     helpers [many [LalinC.CBackendHelperUse]],
     value_types [LalinLower.LowerCValueTypeProjection],
     value_sites [LalinLower.LowerCValueSiteProjection],
+    source [LalinCode.CodeFunc],
+    block_params [LalinLower.LowerCBlockParamProjection],
   },
   product. LowerCModuleEmission {
     interned,

@@ -89,7 +89,8 @@ function Code.CodeLinkageImport:lower_c_visibility() return Core.VisibilityLocal
 function Code.CodeLinkageDeclaration:lower_c_visibility() return Core.VisibilityLocal end
 
 function Code.CodeFunc:lower_c_function(input)
-  local value_entries, params, locals, value_sites = {}, {}, {}, {}
+  local value_entries, params, locals, value_sites, block_params =
+    {}, {}, {}, {}, {}
   for i = 1, #self.params do
     local entry = self.params[i]:lower_c_value_entry()
     value_entries[#value_entries + 1], params[#params + 1] = entry, entry.c_local
@@ -105,6 +106,9 @@ function Code.CodeFunc:lower_c_function(input)
       value_entries[#value_entries + 1] = entry
       value_sites[#value_sites + 1] = Lower.LowerCValueSiteEntry(
         entry.value, Lower.LowerCBlockParamSite(self.blocks[i].id))
+      block_params[#block_params + 1] = Lower.LowerCBlockParamEntry(
+        self.blocks[i].id, j, entry,
+        C.CBackendBlockParam(entry.c_local.id, entry.c_local.ty))
     end
   end
   local values = Lower.LowerCValueTypeProjection(value_entries)
@@ -121,7 +125,8 @@ function Code.CodeFunc:lower_c_function(input)
   local sig_id = input.signatures:lower_c_signature_lookup(self.sig):lower_c_sig_id()
   local func = C.CBackendFunc(C.CBackendName(self.name), self.name, self.linkage:lower_c_visibility(), sig_id, params, locals, C.CBackendBodyBlocks(entry, blocks))
   return Lower.LowerCFunctionEmission(
-    func, helpers, values, Lower.LowerCValueSiteProjection(value_sites))
+    func, helpers, values, Lower.LowerCValueSiteProjection(value_sites),
+    self, Lower.LowerCBlockParamProjection(block_params))
 end
 
 function Code.CodeDataInit:lower_code_data_init_to_c() error("missing lower_code_data_init_to_c leaf method", 2) end
