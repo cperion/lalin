@@ -1,4 +1,16 @@
 local M = {}
+local Lower = require("lalin.schema_v2.lower")
+local Compiler = require("lalin.schema_v2.compiler")
+
+function Lower.LowerCModuleEmitted:compiler_c_backend_result()
+    local unit = self.emission.unit
+    local validation = require("lalin.impl.lower_emit_c.validate").validate(unit)
+    return Compiler.CompilerCBackendResult(unit, validation)
+end
+
+function Lower.LowerCModuleRejected:compiler_c_backend_result()
+    error("typed canonical C lowering rejected with " .. #self.issues .. " issue(s)", 2)
+end
 
 function M.code_result_to_c(request)
     local code_result = request.result
@@ -13,8 +25,6 @@ function M.code_result_to_c(request)
     require("lalin.impl.lower_plan")
     require("lalin.impl.lower_emit_c")
 
-    local Lower = require("lalin.schema_v2.lower")
-    local Compiler = require("lalin.schema_v2.compiler")
     local module = code_result.module
     local graph = module:build_graph()
     local flow = graph:compute_flow(module)
@@ -30,11 +40,9 @@ function M.code_result_to_c(request)
     local lower_plan = module:plan_lowering(
       graph, kernels, schedules, Lower.LowerTargetC)
     local spine = Lower.LowerBackSpine(module, graph, target)
-    local emission = lower_plan:lower_c_module(
-      Lower.LowerCModuleInput(spine, lower_plan, prepared.projection))
-    local unit = emission.unit
-    local validation = require("lalin.impl.lower_emit_c.validate").validate(unit)
-    return Compiler.CompilerCBackendResult(unit, validation)
+    return prepared:lower_c_prepared_module(
+      Lower.LowerCPreparedModuleInput(spine, lower_plan))
+:compiler_c_backend_result()
 end
 
 return M

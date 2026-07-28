@@ -72,6 +72,21 @@ function Lower.LowerKernelCMatPreparationInput:lower_prepare_cmat()
     self.kernels, self.schedules, self.compiler):project_kernel_module()
   :lower_cmat_prepare()
 end
+function Lower.LowerKernelCMatPrepared:lower_c_prepared_module(input)
+  local emission = input.plan:lower_c_module(Lower.LowerCModuleInput(
+    input.spine, input.plan, self.projection))
+  return Lower.LowerCModuleEmitted(emission)
+end
+function Lower.LowerKernelCMatPreparationRejected:lower_c_prepared_module(_input)
+  return Lower.LowerCModuleRejected({
+    Lower.LowerIssuePreparationModuleMismatch(self.expected, self.actual),
+  })
+end
+function Lower.LowerKernelCMatPreparationFacetRejected:lower_c_prepared_module(_input)
+  return Lower.LowerCModuleRejected({
+    Lower.LowerIssuePreparationFacetRejected(self.reason),
+  })
+end
 
 function Lower.LowerLoopByIdMissing:lower_resolve_coverage(input, cover)
   return Lower.LowerFragmentCoverageRejected(

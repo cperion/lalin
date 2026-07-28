@@ -40,6 +40,18 @@ assert(input.spine.target == target, "LowerCModuleInput must retain spine target
 local emission = plan:lower_c_module(input)
 assert(asdl.classof(emission.unit) == C.CBackendUnit)
 assert(emission.unit.target == target, "CBackendUnit must retain exact target identity")
+local prepared_input = Lower.LowerCPreparedModuleInput(spine, plan)
+local rejected_preparation = Lower.LowerKernelCMatPreparationRejected(
+  module_id, Code.CodeModuleId("other"))
+:lower_c_prepared_module(prepared_input)
+assert(asdl.classof(rejected_preparation) == Lower.LowerCModuleRejected)
+assert(asdl.classof(rejected_preparation.issues[1]) ==
+  Lower.LowerIssuePreparationModuleMismatch)
+local rejected_facet = Lower.LowerKernelCMatPreparationFacetRejected(
+  "facet mismatch"):lower_c_prepared_module(prepared_input)
+assert(asdl.classof(rejected_facet) == Lower.LowerCModuleRejected)
+assert(asdl.classof(rejected_facet.issues[1]) ==
+  Lower.LowerIssuePreparationFacetRejected)
 
 local request = Compiler.CompilerCCodegenRequest(
   Compiler.CodeResult(module, Code.CodeContractFactSet(module_id, {}), T.LalinSem.LayoutEnv({})),

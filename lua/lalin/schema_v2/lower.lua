@@ -90,6 +90,12 @@ return schema. LalinLower {
       reason [str],
     },
     LowerIssueExitShapeRejected { variant_unique, reason [str], },
+    LowerIssuePreparationModuleMismatch {
+      variant_unique,
+      expected [LalinCode.CodeModuleId],
+      actual [LalinCode.CodeModuleId],
+    },
+    LowerIssuePreparationFacetRejected { variant_unique, reason [str], },
     LowerIssueClosedFormUnsupported {
       variant_unique,
       fragment [LalinLower.LowerFragmentId],
@@ -363,6 +369,11 @@ return schema. LalinLower {
       actual [LalinCode.CodeModuleId],
     },
     LowerKernelCMatPreparationFacetRejected { variant_unique, reason [str], },
+  },
+  product. LowerCPreparedModuleInput {
+    interned,
+    spine [LalinLower.LowerBackSpine],
+    plan [LalinLower.LowerModule],
   },
   sum. LowerFragmentCoverageOrigin {
     LowerCoverageFunction,
