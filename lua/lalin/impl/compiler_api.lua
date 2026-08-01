@@ -11,7 +11,7 @@ require("lalin.backend_target_model")(T) -- installs CBackendTarget:host_target_
 -- Ensure all phase methods are installed
 require("lalin.impl.tree_surface")
 require("lalin.impl.tree_closure")
-require("lalin.impl.tree_check.init")
+require("lalin.impl.tree_check")
 require("lalin.impl.tree_region")
 require("lalin.impl.tree_code")
 require("lalin.impl.code_graph")

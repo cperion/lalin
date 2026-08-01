@@ -157,14 +157,14 @@ local function bind_context(T)
         return lj_module, facts, artifacts, rejects
     end
 
-    local function native_boundary_error(operation)
-        return "luajit_backend: " .. operation .. " only supports explicit LuaJIT bytecode stencil artifacts; native copy-patch uses lalin.native_backend / LalinNative"
+    local function bytecode_boundary_error(operation)
+        return "luajit_backend: " .. operation .. " requires explicit LuaJIT bytecode mode; the performance backend emits C for GCC"
     end
 
     function api.realize_artifacts(artifacts, opts)
         opts = opts or {}
         if not bytecode_mode(opts) then
-            return nil, native_boundary_error("artifact realization")
+            return nil, bytecode_boundary_error("artifact realization")
         end
         return BytecodeTrace.realize_bc_artifacts(artifacts, {
             bank = opts.bc_bank,
@@ -189,7 +189,7 @@ local function bind_context(T)
             if realized == nil then return nil, realize_err, realize_source end
             stencil_symbols = realized.symbols
         elseif #(artifacts or {}) > 0 then
-            return nil, native_boundary_error("module compilation")
+            return nil, bytecode_boundary_error("module compilation")
         end
         local compiled, emit_err, source = Emit.compile_module(lj_module, {
             chunk_name = opts.chunk_name or "lalin_luajit_backend",
@@ -222,7 +222,7 @@ local function bind_context(T)
             stencil_source = BytecodeTrace.emit_bc_bank_source(bc_bank, opts)
         else
             if #(artifacts or {}) > 0 then
-                return nil, native_boundary_error("source artifact emission")
+                return nil, bytecode_boundary_error("source artifact emission")
             end
             stencil_source = "local __lalin_luajit_stencil_symbols = {}\n"
         end

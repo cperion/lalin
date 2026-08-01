@@ -32,7 +32,6 @@ local SCHEMA_MODULES = {
     "kernel",
     "stencil",
     "stencil_machine",
-    "native",
     "exec",
     "schedule",
     "lower",

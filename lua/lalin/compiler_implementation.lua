@@ -59,7 +59,7 @@ function M.install_schema_v2(T)
     end
 
     function Compiler.TreeCodeSchemaV2Implementation:typecheck_module(module, input)
-        require("lalin.impl.tree_check.init")
+        require("lalin.impl.tree_check")
         local checked_module = module:typecheck(input)
         return T.LalinCheck.TypeModuleResult(checked_module, {}, input.target)
     end

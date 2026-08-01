@@ -5,7 +5,7 @@
 -- Ensure all methods are installed:
 require("lalin.impl.tree_surface")
 require("lalin.impl.tree_closure")
-require("lalin.impl.tree_check.init")
+require("lalin.impl.tree_check")
 require("lalin.impl.tree_code")
 require("lalin.impl.code_graph")
 require("lalin.impl.code_flow")

@@ -62,9 +62,6 @@ M.emit_c_lower = require("lalin.emit_c_lower")
 M.emit_c_helpers = require("lalin.emit_c_helpers")
 M.emit_c_tcc = require("lalin.emit_c_tcc")
 M.emit_c_compile = require("lalin.emit_c_compile")
-M.native = require("lalin.native")
-M.native_mc = require("lalin.native_mc")
-M.native_backend = require("lalin.native_backend")
 
 
 local llbl = require("llbl")
@@ -476,26 +473,6 @@ local function compile_args(name_or_decls, decls_or_opts, maybe_opts)
     return name, decls, opts
 end
 
-local function reject_luajit_native_options(opts, where)
-    if opts.native_bank ~= nil or opts.native_bank_artifact ~= nil or opts.bank ~= nil or opts.bank_artifact ~= nil or opts.native_embedded_bank ~= nil or opts.embedded_bank ~= nil then
-        error(where .. ": native banks are not accepted by LuaJIT artifact APIs; use compile_native with a C-owned NativeBankArtifact or NativeLoadedBank", 3)
-    end
-    if opts.mc_bank ~= nil then
-        error(where .. ": mc_bank belongs to the removed LuaJIT machine-code path; use compile_native with a C-owned NativeBankArtifact or NativeLoadedBank", 3)
-    end
-end
-
-local function reject_native_removed_options(opts, where)
-    if opts.mc_bank ~= nil then
-        error(where .. ": mc_bank is removed; pass opts.native_bank/opts.bank as a C-owned NativeBankArtifact or NativeLoadedBank", 3)
-    end
-    if opts.native_embedded_bank ~= nil or opts.embedded_bank ~= nil then
-        error(where .. ": NativeEmbeddedTemplateBank is removed; pass opts.native_bank/opts.bank as a C-owned NativeBankArtifact or NativeLoadedBank", 3)
-    end
-    if opts.residual ~= nil or opts.residual_mode ~= nil or opts.build_mc_bank ~= nil or opts.tcc ~= nil or opts.native_compile_c ~= nil then
-        error(where .. ": residual/TCC/build_mc_bank options are removed; native runtime compilation only asks the C-owned bank selector/installer to install a supplied NativeBankArtifact or NativeLoadedBank", 3)
-    end
-end
 
 function M.compile(name_or_decls, decls_or_opts, maybe_opts)
     local name, decls, opts = compile_args(name_or_decls, decls_or_opts, maybe_opts)
@@ -509,12 +486,13 @@ function M.compile(name_or_decls, decls_or_opts, maybe_opts)
     if opts.c == true or opts.backend == "c" or opts.codegen == "c" then
         return M.compile_c(decls, opts)
     end
-    return M.compile_native(name, decls, opts)
+    opts.runner = "gcc"
+    opts.name = opts.name or name
+    return M.compile_c(decls, opts)
 end
 
 function M.compile_luajit(name_or_decls, decls_or_opts, maybe_opts)
     local name, decls, opts = compile_args(name_or_decls, decls_or_opts, maybe_opts)
-    reject_luajit_native_options(opts, "compile_luajit")
     opts.bytecode = true
     local artifact = M.emit_luajit_artifact(decls, opts)
     local loader = loadstring or load
@@ -529,7 +507,6 @@ end
 
 local prepare_luajit_artifact
 local prepare_c_artifact
-local prepare_native_compile
 
 local function attach_c_artifact_writer(artifact)
     function artifact:write(write_opts)
@@ -663,8 +640,7 @@ function prepare_luajit_artifact(decl, name, opts)
     local module_ast = module_ast_from(decl, name)
     local cls = asdl.classof(module_ast)
     local T = (cls and asdl.context_of(cls)) or asdl.context()
-    if T.LalinCompiler == nil or T.LalinLuaJIT == nil or T.LalinStencil == nil or T.LalinNative == nil then A2(T) end
-    reject_luajit_native_options(opts, "emit_luajit_artifact")
+    if T.LalinCompiler == nil or T.LalinLuaJIT == nil or T.LalinStencil == nil then A2(T) end
     opts.bytecode = true
 
     local Pipeline = require("lalin.frontend_pipeline")(T)
@@ -721,97 +697,9 @@ function prepare_luajit_artifact(decl, name, opts)
     }
 end
 
-local function native_manifest_for(opts)
-    return opts.native_template_manifest or opts.native_manifest or opts.template_manifest
-end
-
-local function native_bank_shared_object_for(opts)
-    return opts.native_bank_shared_object
-        or opts.native_bank_shared_object_path
-        or opts.bank_shared_object
-        or opts.bank_shared_object_path
-end
-
-local function native_bank_for(Backend, opts, target)
-    local expected_manifest = native_manifest_for(opts)
-    local shared_object_path = native_bank_shared_object_for(opts)
-    if opts.native_bank ~= nil then return Backend.require_native_bank(opts.native_bank, target, expected_manifest, shared_object_path) end
-    if opts.bank ~= nil then return Backend.require_native_bank(opts.bank, target, expected_manifest, shared_object_path) end
-    if opts.native_bank_artifact ~= nil then return Backend.require_native_bank(opts.native_bank_artifact, target, expected_manifest, shared_object_path) end
-    if opts.bank_artifact ~= nil then return Backend.require_native_bank(opts.bank_artifact, target, expected_manifest, shared_object_path) end
-    error("compile_native requires opts.native_bank/opts.bank as a C-owned NativeBankArtifact descriptor or NativeLoadedBank handle; runtime native compilation does not invoke compilers, readelf/object tools, TCC, Lua linear bank import, or implicit bank builders", 3)
-end
-
-local function native_runtime_for(Backend, opts)
-    if opts.native_runtime ~= nil and opts.native_runtime_symbols ~= nil then
-        error("compile_native accepts either opts.native_runtime or opts.native_runtime_symbols, not both", 3)
-    end
-    if opts.native_runtime_symbols ~= nil then return Backend.runtime(opts.native_runtime_symbols) end
-    if opts.runtime_symbols ~= nil then return Backend.runtime(opts.runtime_symbols) end
-    return opts.native_runtime or opts.runtime or Backend.empty_runtime()
-end
-
-function prepare_native_compile(decl, name, opts)
-    opts = opts or {}
-    name = name or opts.name or "lalin_native"
-
-    local asdl = require("lalin.asdl")
-    local A2 = require("lalin.schema_projection")
-    local module_ast = module_ast_from(decl, name)
-    local cls = asdl.classof(module_ast)
-    local T = (cls and asdl.context_of(cls)) or asdl.context()
-    if T.LalinCompiler == nil or T.LalinCode == nil or T.LalinKernel == nil or T.LalinStencil == nil or T.LalinNative == nil then A2(T) end
-
-    reject_native_removed_options(opts, "compile_native")
-
-    local Pipeline = require("lalin.frontend_pipeline")(T)
-    local Backend = require("lalin.native_backend")(T)
-    local checked = Pipeline.typecheck_module(module_ast, {
-        context = T,
-        site = "compile_native:typecheck",
-        name = name,
-    })
-    local code_result = Pipeline.checked_to_code_result(checked, {
-        context = T,
-        site = "compile_native:code",
-        name = name,
-    })
-    local target = opts.native_target or opts.target or Backend.host_target()
-    local runtime = native_runtime_for(Backend, opts)
-    local bank = native_bank_for(Backend, opts, target)
-    local result = Backend.compile_code_module(code_result.module, target, runtime, bank, native_manifest_for(opts))
-    return {
-        kind = "NativeCompilePlan",
-        context = T,
-        name = name,
-        module_ast = module_ast,
-        checked = checked,
-        code_result = code_result,
-        target = target,
-        runtime = runtime,
-        bank = bank,
-        result = result,
-        executable = result.executable,
-    }
-end
-
-function M.plan_native_compile(decl, opts)
-    opts = opts or {}
-    return prepare_native_compile(decl, opts.name or "lalin_native", opts)
-end
-
-function M.compile_native(name_or_decls, decls_or_opts, maybe_opts)
-    local name, decls, opts = compile_args(name_or_decls, decls_or_opts, maybe_opts)
-    return prepare_native_compile(decls, name, opts).result
-end
-
-function M.compile_native_executable(name_or_decls, decls_or_opts, maybe_opts)
-    return M.compile_native(name_or_decls, decls_or_opts, maybe_opts).executable
-end
 
 function M.plan_luajit_artifact(decl, opts)
     opts = opts or {}
-    reject_luajit_native_options(opts, "plan_luajit_artifact")
     opts.bytecode = true
     return prepare_luajit_artifact(decl, opts.name or "lalin_luajit", opts)
 end
@@ -824,7 +712,6 @@ function M.emit_luajit_plan_artifact(plan, path_or_opts, name, opts)
     opts = opts or {}
     local path = path_or_opts or opts.path
     name = name or opts.name or plan.name or "lalin_luajit"
-    reject_luajit_native_options(opts, "emit_luajit_plan_artifact")
 
     local source, err, backend_artifact = plan.backend.emit_lua_artifact(plan.lj_module, plan.artifacts, {
         bytecode = true,

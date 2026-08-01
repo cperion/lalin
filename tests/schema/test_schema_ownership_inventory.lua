@@ -100,7 +100,6 @@ assert(namespace_owners.LalinHost == nil, "Host must not be recorded as an ambig
 local excluded_backends = {
   luajit = "LalinLuaJIT",
   luatrace = "LalinLuaTrace",
-  native = "LalinNative",
 }
 for name, namespace in pairs(excluded_backends) do
   assert(old_names[name], "excluded backend schema is missing: " .. name)
@@ -110,7 +109,7 @@ for name, namespace in pairs(excluded_backends) do
 end
 assert(v2_init:find('require("lalin.schema.luajit")', 1, true), "legacy stencil-machine LuaJIT boundary must remain explicit")
 assert(not v2_init:find('require("lalin.schema.luatrace")', 1, true), "LuaTrace must remain excluded from schema-v2")
-assert(not v2_init:find('require("lalin.schema.native")', 1, true), "native copy-patch must remain excluded from schema-v2")
+assert(not old_names.native and not v2_names.native, "retired native copy-patch schema must be absent")
 
 io.write("schema ownership inventory ok: 26 duplicate names, one intended owner each\n")
 

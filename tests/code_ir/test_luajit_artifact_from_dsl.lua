@@ -926,7 +926,6 @@ for label, count in pairs(expected_counts) do
 end
 assert(nested_point_binary >= 2, 'expected nested point binary bodies from fused source expressions')
 
--- This broad DSL fixture intentionally stops at LuaJIT lowering.  The removed
--- LuaJIT machine-code path used to execute these selected C stencil artifacts;
--- native execution now belongs to standalone LalinNative tests.
+-- This broad fixture intentionally stops at explicit LuaJIT bytecode lowering.
+-- Performance execution is covered by the emitted-C + GCC tests.
 io.write('test_luajit_artifact_from_dsl: ok\n')

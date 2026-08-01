@@ -5,15 +5,6 @@
 #include "lauxlib.h"
 #include "lualib.h"
 #include "lalin_embedded_bc_bank.h"
-#include "lalin_native_template_bank.h"
-
-static void lalin_assert_native_template_bank_api_linked(void) {
-  /* The generated native bank is a C-owned runtime artifact.  Lua reaches it
-     through the exported lalin_native_bank_* FFI API and a typed
-     NativeBankArtifact descriptor, not through registry debug metadata or the
-     removed passive NativeEmbeddedTemplateBank import path. */
-  (void)lalin_native_bank_artifact();
-}
 
 static void lalin_push_argv(lua_State *L, int argc, char **argv) {
   int i;
@@ -35,7 +26,6 @@ int main(int argc, char **argv) {
 
   luaL_openlibs(L);
   lalin_install_embedded_bc_bank(L);
-  lalin_assert_native_template_bank_api_linked();
   lalin_push_argv(L, argc, argv);
 
   lua_getglobal(L, "require");
