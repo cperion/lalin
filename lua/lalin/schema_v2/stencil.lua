@@ -510,16 +510,10 @@ return schema. LalinStencil {
     StencilOptOs,
     StencilOptOz,
   },
-  sum. StencilMachineTarget {
-    StencilMachineNative,
-    StencilMachineBaseline,
-    StencilMachineNamed { variant_unique, field. name [str], },
-  },
   product. StencilCompilerPolicy {
     interned,
     compiler [LalinStencil.StencilCompiler],
     opt_level [LalinStencil.StencilOptLevel],
-    machine [LalinStencil.StencilMachineTarget],
     flags [many [str]],
   },
   sum. StencilAliasFact { StencilAliasUnknown, StencilAliasNoAlias, StencilAliasMayAlias, },
@@ -852,7 +846,7 @@ return schema. LalinStencil {
   },
   product. StencilComputation {
     interned,
-    field. id [LalinStencil.StencilMetastencilId],
+    field. id [LalinStencil.StencilComputationId],
     producer [LalinStencil.StencilProducer],
     accesses [many [LalinStencil.StencilAccess]],
     streams [many [LalinStencil.StencilStreamDef]],
@@ -1092,7 +1086,7 @@ return schema. LalinStencil {
       stride [LalinStencil.StencilArtifactStride],
     },
   },
-  product. StencilMetastencilId { interned, text [str], },
+  product. StencilComputationId { interned, text [str], },
   product. StencilMetastencilNodeId { interned, text [str], },
   product. StencilMetastencilWireId { interned, text [str], },
   sum. StencilMetastencilPortFlow {
@@ -1195,7 +1189,7 @@ return schema. LalinStencil {
   product. StencilMetastencilFingerprint { interned, text [str], },
   product. StencilMetastencilDescriptor {
     interned,
-    field. id [LalinStencil.StencilMetastencilId],
+    field. id [LalinStencil.StencilComputationId],
     external_ports [many [LalinStencil.StencilMetastencilPort]],
     nodes [many [LalinStencil.StencilMetastencilNode]],
     wires [many [LalinStencil.StencilMetastencilWire]],

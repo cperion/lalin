@@ -224,8 +224,7 @@ local scalar_schedule = Schedule.SchedulePlanned(
   Schedule.ScheduleId("schedule:store:scalar"), store_kernel.id,
   Schedule.ScheduleScalarIndex, {}, {})
 local compiler = Stencil.StencilCompilerPolicy(
-  Stencil.StencilCompilerGcc, Stencil.StencilOptO2,
-  Stencil.StencilMachineNative, {})
+  Stencil.StencilCompilerGcc, Stencil.StencilOptO2, {})
 local target = Backend.BackTargetModel(Backend.BackTargetNative, {})
 local projected = Stencil.StencilKernelProjectionInput(
   module, graph, flow, semantics, store_kernel, scalar_schedule, compiler, target,

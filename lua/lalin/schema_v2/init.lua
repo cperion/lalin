@@ -17,7 +17,7 @@ local files = {
   "type", "c", "bind", "sem",
   "tree", "check", "tree_code",
   "code", "graph", "flow", "value", "mem", "effect",
-  "kernel", "stencil", "stencil_descriptor", "c_materialize",
+  "kernel", "stencil", "c_materialize",
   "lower", "schedule",
   "backend", "cemit",
   "compiler", "code_validation", "exec",

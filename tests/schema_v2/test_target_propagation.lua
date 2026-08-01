@@ -56,8 +56,7 @@ assert(asdl.classof(rejected_facet.issues[1]) ==
 local request = Compiler.CompilerCCodegenRequest(
   Compiler.CodeResult(module, Code.CodeContractFactSet(module_id, {}), T.LalinSem.LayoutEnv({})),
   target, Stencil.StencilCompilerPolicy(
-    Stencil.StencilCompilerGcc, Stencil.StencilOptO3,
-    Stencil.StencilMachineNative, {}))
+    Stencil.StencilCompilerGcc, Stencil.StencilOptO3, {}))
 assert(request.target == target, "CompilerCCodegenRequest must retain exact target identity")
 
 local function atomic_report(dialect)

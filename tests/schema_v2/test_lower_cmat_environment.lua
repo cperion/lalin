@@ -122,8 +122,7 @@ local env_provenance = Stencil.StencilKernelProvenanceFacet(
   Stencil.StencilKernelResultVoid)
 
 local env_compiler = Stencil.StencilCompilerPolicy(
-  Stencil.StencilCompilerGcc, Stencil.StencilOptO3,
-  Stencil.StencilMachineNative, {})
+  Stencil.StencilCompilerGcc, Stencil.StencilOptO3, {})
 local env_schedule = Stencil.StencilScheduleScalar(env_compiler)
 local env_producer = Stencil.StencilProducer(
   Stencil.StencilProducerOriginNone,
@@ -135,7 +134,7 @@ local env_producer = Stencil.StencilProducer(
     Stencil.StencilIterationStopInclusive,
     Stencil.StencilKernelTripExact(env_trip)))
 local env_computation = Stencil.StencilComputation(
-  Stencil.StencilMetastencilId("env_computation"), env_producer,
+  Stencil.StencilComputationId("env_computation"), env_producer,
   {}, {}, {}, Stencil.StencilFusionLegality({}, {}, {}), env_schedule, {})
 local env_loop_nest = CMat.CMatLoopNest(
   {}, CMat.CMatSchedulePolicy(1, 1, CMat.CMatVectorNone))

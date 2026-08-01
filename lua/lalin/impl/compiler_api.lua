@@ -27,7 +27,6 @@ require("lalin.impl.lower_emit_c")
 require("lalin.impl.cemit_emit")
 require("lalin.impl.stencil_plan")
 require("lalin.impl.stencil_reduction")
-require("lalin.impl.stencil_metastencil")
 require("lalin.impl.stencil_c")
 require("lalin.impl.exec_plan")
 
@@ -48,8 +47,7 @@ local function compile_validated(input)
   local code_result = Compiler.CodeResult(code_module, contracts, Sem.LayoutEnv({}))
   local request = Compiler.CompilerCCodegenRequest(
     code_result, input.target, Stencil.StencilCompilerPolicy(
-      Stencil.StencilCompilerGcc, Stencil.StencilOptO3,
-      Stencil.StencilMachineNative, {}))
+      Stencil.StencilCompilerGcc, Stencil.StencilOptO3, {}))
   local backend = require("lalin.compiler_schema_v2_c_backend").code_result_to_c(request)
   local Cemit = require("lalin.schema_v2.cemit")
   local Lower_schema = require("lalin.schema_v2.lower")

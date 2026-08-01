@@ -143,19 +143,6 @@ return schema. LalinKernel {
       mode [LalinStencil.StencilScanMode],
       axis [LalinKernel.KernelScanAxis],
     },
-    KernelEffectPartition {
-      variant_unique,
-      dst [LalinKernel.KernelLane],
-      src [LalinKernel.KernelExpr],
-      pred [LalinStencil.StencilPredicate],
-      semantics [LalinStencil.StencilPartitionSemantics],
-    },
-    KernelEffectCopy {
-      variant_unique,
-      dst [LalinKernel.KernelLane],
-      src [LalinKernel.KernelExpr],
-      semantics [LalinStencil.StencilCopySemantics],
-    },
     KernelEffectScatterReduce {
       variant_unique,
       dst [LalinKernel.KernelLane],

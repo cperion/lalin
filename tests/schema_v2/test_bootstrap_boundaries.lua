@@ -41,7 +41,6 @@ assert(not phase_source:match('require%("lalin%.schema%.phase"%)'))
 
 for _, path in ipairs {
   "lua/lalin/schema_v2/stencil.lua",
-  "lua/lalin/schema_v2/stencil_descriptor.lua",
   "lua/lalin/schema_v2/c_materialize.lua",
 } do
   local text = source(path)

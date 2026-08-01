@@ -1320,7 +1320,7 @@ function Stencil.StencilKernelScheduleConverted:stencil_finalize(construction)
     stream_entries[#stream_entries + 1] = entry
   end
   local computation = Stencil.StencilComputation(
-    Stencil.StencilMetastencilId("kernel-computation:" .. sanitized(state.kernel.id.text)),
+    Stencil.StencilComputationId("kernel-computation:" .. sanitized(state.kernel.id.text)),
     state.producer, accesses, streams, state.sinks, state.legality, self.schedule, state.proofs)
   return Stencil.StencilKernelProjected(
     Stencil.StencilKernelComputationProjection(
