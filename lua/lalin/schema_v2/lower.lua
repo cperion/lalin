@@ -206,39 +206,6 @@ return schema. LalinLower {
     plan [LalinLower.LowerFuncPlan],
     issues [many [LalinLower.LowerIssue]],
   },
-  sum. LowerEmitCandidate {
-    LowerEmitCodeCandidate,
-    LowerEmitClosedFormCandidate,
-    LowerEmitKernelCandidate { variant_unique, schedule [LalinSchedule.KernelSchedule], },
-    LowerEmitMissingScheduleCandidate { variant_unique, reason [str], },
-    LowerEmitUnsupportedCandidate { variant_unique, reason [str], },
-  },
-  sum. LowerEmitSelection {
-    LowerEmitCode,
-    LowerEmitClosedForm,
-    LowerEmitScalarKernel,
-    LowerEmitVectorKernel,
-    LowerEmitMissingSchedule { variant_unique, reason [str], },
-    LowerEmitUnsupported { variant_unique, reason [str], },
-  },
-  sum. LowerBlockMapping {
-    LowerBlockEliminated {
-      variant_unique,
-      block [LalinCode.CodeBlockId],
-    },
-    LowerBlockRewritten {
-      variant_unique,
-      block [LalinCode.CodeBlockId],
-      replacement [LalinCode.CodeBlock],
-    },
-  },
-  product. LowerRewriteApplication {
-    interned,
-    fragment [LalinLower.LowerFragment],
-    rewrite_plan [LalinKernel.KernelRewritePlan],
-    replacement_blocks [many [LalinCode.CodeBlock]],
-    block_mappings [many [LalinLower.LowerBlockMapping]],
-  },
   sum. LowerCarrierStrategy {
     LowerCarrierCarry,
     LowerCarrierReject { variant_unique, reason [str], },
@@ -328,16 +295,6 @@ return schema. LalinLower {
   sum. LowerAddressPlanLookup {
     LowerAddressPlanFound { variant_unique, plan [LalinLower.LowerAddressPlan], },
     LowerAddressPlanMissing { variant_unique, address [LalinFlow.FlowAddressId], },
-  },
-  product. LowerCarrierResolveInput { interned, block [LalinGraph.GraphBlockId], },
-  sum. LowerCarrierLocalResolution {
-    LowerCarrierLocalResolved { variant_unique, c_local [LalinC.CBackendLocal], },
-    LowerCarrierLocalRejected { variant_unique, issue [LalinLower.LowerIssue], },
-  },
-  product. LowerAddressResolveInput { interned, block [LalinGraph.GraphBlockId], lane [LalinKernel.KernelLaneId], },
-  sum. LowerAddressPlaceResolution {
-    LowerAddressPlaceResolved { variant_unique, place [LalinC.CBackendPlace], },
-    LowerAddressPlaceRejected { variant_unique, issue [LalinLower.LowerIssue], },
   },
   sum. LowerKernelCMatState {
     LowerKernelCMatReady {
@@ -836,12 +793,6 @@ return schema. LalinLower {
     },
     LowerCMatExitsRejected { variant_unique, issue [LalinLower.LowerIssue], },
   },
-  product. LowerCNamespaceSupply { interned, field. next [number], },
-  product. LowerCNamespaceAllocation {
-    interned,
-    supply [LalinLower.LowerCNamespaceSupply],
-    namespace [LalinCMat.CMatCFragmentNamespace],
-  },
   product. LowerCMatEnvironmentInput {
     interned,
     fragment [LalinLower.LowerFragment],
@@ -850,7 +801,10 @@ return schema. LalinLower {
     code_func [LalinCode.CodeFunc],
     baseline [LalinLower.LowerCFunctionEmission],
     addresses [LalinLower.LowerAddressPlanProjection],
+    dominance [LalinLower.LowerCDominanceProjection],
+    adapters [LalinLower.LowerCReplacementEntryProjection],
     namespace [LalinCMat.CMatCFragmentNamespace],
+    reserved_labels [many [LalinC.CBackendLabel]],
     target [LalinC.CBackendTarget],
   },
   sum. LowerCMatEnvironment {
@@ -859,36 +813,6 @@ return schema. LalinLower {
       request [LalinCMat.CMatCFragmentInput],
     },
     LowerCMatEnvironmentRejected { variant_unique, issue [LalinLower.LowerIssue], },
-  },
-  sum. LowerCSourceBlockDisposition {
-    LowerCRetainedBlock { variant_unique, block [LalinCode.CodeBlockId], },
-    LowerCEliminatedBlock { variant_unique, block [LalinCode.CodeBlockId], },
-    LowerCReplacementBlock {
-      variant_unique,
-      block [LalinCode.CodeBlockId],
-      label [LalinC.CBackendLabel],
-    },
-  },
-  product. LowerCLocalSubstitutionEntry {
-    interned,
-    source [LalinC.CBackendLocalId],
-    replacement [LalinC.CBackendLocal],
-  },
-  product. LowerCLocalSubstitutionProjection {
-    interned,
-    entries [many [LalinLower.LowerCLocalSubstitutionEntry]],
-  },
-  sum. LowerCLocalSubstitutionLookup {
-    LowerCLocalSubstitutionFound {
-      variant_unique,
-      entry [LalinLower.LowerCLocalSubstitutionEntry],
-    },
-    LowerCLocalSubstitutionMissing { variant_unique, source [LalinC.CBackendLocalId], },
-    LowerCLocalSubstitutionAmbiguous {
-      variant_unique,
-      source [LalinC.CBackendLocalId],
-      count [number],
-    },
   },
   sum. LowerCEmittedFragment {
     LowerCCodeFragment {
@@ -908,19 +832,28 @@ return schema. LalinLower {
       issue [LalinLower.LowerIssue],
     },
   },
+  product. LowerCFragmentAssemblyInput {
+    interned,
+    fragment [LalinLower.LowerFragment],
+    coverage [LalinLower.LowerFragmentCoverage],
+    code_func [LalinCode.CodeFunc],
+    baseline [LalinLower.LowerCFunctionEmission],
+    materializations [LalinLower.LowerKernelCMatProjection],
+    dominance [LalinLower.LowerCDominanceProjection],
+    adapters [LalinLower.LowerCReplacementEntryProjection],
+    addresses [LalinLower.LowerAddressPlanProjection],
+    namespace [LalinCMat.CMatCFragmentNamespace],
+    reserved_labels [many [LalinC.CBackendLabel]],
+    target [LalinC.CBackendTarget],
+  },
   product. LowerCFunctionAssembly {
     interned,
     code_func [LalinCode.CodeFunc],
     baseline [LalinLower.LowerCFunctionEmission],
-    plan [LalinLower.LowerFuncPlan],
     fragments [many [LalinLower.LowerCEmittedFragment]],
-    dispositions [many [LalinLower.LowerCSourceBlockDisposition]],
     blocks [many [LalinC.CBackendBlock]],
     locals [many [LalinC.CBackendLocal]],
     helpers [many [LalinC.CBackendHelperUse]],
-    substitutions [LalinLower.LowerCLocalSubstitutionProjection],
-    controls [many [LalinCMat.CMatCControlResult]],
-    namespace_supply [LalinLower.LowerCNamespaceSupply],
   },
   sum. LowerCFunctionAssemblyResult {
     LowerCFunctionAssemblyReady {
@@ -940,13 +873,7 @@ return schema. LalinLower {
     plan [LalinLower.LowerFuncPlan],
     baseline [LalinLower.LowerCFunctionEmission],
     materializations [LalinLower.LowerKernelCMatProjection],
-    signatures [LalinLower.LowerCSignatureProjection],
-    carriers [LalinLower.LowerCarrierPlanProjection],
     addresses [LalinLower.LowerAddressPlanProjection],
-  },
-  product. LowerCRewriteInput {
-    interned,
-    substitutions [LalinLower.LowerCLocalSubstitutionProjection],
   },
   product. LowerBackSpine {
     interned,
@@ -1091,53 +1018,23 @@ return schema. LalinLower {
     proofs [many [LalinLower.LowerProof]],
     issues [many [LalinLower.LowerIssue]],
   },
-  product. LowerCBlockMapping { interned, source [LalinCode.CodeBlockId], replacement [LalinC.CBackendBlock], },
-  product. LowerCValueMapping { interned, field. value [LalinCode.CodeValueId], c_local [LalinC.CBackendLocal], },
-  product. LowerCFragment {
-    interned,
-    blocks [many [LalinC.CBackendBlock]],
-    locals [many [LalinC.CBackendLocal]],
-    helpers [many [LalinC.CBackendHelperUse]],
-    block_mappings [many [LalinLower.LowerCBlockMapping]],
-    value_mappings [many [LalinLower.LowerCValueMapping]],
-  },
   product. LowerFuncPlan {
     interned,
     func [LalinCode.CodeFuncId],
     fragments [many [LalinLower.LowerFragment]],
   },
-  product. LowerFunctionPlanEntry { interned, func [LalinCode.CodeFuncId], plan [LalinLower.LowerFuncPlan], },
-  product. LowerFunctionPlanProjection { interned, entries [many [LalinLower.LowerFunctionPlanEntry]], },
+  product. LowerFunctionPlanEntry {
+    interned,
+    func [LalinCode.CodeFuncId],
+    plan [LalinLower.LowerFuncPlan],
+  },
+  product. LowerFunctionPlanProjection {
+    interned,
+    entries [many [LalinLower.LowerFunctionPlanEntry]],
+  },
   sum. LowerFunctionPlanLookup {
     LowerFunctionPlanFound { variant_unique, entry [LalinLower.LowerFunctionPlanEntry], },
     LowerFunctionPlanMissing { variant_unique, func [LalinCode.CodeFuncId], },
-  },
-  product. LowerFragmentEmissionInput {
-    interned,
-    spine [LalinLower.LowerBackSpine],
-    code_func [LalinCode.CodeFunc],
-    plan [LalinLower.LowerFuncPlan],
-    fragment [LalinLower.LowerFragment],
-    signatures [LalinLower.LowerCSignatureProjection],
-    carriers [LalinLower.LowerCarrierPlanProjection],
-    addresses [LalinLower.LowerAddressPlanProjection],
-  },
-  sum. LowerFragmentEmission {
-    LowerCodeFragmentEmitted { variant_unique, fragment [LalinLower.LowerCFragment], },
-    LowerClosedFormFragmentEmitted { variant_unique, fragment [LalinLower.LowerCFragment], },
-    LowerKernelFragmentEmitted { variant_unique, fragment [LalinLower.LowerCFragment], },
-    LowerFragmentEmissionRejected { variant_unique, issue [LalinLower.LowerIssue], },
-  },
-  product. LowerFunctionEmissionState {
-    interned,
-    code_func [LalinCode.CodeFunc],
-    plan [LalinLower.LowerFuncPlan],
-    fragments [many [LalinLower.LowerCFragment]],
-    issues [many [LalinLower.LowerIssue]],
-  },
-  sum. LowerFunctionEmissionResult {
-    LowerFunctionEmitted { variant_unique, emission [LalinLower.LowerCFunctionEmission], },
-    LowerFunctionEmissionRejected { variant_unique, func [LalinCode.CodeFuncId], issues [many [LalinLower.LowerIssue]], },
   },
   product. LowerModule {
     interned,
@@ -1150,5 +1047,4 @@ return schema. LalinLower {
     funcs [LalinLower.LowerFunctionPlanProjection],
     issues [many [LalinLower.LowerIssue]],
   },
-  product. LowerValidationReport { interned, issues [many [LalinLower.LowerIssue]], },
 }

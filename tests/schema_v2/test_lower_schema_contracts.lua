@@ -23,18 +23,17 @@ assert(field_names(Lower.LowerCIncomingArgumentInput) ==
 assert(Lower.LowerCTermEdgeOnly and Lower.LowerCTermEdgeThen and
   Lower.LowerCTermEdgeElse and Lower.LowerCTermEdgeCase and
   Lower.LowerCTermEdgeDefault)
-assert(field_names(Lower.LowerFragmentEmissionInput) == "spine,code_func,plan,fragment,signatures,carriers,addresses")
-assert(field_names(Lower.LowerCFragment) == "blocks,locals,helpers,block_mappings,value_mappings")
-assert(field_names(Lower.LowerModule) == "module,target,kernels,schedules,carriers,addresses,funcs,issues")
-assert(Lower.LowerFunctionPlanFound and Lower.LowerFunctionPlanMissing)
-assert(Lower.LowerAddressPlanFound and Lower.LowerAddressPlanMissing)
-assert(Lower.LowerCarrierLocalResolved and Lower.LowerCarrierLocalRejected)
-assert(Lower.LowerAddressPlaceResolved and Lower.LowerAddressPlaceRejected)
-assert(Lower.LowerCodeFragmentEmitted)
-assert(Lower.LowerClosedFormFragmentEmitted)
-assert(Lower.LowerKernelFragmentEmitted)
-assert(Lower.LowerFragmentEmissionRejected)
-assert(Lower.LowerFunctionEmitted and Lower.LowerFunctionEmissionRejected)
+assert(field_names(Lower.LowerCFragmentAssemblyInput) ==
+  "fragment,coverage,code_func,baseline,materializations,dominance,adapters,addresses,namespace,reserved_labels,target")
+assert(field_names(Lower.LowerCFunctionAssembly) ==
+  "code_func,baseline,fragments,blocks,locals,helpers")
+assert(field_names(Lower.LowerCFunctionAssemblyInput) ==
+  "spine,code_func,plan,baseline,materializations,addresses")
+assert(Lower.LowerCCodeFragment and Lower.LowerCKernelCMatFragment and
+  Lower.LowerCRejectedFragment)
+assert(Lower.LowerCFragment == nil, "lossy C fragment protocol must stay removed")
+assert(Lower.LowerFragmentEmission == nil, "old fragment emission protocol must stay removed")
+assert(Lower.LowerEmitSelection == nil, "stale schedule-form dispatch must stay removed")
 assert(Lower.LowerKernelCMatPrepared and Lower.LowerKernelCMatPreparationRejected)
 assert(Lower.LowerFragmentCoverageResolved and Lower.LowerFragmentCoverageRejected)
 assert(Lower.LowerCMatEnvironmentReady and Lower.LowerCMatEnvironmentRejected)
