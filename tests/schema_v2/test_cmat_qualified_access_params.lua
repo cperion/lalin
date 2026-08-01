@@ -18,7 +18,8 @@ assert(asdl.classof(i32_backend) == C.CBackendScalar)
 local read_access = Stencil.StencilAccess("xs", Stencil.StencilAccessRead, i32,
   Stencil.StencilAccessDirect(Stencil.StencilLayoutContiguous(4)))
 local read_binding = read_access:cmat_canonical_binding(
-  CMat.CMatAccessBindingInput(CMat.CMatLocalId("xs")))
+  CMat.CMatAccessBindingInput(CMat.CMatLocalId("xs"),
+    Stencil.StencilAccessRestrictMissing(Stencil.StencilAccessRef("other"))))
 assert(asdl.classof(read_binding.restrict_capability) == CMat.CMatRestrictIneligible)
 assert(read_binding.const_capability == CMat.CMatConstEligible)
 local read_result = read_binding:cmat_c_access_binding()
@@ -36,7 +37,8 @@ assert(read_result.entry.stride == 4)
 local write_access = Stencil.StencilAccess("out", Stencil.StencilAccessWrite, i32,
   Stencil.StencilAccessDirect(Stencil.StencilLayoutContiguous(4)))
 local write_binding = write_access:cmat_canonical_binding(
-  CMat.CMatAccessBindingInput(CMat.CMatLocalId("out")))
+  CMat.CMatAccessBindingInput(CMat.CMatLocalId("out"),
+    Stencil.StencilAccessRestrictMissing(Stencil.StencilAccessRef("other"))))
 assert(asdl.classof(write_binding.const_capability) == CMat.CMatConstIneligible)
 local write_result = write_binding:cmat_c_access_binding()
 assert(asdl.classof(write_result) == CMat.CMatCAccessCBindingReady)

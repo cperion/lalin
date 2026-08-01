@@ -17,20 +17,98 @@ function Stencil.StencilAccessReadWrite:cmat_const_capability() return CMat.CMat
 function Stencil.StencilAccessReduce:cmat_const_capability() return CMat.CMatConstIneligible("reduction access") end
 function Stencil.StencilAccessControlResult:cmat_const_capability() return CMat.CMatConstIneligible("control result") end
 
-function Stencil.StencilLayoutScalar:cmat_restrict_capability() return CMat.CMatRestrictIneligible("scalar is not pointer-like") end
-function Stencil.StencilLayoutContiguous:cmat_restrict_capability() return CMat.CMatRestrictIneligible("no declared noalias proof") end
-function Stencil.StencilLayoutIndexed:cmat_restrict_capability() return CMat.CMatRestrictIneligible("no declared noalias proof") end
-function Stencil.StencilLayoutAffine1D:cmat_restrict_capability() return CMat.CMatRestrictIneligible("no declared noalias proof") end
-function Stencil.StencilLayoutAffineND:cmat_restrict_capability() return CMat.CMatRestrictIneligible("no declared noalias proof") end
-function Stencil.StencilLayoutFieldProjection:cmat_restrict_capability() return CMat.CMatRestrictIneligible("no declared noalias proof") end
-function Stencil.StencilLayoutSoAComponent:cmat_restrict_capability() return CMat.CMatRestrictIneligible("no declared noalias proof") end
-function Stencil.StencilAccessDirect:cmat_restrict_capability() return self.base:cmat_restrict_capability() end
-function Stencil.StencilAccessDescribed:cmat_restrict_capability() return self.base:cmat_restrict_capability() end
+function Stencil.StencilFusionLegalityFact:cmat_alias_pair_contribution(_input)
+  return Stencil.StencilAccessAliasPairNotMatched
+end
+function Stencil.StencilFusionAccessAliasRelation:cmat_alias_pair_contribution(input)
+  if (self.left == input.left and self.right == input.right)
+      or (self.left == input.right and self.right == input.left) then
+    return Stencil.StencilAccessAliasPairMatched(self.relation)
+  end
+  return Stencil.StencilAccessAliasPairNotMatched
+end
+function Stencil.StencilAccessAliasPairMatched:cmat_add_alias_evidence(evidence)
+  local relations = {}
+  for i = 1, #evidence.relations do relations[i] = evidence.relations[i] end
+  relations[#relations + 1] = self.relation
+  return Stencil.StencilAccessAliasPairEvidence(relations)
+end
+function Stencil.StencilAccessAliasPairNotMatched:cmat_add_alias_evidence(evidence)
+  return evidence
+end
+function Stencil.StencilFusionLegality:cmat_alias_pair_lookup(input)
+  local evidence = Stencil.StencilAccessAliasPairEvidence({})
+  for i = 1, #self.facts do
+    evidence = self.facts[i]:cmat_alias_pair_contribution(input)
+      :cmat_add_alias_evidence(evidence)
+  end
+  return evidence:cmat_alias_pair_lookup()
+end
+function Stencil.StencilAccessAliasPairEvidence:cmat_alias_pair_lookup()
+  if #self.relations == 0 then return Stencil.StencilAccessAliasPairMissing end
+  if #self.relations == 1 then
+    return Stencil.StencilAccessAliasPairFound(self.relations[1])
+  end
+  return Stencil.StencilAccessAliasPairAmbiguous(#self.relations)
+end
+function Stencil.StencilComputation:cmat_access_restrict_decision(access)
+  local decision = Stencil.StencilAccessRestrictDerived
+  for i = 1, #self.accesses do
+    local other = Stencil.StencilAccessRef(self.accesses[i].name)
+    if other ~= access then
+      decision = decision:cmat_restrict_step(Stencil.StencilAccessRestrictStepInput(
+        other, self.legality:cmat_alias_pair_lookup(
+          Stencil.StencilAccessAliasPairInput(access, other))))
+    end
+  end
+  return decision
+end
+function Stencil.StencilAccessRestrictDerived:cmat_restrict_step(input)
+  return input.lookup:cmat_restrict_decision(input.other)
+end
+function Stencil.StencilAccessRestrictMissing:cmat_restrict_step(_input) return self end
+function Stencil.StencilAccessRestrictContradicted:cmat_restrict_step(_input) return self end
+function Stencil.StencilAccessRestrictAmbiguous:cmat_restrict_step(_input) return self end
+function Stencil.StencilAccessAliasPairFound:cmat_restrict_decision(other)
+  return self.relation:cmat_restrict_decision(other)
+end
+function Stencil.StencilAccessAliasPairMissing:cmat_restrict_decision(other)
+  return Stencil.StencilAccessRestrictMissing(other)
+end
+function Stencil.StencilAccessAliasPairAmbiguous:cmat_restrict_decision(other)
+  return Stencil.StencilAccessRestrictAmbiguous(other, self.count)
+end
+function Stencil.StencilAliasNoAlias:cmat_restrict_decision(_other)
+  return Stencil.StencilAccessRestrictDerived
+end
+function Stencil.StencilAliasUnknown:cmat_restrict_decision(other)
+  return Stencil.StencilAccessRestrictContradicted(other, self)
+end
+function Stencil.StencilAliasMayAlias:cmat_restrict_decision(other)
+  return Stencil.StencilAccessRestrictContradicted(other, self)
+end
+function Stencil.StencilAccessRestrictDerived:cmat_restrict_capability()
+  return CMat.CMatRestrictEligible
+end
+function Stencil.StencilAccessRestrictMissing:cmat_restrict_capability()
+  return CMat.CMatRestrictIneligible("missing declared noalias relation")
+end
+function Stencil.StencilAccessRestrictContradicted:cmat_restrict_capability()
+  return CMat.CMatRestrictIneligible("declared alias relation prevents restrict")
+end
+function Stencil.StencilAccessRestrictAmbiguous:cmat_restrict_capability()
+  return CMat.CMatRestrictIneligible("ambiguous declared alias relation")
+end
+function Stencil.StencilComputation:cmat_access_binding_input(access)
+  local ref = Stencil.StencilAccessRef(access.name)
+  return CMat.CMatAccessBindingInput(
+    CMat.CMatLocalId(access.name), self:cmat_access_restrict_decision(ref))
+end
 
 function Stencil.StencilAccess:cmat_canonical_binding(input)
   return CMat.CMatAccessBinding(
     Stencil.StencilAccessRef(self.name), self, input.local_id, self.ty, self.layout,
-    self.role:cmat_mutability(), self.layout:cmat_restrict_capability(),
+    self.role:cmat_mutability(), input.restrict:cmat_restrict_capability(),
     self.role:cmat_const_capability(), Stencil.StencilAlignmentUnknown)
 end
 function Stencil.StencilValidationAccepted:cmat_bind(access, input)
@@ -131,7 +209,8 @@ end
 function CMat.CMatLoopPlanned:cmat_materialize_computation(computation, input)
   local collection = CMat.CMatAccessCollectionReady({})
   for _, access in ipairs(computation.accesses) do
-    collection = access:cmat_binding(CMat.CMatAccessBindingInput(CMat.CMatLocalId(access.name))):cmat_collect(collection)
+    collection = access:cmat_binding(computation:cmat_access_binding_input(access))
+      :cmat_collect(collection)
   end
   local streams = {}
   for _, stream in ipairs(computation.streams) do streams[#streams + 1] = stream:cmat_stream_materialization() end

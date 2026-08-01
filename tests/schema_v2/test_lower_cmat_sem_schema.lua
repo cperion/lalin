@@ -460,7 +460,8 @@ local access = Stencil.StencilAccess(
   "input", Stencil.StencilAccessRead, i32,
   Stencil.StencilAccessDirect(Stencil.StencilLayoutContiguous(4)))
 local binding = access:cmat_canonical_binding(
-  CMat.CMatAccessBindingInput(CMat.CMatLocalId("input")))
+  CMat.CMatAccessBindingInput(
+    CMat.CMatLocalId("input"), Stencil.StencilAccessRestrictDerived))
 local lane = Kernel.KernelLane(
   Kernel.KernelLaneId("lane"), Mem.MemObjectId("object"), { mem_access },
   Mem.MemBaseValue(base_value), i32, Mem.MemAccessScalar, {
@@ -498,6 +499,7 @@ local projected_source = Lower.LowerCMatAccessSourceInput(
 :lower_cmat_access_source()
 assert(asdl.classof(projected_source) ==
   Lower.LowerCMatAccessSourceRejected)
+
 local forged_plan = Lower.LowerAddressPlan(
   address_id, carrier_id, Flow.FlowAddressBase(lane.base, i32, 4),
   Lower.LowerAddressCarryProjected, {}, {}, {

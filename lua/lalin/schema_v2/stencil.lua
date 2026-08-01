@@ -1146,6 +1146,52 @@ return schema. LalinStencil {
     },
     StencilFusionProofObligation { variant_unique, obligation [LalinStencil.StencilProofObligation], },
   },
+  product. StencilAccessAliasPairInput {
+    interned,
+    left [LalinStencil.StencilAccessRef],
+    right [LalinStencil.StencilAccessRef],
+  },
+  sum. StencilAccessAliasPairContribution {
+    StencilAccessAliasPairMatched {
+      variant_unique,
+      relation [LalinStencil.StencilAliasFact],
+    },
+    StencilAccessAliasPairNotMatched,
+  },
+  product. StencilAccessAliasPairEvidence {
+    interned,
+    relations [many [LalinStencil.StencilAliasFact]],
+  },
+  sum. StencilAccessAliasPairLookup {
+    StencilAccessAliasPairFound {
+      variant_unique,
+      relation [LalinStencil.StencilAliasFact],
+    },
+    StencilAccessAliasPairMissing,
+    StencilAccessAliasPairAmbiguous { variant_unique, count [number], },
+  },
+  sum. StencilAccessRestrictDecision {
+    StencilAccessRestrictDerived,
+    StencilAccessRestrictMissing {
+      variant_unique,
+      other [LalinStencil.StencilAccessRef],
+    },
+    StencilAccessRestrictContradicted {
+      variant_unique,
+      other [LalinStencil.StencilAccessRef],
+      relation [LalinStencil.StencilAliasFact],
+    },
+    StencilAccessRestrictAmbiguous {
+      variant_unique,
+      other [LalinStencil.StencilAccessRef],
+      count [number],
+    },
+  },
+  product. StencilAccessRestrictStepInput {
+    interned,
+    other [LalinStencil.StencilAccessRef],
+    lookup [LalinStencil.StencilAccessAliasPairLookup],
+  },
   sum. StencilFusionReject {
     StencilFusionRejectTypeMismatch {
       variant_unique,

@@ -37,7 +37,11 @@ return schema. LalinCMat {
     const_capability [LalinCMat.CMatConstCapability],
     alignment [LalinStencil.StencilAlignmentFact],
   },
-  product. CMatAccessBindingInput { interned, local_id [LalinCMat.CMatLocalId], },
+  product. CMatAccessBindingInput {
+    interned,
+    local_id [LalinCMat.CMatLocalId],
+    restrict [LalinStencil.StencilAccessRestrictDecision],
+  },
   sum. CMatAccessBindingResult {
     CMatAccessBound { variant_unique, binding [LalinCMat.CMatAccessBinding], },
     CMatAccessBindingRejected { variant_unique, issue [LalinCMat.CMatMaterializationIssue], },
@@ -664,6 +668,23 @@ return schema. LalinCMat {
     state [LalinCMat.CMatCFragmentState],
     start [LalinCMat.CMatCFragmentBoundEmitted],
     trip [LalinCMat.CMatCFragmentBoundEmitted],
+  },
+  product. CMatCFragmentSinkFoldInput {
+    interned,
+    sinks [many [LalinStencil.StencilSinkDef]],
+    next_index [number],
+    body [LalinCMat.CMatCFragmentBodyInput],
+  },
+  product. CMatCFragmentSinkMergeInput {
+    interned,
+    accumulated [LalinCMat.CMatCFragmentSinkEmitted],
+    fold [LalinCMat.CMatCFragmentSinkFoldInput],
+  },
+  product. CMatCFragmentControlMergeInput {
+    interned,
+    current [LalinCMat.CMatCFragmentSinkEmitted],
+    accumulated [LalinCMat.CMatCFragmentSinkEmitted],
+    fold [LalinCMat.CMatCFragmentSinkFoldInput],
   },
   product. CMatCExitArgumentValue {
     interned,

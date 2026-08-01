@@ -284,7 +284,8 @@ local env_access = Stencil.StencilAccess(
   "env_input", Stencil.StencilAccessRead, i32,
   Stencil.StencilAccessDirect(Stencil.StencilLayoutContiguous(4)))
 local env_binding = env_access:cmat_canonical_binding(
-  CMat.CMatAccessBindingInput(CMat.CMatLocalId("env_input")))
+  CMat.CMatAccessBindingInput(CMat.CMatLocalId("env_input"),
+    Stencil.StencilAccessRestrictMissing(Stencil.StencilAccessRef("other"))))
 local orphan_fused = CMat.CMatFusedKernel(
   CMat.CMatKernelId("env_kernel"), env_computation, env_loop_nest,
   { env_binding }, {}, {}, env_schedule, {})

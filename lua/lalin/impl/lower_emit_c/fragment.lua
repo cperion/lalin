@@ -1632,35 +1632,92 @@ function CMat.CMatCFragmentStateReady:cmat_fragment_continue_prepared_body(conti
   for i = 1, #materialization.provenance.streams.entries do
     step = step:cmat_fragment_apply_stream(materialization.provenance.streams.entries[i])
   end
-  if #materialization.kernel.computation.sinks ~= 1 then
-    return CMat.CMatCFragmentRejected({
-      CMat.CMatCEmissionInvalidKernel(
-        "scalar counted fragment requires exactly one sink")
-    })
-  end
   local body = CMat.CMatCFragmentBodyInput(
     continuation.plan, self.state, continuation.start, continuation.trip)
-  return step:cmat_fragment_apply_sink(
-    materialization.kernel.computation.sinks[1])
-:cmat_fragment_finish_body(body)
+  local sinks = materialization.kernel.computation.sinks
+  if #sinks == 0 then
+    return CMat.CMatCFragmentRejected({
+      CMat.CMatCEmissionInvalidKernel(
+        "scalar counted fragment requires at least one sink")
+    })
+  end
+  return step:cmat_fragment_apply_sink(sinks[1])
+    :cmat_fragment_continue_sinks(
+      CMat.CMatCFragmentSinkFoldInput(sinks, 2, body))
 end
 
-function CMat.CMatCFragmentSinkRejected:cmat_fragment_finish_body(_body)
+function CMat.CMatCFragmentSinkRejected:cmat_fragment_continue_sinks(_input)
   return CMat.CMatCFragmentRejected(self.issues)
 end
-function CMat.CMatCFragmentSinkEmitted:cmat_fragment_finish_body(body)
-  return CMat.CMatCFragmentBodyContinue(
-    self.state, self.control, self.value_mappings)
-:cmat_fragment_finish_body_plan(body)
+function CMat.CMatCFragmentSinkEmitted:cmat_fragment_continue_sinks(input)
+  if input.next_index > #input.sinks then
+    return CMat.CMatCFragmentBodyContinue(
+      self.state, self.control, self.value_mappings)
+:cmat_fragment_finish_body_plan(input.body)
+  end
+  local fold = CMat.CMatCFragmentSinkFoldInput(
+    input.sinks, input.next_index + 1, input.body)
+  return CMat.CMatCFragmentStateReady(self.state)
+:cmat_fragment_apply_sink(input.sinks[input.next_index])
+:cmat_fragment_merge_sink(CMat.CMatCFragmentSinkMergeInput(self, fold))
+end
+function CMat.CMatCFragmentControlSinkEmitted:cmat_fragment_continue_sinks(input)
+  if input.next_index > #input.sinks then
+    return self.body:cmat_fragment_finish_body_plan(input.body)
+  end
+  return CMat.CMatCFragmentRejected({
+    CMat.CMatCEmissionInvalidKernel(
+      "a control sink must be the last computation sink")
+  })
+end
+function CMat.CMatCFragmentSinkRejected:cmat_fragment_merge_sink(_input)
+  return CMat.CMatCFragmentRejected(self.issues)
+end
+function CMat.CMatCFragmentControlSinkEmitted:cmat_fragment_merge_sink(input)
+  if input.fold.next_index > #input.fold.sinks then
+    return self.body:cmat_fragment_finish_body_plan(input.fold.body)
+  end
+  return CMat.CMatCFragmentRejected({
+    CMat.CMatCEmissionInvalidKernel(
+      "a control sink must be the last computation sink")
+  })
+end
+function CMat.CMatCFragmentSinkEmitted:cmat_fragment_merge_sink(input)
+  return self.control:cmat_fragment_merge_sink_control(
+    CMat.CMatCFragmentControlMergeInput(
+      self, input.accumulated, input.fold))
+end
+function CMat.CMatCControlNone:cmat_fragment_merge_sink_control(input)
+  return input:cmat_fragment_continue_merged_sink(input.accumulated.control)
+end
+function CMat.CMatCControlResult:cmat_fragment_merge_sink_control(input)
+  return input.accumulated.control:cmat_fragment_accept_incoming_control(input)
+end
+function CMat.CMatCControlNone:cmat_fragment_accept_incoming_control(input)
+  return input:cmat_fragment_continue_merged_sink(input.current.control)
+end
+function CMat.CMatCControlResult:cmat_fragment_accept_incoming_control(_input)
+  return CMat.CMatCFragmentRejected({
+    CMat.CMatCEmissionInvalidKernel(
+      "multiple control-producing sinks in one counted fragment")
+  })
+end
+function CMat.CMatCFragmentControlMergeInput:cmat_fragment_continue_merged_sink(control)
+  local mappings = {}
+  for i = 1, #self.accumulated.value_mappings do
+    mappings[#mappings + 1] = self.accumulated.value_mappings[i]
+  end
+  for i = 1, #self.current.value_mappings do
+    mappings[#mappings + 1] = self.current.value_mappings[i]
+  end
+  return CMat.CMatCFragmentSinkEmitted(self.current.state, control, mappings)
+:cmat_fragment_continue_sinks(self.fold)
 end
 function CMat.CMatCFragmentBodyContinue:cmat_fragment_finish_body_plan(body)
   local loop = CMat.CMatCCountedLoopAssemblyInput(
     self.state, body.start, body.trip, self)
   return self.state.request.exits:cmat_fragment_lookup(CMat.CMatCExitNormal)
 :cmat_fragment_finish_counted(loop)
-end
-function CMat.CMatCFragmentControlSinkEmitted:cmat_fragment_finish_body(body)
-  return self.body:cmat_fragment_finish_body_plan(body)
 end
 function CMat.CMatCExitBindingFound:cmat_control_mapping()
   return CMat.CMatCControlExitMapping(
@@ -2383,7 +2440,7 @@ function CMat.CMatMaterializedKernelFragment:cmat_validate_fragment_materializat
   end
   for i = 1, #computation.accesses do
     local expected = computation.accesses[i]:cmat_canonical_binding(
-      CMat.CMatAccessBindingInput(CMat.CMatLocalId(computation.accesses[i].name)))
+      computation:cmat_access_binding_input(computation.accesses[i]))
     local count = 0
     for j = 1, #self.kernel.accesses do
       if self.kernel.accesses[j] == expected then
@@ -2399,8 +2456,7 @@ function CMat.CMatMaterializedKernelFragment:cmat_validate_fragment_materializat
     local count = 0
     for j = 1, #computation.accesses do
       local expected = computation.accesses[j]:cmat_canonical_binding(
-        CMat.CMatAccessBindingInput(
-          CMat.CMatLocalId(computation.accesses[j].name)))
+        computation:cmat_access_binding_input(computation.accesses[j]))
       if expected == self.kernel.accesses[i] then
         count = count + 1
       end

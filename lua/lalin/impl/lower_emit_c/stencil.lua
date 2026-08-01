@@ -557,7 +557,7 @@ local function finish_function(sink_result, kernel, input, shape, stop_atom, ret
   local func = C.CBackendFunc(C.CBackendName(input.symbol), input.symbol, Core.VisibilityExport,
     sig_id, params, state.locals, C.CBackendBodyBlocks(entry_label, blocks))
   local unit = C.CBackendUnit(input.module_name, input.target, { sig }, {}, {}, {}, state.helpers, { func })
-  local report = require("lalin.emit_c_validate")(T).validate(unit)
+  local report = require("lalin.impl.lower_emit_c.validate").validate(unit)
   if #report.issues ~= 0 then
     return CMat.CMatCRejected({ CMat.CMatCEmissionValidationRejected(report.issues) })
   end

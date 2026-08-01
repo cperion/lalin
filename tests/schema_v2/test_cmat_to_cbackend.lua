@@ -29,7 +29,10 @@ local emitted = materialized:cmat_emit_c(CMat.CMatCEmissionInput("cmat_map", "cm
 assert(asdl.classof(emitted) == CMat.CMatCEmitted)
 assert(asdl.classof(emitted.unit) == C.CBackendUnit)
 assert(#emitted.unit.funcs == 1 and #emitted.unit.funcs[1].body.blocks == 4)
-assert(#require("lalin.emit_c_validate")(require("lalin.schema_v2")).validate(emitted.unit).issues == 0)
+assert(#require("lalin.impl.lower_emit_c.validate").validate(emitted.unit).issues == 0)
+local source = require("lalin.emit_c_lower")(require("lalin.schema_v2"))
+  .emit_artifact(emitted.unit, {}).source
+assert(source:find("cmat_map", 1, true), "canonical CMat unit must remain source-emittable")
 
 local rejected_computation = Stencil.StencilComputation(Stencil.StencilComputationId("bad"), Stencil.StencilProducer(Stencil.StencilProducerOriginNone, Stencil.StencilProduceRangeND({})), { xs }, { x }, { sink }, Stencil.StencilFusionLegality({}, {}, {}), schedule, {})
 local rejected = rejected_computation:cmat_materialize(CMat.CMatMaterializationInput(CMat.CMatKernelId("bad"))):cmat_emit_c(CMat.CMatCEmissionInput("bad", "bad", target))
