@@ -23,12 +23,16 @@ The active tree includes:
   multi-sink fragments;
 - exact declared-noalias projection to `restrict`;
 - conservative induction preservation as `MemIndexInduction`;
+- exact CMat memory-use and coordinate facets;
+- executable absolute, iteration, dynamic-window, and shared-cursor C address
+  plans with typed lookup/rejection;
+- cursor preheader initialization and signed fused-loop advancement;
 - deletion of native copy-patch runtime, banks, schemas, tests, and APIs.
 
 Current validation baseline:
 
 ```text
-schema_v2: 55 passed
+schema_v2: 57 passed
 c_backend: 31 passed
 embedded binary: passing
 ```
@@ -42,21 +46,21 @@ Design authority: `docs/CMAT_MEMORY_COORDINATE_ARCHITECTURE.md`.
 The old Flow/LOWER carrier and address plans are disconnected from canonical
 fused C and must not be revived.
 
-### Gate A — memory-use spine
+### Gate A — memory-use spine — complete
 
 - preserve the exact index of `KernelEffectStore` through Stencil;
 - define stable CMat identities for stream, window-offset, and sink memory uses;
 - derive one ordered `CMatMemoryUseSpine` from each fused computation;
 - prove load/store/window occurrence identity with focused schema tests.
 
-### Gate B — coordinate facet
+### Gate B — coordinate facet — complete
 
 - align every memory use with canonical `MemAccessFact` and Stencil iteration;
 - derive exact absolute or iteration-affine coordinates;
 - reject contradictory or missing facts through typed projection results;
 - share structurally equal address bases without semantic side maps.
 
-### Gate C — executable C address plan
+### Gate C — executable C address plan — complete
 
 - materialize explicit absolute/cursor addressing leaves;
 - emit one preheader seed and one signed step per shared cursor basis;
@@ -65,12 +69,14 @@ fused C and must not be revived.
 - preserve bounds, alignment, alias, mutability, and trap facts unchanged;
 - add equation and GCC `-O3` execution tests.
 
-### Gate D — delete obsolete vocabulary
+### Gate D — delete obsolete vocabulary — in progress
 
-Delete schema-v2 `FlowCarrier*`, `FlowAddress*`, `LowerCarrier*`,
-`LowerAddress*`, synthetic `sem_addr_*` generation, and per-access projected
-source variants after the coordinate plan is the sole consumer path. No
-compatibility aliases.
+Schema-v2 `LowerCarrier*`, `LowerAddress*`, synthetic `sem_addr_*` generation,
+and the per-access projected source variant have been removed from canonical
+LOWER/CMat. `FlowCarrier*` and `FlowAddress*` remain in the shared old/v2 Flow
+context because the legacy compiler still consumes them; their final deletion is
+part of the old-schema ownership cutover, not a compatibility alias in the new
+address plan.
 
 ## P1 — window coordinate generalization
 
@@ -115,8 +121,7 @@ The final old-tree retirement is blocked until every ownership domain is closed.
 - no LuaJIT parity work unless explicitly scheduled;
 - no side maps, handler tables, generic contexts, nil semantic protocols, or
   ad hoc result records;
-- no broad optimization work before the typed coordinate and assembly contracts
-  are complete.
+- no broad optimization work before typed semantic contracts are complete.
 
 ## Required validation per gate
 

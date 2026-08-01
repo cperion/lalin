@@ -5,8 +5,9 @@
 This document defines the schema-first replacement for the disconnected
 `FlowCarrier` / `FlowAddress` / `LowerCarrierPlan` / `LowerAddressPlan`
 machinery in schema v2. It is the design authority for fused memory addressing.
-Implementation proceeds only through the gates named below. Gates 1 and 2 are
-complete; Gate 3 executable address planning is the next boundary.
+Gates 1–3 are complete: exact memory uses project to exact coordinates and then
+to executable C address plans. The remaining retirement work is limited to the
+shared old-schema Flow ownership cutover described below.
 
 ## Semantic center
 
@@ -161,6 +162,7 @@ product. LowerCMatUseCoordinateEntry {
 
 product. LowerCMatCoordinateFacet {
   spine [CMatMemoryUseSpine],
+  iteration [StencilKernelIteration],
   entries [many [LowerCMatUseCoordinateEntry]],
 }
 
@@ -172,8 +174,8 @@ sum. LowerCMatCoordinateProjection {
 
 The projection resolves each `StencilAccessRef` through the exact provenance
 entry, its single `KernelLane` memory-access identity, and the corresponding
-`MemAccessFact`. Missing, ambiguous, or root-disagreeing relations reject the
-whole facet.
+`MemAccessFact`. Missing, ambiguous, root-disagreeing, or iteration-disagreeing
+relations reject the whole facet/address plan.
 
 An affine coordinate is constructed only for producer-selected or window uses
 whose `MemIndexInduction` agrees with `StencilKernelIteration` on primary role,
@@ -200,14 +202,26 @@ product. CMatCAddressCursor {
   interned,
   id [CMatCAddressCursorId],
   basis [LowerCMatAddressBasis],
-  local [CBackendLocal],
+  base [CBackendLocal],
+  cursor_local [CBackendLocal],
+  start [CodeValueId],
   step_bytes [number],
 }
 
 sum. CMatCUseAddressing {
   CMatCAbsoluteAddressing {
-    root [CBackendLocal],
+    base [CBackendLocal],
     index [StencilIndexExpr],
+    index_scale_bytes [number],
+    const_offset_bytes [number],
+  },
+  CMatCIterationAddressing {
+    base [CBackendLocal],
+    index_scale_bytes [number],
+    const_offset_bytes [number],
+  },
+  CMatCDynamicWindowAddressing {
+    base [CBackendLocal],
     index_scale_bytes [number],
     const_offset_bytes [number],
   },
@@ -226,6 +240,7 @@ product. CMatCUseAddressingEntry {
 product. CMatCAddressPlan {
   interned,
   spine [CMatMemoryUseSpine],
+  iteration [StencilKernelIteration],
   cursors [many [CMatCAddressCursor]],
   uses [many [CMatCUseAddressingEntry]],
 }
@@ -277,14 +292,18 @@ derived cursor local is never independently declared `restrict`.
 
 ## Retired vocabulary
 
-The schema-v2 cutover deletes rather than revives:
+The schema-v2 CMat/LOWER cutover deletes rather than revives:
 
-- `FlowCarrierThread`, `FlowCarrierTransfer`, and `FlowCarrierStep`;
-- `FlowAddressThread`, `FlowAddressUse`, and their `FlowFactSet` fields;
 - `LowerCarrierPlan` and its block/edge vocabulary;
 - `LowerAddressPlan`, synthetic address block parameters, edge transfers, lane
   lookups, and instruction-use projections;
 - per-access `CMatCFragmentAccessAddressProjected`.
+
+The older shared Flow context still declares and produces `FlowCarrier*` and
+`FlowAddress*` for the legacy compiler path. Canonical schema-v2 LOWER/CMat does
+not consume them. Their final deletion belongs to the old-schema ownership
+cutover; removing them from only the schema-v2 declaration would break the
+shared context-bound implementation.
 
 Those declarations mix checked recurrence analysis, eliminated-CFG transport,
 and backend locals into a false spine. The fused loop and its memory-use spine
@@ -328,23 +347,25 @@ CMatCUseAddressing leaf
 Every closed `ValueExpr` alternative is representable as `StencilIndexPoint`, so
 the projection preserves non-counter indexes explicitly rather than inventing an
 unsupported alternative. Only an exact counter identity selects
-`StencilIndexProducer`; later C emission rejects explicit stores until Gate 3.
+`StencilIndexProducer`; executable explicit stores are admitted through the
+Gate 3 absolute addressing leaf.
 
 No method may inspect a child class, return a selector string, use nil as an
 outcome, or carry semantic state in a Lua map.
 
 ## Validation gates
 
-1. **Spine tests** — exact load/store/window occurrence identity and order;
-   store index preservation; no hidden producer-index convention.
-2. **Coordinate tests** — exact induction alignment, contradiction rejection,
-   absolute relation retention, and basis sharing.
-3. **Plan tests** — one cursor per structural basis, mixed absolute/cursor uses,
-   deterministic identities, and typed lookup failures.
-4. **Equation tests** — absolute and cursor forms produce identical byte
-   addresses for forward, backward, non-unit, nonzero-start, and constant-offset
-   cases.
-5. **GCC tests** — centered reads and stores, shared cursors, mixed uses, early
-   exits, and no double indexing under `-O3`.
-6. **Deletion sweep** — no schema-v2 carrier/address-transfer vocabulary or
-   synthetic `sem_addr_*` local generation remains.
+1. **Spine tests — complete**: exact load/store/window occurrence identity and
+   order; store index preservation; no hidden producer-index convention.
+2. **Coordinate tests — complete**: exact induction alignment, contradiction
+   rejection, absolute relation retention, and basis sharing.
+3. **Plan tests — complete**: one cursor per structural basis, mixed
+   absolute/cursor/dynamic-window uses, deterministic identities, and typed
+   lookup failures.
+4. **Equation tests — complete at the plan boundary**: forward, backward,
+   non-unit, nonzero-start, and constant-offset cursor equations.
+5. **GCC tests — active**: cursor preheader/step execution, centered loads and
+   stores, multi-sink uses, windows, folds, and early exits execute under `-O3`.
+6. **Deletion sweep — partial**: stale schema-v2 LOWER/address-plan and projected
+   CMat source vocabulary is gone. Shared old-context `FlowCarrier*` /
+   `FlowAddress*` retirement remains part of the old-schema ownership cutover.

@@ -31,7 +31,6 @@ local kernels = Kernel.KernelModulePlan(module_id, flow, values, memory, effects
 local back_target = Backend.BackTargetModel(Backend.BackTargetNative, {})
 local schedules = Schedule.ScheduleModulePlan(module_id, Schedule.ScheduleTarget(back_target), {})
 local plan = Lower.LowerModule(module_id, Lower.LowerTargetC, kernels, schedules,
-  Lower.LowerCarrierPlanProjection({}), Lower.LowerAddressPlanProjection({}),
   Lower.LowerFunctionPlanProjection({}), {})
 local input = Lower.LowerCModuleInput(
   spine, plan, Lower.LowerKernelCMatProjection({}))

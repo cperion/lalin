@@ -412,6 +412,9 @@ local external_values = CMat.CMatCExternalValueBindingProjection({
   CMat.CMatCExternalValueBindingEntry(
     trip.count, C.CBackendLocal(
       C.CBackendLocalId("trip"), C.CBackendName("trip"), c_i32)),
+  CMat.CMatCExternalValueBindingEntry(
+    start, C.CBackendLocal(
+      C.CBackendLocalId("start"), C.CBackendName("start"), c_i32)),
 })
 local fragment_accesses = CMat.CMatCFragmentAccessBindingProjection({
   CMat.CMatCFragmentAccessBindingEntry(
@@ -419,6 +422,11 @@ local fragment_accesses = CMat.CMatCFragmentAccessBindingProjection({
     store_kernel.body.lanes.entries[1].lane.id, access_id,
     CMat.CMatCFragmentAccessDirect(base_local), 4, 4, Mem.MemAlignKnown(4)),
 })
+local fragment_namespace = CMat.CMatCFragmentNamespace("kernel_store")
+local fragment_address_plan = cmat_state.coordinates.facet
+:materialize_c_address_plan(CMat.CMatCAddressPlanInput(
+  cmat_state.materialization.provenance.iteration, fragment_accesses,
+  fragment_namespace)).plan
 local fragment_exits = CMat.CMatCExitBindingProjection({
   CMat.CMatCExitBindingEntry(
     CMat.CMatCExitNormal, Code.CodeBlockId("exit"),
@@ -436,8 +444,8 @@ local fragment_input = CMat.CMatCFragmentInput(
   canonical_materialization, fragment_func, { block_id }, block_id,
   C.CBackendTarget(
     C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian),
-  external_values, fragment_accesses, fragment_exits,
-  CMat.CMatCFragmentNamespace("kernel_store"), {})
+  external_values, fragment_accesses, fragment_address_plan, fragment_exits,
+  fragment_namespace, {})
 assert(fragment_input.materialization == canonical_materialization)
 assert(fragment_input.accesses.entries[1].mem_access == access_id)
 assert(fragment_input.accesses.entries[1].source.base == base_local)
@@ -459,7 +467,7 @@ assert(asdl.classof(
   CMat.CMatCBinaryRejected)
 local empty_cover = CMat.CMatCFragmentInput(
   canonical_materialization, fragment_func, {}, block_id, fragment_input.target,
-  external_values, fragment_accesses, fragment_exits,
+  external_values, fragment_accesses, fragment_address_plan, fragment_exits,
   CMat.CMatCFragmentNamespace("empty_cover"), {}):emit_cmat_fragment()
 assert(asdl.classof(empty_cover) == CMat.CMatCFragmentRejected)
 assert(empty_cover.issues[1].block == block_id)
@@ -470,7 +478,8 @@ local bad_exit = CMat.CMatCExitBindingProjection({
 })
 local invalid_exit = CMat.CMatCFragmentInput(
   canonical_materialization, fragment_func, { block_id }, block_id,
-  fragment_input.target, external_values, fragment_accesses, bad_exit,
+  fragment_input.target, external_values, fragment_accesses,
+  fragment_address_plan, bad_exit,
   CMat.CMatCFragmentNamespace("bad_exit"), {}):emit_cmat_fragment()
 assert(asdl.classof(invalid_exit) == CMat.CMatCFragmentRejected)
 local ambiguous_exits = CMat.CMatCExitBindingProjection({
@@ -478,7 +487,8 @@ local ambiguous_exits = CMat.CMatCExitBindingProjection({
 })
 local ambiguous_exit = CMat.CMatCFragmentInput(
   canonical_materialization, fragment_func, { block_id }, block_id,
-  fragment_input.target, external_values, fragment_accesses, ambiguous_exits,
+  fragment_input.target, external_values, fragment_accesses,
+  fragment_address_plan, ambiguous_exits,
   CMat.CMatCFragmentNamespace("ambiguous_exit"), {}):emit_cmat_fragment()
 assert(asdl.classof(ambiguous_exit) == CMat.CMatCFragmentRejected)
 local typed_exit_block = Code.CodeBlock(
@@ -500,7 +510,7 @@ local mismatched_exit_projection = CMat.CMatCExitBindingProjection({
 local mismatched_exit = CMat.CMatCFragmentInput(
   canonical_materialization, typed_exit_func, { block_id }, block_id,
   fragment_input.target, external_values, fragment_accesses,
-  mismatched_exit_projection,
+  fragment_address_plan, mismatched_exit_projection,
   CMat.CMatCFragmentNamespace("typed_exit"), {}):emit_cmat_fragment()
 assert(asdl.classof(mismatched_exit) == CMat.CMatCFragmentRejected)
 local wrong_trip_values = CMat.CMatCExternalValueBindingProjection({
@@ -508,10 +518,12 @@ local wrong_trip_values = CMat.CMatCExternalValueBindingProjection({
   CMat.CMatCExternalValueBindingEntry(
     trip.count, C.CBackendLocal(
       C.CBackendLocalId("trip64"), C.CBackendName("trip64"), c_i64)),
+  external_values.entries[3],
 })
 local wrong_trip = CMat.CMatCFragmentInput(
   canonical_materialization, fragment_func, { block_id }, block_id,
-  fragment_input.target, wrong_trip_values, fragment_accesses, fragment_exits,
+  fragment_input.target, wrong_trip_values, fragment_accesses,
+  fragment_address_plan, fragment_exits,
   CMat.CMatCFragmentNamespace("wrong_trip"), {}):emit_cmat_fragment()
 assert(asdl.classof(wrong_trip) == CMat.CMatCFragmentRejected)
 assert(wrong_trip.issues[1].subject == "counted trip")

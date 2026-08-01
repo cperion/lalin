@@ -11,6 +11,7 @@ require("lalin.impl.lower_emit_c.materialize")
 require("lalin.impl.lower_emit_c.coordinates")
 require("lalin.impl.lower_emit_c.stencil")
 require("lalin.impl.lower_emit_c.fragment")
+require("lalin.impl.lower_emit_c.address_plan")
 require("lalin.impl.lower_emit_c.lower_sem")
 require("lalin.impl.lower_emit_c.assembly")
 
@@ -29,8 +30,9 @@ function Lower.LowerFunctionPlanProjection:lower_function_plan_lookup(func)
   return Lower.LowerFunctionPlanMissing(func)
 end
 function Lower.LowerFunctionPlanFound:lower_c_function_assembly(input, func, baseline)
-  return Lower.LowerCFunctionAssemblyInput(input.spine, func, self.entry.plan, baseline,
-    input.materializations, input.plan.addresses):lower_c_function_assembly()
+  return Lower.LowerCFunctionAssemblyInput(
+    input.spine, func, self.entry.plan, baseline, input.materializations)
+:lower_c_function_assembly()
 end
 function Lower.LowerFunctionPlanMissing:lower_c_function_assembly(_input, func, baseline)
   return Lower.LowerCFunctionAssemblyReady(Lower.LowerCFunctionAssembly(

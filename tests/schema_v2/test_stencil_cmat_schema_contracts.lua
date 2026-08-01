@@ -76,13 +76,14 @@ assert(Stencil.StencilScheduleCandidateNoPlan and Stencil.StencilScheduleCandida
 assert(field_names(Stencil.StencilKernelProvenanceFacet) ==
   "kernel,iteration,domain,accesses,streams,result")
 assert(field_names(CMat.CMatCFragmentInput) ==
-  "materialization,code_func,covered_blocks,replacement_source,target,values,accesses,exits,namespace,reserved_labels")
+  "materialization,code_func,covered_blocks,replacement_source,target,values,accesses,address_plan,exits,namespace,reserved_labels")
 assert(field_names(CMat.CMatCFragment) ==
   "entry,blocks,locals,helpers,block_alignments,value_mappings,control")
 assert(CMat.CMatMaterializedKernelFragment and CMat.CMatRejectedKernelFragment)
 assert(CMat.CMatCFragmentEmitted and CMat.CMatCFragmentRejected)
 assert(CMat.CMatCExternalValueBindingFound and CMat.CMatCExternalValueBindingMissing)
-assert(CMat.CMatCFragmentAccessDirect and CMat.CMatCFragmentAccessAddressProjected)
+assert(CMat.CMatCFragmentAccessDirect)
+assert(not CMat.CMatCFragmentAccessAddressProjected)
 assert(CMat.CMatCFragmentAccessBindingFound and CMat.CMatCFragmentAccessBindingMissing)
 assert(CMat.CMatCExitBindingFound and CMat.CMatCExitBindingMissing)
 assert(CMat.CMatCBlockEliminated and CMat.CMatCBlockReplacementEntry)

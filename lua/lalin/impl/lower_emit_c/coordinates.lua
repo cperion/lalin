@@ -186,7 +186,7 @@ function Lower.LowerCMatUseCoordinateRejected:lower_cmat_collect_coordinates(sta
 end
 function Lower.LowerCMatCoordinateCollecting:lower_cmat_add_coordinate(entry)
   return Lower.LowerCMatCoordinateCollecting(
-    self.spine, append_one(self.entries, entry))
+    self.spine, self.iteration, append_one(self.entries, entry))
 end
 function Lower.LowerCMatCoordinateAssemblyRejected:lower_cmat_add_coordinate(_entry)
   return self
@@ -200,14 +200,15 @@ function Lower.LowerCMatCoordinateAssemblyRejected:lower_cmat_add_coordinate_iss
 end
 function Lower.LowerCMatCoordinateCollecting:lower_cmat_finish_coordinates()
   return Lower.LowerCMatCoordinatesProjected(
-    Lower.LowerCMatCoordinateFacet(self.spine, self.entries))
+    Lower.LowerCMatCoordinateFacet(
+      self.spine, self.iteration, self.entries))
 end
 function Lower.LowerCMatCoordinateAssemblyRejected:lower_cmat_finish_coordinates()
   return Lower.LowerCMatCoordinatesRejected(self.issues)
 end
 
 function CMat.CMatMemoryUseSpine:lower_coordinates(input)
-  local state = Lower.LowerCMatCoordinateCollecting(self, {})
+  local state = Lower.LowerCMatCoordinateCollecting(self, input.iteration, {})
   for i = 1, #self.uses do
     state = self.uses[i]:lower_cmat_coordinate(input)
       :lower_cmat_collect_coordinates(state)

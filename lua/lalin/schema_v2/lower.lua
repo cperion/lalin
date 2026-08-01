@@ -50,8 +50,6 @@ return schema. LalinLower {
     LowerIssueFallback { variant_unique, cover [LalinLower.LowerCover], fallback_kind [LalinLower.LowerFallbackKind], },
     LowerIssueKernelRejected { variant_unique, cover [LalinLower.LowerCover], rejects [many [LalinKernel.KernelReject]], },
     LowerIssueScheduleRejected { variant_unique, cover [LalinLower.LowerCover], rejects [many [LalinSchedule.ScheduleReject]], },
-    LowerIssueCarrierMissing { variant_unique, carrier [LalinFlow.FlowCarrierId], },
-    LowerIssueAddressMissing { variant_unique, address [LalinFlow.FlowAddressId], },
     LowerIssueFragmentRejected { variant_unique, fragment [LalinLower.LowerFragmentId], reason [str], },
     LowerIssueCMatRejected {
       variant_unique,
@@ -116,6 +114,11 @@ return schema. LalinLower {
       variant_unique,
       fragment [LalinLower.LowerFragmentId],
       issue [LalinLower.LowerCMatCoordinateIssue],
+    },
+    LowerIssueCMatAddressPlanRejected {
+      variant_unique,
+      fragment [LalinLower.LowerFragmentId],
+      issue [LalinCMat.CMatCAddressIssue],
     },
     LowerIssueClosedFormUnsupported {
       variant_unique,
@@ -210,96 +213,6 @@ return schema. LalinLower {
   product. LowerFunctionPlanResult {
     plan [LalinLower.LowerFuncPlan],
     issues [many [LalinLower.LowerIssue]],
-  },
-  sum. LowerCarrierStrategy {
-    LowerCarrierCarry,
-    LowerCarrierReject { variant_unique, reason [str], },
-  },
-  product. LowerCarrierBlockParam {
-    interned,
-    carrier [LalinFlow.FlowCarrierId],
-    block [LalinGraph.GraphBlockId],
-    param [LalinC.CBackendLocalId],
-    value_ty [LalinCode.CodeType],
-  },
-  sum. LowerCarrierEdgeSource {
-    LowerCarrierEdgeRecompute { variant_unique, index [LalinCode.CodeValueId], },
-    LowerCarrierEdgeCarrySame,
-    LowerCarrierEdgeCarryConst { variant_unique, amount [number], },
-    LowerCarrierEdgeCarryDynamic { variant_unique, step [LalinCode.CodeValueId], },
-  },
-  product. LowerCarrierEdgeTransfer {
-    interned,
-    carrier [LalinFlow.FlowCarrierId],
-    edge [LalinGraph.GraphEdge],
-    source [LalinLower.LowerCarrierEdgeSource],
-    dest_param [LalinC.CBackendLocalId],
-  },
-  product. LowerCarrierPlan {
-    interned,
-    carrier [LalinFlow.FlowCarrierId],
-    index [LalinCode.CodeValueId],
-    value_ty [LalinCode.CodeType],
-    strategy [LalinLower.LowerCarrierStrategy],
-    blocks [many [LalinLower.LowerCarrierBlockParam]],
-    transfers [many [LalinLower.LowerCarrierEdgeTransfer]],
-    proofs [many [LalinLower.LowerProof]],
-  },
-  product. LowerCarrierPlanProjection { plans [many [LalinLower.LowerCarrierPlan]], },
-  sum. LowerCarrierPlanLookup {
-    LowerCarrierPlanFound { variant_unique, plan [LalinLower.LowerCarrierPlan], },
-    LowerCarrierPlanMissing { variant_unique, carrier [LalinFlow.FlowCarrierId], },
-  },
-  product. LowerAddressLaneUse {
-    interned,
-    address [LalinFlow.FlowAddressId],
-    lane [LalinKernel.KernelLaneId],
-  },
-  product. LowerAddressInstUse {
-    interned,
-    address [LalinFlow.FlowAddressId],
-    inst [LalinGraph.GraphInstRef],
-  },
-  sum. LowerAddressStrategy {
-    LowerAddressCarryProjected,
-    LowerAddressReject { variant_unique, reason [str], },
-  },
-  product. LowerAddressBlockParam {
-    interned,
-    address [LalinFlow.FlowAddressId],
-    block [LalinGraph.GraphBlockId],
-    param [LalinC.CBackendLocalId],
-    elem_ty [LalinCode.CodeType],
-  },
-  sum. LowerAddressEdgeSource {
-    LowerAddressEdgeRecomputeFromCarrier { variant_unique, index [LalinCode.CodeValueId], },
-    LowerAddressEdgeCarrySame,
-    LowerAddressEdgeCarryConstBytes { variant_unique, amount [number], },
-    LowerAddressEdgeCarryDynamicBytes { variant_unique, step [LalinCode.CodeValueId], elem_size [number], },
-  },
-  product. LowerAddressEdgeTransfer {
-    interned,
-    address [LalinFlow.FlowAddressId],
-    edge [LalinGraph.GraphEdge],
-    source [LalinLower.LowerAddressEdgeSource],
-    dest_param [LalinC.CBackendLocalId],
-  },
-  product. LowerAddressPlan {
-    interned,
-    address [LalinFlow.FlowAddressId],
-    carrier [LalinFlow.FlowCarrierId],
-    base [LalinFlow.FlowAddressBase],
-    strategy [LalinLower.LowerAddressStrategy],
-    blocks [many [LalinLower.LowerAddressBlockParam]],
-    transfers [many [LalinLower.LowerAddressEdgeTransfer]],
-    lanes [many [LalinLower.LowerAddressLaneUse]],
-    insts [many [LalinLower.LowerAddressInstUse]],
-    proofs [many [LalinLower.LowerProof]],
-  },
-  product. LowerAddressPlanProjection { interned, plans [many [LalinLower.LowerAddressPlan]], },
-  sum. LowerAddressPlanLookup {
-    LowerAddressPlanFound { variant_unique, plan [LalinLower.LowerAddressPlan], },
-    LowerAddressPlanMissing { variant_unique, address [LalinFlow.FlowAddressId], },
   },
   sum. LowerCMatInductionAlignmentAxis {
     LowerCMatAlignmentRole,
@@ -407,6 +320,7 @@ return schema. LalinLower {
   product. LowerCMatCoordinateFacet {
     interned,
     spine [LalinCMat.CMatMemoryUseSpine],
+    iteration [LalinStencil.StencilKernelIteration],
     entries [many [LalinLower.LowerCMatUseCoordinateEntry]],
   },
   sum. LowerCMatCoordinateProjection {
@@ -468,6 +382,7 @@ return schema. LalinLower {
     LowerCMatCoordinateCollecting {
       variant_unique,
       spine [LalinCMat.CMatMemoryUseSpine],
+      iteration [LalinStencil.StencilKernelIteration],
       entries [many [LalinLower.LowerCMatUseCoordinateEntry]],
     },
     LowerCMatCoordinateAssemblyRejected {
@@ -505,6 +420,11 @@ return schema. LalinLower {
     interned,
     assembly [LalinLower.LowerCFragmentAssemblyInput],
     materialization [LalinCMat.CMatMaterialization],
+  },
+  product. LowerCMatMaterializationContributionInput {
+    interned,
+    assembly [LalinLower.LowerCFragmentAssemblyInput],
+    coordinates [LalinLower.LowerCMatCoordinateFacet],
   },
 
   sum. LowerKernelCMatState {
@@ -813,7 +733,6 @@ return schema. LalinLower {
     interned,
     fact [LalinLower.LowerCMatAccessFact],
     values [LalinCMat.CMatCExternalValueBindingProjection],
-    addresses [LalinLower.LowerAddressPlanProjection],
   },
   sum. LowerCMatAccessSourceResolution {
     LowerCMatAccessSourceReady {
@@ -830,32 +749,6 @@ return schema. LalinLower {
     access [LalinStencil.StencilAccessRef],
     values [LalinCMat.CMatCExternalValueBindingProjection],
     expected [LalinC.CBackendType],
-  },
-  product. LowerAddressByLaneEntry {
-    interned,
-    field. lane [LalinKernel.KernelLaneId],
-    plan [LalinLower.LowerAddressPlan],
-    use [LalinLower.LowerAddressLaneUse],
-  },
-  sum. LowerAddressByLaneLookup {
-    LowerAddressByLaneFound {
-      variant_unique,
-      entry [LalinLower.LowerAddressByLaneEntry],
-    },
-    LowerAddressByLaneMissing {
-      variant_unique,
-      field. lane [LalinKernel.KernelLaneId],
-    },
-    LowerAddressByLaneAmbiguous {
-      variant_unique,
-      field. lane [LalinKernel.KernelLaneId],
-      count [number],
-    },
-    LowerAddressByLaneInvalidRelation {
-      variant_unique,
-      field. lane [LalinKernel.KernelLaneId],
-      reason [str],
-    },
   },
   product. LowerCMatAccessCollection {
     interned,
@@ -907,7 +800,6 @@ return schema. LalinLower {
     bindings [many [LalinCMat.CMatAccessBinding]],
     provenance [LalinStencil.StencilAccessByKernelLaneProjection],
     values [LalinCMat.CMatCExternalValueBindingProjection],
-    addresses [LalinLower.LowerAddressPlanProjection],
     target [LalinC.CBackendTarget],
   },
   product. LowerCMatAccessFoldInput {
@@ -919,7 +811,6 @@ return schema. LalinLower {
     interned,
     materialization [LalinCMat.CMatMaterializedKernelFragment],
     values [LalinCMat.CMatCExternalValueBindingProjection],
-    addresses [LalinLower.LowerAddressPlanProjection],
     target [LalinC.CBackendTarget],
   },
   sum. LowerCMatAccessEnvironment {
@@ -1005,14 +896,25 @@ return schema. LalinLower {
     },
     LowerCMatExitsRejected { variant_unique, issue [LalinLower.LowerIssue], },
   },
+  product. LowerCMatAddressEnvironmentInput {
+    interned,
+    environment [LalinLower.LowerCMatEnvironmentInput],
+    values [LalinLower.LowerCMatValuesReady],
+    accesses [LalinLower.LowerCMatAccessesReady],
+  },
+  product. LowerCMatAddressPlanReadyInput {
+    interned,
+    environment [LalinLower.LowerCMatAddressEnvironmentInput],
+    plan [LalinCMat.CMatCAddressPlan],
+  },
   product. LowerCMatEnvironmentInput {
     interned,
     fragment [LalinLower.LowerFragment],
     materialization [LalinCMat.CMatMaterializedKernelFragment],
+    coordinates [LalinLower.LowerCMatCoordinateFacet],
     coverage [LalinLower.LowerFragmentCoverage],
     code_func [LalinCode.CodeFunc],
     baseline [LalinLower.LowerCFunctionEmission],
-    addresses [LalinLower.LowerAddressPlanProjection],
     dominance [LalinLower.LowerCDominanceProjection],
     adapters [LalinLower.LowerCReplacementEntryProjection],
     namespace [LalinCMat.CMatCFragmentNamespace],
@@ -1053,7 +955,6 @@ return schema. LalinLower {
     materializations [LalinLower.LowerKernelCMatProjection],
     dominance [LalinLower.LowerCDominanceProjection],
     adapters [LalinLower.LowerCReplacementEntryProjection],
-    addresses [LalinLower.LowerAddressPlanProjection],
     namespace [LalinCMat.CMatCFragmentNamespace],
     reserved_labels [many [LalinC.CBackendLabel]],
     target [LalinC.CBackendTarget],
@@ -1085,7 +986,6 @@ return schema. LalinLower {
     plan [LalinLower.LowerFuncPlan],
     baseline [LalinLower.LowerCFunctionEmission],
     materializations [LalinLower.LowerKernelCMatProjection],
-    addresses [LalinLower.LowerAddressPlanProjection],
   },
   product. LowerBackSpine {
     interned,
@@ -1254,8 +1154,6 @@ return schema. LalinLower {
     target [LalinLower.LowerTarget],
     kernels [LalinKernel.KernelModulePlan],
     schedules [LalinSchedule.ScheduleModulePlan],
-    carriers [LalinLower.LowerCarrierPlanProjection],
-    addresses [LalinLower.LowerAddressPlanProjection],
     funcs [LalinLower.LowerFunctionPlanProjection],
     issues [many [LalinLower.LowerIssue]],
   },

@@ -42,7 +42,9 @@ local effects = Effect.EffectFactSet(id, {}, {}, {})
 local kernels = Kernel.KernelModulePlan(id, flow, values, mem, effects, {})
 local target = Schedule.ScheduleTarget(Backend.BackTargetModel(Backend.BackTargetNative, {}))
 local schedules = Schedule.ScheduleModulePlan(id, target, {})
-local lower_module = Lower.LowerModule(id, Lower.LowerTargetC, kernels, schedules, Lower.LowerCarrierPlanProjection({}), Lower.LowerAddressPlanProjection({}), Lower.LowerFunctionPlanProjection({}), {})
+local lower_module = Lower.LowerModule(
+  id, Lower.LowerTargetC, kernels, schedules,
+  Lower.LowerFunctionPlanProjection({}), {})
 local c_target = C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian, true)
 local input = Lower.LowerCModuleInput(
   Lower.LowerBackSpine(module, Graph.CodeGraph(id, {}), c_target), lower_module,

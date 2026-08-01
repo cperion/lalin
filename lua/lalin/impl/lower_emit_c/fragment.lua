@@ -134,6 +134,48 @@ function CMat.CMatCFragmentState:cmat_fragment_allocate(stem, ty)
     self.entry_stmts, self.cfg, self.helpers, self.next_local + 1), c_local)
 end
 
+function CMat.CMatCFragmentState:cmat_fragment_add_planned_local(c_local)
+  return CMat.CMatCFragmentState(
+    self.request, self.provenance, self.index, self.ordinal,
+    self.values, self.streams, self.window, append(self.locals, c_local),
+    self.entry_stmts, self.cfg, self.helpers, self.next_local)
+end
+function CMat.CMatCAddressPlan:cmat_fragment_install(state)
+  local next_state = state
+  for i = 1, #self.cursors do
+    local cursor = self.cursors[i]
+    local starts = {}
+    for j = 1, #state.request.values.entries do
+      local entry = state.request.values.entries[j]
+      if entry.value == cursor.start then starts[#starts + 1] = entry end
+    end
+    if #starts ~= 1 or starts[1].c_local.ty ~= state.index.ty then
+      return CMat.CMatCFragmentStateRejected({
+        CMat.CMatCEmissionInvalidKernel(
+          "cursor initialization requires one exact start binding")
+      })
+    end
+    next_state = next_state:cmat_fragment_add_planned_local(cursor.cursor_local)
+    next_state = next_state:cmat_fragment_add_entry(C.CBackendAssign(
+      cursor.cursor_local.id, C.CBackendRPtrOffset(
+        C.CBackendAtomLocal(cursor.base.id),
+        C.CBackendAtomLocal(starts[1].c_local.id),
+        cursor.basis.index_scale_bytes, 0)))
+  end
+  return CMat.CMatCFragmentStateReady(next_state)
+end
+function CMat.CMatCAddressPlan:cmat_fragment_cursor_steps(index_ty)
+  local stmts = {}
+  local zero = C.CBackendAtomLiteral(index_ty, Core.LitInt("0"))
+  for i = 1, #self.cursors do
+    local cursor = self.cursors[i]
+    stmts[#stmts + 1] = C.CBackendAssign(cursor.cursor_local.id,
+      C.CBackendRPtrOffset(C.CBackendAtomLocal(cursor.cursor_local.id),
+        zero, 1, cursor.step_bytes))
+  end
+  return CMat.CMatCCursorStatementProjection(stmts)
+end
+
 function CMat.CMatCFragmentState:cmat_fragment_add_entry(stmt)
   return CMat.CMatCFragmentState(
     self.request, self.provenance, self.index, self.ordinal,
@@ -839,7 +881,9 @@ end
 function CMat.CMatCFragmentAccessBindingFound:cmat_resolved_window_load(input)
   local ty = input.request.stream.definition.ty:code_to_c_backend_type()
   return self:cmat_fragment_access_place(CMat.CMatCFragmentAccessPlaceInput(
-    input.request.state, input.index, input.request.state.index.ty, ty))
+    input.request.state, CMat.CMatWindowMemoryUse(
+      Stencil.StencilStreamRef(input.request.stream.definition.id), 1),
+    input.index, input.request.state.index.ty, ty))
 :cmat_finish_window_load(input)
 end
 function CMat.CMatCWindowResolvedLoadInput:cmat_emit_resolved_window_load()
@@ -923,7 +967,9 @@ function CMat.CMatCFragmentAccessBindingFound:cmat_guarded_window_load(input)
   local guarded = CMat.CMatCWindowGuardedLoadInput(
     request, input.index, input.condition)
   return self:cmat_fragment_access_place(CMat.CMatCFragmentAccessPlaceInput(
-    state, input.index, state.index.ty, ty))
+    state, CMat.CMatWindowMemoryUse(
+      Stencil.StencilStreamRef(input.request.stream.definition.id), 1),
+    input.index, state.index.ty, ty))
 :cmat_finish_guarded_window_load(CMat.CMatCWindowGuardedPlaceInput(
   guarded, allocation.c_local, zero_label, join_label))
 end
@@ -976,12 +1022,6 @@ end
 function CMat.CMatCFragmentAccessBindingMissing:cmat_fragment_load_bound(_input)
   return CMat.CMatCFragmentStateRejected({ CMat.CMatCEmissionMissingAccess(self.access) })
 end
-function CMat.CMatCFragmentAccessDirect:cmat_fragment_base_atom()
-  return C.CBackendAtomLocal(self.base.id)
-end
-function CMat.CMatCFragmentAccessAddressProjected:cmat_fragment_base_atom()
-  return C.CBackendAtomLocal(self.base.id)
-end
 function Mem.MemAlignUnknown:cmat_fragment_place(input)
   return C.CBackendPlacePtrIndex(input.base, input.index, input.ty, input.stride, nil)
 end
@@ -994,38 +1034,107 @@ end
 function Mem.MemAlignAssumed:cmat_fragment_place(input)
   return C.CBackendPlacePtrIndex(input.base, input.index, input.ty, input.stride, self.bytes)
 end
-function CMat.CMatCFragmentAccessBindingFound:cmat_fragment_access_place(input)
-  if self.entry.elem_size <= 0 or self.entry.stride <= 0
-      or self.entry.stride % self.entry.elem_size ~= 0 then
-    return CMat.CMatCFragmentPlaceRejected({
-      CMat.CMatCEmissionInvalidKernel(
-        "fragment access stride must be a positive element-size multiple")
-    })
+function Mem.MemAlignUnknown:cmat_fragment_deref(addr, ty)
+  return C.CBackendPlaceDeref(addr, ty, nil)
+end
+function Mem.MemAlignKnown:cmat_fragment_deref(addr, ty)
+  return C.CBackendPlaceDeref(addr, ty, self.bytes)
+end
+function Mem.MemAlignAtLeast:cmat_fragment_deref(addr, ty)
+  return C.CBackendPlaceDeref(addr, ty, self.bytes)
+end
+function Mem.MemAlignAssumed:cmat_fragment_deref(addr, ty)
+  return C.CBackendPlaceDeref(addr, ty, self.bytes)
+end
+
+local function cmat_fragment_offset_place(state, binding, base, index, scale, offset, ty)
+  if offset == 0 and scale == binding.elem_size then
+    local place = binding.alignment:cmat_fragment_place(
+      CMat.CMatCFragmentPlaceInput(base, index, ty, binding.elem_size))
+    return CMat.CMatCFragmentPlaceEmitted(state, place)
   end
+  local allocation = state:cmat_fragment_allocate(
+    "address", C.CBackendDataPtr(ty))
+  state = allocation.state:cmat_fragment_add_body(C.CBackendAssign(
+    allocation.c_local.id, C.CBackendRPtrOffset(base, index, scale, offset)))
+  return CMat.CMatCFragmentPlaceEmitted(state,
+    binding.alignment:cmat_fragment_deref(
+      C.CBackendAtomLocal(allocation.c_local.id), ty))
+end
+
+function CMat.CMatCAddressingMissing:cmat_fragment_emit_place(_input, _binding)
+  return CMat.CMatCFragmentPlaceRejected({
+    CMat.CMatCEmissionInvalidKernel("C address plan is missing a memory use") })
+end
+function CMat.CMatCAddressingAmbiguous:cmat_fragment_emit_place(_input, _binding)
+  return CMat.CMatCFragmentPlaceRejected({
+    CMat.CMatCEmissionInvalidKernel("C address plan has an ambiguous memory use") })
+end
+function CMat.CMatCAddressingFound:cmat_fragment_emit_place(input, binding)
+  return self.entry.addressing:cmat_fragment_emit_place(input, binding)
+end
+function CMat.CMatCAbsoluteAddressing:cmat_fragment_emit_place(input, binding)
+  if self.index_scale_bytes ~= binding.stride then
+    return CMat.CMatCFragmentPlaceRejected({
+      CMat.CMatCEmissionInvalidKernel("absolute address scale disagrees with binding") })
+  end
+  return cmat_fragment_offset_place(input.state, binding,
+    C.CBackendAtomLocal(self.base.id), input.index,
+    self.index_scale_bytes, self.const_offset_bytes, input.ty)
+end
+function CMat.CMatCIterationAddressing:cmat_fragment_emit_place(input, binding)
+  if self.index_scale_bytes ~= binding.stride then
+    return CMat.CMatCFragmentPlaceRejected({
+      CMat.CMatCEmissionInvalidKernel("iteration address scale disagrees with binding") })
+  end
+  return cmat_fragment_offset_place(input.state, binding,
+    C.CBackendAtomLocal(self.base.id), input.index,
+    self.index_scale_bytes, self.const_offset_bytes, input.ty)
+end
+function CMat.CMatCDynamicWindowAddressing:cmat_fragment_emit_place(input, binding)
+  if self.index_scale_bytes ~= binding.stride then
+    return CMat.CMatCFragmentPlaceRejected({
+      CMat.CMatCEmissionInvalidKernel("window address scale disagrees with binding") })
+  end
+  return cmat_fragment_offset_place(input.state, binding,
+    C.CBackendAtomLocal(self.base.id), input.index,
+    self.index_scale_bytes, self.const_offset_bytes, input.ty)
+end
+function CMat.CMatCCursorAddressing:cmat_fragment_emit_place(input, binding)
+  return input.state.request.address_plan:cursor(self.cursor)
+    :cmat_fragment_cursor_place(input, binding, self.displacement_bytes)
+end
+function CMat.CMatCCursorMissing:cmat_fragment_cursor_place(_input, _binding, _displacement)
+  return CMat.CMatCFragmentPlaceRejected({
+    CMat.CMatCEmissionInvalidKernel("C address plan cursor is missing") })
+end
+function CMat.CMatCCursorAmbiguous:cmat_fragment_cursor_place(_input, _binding, _displacement)
+  return CMat.CMatCFragmentPlaceRejected({
+    CMat.CMatCEmissionInvalidKernel("C address plan cursor is ambiguous") })
+end
+function CMat.CMatCCursorFound:cmat_fragment_cursor_place(input, binding, displacement)
+  if self.cursor.basis.index_scale_bytes ~= binding.stride then
+    return CMat.CMatCFragmentPlaceRejected({
+      CMat.CMatCEmissionInvalidKernel("cursor address scale disagrees with binding") })
+  end
+  if displacement == 0 then
+    return CMat.CMatCFragmentPlaceEmitted(input.state,
+      binding.alignment:cmat_fragment_deref(
+        C.CBackendAtomLocal(self.cursor.cursor_local.id), input.ty))
+  end
+  local zero = C.CBackendAtomLiteral(input.index_ty, Core.LitInt("0"))
+  return cmat_fragment_offset_place(input.state, binding,
+    C.CBackendAtomLocal(self.cursor.cursor_local.id), zero, 1, displacement, input.ty)
+end
+function CMat.CMatCFragmentAccessBindingFound:cmat_fragment_access_place(input)
   if input.index_ty ~= input.state.index.ty then
     return CMat.CMatCFragmentPlaceRejected({
       CMat.CMatCEmissionTypeMismatch(
         "fragment access index", input.state.index.ty, input.index_ty)
     })
   end
-  local state = input.state
-  local index = input.index
-  local factor = self.entry.stride / self.entry.elem_size
-  if factor ~= 1 then
-    local allocation = state:cmat_fragment_allocate("stride", input.index_ty)
-    local helper = allocation.state:cmat_fragment_add_helper(
-      C.CBackendHelperIntBinary(
-        Core.BinMul, input.index_ty, C.CBackendIntWrap))
-    state = helper.state:cmat_fragment_add_body(C.CBackendHelperCall(
-      allocation.c_local.id, helper.helper, { index,
-        C.CBackendAtomLiteral(input.index_ty, Core.LitInt(tostring(factor))) }))
-    index = C.CBackendAtomLocal(allocation.c_local.id)
-  end
-  local place = self.entry.alignment:cmat_fragment_place(
-    CMat.CMatCFragmentPlaceInput(
-      self.entry.source:cmat_fragment_base_atom(), index,
-      input.ty, self.entry.elem_size))
-  return CMat.CMatCFragmentPlaceEmitted(state, place)
+  return input.state.request.address_plan:lookup(input.use)
+    :cmat_fragment_emit_place(input, self.entry)
 end
 function CMat.CMatCFragmentPlaceRejected:cmat_fragment_finish_load(_stream)
   return CMat.CMatCFragmentStateRejected(self.issues)
@@ -1042,7 +1151,9 @@ end
 function CMat.CMatCFragmentAccessBindingFound:cmat_fragment_load_bound(input)
   local ty = input.stream.definition.ty:code_to_c_backend_type()
   return self:cmat_fragment_access_place(CMat.CMatCFragmentAccessPlaceInput(
-    input.index.state, input.index.atom, input.index.ty, ty))
+    input.index.state, CMat.CMatStreamMemoryUse(
+      Stencil.StencilStreamRef(input.stream.definition.id)),
+    input.index.atom, input.index.ty, ty))
 :cmat_fragment_finish_load(input.stream)
 end
 
@@ -1352,25 +1463,24 @@ function CMat.CMatCFragmentExprEmitted:cmat_finish_find_control(input)
     C.CBackendAtomLocal(self.state.index.id), self.atom, self.ty))
 end
 function Stencil.StencilSinkOpStore:cmat_fragment_emit_sink(state, sink)
-  return self.index:cmat_fragment_emit_store_index(state, sink, self)
+  return self.index:cmat_fragment_index(state, sink)
+    :cmat_fragment_finish_store_index(sink, self)
 end
-function Stencil.StencilIndexProducer:cmat_fragment_emit_store_index(state, sink, op)
-  return state.streams:cmat_fragment_lookup(op.value)
-    :cmat_fragment_store_stream(
-      CMat.CMatCFragmentStoreRequest(state, sink, op.dst))
+function CMat.CMatCFragmentExprRejected:cmat_fragment_finish_store_index(_sink, _op)
+  return CMat.CMatCFragmentSinkRejected(self.issues)
 end
-function Stencil.StencilIndexExplicit:cmat_fragment_emit_store_index(_state, sink, _op)
-  return CMat.CMatCFragmentSinkRejected({
-    CMat.CMatCEmissionUnsupportedSink(
-      sink, "explicit store indexing requires a projected C address plan")
-  })
+function CMat.CMatCFragmentExprEmitted:cmat_fragment_finish_store_index(sink, op)
+  return self.state.streams:cmat_fragment_lookup(op.value)
+    :cmat_fragment_store_stream(CMat.CMatCFragmentStoreRequest(
+      self.state, sink, op.dst, self.atom, self.ty))
 end
 function CMat.CMatCFragmentStreamMissing:cmat_fragment_store_stream(_input)
   return CMat.CMatCFragmentSinkRejected({ CMat.CMatCEmissionMissingStream(self.stream) })
 end
 function CMat.CMatCFragmentStreamFound:cmat_fragment_store_stream(request)
   local input = CMat.CMatCFragmentStoreInput(
-    request.state, request.sink, request.dst, self.entry)
+    request.state, request.sink, request.dst, request.index, request.index_ty,
+    self.entry)
   return request.sink.op.semantics:cmat_fragment_store_semantics(input)
 end
 function Stencil.StencilStoreSemantics:cmat_fragment_store_semantics(input)
@@ -1396,8 +1506,8 @@ function CMat.CMatCFragmentPlaceEmitted:cmat_fragment_finish_store(input)
 end
 function CMat.CMatCFragmentAccessBindingFound:cmat_fragment_store_bound(input)
   return self:cmat_fragment_access_place(CMat.CMatCFragmentAccessPlaceInput(
-    input.state, C.CBackendAtomLocal(input.state.index.id),
-    input.state.index.ty, input.stream.ty))
+    input.state, CMat.CMatSinkMemoryUse(Stencil.StencilSinkRef(input.sink.id)),
+    input.index, input.index_ty, input.stream.ty))
 :cmat_fragment_finish_store(input)
 end
 
@@ -1904,6 +2014,10 @@ function CMat.CMatCControlAssemblyValid:cmat_fragment_assemble_control_loop()
   }
   local step_stmts = { C.CBackendHelperCall(state.index.id, index_step.helper,
     { C.CBackendAtomLocal(state.index.id), magnitude }) }
+  local cursor_steps = state.request.address_plan:cmat_fragment_cursor_steps(index_ty)
+  for i = 1, #cursor_steps.stmts do
+    step_stmts[#step_stmts + 1] = cursor_steps.stmts[i]
+  end
   local body_term = self.polarity:cmat_control_body_term(
     CMat.CMatCControlBodyTermInput(
       self.condition, advance_label, self.early.entry.label, early_atoms))
@@ -2129,6 +2243,10 @@ function CMat.CMatCExitArgumentCollectionReady:cmat_fragment_build_exit(context)
   }
   local step_stmts = { C.CBackendHelperCall(state.index.id, index_step.helper,
     { C.CBackendAtomLocal(state.index.id), magnitude }) }
+  local cursor_steps = state.request.address_plan:cmat_fragment_cursor_steps(index_ty)
+  for i = 1, #cursor_steps.stmts do
+    step_stmts[#step_stmts + 1] = cursor_steps.stmts[i]
+  end
   local blocks = {
     C.CBackendBlock(entry_label, {}, entry_stmts, C.CBackendGoto(test_label, {})),
     C.CBackendBlock(test_label, {}, test_stmts, C.CBackendIfGoto(
@@ -2253,6 +2371,13 @@ function CMat.CMatCResultSinkRequired:cmat_validate_result_sink(input)
   issues[#issues + 1] = CMat.CMatCEmissionInvalidKernel(
     "control result provenance lacks one exact computation sink")
   return CMat.CMatCMaterializationIssueCollection(issues)
+end
+function CMat.CMatCFragmentStateRejected:cmat_fragment_continue_address_plan(_materialization)
+  return CMat.CMatCFragmentRejected(self.issues)
+end
+function CMat.CMatCFragmentStateReady:cmat_fragment_continue_address_plan(materialization)
+  return materialization.kernel.computation.producer.shape:cmat_fragment_shape(
+    materialization, self.state)
 end
 local function validate_result_stream(input, stream, value)
   local count = 0
@@ -2535,8 +2660,8 @@ function CMat.CMatCFragmentMaterializationValid:cmat_emit_valid_fragment(request
     CMat.CMatCFragmentCFG({}, CMat.CMatCOpenBlock(
       C.CBackendLabel(request.namespace.prefix .. "_body"), {}, {}), 1),
     {}, 1):cmat_fragment_seed_counter()
-  return materialization.kernel.computation.producer.shape:cmat_fragment_shape(
-    materialization, state)
+  return request.address_plan:cmat_fragment_install(state)
+:cmat_fragment_continue_address_plan(materialization)
 end
 function CMat.CMatRejectedKernelFragment:cmat_emit_fragment(_request)
   local issues = {}

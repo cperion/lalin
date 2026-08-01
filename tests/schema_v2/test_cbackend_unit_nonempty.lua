@@ -106,8 +106,6 @@ local lower_module = Lower.LowerModule(
   Lower.LowerTargetC,
   kernel_plan,
   schedule_plan,
-  Lower.LowerCarrierPlanProjection({}),
-  Lower.LowerAddressPlanProjection({}),
   Lower.LowerFunctionPlanProjection({}),
   {}
 )

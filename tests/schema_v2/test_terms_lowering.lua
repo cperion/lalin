@@ -43,7 +43,7 @@ local function make_lower_module()
     Lower.LowerTargetC,
     kernel_plan,
     schedule_plan,
-    Lower.LowerCarrierPlanProjection({}), Lower.LowerAddressPlanProjection({}), Lower.LowerFunctionPlanProjection({}), {}
+    Lower.LowerFunctionPlanProjection({}), {}
   )
 end
 

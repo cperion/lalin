@@ -150,7 +150,8 @@ local memory_basis = Lower.LowerCMatAddressBasis(
   Mem.MemBaseValue(base), Flow.FlowInduction(
     index, i32, start, step, Flow.FlowPrimaryInduction,
     Flow.FlowRangeUnknown(index)), 4)
-local coordinate_facet = Lower.LowerCMatCoordinateFacet(memory_spine, {
+local coordinate_facet = Lower.LowerCMatCoordinateFacet(
+  memory_spine, provenance.iteration, {
   Lower.LowerCMatUseCoordinateEntry(
     memory_spine.uses[1].id,
     Lower.LowerCMatIterationAffineCoordinate(memory_basis, 0)),
@@ -226,7 +227,6 @@ local module = Code.CodeModule(
   { Code.CodeSig(sig_id, { i32, i32, ptr_ty }, {}) },
   {}, {}, {}, {}, { func_param }, origin)
 local spine = Lower.LowerBackSpine(module, Graph.CodeGraph(module.id, { graph }), target)
-local addresses = Lower.LowerAddressPlanProjection({})
 
 local signatures = Lower.LowerCSignatureProjection({
   Code.CodeSig(sig_id, { i32, i32, ptr_ty }, {}):lower_c_signature_entry() })
@@ -242,7 +242,7 @@ local kernel_plan = Lower.LowerFuncPlan(func_id, { kernel_fragment })
 
 local function assemble(code_func, baseline, plan)
   return Lower.LowerCFunctionAssemblyInput(
-    spine, code_func, plan, baseline, cmat_projection, addresses)
+    spine, code_func, plan, baseline, cmat_projection)
     :lower_c_function_assembly()
 end
 
@@ -351,7 +351,8 @@ assert(asdl.classof(missing_result.issues[1]) == Lower.LowerIssueFragmentRejecte
 -- executes the assembled function.
 ----------------------------------------------------------------------
 
-local flow_facts = Flow.FlowFactSet(module.id, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+local flow_facts = Flow.FlowFactSet(
+  module.id, {}, {}, {}, {}, {}, {}, {}, {}, {})
 local value_facts = Value.ValueFactSet(module.id, {}, {}, {})
 local mem_facts = Mem.MemSemanticFactSet(module.id, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 local effect_facts = Effect.EffectFactSet(module.id, {}, {}, {})
@@ -361,7 +362,6 @@ local schedule_module = Schedule.ScheduleModulePlan(
   module.id, Schedule.ScheduleTarget(Backend.BackTargetModel(Backend.BackTargetNative, {})), {})
 local module_plan = Lower.LowerModule(
   module.id, Lower.LowerTargetC, kernel_module, schedule_module,
-  Lower.LowerCarrierPlanProjection({}), addresses,
   Lower.LowerFunctionPlanProjection({
     Lower.LowerFunctionPlanEntry(func_id, kernel_plan),
   }), {})

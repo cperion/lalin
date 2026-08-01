@@ -62,7 +62,8 @@ function Lower.LowerKernelCMatReady:lower_c_cmat_state_contribute(input)
 end
 function Lower.LowerCMatCoordinatesProjected:lower_c_coordinate_contribute(input)
   return input.materialization:lower_c_cmat_materialization_contribute(
-    input.assembly)
+    Lower.LowerCMatMaterializationContributionInput(
+      input.assembly, self.facet))
 end
 function Lower.LowerCMatCoordinatesRejected:lower_c_coordinate_contribute(input)
   if #self.issues == 0 then
@@ -77,30 +78,40 @@ function Lower.LowerCMatCoordinatesRejected:lower_c_coordinate_contribute(input)
       input.assembly.fragment.id, self.issues[1]))
 end
 function CMat.CMatMaterializedKernelFragment:lower_c_cmat_materialization_contribute(input)
-  local env = Lower.LowerCMatEnvironmentInput(input.fragment, self, input.coverage,
-    input.code_func, input.baseline, input.addresses, input.dominance, input.adapters,
-    input.namespace, input.reserved_labels, input.target)
-  return env:lower_cmat_environment():lower_c_environment_contribute(input)
+  local assembly = input.assembly
+  local env = Lower.LowerCMatEnvironmentInput(
+    assembly.fragment, self, input.coordinates, assembly.coverage,
+    assembly.code_func, assembly.baseline, assembly.dominance,
+    assembly.adapters, assembly.namespace, assembly.reserved_labels, assembly.target)
+  return env:lower_cmat_environment():lower_c_environment_contribute(assembly)
 end
 function CMat.CMatRejectedKernelFragment:lower_c_cmat_materialization_contribute(input)
+  local assembly = input.assembly
   if #self.issues == 0 then
-    return Lower.LowerCRejectedFragment(input.fragment.id,
-      Lower.LowerIssueFragmentRejected(input.fragment.id, "kernel materialization rejected without an issue"))
+    return Lower.LowerCRejectedFragment(assembly.fragment.id,
+      Lower.LowerIssueFragmentRejected(assembly.fragment.id,
+        "kernel materialization rejected without an issue"))
   end
-  return Lower.LowerCRejectedFragment(input.fragment.id,
-    Lower.LowerIssueCMatRejected(input.fragment.id, CMat.CMatCEmissionMaterializationIssue(self.issues[1])))
+  return Lower.LowerCRejectedFragment(assembly.fragment.id,
+    Lower.LowerIssueCMatRejected(assembly.fragment.id,
+      CMat.CMatCEmissionMaterializationIssue(self.issues[1])))
 end
 function CMat.CMatMaterializedFused:lower_c_cmat_materialization_contribute(input)
-  return Lower.LowerCRejectedFragment(input.fragment.id,
-    Lower.LowerIssueFragmentRejected(input.fragment.id, "authored standalone materialization has no canonical kernel provenance"))
+  local assembly = input.assembly
+  return Lower.LowerCRejectedFragment(assembly.fragment.id,
+    Lower.LowerIssueFragmentRejected(assembly.fragment.id,
+      "authored standalone materialization has no canonical kernel provenance"))
 end
 function CMat.CMatRejectedComputation:lower_c_cmat_materialization_contribute(input)
+  local assembly = input.assembly
   if #self.issues == 0 then
-    return Lower.LowerCRejectedFragment(input.fragment.id,
-      Lower.LowerIssueFragmentRejected(input.fragment.id, "computation materialization rejected without an issue"))
+    return Lower.LowerCRejectedFragment(assembly.fragment.id,
+      Lower.LowerIssueFragmentRejected(assembly.fragment.id,
+        "computation materialization rejected without an issue"))
   end
-  return Lower.LowerCRejectedFragment(input.fragment.id,
-    Lower.LowerIssueCMatRejected(input.fragment.id, CMat.CMatCEmissionMaterializationIssue(self.issues[1])))
+  return Lower.LowerCRejectedFragment(assembly.fragment.id,
+    Lower.LowerIssueCMatRejected(assembly.fragment.id,
+      CMat.CMatCEmissionMaterializationIssue(self.issues[1])))
 end
 function Lower.LowerCMatEnvironmentRejected:lower_c_environment_contribute(input)
   return Lower.LowerCRejectedFragment(input.fragment.id, self.issue)
@@ -135,7 +146,7 @@ end
 function Lower.LowerCReplacementEntryAdapterReady:lower_c_fragment_contribution(input, fragment, coverage, dominance)
   return fragment.strategy:lower_c_contribute(Lower.LowerCFragmentAssemblyInput(
     fragment, coverage, input.code_func, input.baseline, input.materializations,
-    dominance, self.projection, input.addresses,
+    dominance, self.projection,
     CMat.CMatCFragmentNamespace(sanitize(fragment.id.text)),
     input.baseline:lower_c_body_labels(), input.spine.target))
 end

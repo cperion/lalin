@@ -176,6 +176,14 @@ local accesses = CMat.CMatCFragmentAccessBindingProjection({
     Stencil.StencilAccessRef("out2"), lane2_id, access2_id,
     CMat.CMatCFragmentAccessDirect(out2_local), 4, 4, Mem.MemAlignKnown(4)),
 })
+local address_spine = materialization.kernel:cmat_memory_use_spine()
+local address_plan = CMat.CMatCAddressPlan(
+  address_spine, materialization.provenance.iteration, {}, {
+    CMat.CMatCUseAddressingEntry(address_spine.uses[1].id,
+      CMat.CMatCIterationAddressing(out1_local, 4, 0)),
+    CMat.CMatCUseAddressingEntry(address_spine.uses[2].id,
+      CMat.CMatCIterationAddressing(out2_local, 4, 0)),
+  })
 local exits = CMat.CMatCExitBindingProjection({
   CMat.CMatCExitBindingEntry(
     CMat.CMatCExitNormal, exit_id, C.CBackendLabel("exit"), {}),
@@ -183,7 +191,8 @@ local exits = CMat.CMatCExitBindingProjection({
 local request = CMat.CMatCFragmentInput(
   materialization, code_func, { block_id }, block_id,
   C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian),
-  values, accesses, exits, CMat.CMatCFragmentNamespace("multisink"), {})
+  values, accesses, address_plan, exits,
+  CMat.CMatCFragmentNamespace("multisink"), {})
 
 local emission = request:emit_cmat_fragment()
 assert(asdl.classof(emission) == CMat.CMatCFragmentEmitted)

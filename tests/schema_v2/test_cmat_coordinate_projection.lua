@@ -3,9 +3,11 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local asdl = require("lalin.asdl")
 require("lalin.schema_v2")
 require("lalin.impl.lower_emit_c.coordinates")
+require("lalin.impl.lower_emit_c.address_plan")
 
 local Core = require("lalin.schema_v2.core")
 local Code = require("lalin.schema_v2.code")
+local C = require("lalin.schema_v2.c")
 local Graph = require("lalin.schema_v2.graph")
 local Flow = require("lalin.schema_v2.flow")
 local Value = require("lalin.schema_v2.value")
@@ -141,6 +143,73 @@ assert(absolute.index == explicit.index)
 assert(absolute.index_scale_bytes == 4)
 assert(absolute.const_offset_bytes == 3)
 
+local c_i32 = C.CBackendScalar(Core.ScalarI32)
+local xs_base = C.CBackendLocal(
+  C.CBackendLocalId("xs"), C.CBackendName("xs"), C.CBackendDataPtr(c_i32))
+local absolute_base = C.CBackendLocal(
+  C.CBackendLocalId("absolute"), C.CBackendName("absolute"),
+  C.CBackendDataPtr(c_i32))
+local address_accesses = CMat.CMatCFragmentAccessBindingProjection({
+  CMat.CMatCFragmentAccessBindingEntry(
+    xs_ref, lane.id, access_id, CMat.CMatCFragmentAccessDirect(xs_base),
+    4, 4, Mem.MemAlignKnown(4)),
+  CMat.CMatCFragmentAccessBindingEntry(
+    absolute_ref, absolute_lane.id, absolute_access_id,
+    CMat.CMatCFragmentAccessDirect(absolute_base),
+    4, 4, Mem.MemAlignKnown(4)),
+})
+local plan_input = CMat.CMatCAddressPlanInput(
+  iteration, address_accesses, CMat.CMatCFragmentNamespace("coord"))
+local address_projection = facet:materialize_c_address_plan(plan_input)
+assert(asdl.classof(address_projection) == CMat.CMatCAddressPlanReady)
+local address_plan = address_projection.plan
+assert(#address_plan.cursors == 1)
+assert(address_plan.cursors[1].basis == centered.basis)
+assert(address_plan.cursors[1].base == xs_base)
+assert(address_plan.cursors[1].step_bytes == 8)
+assert(asdl.classof(address_plan:lookup(centered_id).entry.addressing) ==
+  CMat.CMatCCursorAddressing)
+assert(address_plan:lookup(centered_id).entry.addressing.cursor ==
+  address_plan:lookup(store_id).entry.addressing.cursor)
+assert(asdl.classof(address_plan:lookup(window_id).entry.addressing) ==
+  CMat.CMatCDynamicWindowAddressing)
+assert(asdl.classof(address_plan:lookup(absolute_id).entry.addressing) ==
+  CMat.CMatCAbsoluteAddressing)
+local repeated_plan = facet:materialize_c_address_plan(plan_input).plan
+assert(repeated_plan.cursors[1].id == address_plan.cursors[1].id)
+assert(repeated_plan.cursors[1].cursor_local.id ==
+  address_plan.cursors[1].cursor_local.id)
+local missing_binding_plan = facet:materialize_c_address_plan(
+  CMat.CMatCAddressPlanInput(iteration,
+    CMat.CMatCFragmentAccessBindingProjection({}),
+    CMat.CMatCFragmentNamespace("missing")))
+assert(asdl.classof(missing_binding_plan) ==
+  CMat.CMatCAddressPlanRejected)
+assert(asdl.classof(missing_binding_plan.issues[1]) ==
+  CMat.CMatCAddressMissingBinding)
+local incomplete_plan = Lower.LowerCMatCoordinateFacet(spine, iteration, {
+  facet.entries[1], facet.entries[2], facet.entries[3],
+}):materialize_c_address_plan(plan_input)
+assert(asdl.classof(incomplete_plan) == CMat.CMatCAddressPlanRejected)
+assert(asdl.classof(incomplete_plan.issues[1]) ==
+  CMat.CMatCAddressMissingUse)
+local duplicate_plan = Lower.LowerCMatCoordinateFacet(spine, iteration, {
+  facet.entries[1], facet.entries[1], facet.entries[2], facet.entries[3],
+  facet.entries[4],
+}):materialize_c_address_plan(plan_input)
+assert(asdl.classof(duplicate_plan) == CMat.CMatCAddressPlanRejected)
+assert(asdl.classof(duplicate_plan.issues[1]) ==
+  CMat.CMatCAddressAmbiguousUse)
+local mismatched_iteration_plan = facet:materialize_c_address_plan(
+  CMat.CMatCAddressPlanInput(Stencil.StencilKernelIteration(
+    loop, counter, i32, start, stop, step, 3,
+    Stencil.StencilIterationStopExclusive, Stencil.StencilProducerForward,
+    iteration.trip), address_accesses, CMat.CMatCFragmentNamespace("mismatch")))
+assert(asdl.classof(mismatched_iteration_plan) ==
+  CMat.CMatCAddressPlanRejected)
+assert(asdl.classof(mismatched_iteration_plan.issues[1]) ==
+  CMat.CMatCAddressIterationDisagreement)
+
 local missing_use = CMat.CMatMemoryUse(
   CMat.CMatStreamMemoryUse(
     Stencil.StencilStreamRef(Stencil.StencilStreamId("missing"))),
@@ -224,7 +293,7 @@ assert(asdl.classof(facet:lookup(
   CMat.CMatSinkMemoryUse(
     Stencil.StencilSinkRef(Stencil.StencilSinkId("missing"))))) ==
   Lower.LowerCMatUseCoordinateMissing)
-local ambiguous_facet = Lower.LowerCMatCoordinateFacet(spine, {
+local ambiguous_facet = Lower.LowerCMatCoordinateFacet(spine, iteration, {
   facet.entries[1], facet.entries[1],
 })
 assert(asdl.classof(ambiguous_facet:lookup(centered_id)) ==

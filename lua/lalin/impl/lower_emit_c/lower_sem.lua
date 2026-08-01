@@ -5,6 +5,7 @@ require("lalin.impl.lower_emit_c.materialize")
 require("lalin.impl.lower_emit_c.coordinates")
 require("lalin.impl.lower_emit_c.code_to_c")
 require("lalin.impl.lower_emit_c.fragment")
+require("lalin.impl.lower_emit_c.address_plan")
 
 local Lower = require("lalin.schema_v2.lower")
 local Stencil = require("lalin.schema_v2.stencil")
@@ -978,7 +979,7 @@ end
 
 function Lower.LowerCMatValuesReady:lower_cmat_compose_accesses(input)
   local accesses = Lower.LowerCMatAccessEnvironmentInput(
-    input.materialization, self.values, input.addresses, input.target)
+    input.materialization, self.values, input.target)
     :lower_cmat_accesses()
   return accesses:lower_cmat_compose_exits(input, self)
 end
@@ -987,22 +988,45 @@ function Lower.LowerCMatValuesRejected:lower_cmat_compose_accesses(_input)
 end
 
 function Lower.LowerCMatAccessesReady:lower_cmat_compose_exits(input, values)
+  local address_input = Lower.LowerCMatAddressEnvironmentInput(input, values, self)
+  return input.coordinates:materialize_c_address_plan(
+    CMat.CMatCAddressPlanInput(
+      input.materialization.provenance.iteration, self.accesses, input.namespace))
+:lower_cmat_compose_exits(address_input)
+end
+function CMat.CMatCAddressPlanRejected:lower_cmat_compose_exits(input)
+  if #self.issues == 0 then
+    return Lower.LowerCMatEnvironmentRejected(
+      Lower.LowerIssueFragmentRejected(
+        input.environment.fragment.id, "C address plan rejected without an issue"))
+  end
+  return Lower.LowerCMatEnvironmentRejected(
+    Lower.LowerIssueCMatAddressPlanRejected(
+      input.environment.fragment.id, self.issues[1]))
+end
+function CMat.CMatCAddressPlanReady:lower_cmat_compose_exits(input)
+  local environment = input.environment
   local exits = Lower.LowerCMatExitEnvironmentInput(
-    input.materialization.provenance, input.coverage, input.code_func)
-    :lower_cmat_exits()
-  return exits:lower_cmat_finish_environment(input, values, self)
+    environment.materialization.provenance, environment.coverage,
+    environment.code_func):lower_cmat_exits()
+  return exits:lower_cmat_finish_environment(
+    Lower.LowerCMatAddressPlanReadyInput(input, self.plan))
 end
 function Lower.LowerCMatAccessesRejected:lower_cmat_compose_exits(_input, _values)
   return Lower.LowerCMatEnvironmentRejected(self.issue)
 end
 
-function Lower.LowerCMatExitsReady:lower_cmat_finish_environment(input, values, accesses)
+function Lower.LowerCMatExitsReady:lower_cmat_finish_environment(input)
+  local address_input = input.environment
+  local environment = address_input.environment
   return Lower.LowerCMatEnvironmentReady(CMat.CMatCFragmentInput(
-    input.materialization, input.code_func, input.coverage.covered_blocks,
-    input.coverage.replacement_source, input.target, values.values,
-    accesses.accesses, self.exits, input.namespace, input.reserved_labels))
+    environment.materialization, environment.code_func,
+    environment.coverage.covered_blocks,
+    environment.coverage.replacement_source, environment.target,
+    address_input.values.values, address_input.accesses.accesses, input.plan,
+    self.exits, environment.namespace, environment.reserved_labels))
 end
-function Lower.LowerCMatExitsRejected:lower_cmat_finish_environment(_input, _values, _accesses)
+function Lower.LowerCMatExitsRejected:lower_cmat_finish_environment(_input)
   return Lower.LowerCMatEnvironmentRejected(self.issue)
 end
 local function access_issue(access, reason)
@@ -1048,51 +1072,12 @@ function Mem.MemBaseUnknown:lower_cmat_direct_access(input)
   return Lower.LowerCMatAccessSourceRejected(access_issue(
     input.access, "unknown memory base: " .. self.reason))
 end
-function Lower.LowerAddressPlanProjection:lower_cmat_lane_lookup(lane)
-  local entries = {}
-  for i = 1, #self.plans do
-    local plan = self.plans[i]
-    for j = 1, #plan.lanes do
-      local use = plan.lanes[j]
-      if use.lane == lane then
-        if use.address ~= plan.address then
-          return Lower.LowerAddressByLaneInvalidRelation(
-            lane, "lane use names a different address than its owning plan")
-        end
-        entries[#entries + 1] = Lower.LowerAddressByLaneEntry(
-          lane, plan, use)
-      end
-    end
-  end
-  if #entries == 0 then return Lower.LowerAddressByLaneMissing(lane) end
-  if #entries > 1 then
-    return Lower.LowerAddressByLaneAmbiguous(lane, #entries)
-  end
-  return Lower.LowerAddressByLaneFound(entries[1])
-end
-function Lower.LowerAddressByLaneFound:lower_cmat_access_source(input)
-  return Lower.LowerCMatAccessSourceRejected(access_issue(
-    input.fact.binding.access,
-    "address-projected lanes require relative-index and assembly semantics"))
-end
-function Lower.LowerAddressByLaneAmbiguous:lower_cmat_access_source(input)
-  return Lower.LowerCMatAccessSourceRejected(access_issue(
-    input.fact.binding.access, "multiple address relations serve the lane"))
-end
-function Lower.LowerAddressByLaneInvalidRelation:lower_cmat_access_source(input)
-  return Lower.LowerCMatAccessSourceRejected(access_issue(
-    input.fact.binding.access, "invalid address relation: " .. self.reason))
-end
-function Lower.LowerAddressByLaneMissing:lower_cmat_access_source(input)
-  local expected = C.CBackendDataPtr(
-    input.fact.binding.ty:code_to_c_backend_type())
-  return input.fact.provenance.lane.base:lower_cmat_direct_access(
-    Lower.LowerCMatDirectAccessInput(
-      input.fact.binding.access, input.values, expected))
-end
 function Lower.LowerCMatAccessSourceInput:lower_cmat_access_source()
-  return self.addresses:lower_cmat_lane_lookup(self.fact.provenance.lane.id)
-:lower_cmat_access_source(self)
+  local expected = C.CBackendDataPtr(
+    self.fact.binding.ty:code_to_c_backend_type())
+  return self.fact.provenance.lane.base:lower_cmat_direct_access(
+    Lower.LowerCMatDirectAccessInput(
+      self.fact.binding.access, self.values, expected))
 end
 function Lower.LowerCMatAccessSourceReady:lower_cmat_finish_access(input)
   local entries = copy(input.collection.entries)
@@ -1200,7 +1185,7 @@ function Lower.LowerCMatAccessPatternAdmitted:lower_cmat_continue_pattern(eviden
     evidence.binding, evidence.provenance, evidence.mem_access,
     evidence.backend.alignment, evidence.elem_size, evidence.stride)
   local source_input = Lower.LowerCMatAccessSourceInput(
-    fact, evidence.request.values, evidence.request.addresses)
+    fact, evidence.request.values)
   return source_input:lower_cmat_access_source()
 :lower_cmat_finish_access(Lower.LowerCMatAccessFinishInput(
     fact, evidence.collection))
@@ -1253,8 +1238,8 @@ end
 function Lower.LowerCMatAccessEnvironmentInput:lower_cmat_accesses()
   return Lower.LowerCMatAccessBuildRequest(
     self.materialization.kernel.accesses,
-    self.materialization.provenance.accesses,
-    self.values, self.addresses, self.target):lower_cmat_accesses()
+    self.materialization.provenance.accesses, self.values, self.target)
+:lower_cmat_accesses()
 end
 
 return Lower

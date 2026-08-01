@@ -204,6 +204,59 @@ local fragment_accesses = CMat.CMatCFragmentAccessBindingProjection({
     Stencil.StencilAccessRef("out"), lane_id, access_id,
     CMat.CMatCFragmentAccessDirect(out_param), 4, 8, Mem.MemAlignKnown(4)),
 })
+function CMat.CMatStreamMemoryUse:test_fragment_addressing(binding)
+  return CMat.CMatCIterationAddressing(binding.source.base, binding.stride, 0)
+end
+function CMat.CMatSinkMemoryUse:test_fragment_addressing(binding)
+  return CMat.CMatCIterationAddressing(binding.source.base, binding.stride, 0)
+end
+function CMat.CMatWindowMemoryUse:test_fragment_addressing(binding)
+  return CMat.CMatCDynamicWindowAddressing(binding.source.base, binding.stride, 0)
+end
+function test_address_plan(materialization, accesses)
+  local spine = materialization.kernel:cmat_memory_use_spine()
+  local entries = {}
+  for i = 1, #spine.uses do
+    local binding
+    for j = 1, #accesses.entries do
+      if accesses.entries[j].access == spine.uses[i].access then
+        binding = accesses.entries[j]
+      end
+    end
+    assert(binding, "test address plan requires an access binding")
+    entries[#entries + 1] = CMat.CMatCUseAddressingEntry(
+      spine.uses[i].id, spine.uses[i].id:test_fragment_addressing(binding))
+  end
+  return CMat.CMatCAddressPlan(
+    spine, materialization.provenance.iteration, {}, entries)
+end
+function cursor_address_plan()
+  local Lower = require("lalin.schema_v2.lower")
+  local spine = materialization.kernel:cmat_memory_use_spine()
+  assert(#spine.uses == 2)
+  local induction = Flow.FlowInduction(
+    iteration.counter, iteration.index_ty, iteration.start, iteration.step,
+    Flow.FlowPrimaryInduction, Flow.FlowRangeUnknown(iteration.counter))
+  local input_basis = Lower.LowerCMatAddressBasis(input_lane.base, induction, 4)
+  local output_basis = Lower.LowerCMatAddressBasis(lane.base, induction, 8)
+  local input_cursor = CMat.CMatCAddressCursor(
+    CMat.CMatCAddressCursorId("counted_fragment_cursor_input"), input_basis,
+    input_param, C.CBackendLocal(
+      C.CBackendLocalId("counted_fragment_cursor_input"),
+      C.CBackendName("counted_fragment_cursor_input"), c_ptr), start, 4)
+  local output_cursor = CMat.CMatCAddressCursor(
+    CMat.CMatCAddressCursorId("counted_fragment_cursor_output"), output_basis,
+    out_param, C.CBackendLocal(
+      C.CBackendLocalId("counted_fragment_cursor_output"),
+      C.CBackendName("counted_fragment_cursor_output"), c_ptr), start, 8)
+  return CMat.CMatCAddressPlan(spine, iteration,
+    { input_cursor, output_cursor }, {
+      CMat.CMatCUseAddressingEntry(spine.uses[1].id,
+        CMat.CMatCCursorAddressing(input_cursor.id, 0)),
+      CMat.CMatCUseAddressingEntry(spine.uses[2].id,
+        CMat.CMatCCursorAddressing(output_cursor.id, 0)),
+    })
+end
 local fragment_exits = CMat.CMatCExitBindingProjection({
   CMat.CMatCExitBindingEntry(
     CMat.CMatCExitNormal, Code.CodeBlockId("exit"),
@@ -213,7 +266,8 @@ local target = C.CBackendTarget(
   C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian)
 local request = CMat.CMatCFragmentInput(
   materialization, code_func, { block_id }, block_id, target,
-  external_values, fragment_accesses, fragment_exits,
+  external_values, fragment_accesses,
+  cursor_address_plan(), fragment_exits,
   CMat.CMatCFragmentNamespace("counted_fragment"), {})
 local emitted = request:emit_cmat_fragment()
 local bad_fragment_accesses = CMat.CMatCFragmentAccessBindingProjection({
@@ -224,7 +278,8 @@ local bad_fragment_accesses = CMat.CMatCFragmentAccessBindingProjection({
 })
 local bad_access_emission = CMat.CMatCFragmentInput(
   materialization, code_func, { block_id }, block_id, target,
-  external_values, bad_fragment_accesses, fragment_exits,
+  external_values, bad_fragment_accesses,
+  cursor_address_plan(), fragment_exits,
   CMat.CMatCFragmentNamespace("counted_fragment_bad_access"), {})
 :emit_cmat_fragment()
 assert(asdl.classof(bad_access_emission) == CMat.CMatCFragmentRejected)
@@ -349,7 +404,9 @@ local fold_code_func = Code.CodeFunc(
   { source_block, fold_source_exit }, code_func.origin)
 local fold_request = CMat.CMatCFragmentInput(
   fold_materialization, fold_code_func, { block_id }, block_id, target,
-  external_values, CMat.CMatCFragmentAccessBindingProjection({}), fold_exit,
+  external_values, CMat.CMatCFragmentAccessBindingProjection({}),
+  test_address_plan(fold_materialization,
+    CMat.CMatCFragmentAccessBindingProjection({})), fold_exit,
   CMat.CMatCFragmentNamespace("counted_fold"), {})
 local fold_fragment = fold_request:emit_cmat_fragment().fragment
 local fold_result_id = C.CBackendLocalId("fold_result")
@@ -437,7 +494,8 @@ local function run_window(tag, boundary, expected, offset)
     tag, window_computation, window_provenance)
   local request = CMat.CMatCFragmentInput(
     window_materialization, code_func, { block_id }, block_id, target,
-    external_values, fragment_accesses, fragment_exits,
+    external_values, fragment_accesses,
+    test_address_plan(window_materialization, fragment_accesses), fragment_exits,
     CMat.CMatCFragmentNamespace(tag), {})
   local emission = request:emit_cmat_fragment()
   if boundary == Stencil.StencilWindowBoundaryReject
@@ -552,7 +610,9 @@ local function compile_bool_control(tag, sink_op, result, result_provenance)
     tag .. ":bad", bad_computation, control_provenance)
   local bad_relation = CMat.CMatCFragmentInput(
     bad_materialization, semantic_func, { block_id }, block_id, target,
-    external_values, CMat.CMatCFragmentAccessBindingProjection({}), exits,
+    external_values, CMat.CMatCFragmentAccessBindingProjection({}),
+    test_address_plan(bad_materialization,
+      CMat.CMatCFragmentAccessBindingProjection({})), exits,
     CMat.CMatCFragmentNamespace(tag .. "_bad"), {}):emit_cmat_fragment()
   assert(asdl.classof(bad_relation) == CMat.CMatCFragmentRejected)
   local bypassed_plan = CMat.CMatMaterializedKernelFragment(
@@ -560,19 +620,25 @@ local function compile_bool_control(tag, sink_op, result, result_provenance)
       fused.loop, {}, {}, {}, computation.schedule, {}), control_provenance)
   local bypassed = CMat.CMatCFragmentInput(
     bypassed_plan, semantic_func, { block_id }, block_id, target,
-    external_values, CMat.CMatCFragmentAccessBindingProjection({}), exits,
+    external_values, CMat.CMatCFragmentAccessBindingProjection({}),
+    test_address_plan(bypassed_plan,
+      CMat.CMatCFragmentAccessBindingProjection({})), exits,
     CMat.CMatCFragmentNamespace(tag .. "_bypassed"), {})
 :emit_cmat_fragment()
   assert(asdl.classof(bypassed) == CMat.CMatCFragmentRejected)
   local collision = CMat.CMatCFragmentInput(
     materialization, semantic_func, { block_id }, block_id, target,
-    external_values, CMat.CMatCFragmentAccessBindingProjection({}), exits,
+    external_values, CMat.CMatCFragmentAccessBindingProjection({}),
+    test_address_plan(materialization,
+      CMat.CMatCFragmentAccessBindingProjection({})), exits,
     CMat.CMatCFragmentNamespace(tag), { C.CBackendLabel(tag .. "_entry") })
 :emit_cmat_fragment()
   assert(asdl.classof(collision) == CMat.CMatCFragmentRejected)
   local emission = CMat.CMatCFragmentInput(
     materialization, semantic_func, { block_id }, block_id, target,
-    external_values, CMat.CMatCFragmentAccessBindingProjection({}), exits,
+    external_values, CMat.CMatCFragmentAccessBindingProjection({}),
+    test_address_plan(materialization,
+      CMat.CMatCFragmentAccessBindingProjection({})), exits,
     CMat.CMatCFragmentNamespace(tag), {}):emit_cmat_fragment()
   assert(asdl.classof(emission) == CMat.CMatCFragmentEmitted)
   local fragment = emission.fragment
@@ -707,7 +773,9 @@ local compare_exits = CMat.CMatCExitBindingProjection({
 })
 local compare_emission = CMat.CMatCFragmentInput(
   compare_materialization, compare_func, { block_id }, block_id, target,
-  external_values, CMat.CMatCFragmentAccessBindingProjection({}), compare_exits,
+  external_values, CMat.CMatCFragmentAccessBindingProjection({}),
+  test_address_plan(compare_materialization,
+    CMat.CMatCFragmentAccessBindingProjection({})), compare_exits,
   CMat.CMatCFragmentNamespace(compare_tag), {}):emit_cmat_fragment()
 assert(asdl.classof(compare_emission) == CMat.CMatCFragmentEmitted)
 local compare_fragment = compare_emission.fragment
@@ -808,7 +876,9 @@ local find_exits = CMat.CMatCExitBindingProjection({
 })
 local find_emission = CMat.CMatCFragmentInput(
   find_materialization, find_code_func, { block_id }, block_id, target,
-  external_values, CMat.CMatCFragmentAccessBindingProjection({}), find_exits,
+  external_values, CMat.CMatCFragmentAccessBindingProjection({}),
+  test_address_plan(find_materialization,
+    CMat.CMatCFragmentAccessBindingProjection({})), find_exits,
   CMat.CMatCFragmentNamespace(find_tag), {}):emit_cmat_fragment()
 assert(asdl.classof(find_emission) == CMat.CMatCFragmentEmitted)
 local bad_find_func = Code.CodeFunc(
@@ -824,7 +894,9 @@ local bad_find_func = Code.CodeFunc(
   }, find_code_func.origin)
 local bad_find_exit = CMat.CMatCFragmentInput(
   find_materialization, bad_find_func, { block_id }, block_id, target,
-  external_values, CMat.CMatCFragmentAccessBindingProjection({}), find_exits,
+  external_values, CMat.CMatCFragmentAccessBindingProjection({}),
+  test_address_plan(find_materialization,
+    CMat.CMatCFragmentAccessBindingProjection({})), find_exits,
   CMat.CMatCFragmentNamespace(find_tag .. "_bad_exit"), {})
 :emit_cmat_fragment()
 assert(asdl.classof(bad_find_exit) == CMat.CMatCFragmentRejected)

@@ -480,40 +480,16 @@ local base_local = C.CBackendLocal(
 local direct_source = Lower.LowerCMatAccessSourceInput(
   fact, CMat.CMatCExternalValueBindingProjection({
     CMat.CMatCExternalValueBindingEntry(base_value, base_local),
-  }), Lower.LowerAddressPlanProjection({})):lower_cmat_access_source()
+  })):lower_cmat_access_source()
 assert(asdl.classof(direct_source) == Lower.LowerCMatAccessSourceReady)
 assert(asdl.classof(direct_source.source) ==
   CMat.CMatCFragmentAccessDirect)
-local address_id = Flow.FlowAddressId("address")
-local carrier_id = Flow.FlowCarrierId("carrier")
-local address_plan = Lower.LowerAddressPlan(
-  address_id, carrier_id, Flow.FlowAddressBase(lane.base, i32, 4),
-  Lower.LowerAddressCarryProjected, {
-    Lower.LowerAddressBlockParam(
-      address_id, Graph.GraphBlockId(func_id, body_id),
-      C.CBackendLocalId("projected_base"), i32),
-  }, {}, { Lower.LowerAddressLaneUse(address_id, lane.id) }, {}, {})
-local projected_source = Lower.LowerCMatAccessSourceInput(
-  fact, CMat.CMatCExternalValueBindingProjection({}),
-  Lower.LowerAddressPlanProjection({ address_plan }))
-:lower_cmat_access_source()
-assert(asdl.classof(projected_source) ==
-  Lower.LowerCMatAccessSourceRejected)
-
-local forged_plan = Lower.LowerAddressPlan(
-  address_id, carrier_id, Flow.FlowAddressBase(lane.base, i32, 4),
-  Lower.LowerAddressCarryProjected, {}, {}, {
-    Lower.LowerAddressLaneUse(Flow.FlowAddressId("other"), lane.id),
-  }, {}, {})
-assert(asdl.classof(Lower.LowerAddressPlanProjection({ forged_plan })
-:lower_cmat_lane_lookup(lane.id)) ==
-  Lower.LowerAddressByLaneInvalidRelation)
 local wrong_base = C.CBackendLocal(
   C.CBackendLocalId("wrong"), C.CBackendName("wrong"), c_i32)
 local wrong_direct = Lower.LowerCMatAccessSourceInput(
   fact, CMat.CMatCExternalValueBindingProjection({
     CMat.CMatCExternalValueBindingEntry(base_value, wrong_base),
-  }), Lower.LowerAddressPlanProjection({})):lower_cmat_access_source()
+  })):lower_cmat_access_source()
 assert(asdl.classof(wrong_direct) == Lower.LowerCMatAccessSourceRejected)
 local target = C.CBackendTarget(
   C.CBackendC99, C.CBackendHostedNative, 64, 64,
@@ -525,7 +501,7 @@ local built_accesses = Lower.LowerCMatAccessBuildRequest(
   { binding }, Stencil.StencilAccessByKernelLaneProjection({
     provenance_access,
   }), exact_values,
-  Lower.LowerAddressPlanProjection({}), target):lower_cmat_accesses()
+  target):lower_cmat_accesses()
 assert(asdl.classof(built_accesses) == Lower.LowerCMatAccessesReady)
 assert(#built_accesses.accesses.entries == 1)
 assert(built_accesses.accesses.entries[1].mem_access == mem_access)
@@ -539,13 +515,13 @@ local ambiguous_accesses = Lower.LowerCMatAccessBuildRequest(
   { binding }, Stencil.StencilAccessByKernelLaneProjection({
     Stencil.StencilAccessByKernelLaneEntry(ambiguous_lane, access),
   }), exact_values,
-  Lower.LowerAddressPlanProjection({}), target):lower_cmat_accesses()
+  target):lower_cmat_accesses()
 assert(asdl.classof(ambiguous_accesses) ==
   Lower.LowerCMatAccessesRejected)
 local duplicate_relation = Lower.LowerCMatAccessBuildRequest(
   { binding }, Stencil.StencilAccessByKernelLaneProjection({
     provenance_access, provenance_access,
-  }), exact_values, Lower.LowerAddressPlanProjection({}), target)
+  }), exact_values, target)
 :lower_cmat_accesses()
 assert(asdl.classof(duplicate_relation) ==
   Lower.LowerCMatAccessesRejected)
@@ -555,7 +531,7 @@ local extra_backend_lane = Kernel.KernelLane(
 local extra_backend = Lower.LowerCMatAccessBuildRequest(
   { binding }, Stencil.StencilAccessByKernelLaneProjection({
     Stencil.StencilAccessByKernelLaneEntry(extra_backend_lane, access),
-  }), exact_values, Lower.LowerAddressPlanProjection({}), target)
+  }), exact_values, target)
 :lower_cmat_accesses()
 assert(asdl.classof(extra_backend) == Lower.LowerCMatAccessesRejected)
 local gather_lane = Kernel.KernelLane(
@@ -564,7 +540,7 @@ local gather_lane = Kernel.KernelLane(
 local gather_access = Lower.LowerCMatAccessBuildRequest(
   { binding }, Stencil.StencilAccessByKernelLaneProjection({
     Stencil.StencilAccessByKernelLaneEntry(gather_lane, access),
-  }), exact_values, Lower.LowerAddressPlanProjection({}), target)
+  }), exact_values, target)
 :lower_cmat_accesses()
 assert(asdl.classof(gather_access) == Lower.LowerCMatAccessesRejected)
 local narrow_backend = Mem.MemBackendAccessInfo(
@@ -577,7 +553,7 @@ local narrow_lane = Kernel.KernelLane(
 local narrow_access = Lower.LowerCMatAccessBuildRequest(
   { binding }, Stencil.StencilAccessByKernelLaneProjection({
     Stencil.StencilAccessByKernelLaneEntry(narrow_lane, access),
-  }), exact_values, Lower.LowerAddressPlanProjection({}), target)
+  }), exact_values, target)
 :lower_cmat_accesses()
 assert(asdl.classof(narrow_access) == Lower.LowerCMatAccessesRejected)
 

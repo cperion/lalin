@@ -201,6 +201,7 @@ return schema. LalinCMat {
     CMatCEmissionUnsupportedSink { variant_unique, sink [LalinStencil.StencilSinkDef], reason [str], },
     CMatCEmissionUnsupportedPoint { variant_unique, field. expr [LalinStencil.StencilPointExpr], reason [str], },
     CMatCEmissionUnsupportedValue { variant_unique, field. value [LalinValue.ValueExpr], reason [str], },
+    CMatCEmissionAddressPlanIssue { variant_unique, issue [LalinCMat.CMatCAddressIssue], },
     CMatCEmissionUnsupportedBinary {
       variant_unique,
       op [LalinCore.BinaryOp],
@@ -350,11 +351,6 @@ return schema. LalinCMat {
   },
   sum. CMatCFragmentAccessSource {
     CMatCFragmentAccessDirect { variant_unique, base [LalinC.CBackendLocal], },
-    CMatCFragmentAccessAddressProjected {
-      variant_unique,
-      address [LalinFlow.FlowAddressId],
-      base [LalinC.CBackendLocal],
-    },
   },
   product. CMatCFragmentAccessBindingEntry {
     interned,
@@ -373,6 +369,123 @@ return schema. LalinCMat {
   sum. CMatCFragmentAccessBindingLookup {
     CMatCFragmentAccessBindingFound { variant_unique, entry [LalinCMat.CMatCFragmentAccessBindingEntry], },
     CMatCFragmentAccessBindingMissing { variant_unique, access [LalinStencil.StencilAccessRef], },
+  },
+
+  product. CMatCAddressCursorId { interned, text [str], },
+  sum. CMatCAddressIssue {
+    CMatCAddressMissingUse { variant_unique, use [LalinCMat.CMatMemoryUseId], },
+    CMatCAddressAmbiguousUse { variant_unique, use [LalinCMat.CMatMemoryUseId], count [number], },
+    CMatCAddressMissingBinding { variant_unique, access [LalinStencil.StencilAccessRef], },
+    CMatCAddressAmbiguousBinding { variant_unique, access [LalinStencil.StencilAccessRef], count [number], },
+    CMatCAddressUnsupportedSource { variant_unique, access [LalinStencil.StencilAccessRef], },
+    CMatCAddressInvalidUseIndex { variant_unique, use [LalinCMat.CMatMemoryUseId], },
+    CMatCAddressInvalidPointerType { variant_unique, access [LalinStencil.StencilAccessRef], field. ty [LalinC.CBackendType], },
+    CMatCAddressScaleDisagreement { variant_unique, access [LalinStencil.StencilAccessRef], coordinate [number], binding [number], },
+    CMatCAddressCursorBaseDisagreement { variant_unique, basis [LalinLower.LowerCMatAddressBasis], },
+    CMatCAddressMissingCursor { variant_unique, cursor [LalinCMat.CMatCAddressCursorId], },
+    CMatCAddressAmbiguousCursor { variant_unique, cursor [LalinCMat.CMatCAddressCursorId], count [number], },
+    CMatCAddressIterationDisagreement {
+      variant_unique,
+      expected [LalinStencil.StencilKernelIteration],
+      actual [LalinStencil.StencilKernelIteration],
+    },
+  },
+  product. CMatCAddressCursor {
+    interned,
+    field. id [LalinCMat.CMatCAddressCursorId],
+    basis [LalinLower.LowerCMatAddressBasis],
+    base [LalinC.CBackendLocal],
+    cursor_local [LalinC.CBackendLocal],
+    start [LalinCode.CodeValueId],
+    step_bytes [number],
+  },
+  sum. CMatCUseAddressing {
+    CMatCAbsoluteAddressing {
+      variant_unique,
+      base [LalinC.CBackendLocal],
+      index [LalinStencil.StencilIndexExpr],
+      index_scale_bytes [number],
+      const_offset_bytes [number],
+    },
+    CMatCIterationAddressing {
+      variant_unique,
+      base [LalinC.CBackendLocal],
+      index_scale_bytes [number],
+      const_offset_bytes [number],
+    },
+    CMatCCursorAddressing {
+      variant_unique,
+      cursor [LalinCMat.CMatCAddressCursorId],
+      displacement_bytes [number],
+    },
+    CMatCDynamicWindowAddressing {
+      variant_unique,
+      base [LalinC.CBackendLocal],
+      index_scale_bytes [number],
+      const_offset_bytes [number],
+    },
+  },
+  product. CMatCUseAddressingEntry {
+    interned,
+    use [LalinCMat.CMatMemoryUseId],
+    addressing [LalinCMat.CMatCUseAddressing],
+  },
+  product. CMatCAddressPlan {
+    interned,
+    spine [LalinCMat.CMatMemoryUseSpine],
+    iteration [LalinStencil.StencilKernelIteration],
+    cursors [many [LalinCMat.CMatCAddressCursor]],
+    uses [many [LalinCMat.CMatCUseAddressingEntry]],
+  },
+  sum. CMatCAddressPlanProjection {
+    CMatCAddressPlanReady { variant_unique, plan [LalinCMat.CMatCAddressPlan], },
+    CMatCAddressPlanRejected { variant_unique, issues [many [LalinCMat.CMatCAddressIssue]], },
+  },
+  product. CMatCAddressPlanInput {
+    interned,
+    iteration [LalinStencil.StencilKernelIteration],
+    accesses [LalinCMat.CMatCFragmentAccessBindingProjection],
+    namespace [LalinCMat.CMatCFragmentNamespace],
+  },
+  product. CMatCAddressUseInput {
+    interned,
+    use [LalinCMat.CMatMemoryUse],
+    binding [LalinCMat.CMatCFragmentAccessBindingEntry],
+    coordinate [LalinLower.LowerCMatUseCoordinate],
+    plan [LalinCMat.CMatCAddressPlanInput],
+    assembly [LalinCMat.CMatCAddressAssembly],
+  },
+  sum. CMatCAddressAssembly {
+    CMatCAddressCollecting {
+      variant_unique,
+      spine [LalinCMat.CMatMemoryUseSpine],
+      cursors [many [LalinCMat.CMatCAddressCursor]],
+      uses [many [LalinCMat.CMatCUseAddressingEntry]],
+      next_cursor [number],
+    },
+    CMatCAddressAssemblyRejected {
+      variant_unique,
+      spine [LalinCMat.CMatMemoryUseSpine],
+      issues [many [LalinCMat.CMatCAddressIssue]],
+    },
+  },
+  sum. CMatCCursorTypeProjection {
+    CMatCCursorTypeReady { variant_unique, field. ty [LalinC.CBackendType], },
+    CMatCCursorTypeRejected { variant_unique, issue [LalinCMat.CMatCAddressIssue], },
+  },
+  sum. CMatCAddressingLookup {
+    CMatCAddressingFound { variant_unique, entry [LalinCMat.CMatCUseAddressingEntry], },
+    CMatCAddressingMissing { variant_unique, use [LalinCMat.CMatMemoryUseId], },
+    CMatCAddressingAmbiguous { variant_unique, use [LalinCMat.CMatMemoryUseId], count [number], },
+  },
+  sum. CMatCCursorLookup {
+    CMatCCursorFound { variant_unique, cursor [LalinCMat.CMatCAddressCursor], },
+    CMatCCursorMissing { variant_unique, cursor [LalinCMat.CMatCAddressCursorId], },
+    CMatCCursorAmbiguous { variant_unique, cursor [LalinCMat.CMatCAddressCursorId], count [number], },
+  },
+  product. CMatCCursorStatementProjection {
+    interned,
+    stmts [many [LalinC.CBackendStmt]],
   },
   sum. CMatCExitRole {
     CMatCExitNormal,
@@ -634,6 +747,7 @@ return schema. LalinCMat {
   product. CMatCFragmentAccessPlaceInput {
     interned,
     state [LalinCMat.CMatCFragmentState],
+    use [LalinCMat.CMatMemoryUseId],
     index [LalinC.CBackendAtom],
     index_ty [LalinC.CBackendType],
     field. ty [LalinC.CBackendType],
@@ -651,12 +765,16 @@ return schema. LalinCMat {
     state [LalinCMat.CMatCFragmentState],
     sink [LalinStencil.StencilSinkDef],
     dst [LalinStencil.StencilAccessRef],
+    index [LalinC.CBackendAtom],
+    index_ty [LalinC.CBackendType],
   },
   product. CMatCFragmentStoreInput {
     interned,
     state [LalinCMat.CMatCFragmentState],
     sink [LalinStencil.StencilSinkDef],
     dst [LalinStencil.StencilAccessRef],
+    index [LalinC.CBackendAtom],
+    index_ty [LalinC.CBackendType],
     stream [LalinCMat.CMatCFragmentStreamEntry],
   },
   product. CMatCFragmentFoldRequest {
@@ -831,6 +949,7 @@ return schema. LalinCMat {
     target [LalinC.CBackendTarget],
     values [LalinCMat.CMatCExternalValueBindingProjection],
     accesses [LalinCMat.CMatCFragmentAccessBindingProjection],
+    address_plan [LalinCMat.CMatCAddressPlan],
     exits [LalinCMat.CMatCExitBindingProjection],
     namespace [LalinCMat.CMatCFragmentNamespace],
     reserved_labels [many [LalinC.CBackendLabel]],

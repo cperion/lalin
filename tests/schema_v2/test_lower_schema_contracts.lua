@@ -24,11 +24,11 @@ assert(Lower.LowerCTermEdgeOnly and Lower.LowerCTermEdgeThen and
   Lower.LowerCTermEdgeElse and Lower.LowerCTermEdgeCase and
   Lower.LowerCTermEdgeDefault)
 assert(field_names(Lower.LowerCFragmentAssemblyInput) ==
-  "fragment,coverage,code_func,baseline,materializations,dominance,adapters,addresses,namespace,reserved_labels,target")
+  "fragment,coverage,code_func,baseline,materializations,dominance,adapters,namespace,reserved_labels,target")
 assert(field_names(Lower.LowerCFunctionAssembly) ==
   "code_func,baseline,fragments,blocks,locals,helpers")
 assert(field_names(Lower.LowerCFunctionAssemblyInput) ==
-  "spine,code_func,plan,baseline,materializations,addresses")
+  "spine,code_func,plan,baseline,materializations")
 assert(Lower.LowerCCodeFragment and Lower.LowerCKernelCMatFragment and
   Lower.LowerCRejectedFragment)
 assert(Lower.LowerCFragment == nil, "lossy C fragment protocol must stay removed")

@@ -165,10 +165,12 @@ local function environment_input(overrides)
   return Lower.LowerCMatEnvironmentInput(
     overrides.fragment or env_fragment,
     overrides.materialization or env_materialization,
+    overrides.coordinates or Lower.LowerCMatCoordinateFacet(
+      env_fused:cmat_memory_use_spine(),
+      env_materialization.provenance.iteration, {}),
     overrides.coverage or env_coverage.coverage,
     overrides.code_func or env_func,
     overrides.baseline or env_baseline,
-    overrides.addresses or Lower.LowerAddressPlanProjection({}),
     overrides.dominance or env_dominance.dominance,
     overrides.adapters or env_adapters.projection,
     overrides.namespace or env_namespace,
