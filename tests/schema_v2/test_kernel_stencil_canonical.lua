@@ -8,6 +8,7 @@ require("lalin.impl.stencil_kernel")
 require("lalin.impl.lower_emit_c.materialize")
 require("lalin.impl.lower_emit_c.stencil")
 require("lalin.impl.lower_emit_c.fragment")
+require("lalin.impl.lower_emit_c.lower_sem")
 
 local Code = require("lalin.schema_v2.code")
 local Core = require("lalin.schema_v2.core")
@@ -19,6 +20,7 @@ local Effect = require("lalin.schema_v2.effect")
 local Kernel = require("lalin.schema_v2.kernel")
 local Stencil = require("lalin.schema_v2.stencil")
 local CMat = require("lalin.schema_v2.c_materialize")
+local Lower = require("lalin.schema_v2.lower")
 local Schedule = require("lalin.schema_v2.schedule")
 local Backend = require("lalin.schema_v2.backend")
 local C = require("lalin.schema_v2.c")
@@ -132,7 +134,7 @@ local access = Mem.MemAccessFact(
   place,
   memory_access,
   Mem.MemBaseValue(ptr),
-  Mem.MemIndexValue(index, 4, 0),
+  Mem.MemIndexInduction(induction, 4, 0),
   Mem.MemAccessScalar,
   Mem.MemAlignKnown(4),
   Mem.MemBoundsInObject("counted loop access"),
@@ -245,6 +247,14 @@ local canonical_materialization = projected.projection:cmat_materialize_kernel(
   CMat.CMatKernelMaterializationInput(CMat.CMatKernelId("kernel:store")))
 assert(canonical_materialization.provenance == projected.projection.provenance)
 assert(canonical_materialization.kernel.computation == computation)
+local cmat_state = projected:lower_cmat_state(
+  Lower.LowerKernelCMatStateInput(store_kernel.id, mem:project_accesses()))
+assert(asdl.classof(cmat_state) == Lower.LowerKernelCMatReady)
+assert(asdl.classof(cmat_state.coordinates) ==
+  Lower.LowerCMatCoordinatesProjected)
+assert(#cmat_state.coordinates.facet.entries == 1)
+assert(asdl.classof(cmat_state.coordinates.facet.entries[1].coordinate) ==
+  Lower.LowerCMatIterationAffineCoordinate)
 assert(computation.producer.shape.step == 1)
 assert(computation.producer.shape.stop_convention ==
   Stencil.StencilIterationStopExclusive)

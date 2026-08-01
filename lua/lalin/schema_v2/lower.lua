@@ -112,6 +112,11 @@ return schema. LalinLower {
       block [LalinCode.CodeBlockId],
       reason [str],
     },
+    LowerIssueCMatCoordinateRejected {
+      variant_unique,
+      fragment [LalinLower.LowerFragmentId],
+      issue [LalinLower.LowerCMatCoordinateIssue],
+    },
     LowerIssueClosedFormUnsupported {
       variant_unique,
       fragment [LalinLower.LowerFragmentId],
@@ -296,11 +301,218 @@ return schema. LalinLower {
     LowerAddressPlanFound { variant_unique, plan [LalinLower.LowerAddressPlan], },
     LowerAddressPlanMissing { variant_unique, address [LalinFlow.FlowAddressId], },
   },
+  sum. LowerCMatInductionAlignmentAxis {
+    LowerCMatAlignmentRole,
+    LowerCMatAlignmentCounter,
+    LowerCMatAlignmentType,
+    LowerCMatAlignmentInit,
+    LowerCMatAlignmentStep,
+  },
+  sum. LowerCMatCoordinateIssue {
+    LowerCMatCoordinateAccessMissing {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      access [LalinStencil.StencilAccessRef],
+    },
+    LowerCMatCoordinateAccessAmbiguous {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      access [LalinStencil.StencilAccessRef],
+      count [number],
+    },
+    LowerCMatCoordinateLaneMemoryMissing {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      field. lane [LalinKernel.KernelLaneId],
+    },
+    LowerCMatCoordinateLaneMemoryAmbiguous {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      field. lane [LalinKernel.KernelLaneId],
+      count [number],
+    },
+    LowerCMatCoordinateMemoryFactMissing {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      access [LalinMem.MemAccessId],
+    },
+    LowerCMatCoordinateMemoryFactAmbiguous {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      access [LalinMem.MemAccessId],
+      count [number],
+    },
+    LowerCMatCoordinateRootDisagreement {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      lane_root [LalinMem.MemBase],
+      memory_root [LalinMem.MemBase],
+    },
+    LowerCMatCoordinateIndexMissing {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+    },
+    LowerCMatCoordinateInductionMissing {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      index [LalinMem.MemIndex],
+    },
+    LowerCMatCoordinateInductionDisagreement {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      induction [LalinFlow.FlowInduction],
+      iteration [LalinStencil.StencilKernelIteration],
+      axis [LalinLower.LowerCMatInductionAlignmentAxis],
+    },
+    LowerCMatCoordinateInvalidScale {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      bytes [number],
+    },
+    LowerCMatCoordinateWindowAxisDisagreement {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      offset [LalinStencil.StencilWindowOffset],
+    },
+    LowerCMatCoordinateMaterializationUnavailable {
+      variant_unique,
+      materialization [LalinCMat.CMatMaterialization],
+    },
+  },
+  product. LowerCMatAddressBasis {
+    interned,
+    root [LalinMem.MemBase],
+    induction [LalinFlow.FlowInduction],
+    index_scale_bytes [number],
+  },
+  sum. LowerCMatUseCoordinate {
+    LowerCMatAbsoluteCoordinate {
+      variant_unique,
+      root [LalinMem.MemBase],
+      index [LalinStencil.StencilIndexExpr],
+      index_scale_bytes [number],
+      const_offset_bytes [number],
+    },
+    LowerCMatIterationAffineCoordinate {
+      variant_unique,
+      basis [LalinLower.LowerCMatAddressBasis],
+      use_offset_bytes [number],
+    },
+  },
+  product. LowerCMatUseCoordinateEntry {
+    interned,
+    use [LalinCMat.CMatMemoryUseId],
+    coordinate [LalinLower.LowerCMatUseCoordinate],
+  },
+  product. LowerCMatCoordinateFacet {
+    interned,
+    spine [LalinCMat.CMatMemoryUseSpine],
+    entries [many [LalinLower.LowerCMatUseCoordinateEntry]],
+  },
+  sum. LowerCMatCoordinateProjection {
+    LowerCMatCoordinatesProjected {
+      variant_unique,
+      facet [LalinLower.LowerCMatCoordinateFacet],
+    },
+    LowerCMatCoordinatesRejected {
+      variant_unique,
+      issues [many [LalinLower.LowerCMatCoordinateIssue]],
+    },
+  },
+  product. LowerCMatCoordinateInput {
+    interned,
+    iteration [LalinStencil.StencilKernelIteration],
+    provenance [LalinStencil.StencilAccessByKernelLaneProjection],
+    memory [LalinMem.MemAccessProjection],
+  },
+  product. LowerCMatLaneCoordinateInput {
+    interned,
+    use [LalinCMat.CMatMemoryUse],
+    iteration [LalinStencil.StencilKernelIteration],
+    memory [LalinMem.MemAccessProjection],
+  },
+  product. LowerCMatUseMemoryFact {
+    interned,
+    use [LalinCMat.CMatMemoryUse],
+    iteration [LalinStencil.StencilKernelIteration],
+    provenance [LalinStencil.StencilAccessByKernelLaneEntry],
+    memory [LalinMem.MemAccessFact],
+  },
+  product. LowerCMatIndexCoordinateInput {
+    interned,
+    use [LalinCMat.CMatMemoryUse],
+    iteration [LalinStencil.StencilKernelIteration],
+    memory [LalinMem.MemAccessFact],
+    index [LalinMem.MemIndex],
+  },
+  product. LowerCMatInductionAlignmentInput {
+    interned,
+    use [LalinCMat.CMatMemoryUse],
+    root [LalinMem.MemBase],
+    iteration [LalinStencil.StencilKernelIteration],
+    induction [LalinFlow.FlowInduction],
+    index_scale_bytes [number],
+    use_offset_bytes [number],
+  },
+  sum. LowerCMatUseCoordinateResult {
+    LowerCMatUseCoordinateProduced {
+      variant_unique,
+      entry [LalinLower.LowerCMatUseCoordinateEntry],
+    },
+    LowerCMatUseCoordinateRejected {
+      variant_unique,
+      issue [LalinLower.LowerCMatCoordinateIssue],
+    },
+  },
+  sum. LowerCMatCoordinateAssembly {
+    LowerCMatCoordinateCollecting {
+      variant_unique,
+      spine [LalinCMat.CMatMemoryUseSpine],
+      entries [many [LalinLower.LowerCMatUseCoordinateEntry]],
+    },
+    LowerCMatCoordinateAssemblyRejected {
+      variant_unique,
+      spine [LalinCMat.CMatMemoryUseSpine],
+      issues [many [LalinLower.LowerCMatCoordinateIssue]],
+    },
+  },
+  sum. LowerCMatUseCoordinateLookup {
+    LowerCMatUseCoordinateFound {
+      variant_unique,
+      entry [LalinLower.LowerCMatUseCoordinateEntry],
+    },
+    LowerCMatUseCoordinateMissing {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+    },
+    LowerCMatUseCoordinateAmbiguous {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      count [number],
+    },
+  },
+  product. LowerKernelCMatStateInput {
+    interned,
+    kernel [LalinKernel.KernelId],
+    memory [LalinMem.MemAccessProjection],
+  },
+  product. LowerKernelCMatMaterializationInput {
+    interned,
+    projection [LalinStencil.StencilKernelComputationProjection],
+    memory [LalinMem.MemAccessProjection],
+  },
+  product. LowerCMatCoordinateContributionInput {
+    interned,
+    assembly [LalinLower.LowerCFragmentAssemblyInput],
+    materialization [LalinCMat.CMatMaterialization],
+  },
+
   sum. LowerKernelCMatState {
     LowerKernelCMatReady {
       variant_unique,
       projection [LalinStencil.StencilKernelComputationProjection],
       materialization [LalinCMat.CMatMaterialization],
+      coordinates [LalinLower.LowerCMatCoordinateProjection],
     },
     LowerKernelCMatRejected {
       variant_unique,

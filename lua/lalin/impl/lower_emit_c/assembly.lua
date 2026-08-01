@@ -57,7 +57,24 @@ function Lower.LowerKernelCMatUnavailable:lower_c_cmat_state_contribute(input)
     Lower.LowerIssueFragmentRejected(input.fragment.id, self.reason))
 end
 function Lower.LowerKernelCMatReady:lower_c_cmat_state_contribute(input)
-  return self.materialization:lower_c_cmat_materialization_contribute(input)
+  return self.coordinates:lower_c_coordinate_contribute(
+    Lower.LowerCMatCoordinateContributionInput(input, self.materialization))
+end
+function Lower.LowerCMatCoordinatesProjected:lower_c_coordinate_contribute(input)
+  return input.materialization:lower_c_cmat_materialization_contribute(
+    input.assembly)
+end
+function Lower.LowerCMatCoordinatesRejected:lower_c_coordinate_contribute(input)
+  if #self.issues == 0 then
+    return Lower.LowerCRejectedFragment(input.assembly.fragment.id,
+      Lower.LowerIssueCMatCoordinateRejected(
+        input.assembly.fragment.id,
+        Lower.LowerCMatCoordinateMaterializationUnavailable(
+          input.materialization)))
+  end
+  return Lower.LowerCRejectedFragment(input.assembly.fragment.id,
+    Lower.LowerIssueCMatCoordinateRejected(
+      input.assembly.fragment.id, self.issues[1]))
 end
 function CMat.CMatMaterializedKernelFragment:lower_c_cmat_materialization_contribute(input)
   local env = Lower.LowerCMatEnvironmentInput(input.fragment, self, input.coverage,

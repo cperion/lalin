@@ -5,8 +5,8 @@
 This document defines the schema-first replacement for the disconnected
 `FlowCarrier` / `FlowAddress` / `LowerCarrierPlan` / `LowerAddressPlan`
 machinery in schema v2. It is the design authority for fused memory addressing.
-Implementation proceeds only through the gates named below. Gate 1 is complete;
-Gate 2 coordinate projection remains the next implementation boundary.
+Implementation proceeds only through the gates named below. Gates 1 and 2 are
+complete; Gate 3 executable address planning is the next boundary.
 
 ## Semantic center
 
@@ -144,7 +144,7 @@ product. LowerCMatAddressBasis {
 sum. LowerCMatUseCoordinate {
   LowerCMatAbsoluteCoordinate {
     root [MemBase],
-    index [CMatMemoryUseIndex],
+    index [StencilIndexExpr],
     index_scale_bytes [number],
     const_offset_bytes [number],
   },
@@ -166,18 +166,27 @@ product. LowerCMatCoordinateFacet {
 
 sum. LowerCMatCoordinateProjection {
   LowerCMatCoordinatesProjected { facet [LowerCMatCoordinateFacet] },
-  LowerCMatCoordinatesRejected { issues [many [LowerIssue]] },
+  LowerCMatCoordinatesRejected { issues [many [LowerCMatCoordinateIssue]] },
 }
 ```
 
-An affine coordinate is constructed only when `MemIndexInduction` and
-`StencilKernelIteration` agree exactly on counter, initialization, and step.
-The basis excludes per-use constant offsets so centered, field, and constant
-window uses can share one cursor.
+The projection resolves each `StencilAccessRef` through the exact provenance
+entry, its single `KernelLane` memory-access identity, and the corresponding
+`MemAccessFact`. Missing, ambiguous, or root-disagreeing relations reject the
+whole facet.
 
-General or dynamically transformed uses remain absolute. A disagreement
-between facts about the same fused use is a rejection, not an absolute
-fallback.
+An affine coordinate is constructed only for producer-selected or window uses
+whose `MemIndexInduction` agrees with `StencilKernelIteration` on primary role,
+counter, index type, initialization, and step. The scale is the positive
+`MemIndexInduction.elem_size`. The structurally interned basis excludes constant
+offsets; `use_offset_bytes` is the memory fact's constant byte offset plus any
+window element offset multiplied by the scale. Centered, field, and constant
+window uses can therefore share one basis.
+
+Explicit `StencilIndexExpr` uses remain absolute and retain the memory fact's
+scale and constant byte offset. A producer or window use backed only by
+`MemIndexValue` is contradictory evidence and rejects rather than silently
+falling back to absolute addressing.
 
 ## Gate 3 — executable C address plan
 
@@ -198,7 +207,7 @@ product. CMatCAddressCursor {
 sum. CMatCUseAddressing {
   CMatCAbsoluteAddressing {
     root [CBackendLocal],
-    index [CMatMemoryUseIndex],
+    index [StencilIndexExpr],
     index_scale_bytes [number],
     const_offset_bytes [number],
   },

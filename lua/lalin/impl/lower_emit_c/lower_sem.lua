@@ -2,6 +2,7 @@
 require("lalin.schema_v2")
 require("lalin.impl.stencil_kernel")
 require("lalin.impl.lower_emit_c.materialize")
+require("lalin.impl.lower_emit_c.coordinates")
 require("lalin.impl.lower_emit_c.code_to_c")
 require("lalin.impl.lower_emit_c.fragment")
 
@@ -31,40 +32,55 @@ function Lower.LowerKernelCMatProjection:lower_cmat_lookup(kernel)
   return Lower.LowerKernelCMatFound(found[1])
 end
 
-function Stencil.StencilKernelProjected:lower_cmat_state(kernel)
+function CMat.CMatMaterializedKernelFragment:lower_cmat_state(input)
+  local spine = self.kernel:cmat_memory_use_spine()
+  local coordinates = spine:lower_coordinates(Lower.LowerCMatCoordinateInput(
+    self.provenance.iteration, self.provenance.accesses, input.memory))
   return Lower.LowerKernelCMatReady(
-    self.projection,
-    self.projection:cmat_materialize_kernel(
-      CMat.CMatKernelMaterializationInput(CMat.CMatKernelId(kernel.text))))
+    input.projection, self, coordinates)
+end
+function CMat.CMatRejectedKernelFragment:lower_cmat_state(input)
+  return Lower.LowerKernelCMatReady(
+    input.projection, self, Lower.LowerCMatCoordinatesRejected({
+      Lower.LowerCMatCoordinateMaterializationUnavailable(self),
+    }))
+end
+function Stencil.StencilKernelProjected:lower_cmat_state(input)
+  return self.projection:cmat_materialize_kernel(
+    CMat.CMatKernelMaterializationInput(CMat.CMatKernelId(input.kernel.text)))
+:lower_cmat_state(Lower.LowerKernelCMatMaterializationInput(
+  self.projection, input.memory))
 end
 
-function Stencil.StencilKernelProjectionRejected:lower_cmat_state(_kernel)
+function Stencil.StencilKernelProjectionRejected:lower_cmat_state(_input)
   return Lower.LowerKernelCMatRejected(self.rejects)
 end
 
-function Stencil.StencilKernelModuleProjectedEntry:lower_cmat_entries()
+function Stencil.StencilKernelModuleProjectedEntry:lower_cmat_entries(input)
   return Lower.LowerKernelCMatProjection({
     Lower.LowerKernelCMatEntry(
-      self.kernel, self.result:lower_cmat_state(self.kernel)) })
+      self.kernel, self.result:lower_cmat_state(
+        Lower.LowerKernelCMatStateInput(
+          self.kernel, input.kernels.mem:project_accesses()))) })
 end
-function Stencil.StencilKernelModuleRejectedEntry:lower_cmat_entries()
+function Stencil.StencilKernelModuleRejectedEntry:lower_cmat_entries(_input)
   return Lower.LowerKernelCMatProjection({})
 end
 
-function Stencil.StencilKernelModuleProjected:lower_cmat_prepare()
+function Stencil.StencilKernelModuleProjected:lower_cmat_prepare(input)
   local entries = {}
   for i = 1, #self.projection.entries do
-    local additions = self.projection.entries[i]:lower_cmat_entries()
+    local additions = self.projection.entries[i]:lower_cmat_entries(input)
     for j = 1, #additions.entries do entries[#entries + 1] = additions.entries[j] end
   end
   return Lower.LowerKernelCMatPrepared(Lower.LowerKernelCMatProjection(entries))
 end
 
-function Stencil.StencilKernelModuleProjectionRejected:lower_cmat_prepare()
+function Stencil.StencilKernelModuleProjectionRejected:lower_cmat_prepare(_input)
   return Lower.LowerKernelCMatPreparationRejected(self.expected, self.actual)
 end
 
-function Stencil.StencilKernelModuleFacetMismatch:lower_cmat_prepare()
+function Stencil.StencilKernelModuleFacetMismatch:lower_cmat_prepare(_input)
   return Lower.LowerKernelCMatPreparationFacetRejected(self.reason)
 end
 
@@ -72,7 +88,7 @@ function Lower.LowerKernelCMatPreparationInput:lower_prepare_cmat()
   return Stencil.StencilKernelModuleProjectionInput(
     self.module, self.graph, self.kernels.flow, self.semantics,
     self.kernels, self.schedules, self.compiler):project_kernel_module()
-  :lower_cmat_prepare()
+  :lower_cmat_prepare(self)
 end
 function Lower.LowerKernelCMatPrepared:lower_c_prepared_module(input)
   return input.plan:lower_c_module(Lower.LowerCModuleInput(

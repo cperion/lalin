@@ -144,10 +144,22 @@ local materialization = computation:cmat_materialize(
 local source_schedule = Schedule.SchedulePlanned(
   Schedule.ScheduleId("asm_schedule"), planned.id,
   Schedule.ScheduleScalarIndex, {}, {})
+local memory_spine = materialization.kernel:cmat_memory_use_spine()
+assert(#memory_spine.uses == 1)
+local memory_basis = Lower.LowerCMatAddressBasis(
+  Mem.MemBaseValue(base), Flow.FlowInduction(
+    index, i32, start, step, Flow.FlowPrimaryInduction,
+    Flow.FlowRangeUnknown(index)), 4)
+local coordinate_facet = Lower.LowerCMatCoordinateFacet(memory_spine, {
+  Lower.LowerCMatUseCoordinateEntry(
+    memory_spine.uses[1].id,
+    Lower.LowerCMatIterationAffineCoordinate(memory_basis, 0)),
+})
 local cmat_projection = Lower.LowerKernelCMatProjection({
   Lower.LowerKernelCMatEntry(planned.id, Lower.LowerKernelCMatReady(
     Stencil.StencilKernelComputationProjection(source_schedule, provenance, computation),
-    materialization)) })
+    materialization,
+    Lower.LowerCMatCoordinatesProjected(coordinate_facet))) })
 
 ----------------------------------------------------------------------
 -- Function fixtures: entry → body(loop) → exit
