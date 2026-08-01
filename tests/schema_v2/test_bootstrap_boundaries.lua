@@ -34,10 +34,12 @@ local init_source = source("lua/lalin/schema_v2/init.lua")
 assert(not init_source:match('"stencil_machine"'))
 assert(not init_source:match('schema%.luajit'))
 local phase_source = source("lua/lalin/schema_v2/phase.lua")
-assert(not phase_source:match("TypeRefAny"))
-assert(not phase_source:match("optional%s*%["))
-assert(not phase_source:match("%[bool%]"))
-assert(not phase_source:match('require%("lalin%.schema%.phase"%)'))
+assert(phase_source:find('return require("lalin.schema.phase")', 1, true),
+  "schema-v2 must consume the canonical shared phase declaration")
+local canonical_phase_source = source("lua/lalin/schema/phase.lua")
+assert(not canonical_phase_source:match("TypeRefAny"))
+assert(not canonical_phase_source:match("optional%s*%["))
+assert(not canonical_phase_source:match("%[bool%]"))
 
 for _, path in ipairs {
   "lua/lalin/schema_v2/stencil.lua",

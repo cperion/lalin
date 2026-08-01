@@ -7,11 +7,12 @@ return schema. LalinPhase {
   product. MachineId { interned, text [str], },
   product. RootId { interned, text [str], },
   product. PackageId { interned, text [str], },
+  product. TypeValueId { interned, text [str], },
+  product. ExternalCapabilityId { interned, text [str], },
 
   sum. TypeRef {
     TypeRef { variant_unique, module_name [str], type_name [str], },
-    TypeRefAny,
-    TypeRefValue { variant_unique, field. name [str], },
+    TypeRefValue { variant_unique, field. id [LalinPhase.TypeValueId], },
   },
 
   product. World {
@@ -19,6 +20,12 @@ return schema. LalinPhase {
     field. id [LalinPhase.WorldId],
     field. ty [LalinPhase.TypeRef],
   },
+
+  sum. DiagnosticsWorld {
+    DiagnosticsWorldNone,
+    DiagnosticsWorldPresent { variant_unique, world [LalinPhase.WorldId], },
+  },
+  sum. PhaseDeterminism { PhaseDeterministic, PhaseNondeterministic, },
 
   sum. CachePolicy {
     CacheIdentity,
@@ -51,7 +58,7 @@ return schema. LalinPhase {
     },
     ImplExternal {
       variant_unique,
-      capability [str],
+      capability [LalinPhase.ExternalCapabilityId],
     },
   },
 
@@ -81,7 +88,7 @@ return schema. LalinPhase {
     field. id [LalinPhase.MachineId],
     input [LalinPhase.WorldId],
     output [LalinPhase.WorldId],
-    diagnostics [optional [LalinPhase.WorldId]],
+    diagnostics [LalinPhase.DiagnosticsWorld],
     abi [LalinPhase.MachineAbi],
     impl [LalinPhase.MachineImpl],
     capabilities [many [LalinPhase.MachineCapability]],
@@ -92,9 +99,9 @@ return schema. LalinPhase {
     field. id [LalinPhase.PhaseId],
     input [LalinPhase.WorldId],
     output [LalinPhase.WorldId],
-    diagnostics [optional [LalinPhase.WorldId]],
+    diagnostics [LalinPhase.DiagnosticsWorld],
     cache [LalinPhase.CachePolicy],
-    deterministic [bool],
+    determinism [LalinPhase.PhaseDeterminism],
     machine [LalinPhase.MachineId],
   },
 
@@ -112,9 +119,9 @@ return schema. LalinPhase {
     machine [LalinPhase.MachineId],
     input [LalinPhase.WorldId],
     output [LalinPhase.WorldId],
-    diagnostics [optional [LalinPhase.WorldId]],
+    diagnostics [LalinPhase.DiagnosticsWorld],
     cache [LalinPhase.CachePolicy],
-    deterministic [bool],
+    determinism [LalinPhase.PhaseDeterminism],
     abi [LalinPhase.MachineAbi],
     impl [LalinPhase.MachineImpl],
     capabilities [many [LalinPhase.MachineCapability]],

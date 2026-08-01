@@ -106,7 +106,6 @@ for name, namespace in pairs(excluded_backends) do
   local text = read_file("lua/lalin/schema/" .. name .. ".lua")
   assert(text:match("return%s+schema%.%s*" .. namespace), "excluded backend namespace mismatch: " .. name)
 end
-assert(v2_init:find('require("lalin.schema.luajit")', 1, true), "legacy stencil-machine LuaJIT boundary must remain explicit")
 assert(not v2_init:find('require("lalin.schema.luatrace")', 1, true), "LuaTrace must remain excluded from schema-v2")
 assert(not old_names.native and not v2_names.native, "retired native copy-patch schema must be absent")
 

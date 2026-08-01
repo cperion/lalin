@@ -17,23 +17,10 @@ local function id_text(id)
     return tostring(id)
 end
 
-local function diagnostics_world_id(id)
-    if id == nil then return nil end
-    if class_name(id) == "LalinPhase.DiagnosticsWorldNone" then return nil end
-    if class_name(id) == "LalinPhase.DiagnosticsWorldPresent" then return id.world end
-    return id
-end
-
-local function maybe_id_text(id)
-    id = diagnostics_world_id(id)
-    if id == nil then return nil end
-    return id_text(id)
-end
 
 local function phase_diagnostics(phase) return phase.diagnostics end
 local function phase_determinism(phase)
-    if phase.determinism ~= nil then return phase.determinism end
-    return phase.deterministic
+    return phase.determinism
 end
 
 local function phase_namespace(package)
@@ -135,9 +122,9 @@ local function step_record(index, phase, machine)
         machine_id = id_text(machine.id),
         input = id_text(phase.input),
         output = id_text(phase.output),
-        diagnostics = maybe_id_text(phase.diagnostics),
+        diagnostics = phase.diagnostics,
         cache = phase.cache,
-        deterministic = phase_determinism(phase),
+        determinism = phase_determinism(phase),
         abi = machine.abi,
         impl = machine.impl,
         capabilities = machine.capabilities,

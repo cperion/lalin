@@ -29,11 +29,12 @@ Intended owners are `lua/lalin/schema_v2/<name>.lua`, with two exceptions:
 - `phase` remains owned by `lua/lalin/schema/phase.lua`; the v2 path is expected
   to consume that owner directly.
 
-## Current blocker
+## Current status
 
-The executable guard currently reports that `lua/lalin/schema_v2/phase.lua` does
-not consume the canonical old-schema `LalinPhase` owner. This is an ownership
-cutover blocker, not permission to weaken the guard or document two owners.
+`LalinPhase` now has one precise, no-`any` declaration owned by
+`lua/lalin/schema/phase.lua`. Schema v2 consumes that declaration directly and
+instantiates it in its own context; there is no constructor adapter or duplicate
+phase vocabulary.
 
 ## Shared and excluded boundaries
 

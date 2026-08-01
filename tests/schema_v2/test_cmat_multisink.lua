@@ -19,6 +19,7 @@ local Mem = require("lalin.schema_v2.mem")
 local Kernel = require("lalin.schema_v2.kernel")
 local Stencil = require("lalin.schema_v2.stencil")
 local CMat = require("lalin.schema_v2.c_materialize")
+local Lower = require("lalin.schema_v2.lower")
 local C = require("lalin.schema_v2.c")
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
@@ -177,13 +178,24 @@ local accesses = CMat.CMatCFragmentAccessBindingProjection({
     CMat.CMatCFragmentAccessDirect(out2_local), 4, 4, Mem.MemAlignKnown(4)),
 })
 local address_spine = materialization.kernel:cmat_memory_use_spine()
-local address_plan = CMat.CMatCAddressPlan(
-  address_spine, materialization.provenance.iteration, {}, {
-    CMat.CMatCUseAddressingEntry(address_spine.uses[1].id,
-      CMat.CMatCIterationAddressing(out1_local, 4, 0)),
-    CMat.CMatCUseAddressingEntry(address_spine.uses[2].id,
-      CMat.CMatCIterationAddressing(out2_local, 4, 0)),
+assert(#address_spine.uses == 2)
+local address_induction = Flow.FlowInduction(
+  iteration.counter, iteration.index_ty, iteration.start, iteration.step,
+  Flow.FlowPrimaryInduction, Flow.FlowRangeUnknown(iteration.counter))
+local address_coordinates = Lower.LowerCMatCoordinateFacet(
+  address_spine, iteration, {
+    Lower.LowerCMatUseCoordinateEntry(address_spine.uses[1].id,
+      Lower.LowerCMatIterationAffineCoordinate(
+        Lower.LowerCMatAddressBasis(lane1.base, address_induction, 4), 0)),
+    Lower.LowerCMatUseCoordinateEntry(address_spine.uses[2].id,
+      Lower.LowerCMatIterationAffineCoordinate(
+        Lower.LowerCMatAddressBasis(lane2.base, address_induction, 4), 0)),
   })
+local address_projection = address_coordinates:materialize_c_address_plan(
+  CMat.CMatCAddressPlanInput(iteration, accesses,
+    CMat.CMatCFragmentNamespace("multisink_address")))
+assert(asdl.classof(address_projection) == CMat.CMatCAddressPlanReady)
+local address_plan = address_projection.plan
 local exits = CMat.CMatCExitBindingProjection({
   CMat.CMatCExitBindingEntry(
     CMat.CMatCExitNormal, exit_id, C.CBackendLabel("exit"), {}),
@@ -210,8 +222,12 @@ local body_stmts = fragment.blocks[3].stmts
 assert(#body_stmts == 2, "both sinks must emit into the counted body")
 assert(asdl.classof(body_stmts[1]) == C.CBackendPlaceStore)
 assert(asdl.classof(body_stmts[2]) == C.CBackendPlaceStore)
-assert(body_stmts[1].place.base.local_id == out1_local.id, "first sink stores out1")
-assert(body_stmts[2].place.base.local_id == out2_local.id, "second sink stores out2")
+assert(asdl.classof(body_stmts[1].place) == C.CBackendPlaceDeref)
+assert(asdl.classof(body_stmts[2].place) == C.CBackendPlaceDeref)
+assert(body_stmts[1].place.addr.local_id.text == "multisink_address_cursor_1",
+  "first sink stores through the first canonical address cursor")
+assert(body_stmts[2].place.addr.local_id.text == "multisink_address_cursor_2",
+  "second sink stores through the second canonical address cursor")
 assert(asdl.classof(body_stmts[1].value) == C.CBackendAtomLiteral)
 assert(asdl.classof(body_stmts[2].value) == C.CBackendAtomLiteral)
 assert(body_stmts[1].value.literal.raw == "7")

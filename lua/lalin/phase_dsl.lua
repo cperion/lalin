@@ -23,7 +23,7 @@ local function type_ref(spec)
     local P = require_phase()
     if type(spec) == "table" then
         local cls = asdl.classof(spec)
-        if cls == P.TypeRef or spec == P.TypeRefAny or cls == P.TypeRefValue then return spec end
+        if cls == P.TypeRef or cls == P.TypeRefValue then return spec end
         if llbl.is(spec, "Capture") and llbl.is(spec.subject, "Symbol") then
             local module_name = spec.subject.text
             local type_name = spec.value
@@ -36,7 +36,9 @@ local function type_ref(spec)
             return P.TypeRef(spec.base.text, spec.field)
         end
     end
-    if spec == nil or spec == "any" or spec == "*" then return P.TypeRefAny end
+    if spec == nil or spec == "any" or spec == "*" then
+        error("E_BAD_SLOT: phase_dsl: every world requires an exact payload type", 3)
+    end
     if type(spec) == "string" then
         error("E_BAD_SLOT: phase_dsl: world type refs use structured names, write world. name [LalinTree.Module], not world. name [\"LalinTree.Module\"]", 3)
     end
@@ -55,18 +57,14 @@ local function machine_id(v) local P = require_phase(); return P.MachineId(ident
 local function root_id(v) local P = require_phase(); return P.RootId(ident_text(v, "root name")) end
 local function package_id(v) local P = require_phase(); return P.PackageId(ident_text(v, "package name")) end
 local function diagnostics_none()
-    local P = require_phase()
-    return P.DiagnosticsWorldNone or nil
+    return require_phase().DiagnosticsWorldNone
 end
 local function diagnostics_present(world)
-    local P = require_phase()
-    local id = world_id(world)
-    return P.DiagnosticsWorldPresent and P.DiagnosticsWorldPresent(id) or id
+    return require_phase().DiagnosticsWorldPresent(world_id(world))
 end
 local function determinism_value(flag)
     local P = require_phase()
-    if P.PhaseDeterministic then return flag == false and P.PhaseNondeterministic or P.PhaseDeterministic end
-    return flag ~= false
+    return flag == false and P.PhaseNondeterministic or P.PhaseDeterministic
 end
 
 local function cache_policy(spec)
@@ -151,7 +149,11 @@ local function impl_from(kind, spec)
     if kind == "lalin" then return P.ImplLalin(assert(spec.module or spec.module_name, "impl.lalin requires module"), assert(spec.func or spec.function_name or spec.symbol, "impl.lalin requires func/function_name/symbol")) end
     if kind == "lua" then return P.ImplLua(assert(spec.module or spec.module_name, "impl.lua requires module"), assert(spec.func or spec.function_name or spec.symbol, "impl.lua requires func/function_name/symbol")) end
     if kind == "c" then return P.ImplC(assert(spec.symbol, "impl.c requires symbol")) end
-    if kind == "external" then return P.ImplExternal(assert(spec.capability, "impl.external requires capability")) end
+    if kind == "external" then
+        return P.ImplExternal(P.ExternalCapabilityId(
+            ident_text(assert(spec.capability, "impl.external requires capability"),
+                "external capability")))
+    end
     error("phase_dsl: unknown impl kind " .. tostring(kind), 3)
 end
 
@@ -343,8 +345,7 @@ end
 local function type_ref_text(v)
     local P = require_phase()
     local cls = asdl.classof(v)
-    if cls == P.TypeRefAny then return "any" end
-    if cls == P.TypeRefValue then return "value. " .. tostring(v.field_name) end
+    if cls == P.TypeRefValue then return "value. " .. id_text(v.id) end
     if cls == P.TypeRef then return tostring(v.module_name) .. "." .. tostring(v.type_name) end
     return tostring(v)
 end
@@ -430,7 +431,9 @@ function M.format_doc(value, f)
             part("impl", value.impl),
         }
         if tostring(value.abi) ~= tostring(P.MachineAbiStatusReturning) then items[#items + 1] = part("abi", value.abi) end
-        if value.diagnostics then items[#items + 1] = part("diagnostics", value.diagnostics) end
+        if asdl.classof(value.diagnostics) == P.DiagnosticsWorldPresent then
+            items[#items + 1] = part("diagnostics", value.diagnostics.world)
+        end
         if #(value.capabilities or {}) > 0 then items[#items + 1] = part("capabilities", value.capabilities) end
         return doc.concat { "machine. ", id_text(value.id), " ", body_block(items, f) }
     elseif cls == P.Phase then
@@ -440,8 +443,12 @@ function M.format_doc(value, f)
             part("machine", value.machine),
         }
         if tostring(value.cache) ~= tostring(P.CacheIdentity) then items[#items + 1] = part("cache", value.cache) end
-        if value.deterministic == false then items[#items + 1] = part("deterministic", value.deterministic) end
-        if value.diagnostics then items[#items + 1] = part("diagnostics", value.diagnostics) end
+        if value.determinism == P.PhaseNondeterministic then
+            items[#items + 1] = part("deterministic", false)
+        end
+        if asdl.classof(value.diagnostics) == P.DiagnosticsWorldPresent then
+            items[#items + 1] = part("diagnostics", value.diagnostics.world)
+        end
         return doc.concat { "phase. ", id_text(value.id), " ", body_block(items, f) }
     elseif cls == P.Root then
         return doc.concat { "root. ", id_text(value.id), " ", body_block({ part("from", value.input), part("to", value.output) }, f) }
@@ -461,7 +468,9 @@ function M.format_doc(value, f)
         if icls == P.ImplLalin then return doc.group { "impl. lalin ", record_doc { module = impl.module_name, func = impl.function_name } } end
         if icls == P.ImplLua then return doc.group { "impl. lua ", record_doc { module = impl.module_name, func = impl.function_name } } end
         if icls == P.ImplC then return doc.group { "impl. c ", record_doc { symbol = impl.symbol } } end
-        if icls == P.ImplExternal then return doc.group { "impl. external ", record_doc { capability = impl.capability } } end
+        if icls == P.ImplExternal then
+            return doc.group { "impl. external ", record_doc { capability = id_text(impl.capability) } }
+        end
     end
     return doc.text(tostring(value))
 end

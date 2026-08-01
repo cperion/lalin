@@ -191,8 +191,9 @@ falling back to absolute addressing.
 
 ## Gate 3 — executable C address plan
 
-Absolute and cursor addressing are true executable alternatives. Concrete
-leaves own place emission.
+Plan production is closed over absolute, cursor, and dynamic-window addressing.
+Iteration-affine stream and sink uses always select a cursor; there is no separate
+unproduced indexed-iteration leaf. Concrete leaves own place emission.
 
 ```lua
 product. CMatCAddressCursorId { interned, text [str] }
@@ -211,11 +212,6 @@ sum. CMatCUseAddressing {
   CMatCAbsoluteAddressing {
     base [CBackendLocal],
     index [StencilIndexExpr],
-    index_scale_bytes [number],
-    const_offset_bytes [number],
-  },
-  CMatCIterationAddressing {
-    base [CBackendLocal],
     index_scale_bytes [number],
     const_offset_bytes [number],
   },

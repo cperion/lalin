@@ -1082,15 +1082,6 @@ function CMat.CMatCAbsoluteAddressing:cmat_fragment_emit_place(input, binding)
     C.CBackendAtomLocal(self.base.id), input.index,
     self.index_scale_bytes, self.const_offset_bytes, input.ty)
 end
-function CMat.CMatCIterationAddressing:cmat_fragment_emit_place(input, binding)
-  if self.index_scale_bytes ~= binding.stride then
-    return CMat.CMatCFragmentPlaceRejected({
-      CMat.CMatCEmissionInvalidKernel("iteration address scale disagrees with binding") })
-  end
-  return cmat_fragment_offset_place(input.state, binding,
-    C.CBackendAtomLocal(self.base.id), input.index,
-    self.index_scale_bytes, self.const_offset_bytes, input.ty)
-end
 function CMat.CMatCDynamicWindowAddressing:cmat_fragment_emit_place(input, binding)
   if self.index_scale_bytes ~= binding.stride then
     return CMat.CMatCFragmentPlaceRejected({

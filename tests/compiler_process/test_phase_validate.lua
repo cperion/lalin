@@ -75,7 +75,10 @@ assert(seen.validate_done)
 
 local duplicate_world = P.Package(
     P.PackageId("bad.duplicate"),
-    { P.World(P.WorldId("tree"), P.TypeRefValue("Tree")), P.World(P.WorldId("tree"), P.TypeRefValue("Other")) },
+    {
+        P.World(P.WorldId("tree"), P.TypeRefValue(P.TypeValueId("Tree"))),
+        P.World(P.WorldId("tree"), P.TypeRefValue(P.TypeValueId("Other"))),
+    },
     {},
     {},
     {}
@@ -86,8 +89,10 @@ assert(has_code(duplicate_report, "E_DUPLICATE_WORLD"))
 
 local missing_world = P.Package(
     P.PackageId("bad.world"),
-    { P.World(P.WorldId("tree"), P.TypeRefValue("Tree")) },
-    { P.Machine(P.MachineId("m"), P.WorldId("missing"), P.WorldId("tree"), nil, P.MachineAbiPure, P.ImplLua("mod", "run"), {}) },
+    { P.World(P.WorldId("tree"), P.TypeRefValue(P.TypeValueId("Tree"))) },
+    { P.Machine(
+        P.MachineId("m"), P.WorldId("missing"), P.WorldId("tree"),
+        P.DiagnosticsWorldNone, P.MachineAbiPure, P.ImplLua("mod", "run"), {}) },
     {},
     {}
 )
@@ -97,9 +102,15 @@ assert(has_code(missing_world_report, "E_UNKNOWN_WORLD"))
 
 local missing_machine = P.Package(
     P.PackageId("bad.machine"),
-    { P.World(P.WorldId("tree"), P.TypeRefValue("Tree")), P.World(P.WorldId("checked"), P.TypeRefValue("Checked")) },
+    {
+        P.World(P.WorldId("tree"), P.TypeRefValue(P.TypeValueId("Tree"))),
+        P.World(P.WorldId("checked"), P.TypeRefValue(P.TypeValueId("Checked"))),
+    },
     {},
-    { P.Phase(P.PhaseId("typecheck"), P.WorldId("tree"), P.WorldId("checked"), nil, P.CacheIdentity, true, P.MachineId("missing")) },
+    { P.Phase(
+        P.PhaseId("typecheck"), P.WorldId("tree"), P.WorldId("checked"),
+        P.DiagnosticsWorldNone, P.CacheIdentity, P.PhaseDeterministic,
+        P.MachineId("missing")) },
     {}
 )
 local missing_machine_report = Validate.validate(missing_machine)
@@ -109,12 +120,17 @@ assert(has_code(missing_machine_report, "E_UNKNOWN_MACHINE"))
 local mismatch = P.Package(
     P.PackageId("bad.mismatch"),
     {
-        P.World(P.WorldId("tree"), P.TypeRefValue("Tree")),
-        P.World(P.WorldId("checked"), P.TypeRefValue("Checked")),
-        P.World(P.WorldId("code"), P.TypeRefValue("Code")),
+        P.World(P.WorldId("tree"), P.TypeRefValue(P.TypeValueId("Tree"))),
+        P.World(P.WorldId("checked"), P.TypeRefValue(P.TypeValueId("Checked"))),
+        P.World(P.WorldId("code"), P.TypeRefValue(P.TypeValueId("Code"))),
     },
-    { P.Machine(P.MachineId("m"), P.WorldId("tree"), P.WorldId("checked"), nil, P.MachineAbiPure, P.ImplLua("mod", "run"), {}) },
-    { P.Phase(P.PhaseId("typecheck"), P.WorldId("code"), P.WorldId("checked"), nil, P.CacheIdentity, true, P.MachineId("m")) },
+    { P.Machine(
+        P.MachineId("m"), P.WorldId("tree"), P.WorldId("checked"),
+        P.DiagnosticsWorldNone, P.MachineAbiPure, P.ImplLua("mod", "run"), {}) },
+    { P.Phase(
+        P.PhaseId("typecheck"), P.WorldId("code"), P.WorldId("checked"),
+        P.DiagnosticsWorldNone, P.CacheIdentity, P.PhaseDeterministic,
+        P.MachineId("m")) },
     { P.Root(P.RootId("compile"), P.WorldId("tree"), P.WorldId("checked")) }
 )
 local mismatch_report = Validate.validate(mismatch)
@@ -123,8 +139,10 @@ assert(has_code(mismatch_report, "E_PHASE_MACHINE_INPUT_MISMATCH"))
 
 local bad_impl = P.Package(
     P.PackageId("bad.impl"),
-    { P.World(P.WorldId("tree"), P.TypeRefValue("Tree")) },
-    { P.Machine(P.MachineId("m"), P.WorldId("tree"), P.WorldId("tree"), nil, P.MachineAbiPure, P.ImplLua("", ""), {}) },
+    { P.World(P.WorldId("tree"), P.TypeRefValue(P.TypeValueId("Tree"))) },
+    { P.Machine(
+        P.MachineId("m"), P.WorldId("tree"), P.WorldId("tree"),
+        P.DiagnosticsWorldNone, P.MachineAbiPure, P.ImplLua("", ""), {}) },
     {},
     {}
 )

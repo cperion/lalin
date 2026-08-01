@@ -407,12 +407,6 @@ return schema. LalinCMat {
       index_scale_bytes [number],
       const_offset_bytes [number],
     },
-    CMatCIterationAddressing {
-      variant_unique,
-      base [LalinC.CBackendLocal],
-      index_scale_bytes [number],
-      const_offset_bytes [number],
-    },
     CMatCCursorAddressing {
       variant_unique,
       cursor [LalinCMat.CMatCAddressCursorId],

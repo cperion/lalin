@@ -204,31 +204,51 @@ local fragment_accesses = CMat.CMatCFragmentAccessBindingProjection({
     Stencil.StencilAccessRef("out"), lane_id, access_id,
     CMat.CMatCFragmentAccessDirect(out_param), 4, 8, Mem.MemAlignKnown(4)),
 })
-function CMat.CMatStreamMemoryUse:test_fragment_addressing(binding)
-  return CMat.CMatCIterationAddressing(binding.source.base, binding.stride, 0)
+function CMat.CMatMemorySelectedIndex:test_coordinate_offset(_scale)
+  return 0
 end
-function CMat.CMatSinkMemoryUse:test_fragment_addressing(binding)
-  return CMat.CMatCIterationAddressing(binding.source.base, binding.stride, 0)
-end
-function CMat.CMatWindowMemoryUse:test_fragment_addressing(binding)
-  return CMat.CMatCDynamicWindowAddressing(binding.source.base, binding.stride, 0)
+function CMat.CMatMemoryWindowOffset:test_coordinate_offset(scale)
+  return self.offset.offset * scale
 end
 function test_address_plan(materialization, accesses)
+  local Lower = require("lalin.schema_v2.lower")
   local spine = materialization.kernel:cmat_memory_use_spine()
+  local iteration = materialization.provenance.iteration
+  local induction = Flow.FlowInduction(
+    iteration.counter, iteration.index_ty, iteration.start, iteration.step,
+    Flow.FlowPrimaryInduction, Flow.FlowRangeUnknown(iteration.counter))
   local entries = {}
   for i = 1, #spine.uses do
-    local binding
+    local use = spine.uses[i]
+    local bindings = {}
     for j = 1, #accesses.entries do
-      if accesses.entries[j].access == spine.uses[i].access then
-        binding = accesses.entries[j]
+      if accesses.entries[j].access == use.access then
+        bindings[#bindings + 1] = accesses.entries[j]
       end
     end
-    assert(binding, "test address plan requires an access binding")
-    entries[#entries + 1] = CMat.CMatCUseAddressingEntry(
-      spine.uses[i].id, spine.uses[i].id:test_fragment_addressing(binding))
+    assert(#bindings == 1, "test address plan requires one access binding")
+    local provenance = {}
+    for j = 1, #materialization.provenance.accesses.entries do
+      local candidate = materialization.provenance.accesses.entries[j]
+      if Stencil.StencilAccessRef(candidate.access.name) == use.access then
+        provenance[#provenance + 1] = candidate
+      end
+    end
+    assert(#provenance == 1, "test address plan requires one provenance entry")
+    local scale = bindings[1].stride
+    local basis = Lower.LowerCMatAddressBasis(
+      provenance[1].lane.base, induction, scale)
+    entries[#entries + 1] = Lower.LowerCMatUseCoordinateEntry(
+      use.id, Lower.LowerCMatIterationAffineCoordinate(
+        basis, use.index:test_coordinate_offset(scale)))
   end
-  return CMat.CMatCAddressPlan(
-    spine, materialization.provenance.iteration, {}, entries)
+  local facet = Lower.LowerCMatCoordinateFacet(spine, iteration, entries)
+  local projection = facet:materialize_c_address_plan(CMat.CMatCAddressPlanInput(
+    iteration, accesses, CMat.CMatCFragmentNamespace(
+      materialization.kernel.id.text .. "_address")))
+  assert(asdl.classof(projection) == CMat.CMatCAddressPlanReady,
+    "test fixture must produce a canonical C address plan")
+  return projection.plan
 end
 function cursor_address_plan()
   local Lower = require("lalin.schema_v2.lower")

@@ -24,20 +24,14 @@ local function id_text(id)
 end
 
 local function diagnostics_world_id(id)
-    if id == nil then return nil end
     if is_class(id, "DiagnosticsWorldNone") then return nil end
-    if is_class(id, "DiagnosticsWorldPresent") then return id.world end
-    return id
-end
-
-local function maybe_id_text(id)
-    id = diagnostics_world_id(id)
-    if id == nil then return nil end
-    return id_text(id)
+    assert(is_class(id, "DiagnosticsWorldPresent"),
+        "phase diagnostics must be a typed DiagnosticsWorld")
+    return id.world
 end
 
 local function same_id(a, b)
-    return maybe_id_text(a) == maybe_id_text(b)
+    return id_text(a) == id_text(b)
 end
 
 local function impl_kind(impl)
@@ -127,7 +121,7 @@ local function validate_impl(ctx, report, machine)
             add_diagnostic(ctx, report, "E_BAD_IMPL", "machine '" .. name .. "' " .. kind .. " implementation requires symbol", impl)
         end
     elseif kind == "external" then
-        if empty_string(impl.capability) then
+        if id_text(impl.capability) == "" then
             add_diagnostic(ctx, report, "E_BAD_IMPL", "machine '" .. name .. "' external implementation requires capability", impl)
         end
     end
@@ -214,7 +208,7 @@ local function validate_package(ctx, package)
             if not same_id(phase.output, machine.output) then
                 add_diagnostic(ctx, report, "E_PHASE_MACHINE_OUTPUT_MISMATCH", "phase '" .. name .. "' output world does not match machine '" .. id_text(machine.id) .. "'", phase)
             end
-            if not same_id(phase.diagnostics, machine.diagnostics) then
+            if phase.diagnostics ~= machine.diagnostics then
                 add_diagnostic(ctx, report, "E_PHASE_MACHINE_DIAGNOSTICS_MISMATCH", "phase '" .. name .. "' diagnostic world does not match machine '" .. id_text(machine.id) .. "'", phase)
             end
         end

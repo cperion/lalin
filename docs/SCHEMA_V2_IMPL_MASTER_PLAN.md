@@ -100,6 +100,12 @@ After coordinate/fusion changes:
 The duplicate-owner guard remains authoritative. Domain cutovers are serialized
 and may resume only when canonical fresh-process parity exists for that domain.
 
+The `LalinPhase` exception is closed: one precise no-`any` declaration remains
+owned by `schema/phase.lua`, and schema v2 consumes that declaration as data before
+instantiating it in its own context. Phase diagnostics, determinism, external
+capabilities, and value-type references are typed; the ownership and legacy schema
+suites are green.
+
 For each cutover:
 
 1. establish the schema-v2 owner and leaf methods;

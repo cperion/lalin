@@ -68,7 +68,8 @@ assert(asdl.classof(lua_impl:machine_implementation_capability()) == P.MachineIm
 assert(asdl.classof(lua_impl:resolve_machine_implementation(executor)) == P.MachineImplementationAvailable)
 assert(asdl.classof(P.ImplLalin("demo", "run"):resolve_machine_implementation(executor)) == P.MachineImplementationUnavailable)
 assert(asdl.classof(P.ImplC("demo_run"):resolve_machine_implementation(executor)) == P.MachineImplementationUnavailable)
-assert(asdl.classof(P.ImplExternal("demo.capability"):resolve_machine_implementation(executor)) == P.MachineImplementationUnavailable)
+assert(asdl.classof(P.ImplExternal(P.ExternalCapabilityId("demo.capability"))
+    :resolve_machine_implementation(executor)) == P.MachineImplementationUnavailable)
 
 local request = P.PhaseExecutionRequest(planned.plan, P.PhaseValueNumber(20), P.CompilerStageUnconfigured)
 local report = executor:run(request)

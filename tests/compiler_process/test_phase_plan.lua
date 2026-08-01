@@ -89,7 +89,8 @@ assert(report.steps[1].phase_id == "typecheck")
 assert(report.steps[1].machine_id == "lalin_typecheck")
 assert(report.steps[1].input == "tree")
 assert(report.steps[1].output == "checked")
-assert(report.steps[1].diagnostics == "diag")
+assert(asdl.classof(report.steps[1].diagnostics) == P.DiagnosticsWorldPresent)
+assert(report.steps[1].diagnostics.world.text == "diag")
 assert(report.steps[2].phase_id == "tree_lower")
 assert(report.steps[2].machine_id == "lalin_tree_lower")
 assert(report.steps[3].phase_id == "lower_to_back")
@@ -114,22 +115,22 @@ end
 local ambiguous = P.Package(
     P.PackageId("bad.ambiguous"),
     {
-        P.World(P.WorldId("a"), P.TypeRefValue("A")),
-        P.World(P.WorldId("b"), P.TypeRefValue("B")),
-        P.World(P.WorldId("c"), P.TypeRefValue("C")),
-        P.World(P.WorldId("d"), P.TypeRefValue("D")),
+        P.World(P.WorldId("a"), P.TypeRefValue(P.TypeValueId("A"))),
+        P.World(P.WorldId("b"), P.TypeRefValue(P.TypeValueId("B"))),
+        P.World(P.WorldId("c"), P.TypeRefValue(P.TypeValueId("C"))),
+        P.World(P.WorldId("d"), P.TypeRefValue(P.TypeValueId("D"))),
     },
     {
-        P.Machine(P.MachineId("m1"), P.WorldId("a"), P.WorldId("b"), nil, P.MachineAbiPure, P.ImplLua("mod", "m1"), {}),
-        P.Machine(P.MachineId("m2"), P.WorldId("b"), P.WorldId("d"), nil, P.MachineAbiPure, P.ImplLua("mod", "m2"), {}),
-        P.Machine(P.MachineId("m3"), P.WorldId("a"), P.WorldId("c"), nil, P.MachineAbiPure, P.ImplLua("mod", "m3"), {}),
-        P.Machine(P.MachineId("m4"), P.WorldId("c"), P.WorldId("d"), nil, P.MachineAbiPure, P.ImplLua("mod", "m4"), {}),
+        P.Machine(P.MachineId("m1"), P.WorldId("a"), P.WorldId("b"), P.DiagnosticsWorldNone, P.MachineAbiPure, P.ImplLua("mod", "m1"), {}),
+        P.Machine(P.MachineId("m2"), P.WorldId("b"), P.WorldId("d"), P.DiagnosticsWorldNone, P.MachineAbiPure, P.ImplLua("mod", "m2"), {}),
+        P.Machine(P.MachineId("m3"), P.WorldId("a"), P.WorldId("c"), P.DiagnosticsWorldNone, P.MachineAbiPure, P.ImplLua("mod", "m3"), {}),
+        P.Machine(P.MachineId("m4"), P.WorldId("c"), P.WorldId("d"), P.DiagnosticsWorldNone, P.MachineAbiPure, P.ImplLua("mod", "m4"), {}),
     },
     {
-        P.Phase(P.PhaseId("p1"), P.WorldId("a"), P.WorldId("b"), nil, P.CacheIdentity, true, P.MachineId("m1")),
-        P.Phase(P.PhaseId("p2"), P.WorldId("b"), P.WorldId("d"), nil, P.CacheIdentity, true, P.MachineId("m2")),
-        P.Phase(P.PhaseId("p3"), P.WorldId("a"), P.WorldId("c"), nil, P.CacheIdentity, true, P.MachineId("m3")),
-        P.Phase(P.PhaseId("p4"), P.WorldId("c"), P.WorldId("d"), nil, P.CacheIdentity, true, P.MachineId("m4")),
+        P.Phase(P.PhaseId("p1"), P.WorldId("a"), P.WorldId("b"), P.DiagnosticsWorldNone, P.CacheIdentity, P.PhaseDeterministic, P.MachineId("m1")),
+        P.Phase(P.PhaseId("p2"), P.WorldId("b"), P.WorldId("d"), P.DiagnosticsWorldNone, P.CacheIdentity, P.PhaseDeterministic, P.MachineId("m2")),
+        P.Phase(P.PhaseId("p3"), P.WorldId("a"), P.WorldId("c"), P.DiagnosticsWorldNone, P.CacheIdentity, P.PhaseDeterministic, P.MachineId("m3")),
+        P.Phase(P.PhaseId("p4"), P.WorldId("c"), P.WorldId("d"), P.DiagnosticsWorldNone, P.CacheIdentity, P.PhaseDeterministic, P.MachineId("m4")),
     },
     { P.Root(P.RootId("compile"), P.WorldId("a"), P.WorldId("d")) }
 )
@@ -139,7 +140,10 @@ assert(has_code(ambiguous_report, "E_AMBIGUOUS_PHASE_PATH"))
 
 local no_path = P.Package(
     P.PackageId("bad.no_path"),
-    { P.World(P.WorldId("a"), P.TypeRefValue("A")), P.World(P.WorldId("b"), P.TypeRefValue("B")) },
+    {
+        P.World(P.WorldId("a"), P.TypeRefValue(P.TypeValueId("A"))),
+        P.World(P.WorldId("b"), P.TypeRefValue(P.TypeValueId("B"))),
+    },
     {},
     {},
     { P.Root(P.RootId("compile"), P.WorldId("a"), P.WorldId("b")) }
