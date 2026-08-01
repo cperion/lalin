@@ -141,7 +141,11 @@ return schema. LalinStencil {
   },
   sum. StencilFoldDestination {
     StencilFoldReturnsValue,
-    StencilFoldStores { variant_unique, access [LalinStencil.StencilAccessRef], },
+    StencilFoldStores {
+      variant_unique,
+      access [LalinStencil.StencilAccessRef],
+      index [LalinStencil.StencilIndexSelection],
+    },
   },
   sum. StencilMetastencilNodeSelection {
     StencilMetastencilExternalNode,
@@ -767,6 +771,7 @@ return schema. LalinStencil {
     StencilSinkOpStore {
       variant_unique,
       dst [LalinStencil.StencilAccessRef],
+      index [LalinStencil.StencilIndexSelection],
       field. value [LalinStencil.StencilStreamRef],
       semantics [LalinStencil.StencilStoreSemantics],
     },
@@ -1832,9 +1837,19 @@ return schema. LalinStencil {
     construction [LalinStencil.StencilKernelConstruction],
     effect [LalinKernel.KernelEffect],
   },
-  product. StencilKernelEffectStreamInput {
+  product. StencilKernelIndexSelectionInput {
+    interned,
+    iteration [LalinStencil.StencilKernelIteration],
+    field. index [LalinValue.ValueExpr],
+  },
+  product. StencilKernelStoreEffectInput {
     interned,
     effect [LalinStencil.StencilKernelEffectInput],
+    index [LalinStencil.StencilIndexSelection],
+  },
+  product. StencilKernelEffectStreamInput {
+    interned,
+    effect [LalinStencil.StencilKernelStoreEffectInput],
     definition [LalinStencil.StencilStreamDef],
   },
   sum. StencilKernelSinkPreparation {

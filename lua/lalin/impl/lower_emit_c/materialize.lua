@@ -165,6 +165,191 @@ function Stencil.StencilScheduleVector:cmat_schedule_policy()
     CMat.CMatVectorExplicit(self.lane_policy:cmat_lane_capability(), self.tail:cmat_tail_policy()))
 end
 
+function CMat.CMatMemoryUseContribution:cmat_append_memory_uses(spine)
+  local uses = {}
+  for i = 1, #spine.uses do uses[i] = spine.uses[i] end
+  for i = 1, #self.uses do uses[#uses + 1] = self.uses[i] end
+  return CMat.CMatMemoryUseSpine(uses)
+end
+local function no_memory_uses()
+  return CMat.CMatMemoryUseContribution({})
+end
+local function selected_memory_use(id, access, role, selection)
+  return CMat.CMatMemoryUse(
+    id, access, role, CMat.CMatMemorySelectedIndex(selection))
+end
+
+function Stencil.StencilStreamIndex:cmat_memory_uses(_definition)
+  return no_memory_uses()
+end
+function Stencil.StencilStreamAccess:cmat_memory_uses(definition)
+  return CMat.CMatMemoryUseContribution({
+    selected_memory_use(
+      CMat.CMatStreamMemoryUse(Stencil.StencilStreamRef(definition.id)),
+      self.access, CMat.CMatMemoryLoad, self.index),
+  })
+end
+function Stencil.StencilStreamWindowAccess:cmat_memory_uses(definition)
+  local uses = {}
+  local stream = Stencil.StencilStreamRef(definition.id)
+  for ordinal = 1, #self.offsets do
+    uses[#uses + 1] = CMat.CMatMemoryUse(
+      CMat.CMatWindowMemoryUse(stream, ordinal), self.access,
+      CMat.CMatMemoryLoad, CMat.CMatMemoryWindowOffset(self.offsets[ordinal]))
+  end
+  return CMat.CMatMemoryUseContribution(uses)
+end
+function Stencil.StencilStreamConst:cmat_memory_uses(_definition)
+  return no_memory_uses()
+end
+function Stencil.StencilStreamValueExpr:cmat_memory_uses(_definition)
+  return no_memory_uses()
+end
+function Stencil.StencilStreamAlias:cmat_memory_uses(_definition)
+  return no_memory_uses()
+end
+function Stencil.StencilStreamZip:cmat_memory_uses(_definition)
+  return no_memory_uses()
+end
+function Stencil.StencilStreamSelect:cmat_memory_uses(_definition)
+  return no_memory_uses()
+end
+function Stencil.StencilStreamMask:cmat_memory_uses(_definition)
+  return no_memory_uses()
+end
+function Stencil.StencilStreamGather:cmat_memory_uses(definition)
+  return CMat.CMatMemoryUseContribution({
+    selected_memory_use(
+      CMat.CMatStreamMemoryUse(Stencil.StencilStreamRef(definition.id)),
+      self.source, CMat.CMatMemoryLoad,
+      Stencil.StencilIndexExplicit(Stencil.StencilIndexStream(self.index_stream))),
+  })
+end
+
+function CMat.CMatPointMemoryUseAssembly:cmat_append_point_memory_use(use)
+  local uses = {}
+  for i = 1, #self.uses do uses[i] = self.uses[i] end
+  uses[#uses + 1] = use
+  return CMat.CMatPointMemoryUseAssembly(
+    self.stream, uses, self.next_window_ordinal + 1)
+end
+function Stencil.StencilPointInput:cmat_point_memory_uses(assembly)
+  return assembly
+end
+function Stencil.StencilPointWindowInput:cmat_point_memory_uses(assembly)
+  local result = assembly
+  for i = 1, #self.offsets do
+    result = result:cmat_append_point_memory_use(CMat.CMatMemoryUse(
+      CMat.CMatWindowMemoryUse(result.stream, result.next_window_ordinal),
+      self.access, CMat.CMatMemoryLoad,
+      CMat.CMatMemoryWindowOffset(self.offsets[i])))
+  end
+  return result
+end
+function Stencil.StencilPointConst:cmat_point_memory_uses(assembly)
+  return assembly
+end
+function Stencil.StencilPointUnary:cmat_point_memory_uses(assembly)
+  return self.arg:cmat_point_memory_uses(assembly)
+end
+function Stencil.StencilPointBinary:cmat_point_memory_uses(assembly)
+  return self.right:cmat_point_memory_uses(
+    self.left:cmat_point_memory_uses(assembly))
+end
+function Stencil.StencilPointCast:cmat_point_memory_uses(assembly)
+  return self.arg:cmat_point_memory_uses(assembly)
+end
+function Stencil.StencilPointPredicate:cmat_point_memory_uses(assembly)
+  return self.arg:cmat_point_memory_uses(assembly)
+end
+function Stencil.StencilPointCompare:cmat_point_memory_uses(assembly)
+  return self.right:cmat_point_memory_uses(
+    self.left:cmat_point_memory_uses(assembly))
+end
+function Stencil.StencilPointSelect:cmat_point_memory_uses(assembly)
+  local result = self.cond:cmat_point_memory_uses(assembly)
+  result = self.then_expr:cmat_point_memory_uses(result)
+  return self.else_expr:cmat_point_memory_uses(result)
+end
+function Stencil.StencilStreamMap:cmat_memory_uses(definition)
+  local assembly = self.expr:cmat_point_memory_uses(
+    CMat.CMatPointMemoryUseAssembly(
+      Stencil.StencilStreamRef(definition.id), {}, 1))
+  return CMat.CMatMemoryUseContribution(assembly.uses)
+end
+
+function Stencil.StencilSinkOpStore:cmat_memory_uses(definition)
+  return CMat.CMatMemoryUseContribution({
+    selected_memory_use(
+      CMat.CMatSinkMemoryUse(Stencil.StencilSinkRef(definition.id)),
+      self.dst, CMat.CMatMemoryStore, self.index),
+  })
+end
+function Stencil.StencilFoldReturnsValue:cmat_fold_memory_uses(_definition)
+  return no_memory_uses()
+end
+function Stencil.StencilFoldStores:cmat_fold_memory_uses(definition)
+  return CMat.CMatMemoryUseContribution({
+    selected_memory_use(
+      CMat.CMatSinkMemoryUse(Stencil.StencilSinkRef(definition.id)),
+      self.access, CMat.CMatMemoryStore, self.index),
+  })
+end
+function Stencil.StencilSinkOpFold:cmat_memory_uses(definition)
+  return self.destination:cmat_fold_memory_uses(definition)
+end
+function Stencil.StencilSinkOpScan:cmat_memory_uses(definition)
+  return CMat.CMatMemoryUseContribution({
+    selected_memory_use(
+      CMat.CMatSinkMemoryUse(Stencil.StencilSinkRef(definition.id)),
+      self.dst, CMat.CMatMemoryStore,
+      Stencil.StencilIndexExplicit(Stencil.StencilIndexAxis(self.axis))),
+  })
+end
+function Stencil.StencilSinkOpScatterStore:cmat_memory_uses(definition)
+  return CMat.CMatMemoryUseContribution({
+    selected_memory_use(
+      CMat.CMatSinkMemoryUse(Stencil.StencilSinkRef(definition.id)),
+      self.dst, CMat.CMatMemoryStore,
+      Stencil.StencilIndexExplicit(Stencil.StencilIndexStream(self.index))),
+  })
+end
+function Stencil.StencilSinkOpScatterFold:cmat_memory_uses(definition)
+  return CMat.CMatMemoryUseContribution({
+    selected_memory_use(
+      CMat.CMatSinkMemoryUse(Stencil.StencilSinkRef(definition.id)),
+      self.dst, CMat.CMatMemoryStore,
+      Stencil.StencilIndexExplicit(Stencil.StencilIndexStream(self.index))),
+  })
+end
+function Stencil.StencilSinkOpAll:cmat_memory_uses(_definition)
+  return no_memory_uses()
+end
+function Stencil.StencilSinkOpAny:cmat_memory_uses(_definition)
+  return no_memory_uses()
+end
+function Stencil.StencilSinkOpFind:cmat_memory_uses(_definition)
+  return no_memory_uses()
+end
+function Stencil.StencilSinkOpAllCompare:cmat_memory_uses(_definition)
+  return no_memory_uses()
+end
+function Stencil.StencilComputation:cmat_memory_use_spine()
+  local spine = CMat.CMatMemoryUseSpine({})
+  for i = 1, #self.streams do
+    spine = self.streams[i].op:cmat_memory_uses(self.streams[i])
+      :cmat_append_memory_uses(spine)
+  end
+  for i = 1, #self.sinks do
+    spine = self.sinks[i].op:cmat_memory_uses(self.sinks[i])
+      :cmat_append_memory_uses(spine)
+  end
+  return spine
+end
+function CMat.CMatFusedKernel:cmat_memory_use_spine()
+  return self.computation:cmat_memory_use_spine()
+end
+
 function Stencil.StencilStreamDef:cmat_stream_materialization()
   return CMat.CMatStreamInline(Stencil.StencilStreamRef(self.id), self.ty)
 end

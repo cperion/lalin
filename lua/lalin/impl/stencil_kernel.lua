@@ -691,14 +691,22 @@ function Kernel.KernelExprAlgebra:stencil_prepare_stream(input)
   return Stencil.StencilKernelStreamPrepared(input.source, input.binding, Stencil.StencilStreamDef(
     input.id, input.binding.ty, Stencil.StencilStreamValueExpr(self.expr, input.binding.ty)))
 end
+function Value.ValueExpr:stencil_index_selection(input)
+  return Stencil.StencilIndexExplicit(Stencil.StencilIndexPoint(input.index))
+end
+function Value.ValueExprValue:stencil_index_selection(input)
+  if self.value == input.iteration.counter then return Stencil.StencilIndexProducer end
+  return Stencil.StencilIndexExplicit(Stencil.StencilIndexPoint(input.index))
+end
 function Stencil.StencilKernelCountedDomain1D:stencil_lane_stream(input)
   local stream, access = input.stream, input.access
+  local selection = stream.binding.expr.index:stencil_index_selection(
+    Stencil.StencilKernelIndexSelectionInput(
+      stream.construction.state.iteration, stream.binding.expr.index))
   return Stencil.StencilKernelStreamPrepared(
     stream.source, stream.binding, Stencil.StencilStreamDef(
       stream.id, stream.binding.ty, Stencil.StencilStreamAccess(
-        Stencil.StencilAccessRef(access.entry.access.name),
-        Stencil.StencilIndexExplicit(
-          Stencil.StencilIndexPoint(stream.binding.expr.index)))))
+        Stencil.StencilAccessRef(access.entry.access.name), selection)))
 end
 function Value.ValueExpr:stencil_project_window_index(input)
   return Stencil.StencilKernelWindowIndexRejected(
@@ -874,24 +882,26 @@ function Stencil.StencilKernelConstructionRejected:stencil_contribute_stream(_in
 
 function Stencil.StencilAccessByKernelLaneMissing:stencil_effect_access(effect_input)
   return Stencil.StencilKernelSinkPreparationRejected(
-    Stencil.StencilKernelUnsupportedEffect(effect_input.effect, "effect lane has no projected access"))
+    Stencil.StencilKernelUnsupportedEffect(
+      effect_input.effect.effect, "effect lane has no projected access"))
 end
 function Stencil.StencilStreamByKernelValueMissing:stencil_effect_value(effect_input)
   return Stencil.StencilKernelSinkPreparationRejected(
     Stencil.StencilKernelUnresolvedValue(self.value))
 end
 function Stencil.StencilStreamByKernelValueFound:stencil_effect_value(effect_input)
-  local effect = effect_input.effect
-  local dst = effect_input.construction.state.access_by_lane:lookup(effect.dst)
+  local effect = effect_input.effect.effect
+  local dst = effect_input.effect.construction.state.access_by_lane:lookup(effect.dst)
   return dst:stencil_effect_access_with_stream(
     Stencil.StencilKernelEffectStreamInput(effect_input, self.entry.definition))
 end
 function Stencil.StencilAccessByKernelLaneFound:stencil_effect_access_with_stream(input)
-  local effect_input = input.effect
+  local store_input = input.effect
   local sink = Stencil.StencilSinkDef(
     Stencil.StencilSinkId("kernel-sink:store:" .. sanitized(self.entry.lane.id.text)),
     Stencil.StencilSinkOpStore(
       Stencil.StencilAccessRef(self.entry.access.name),
+      store_input.index,
       Stencil.StencilStreamRef(input.definition.id),
       Stencil.StencilStoreElementwise))
   return Stencil.StencilKernelSinkPrepared({ sink })
@@ -899,16 +909,21 @@ end
 function Stencil.StencilAccessByKernelLaneMissing:stencil_effect_access_with_stream(input)
   return self:stencil_effect_access(input.effect)
 end
-function Kernel.KernelExprKernelValue:stencil_store_value(effect_input)
-  return effect_input.construction.state.stream_by_value:lookup(self.value):stencil_effect_value(effect_input)
+function Kernel.KernelExprKernelValue:stencil_store_value(store_input)
+  return store_input.effect.construction.state.stream_by_value:lookup(self.value)
+    :stencil_effect_value(store_input)
 end
-function Kernel.KernelExpr:stencil_store_value(effect_input)
+function Kernel.KernelExpr:stencil_store_value(store_input)
   return Stencil.StencilKernelSinkPreparationRejected(
-    Stencil.StencilKernelUnsupportedEffect(effect_input.effect,
+    Stencil.StencilKernelUnsupportedEffect(store_input.effect.effect,
       "store value is not a projected kernel binding"))
 end
 function Kernel.KernelEffectStore:stencil_prepare_sinks(input)
-  return self.value:stencil_store_value(input)
+  local selection = self.index:stencil_index_selection(
+    Stencil.StencilKernelIndexSelectionInput(
+      input.construction.state.iteration, self.index))
+  return self.value:stencil_store_value(
+    Stencil.StencilKernelStoreEffectInput(input, selection))
 end
 function Kernel.KernelEffectFold:stencil_prepare_sinks(_input)
   return Stencil.StencilKernelSinkDeferredToResult(self.reduction)

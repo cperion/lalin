@@ -178,6 +178,11 @@ assert(iteration.start == counted.start and iteration.stop == counted.stop)
 assert(iteration.step == step and iteration.step_magnitude == 1)
 assert(iteration.stop_convention == Stencil.StencilIterationStopExclusive)
 assert(iteration.order == Stencil.StencilProducerForward)
+local explicit_store_index = seven:stencil_index_selection(
+  Stencil.StencilKernelIndexSelectionInput(iteration, seven))
+assert(asdl.classof(explicit_store_index) == Stencil.StencilIndexExplicit)
+assert(asdl.classof(explicit_store_index.index) == Stencil.StencilIndexPoint)
+assert(explicit_store_index.index.expr == seven)
 
 local absent_counter_kernel = Kernel.KernelPlanned(
   Kernel.KernelId("kernel:absent-counter"), planned.subject,
@@ -249,7 +254,31 @@ assert(computation.accesses[1].role == Stencil.StencilAccessWrite)
 assert(#computation.streams == 3)
 assert(#computation.sinks == 1)
 assert(computation.sinks[1].op.dst.name == computation.accesses[1].name)
+assert(computation.sinks[1].op.index == Stencil.StencilIndexProducer)
 assert(computation.schedule.compiler == compiler)
+
+local store_effect_entry = store_kernel.body.effects.entries[1]
+local explicit_store_kernel = Kernel.KernelPlanned(
+  Kernel.KernelId("kernel:store:explicit"), store_kernel.subject, Kernel.KernelBody(
+    store_kernel.body.domain, store_kernel.body.lanes, store_kernel.body.bindings,
+    Kernel.KernelEffectProjection({
+      Kernel.KernelEffectByInstructionEntry(
+        store_effect_entry.inst, Kernel.KernelEffectStore(
+          store_effect_entry.effect.dst, seven, store_effect_entry.effect.value)),
+    }), Kernel.KernelResultVoid, store_kernel.body.equivalence))
+local explicit_store_schedule = Schedule.SchedulePlanned(
+  Schedule.ScheduleId("schedule:store:explicit"), explicit_store_kernel.id,
+  Schedule.ScheduleScalarIndex, {}, {})
+local explicit_store_projected = Stencil.StencilKernelProjectionInput(
+  module, graph, flow, semantics, explicit_store_kernel, explicit_store_schedule,
+  compiler, target, mem, effects):project_kernel_stencil()
+assert(asdl.classof(explicit_store_projected) ==
+  Stencil.StencilKernelProjected)
+local explicit_sink_index =
+  explicit_store_projected.projection.computation.sinks[1].op.index
+assert(asdl.classof(explicit_sink_index) == Stencil.StencilIndexExplicit)
+assert(asdl.classof(explicit_sink_index.index) == Stencil.StencilIndexPoint)
+assert(explicit_sink_index.index.expr == seven)
 
 local control_success = Code.CodeBlockId("control_success")
 local control_failure = Code.CodeBlockId("control_failure")

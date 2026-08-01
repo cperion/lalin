@@ -85,8 +85,8 @@ local alias_stream = Stencil.StencilStreamDef(
   Stencil.StencilStreamAlias(Stencil.StencilStreamRef(plus_stream_id)))
 local sink = Stencil.StencilSinkDef(
   sink_id, Stencil.StencilSinkOpStore(
-    Stencil.StencilAccessRef("out"), Stencil.StencilStreamRef(alias_stream_id),
-    Stencil.StencilStoreElementwise))
+    Stencil.StencilAccessRef("out"), Stencil.StencilIndexProducer,
+    Stencil.StencilStreamRef(alias_stream_id), Stencil.StencilStoreElementwise))
 local compiler = Stencil.StencilCompilerPolicy(
   Stencil.StencilCompilerGcc, Stencil.StencilOptO3, {})
 local schedule = Stencil.StencilScheduleScalar(compiler)
@@ -406,9 +406,8 @@ local function run_window(tag, boundary, expected, offset)
       }))
   local window_sink = Stencil.StencilSinkDef(
     Stencil.StencilSinkId(tag .. ":sink"), Stencil.StencilSinkOpStore(
-      Stencil.StencilAccessRef(output.name),
-      Stencil.StencilStreamRef(window_stream_id),
-      Stencil.StencilStoreElementwise))
+      Stencil.StencilAccessRef(output.name), Stencil.StencilIndexProducer,
+      Stencil.StencilStreamRef(window_stream_id), Stencil.StencilStoreElementwise))
   local window_computation = Stencil.StencilComputation(
     Stencil.StencilComputationId(tag), producer, { input_access, output },
     { window_stream }, { window_sink }, Stencil.StencilFusionLegality({}, {}, {}),

@@ -78,12 +78,12 @@ local nine_stream = Stencil.StencilStreamDef(
     Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("9"))), i32))
 local store1 = Stencil.StencilSinkDef(
   sink1_id, Stencil.StencilSinkOpStore(
-    Stencil.StencilAccessRef("out1"), Stencil.StencilStreamRef(stream1_id),
-    Stencil.StencilStoreElementwise))
+    Stencil.StencilAccessRef("out1"), Stencil.StencilIndexProducer,
+    Stencil.StencilStreamRef(stream1_id), Stencil.StencilStoreElementwise))
 local store2 = Stencil.StencilSinkDef(
   sink2_id, Stencil.StencilSinkOpStore(
-    Stencil.StencilAccessRef("out2"), Stencil.StencilStreamRef(stream2_id),
-    Stencil.StencilStoreElementwise))
+    Stencil.StencilAccessRef("out2"), Stencil.StencilIndexProducer,
+    Stencil.StencilStreamRef(stream2_id), Stencil.StencilStoreElementwise))
 local compiler = Stencil.StencilCompilerPolicy(
   Stencil.StencilCompilerGcc, Stencil.StencilOptO3, {})
 local schedule = Stencil.StencilScheduleScalar(compiler)

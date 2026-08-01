@@ -86,8 +86,8 @@ local const_stream = Stencil.StencilStreamDef(
     Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("7"))), i32))
 local sink = Stencil.StencilSinkDef(
   sink_id, Stencil.StencilSinkOpStore(
-    Stencil.StencilAccessRef("out"), Stencil.StencilStreamRef(stream_id),
-    Stencil.StencilStoreElementwise))
+    Stencil.StencilAccessRef("out"), Stencil.StencilIndexProducer,
+    Stencil.StencilStreamRef(stream_id), Stencil.StencilStoreElementwise))
 local compiler = Stencil.StencilCompilerPolicy(
   Stencil.StencilCompilerGcc, Stencil.StencilOptO3, {})
 local schedule = Stencil.StencilScheduleScalar(compiler)

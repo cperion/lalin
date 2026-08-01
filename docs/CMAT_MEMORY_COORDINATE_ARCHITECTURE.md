@@ -5,7 +5,8 @@
 This document defines the schema-first replacement for the disconnected
 `FlowCarrier` / `FlowAddress` / `LowerCarrierPlan` / `LowerAddressPlan`
 machinery in schema v2. It is the design authority for fused memory addressing.
-Implementation proceeds only through the gates named below.
+Implementation proceeds only through the gates named below. Gate 1 is complete;
+Gate 2 coordinate projection remains the next implementation boundary.
 
 ## Semantic center
 
@@ -116,9 +117,14 @@ elementwise store may select `StencilIndexProducer` only after the original
 `KernelEffectStore.index` is proven equal to the projected kernel counter. The
 index must not be dropped by convention.
 
-The spine is a derived CMat projection: stream and sink leaves contribute uses;
-non-memory leaves contribute none. Window offsets receive occurrence identity
-through `(stream, ordinal)`.
+The spine is a derived CMat projection. Every concrete stream and sink leaf owns
+an explicit contribution method; there is no parent empty default that can hide
+a new memory-bearing alternative. Centered accesses, gathers, stores, scans, and
+scatter sinks preserve `StencilIndexSelection`; nested point-window expressions
+contribute through immutable expression assembly. `StencilFoldStores` carries its
+exact selection. Non-memory leaves explicitly contribute none. Window offsets
+receive occurrence identity through `(stream, ordinal)`, including duplicate
+offset values.
 
 ## Gate 2 — coordinate facet
 
@@ -283,8 +289,10 @@ is an exact flow induction.
 Signatures are designed before bodies:
 
 ```text
-Stencil store-index projection leaf
-  -> StencilIndexSelection | typed kernel projection rejection
+Stencil `ValueExpr` index-selection leaf
+  :stencil_index_selection(StencilKernelIndexSelectionInput)
+  -> StencilIndexSelection
+
 
 Stencil stream/sink operation leaf
   :cmat_memory_uses(definition)
@@ -307,6 +315,11 @@ CMatCUseAddressing leaf
   :emit_place(input)
   -> CMat fragment place result
 ```
+
+Every closed `ValueExpr` alternative is representable as `StencilIndexPoint`, so
+the projection preserves non-counter indexes explicitly rather than inventing an
+unsupported alternative. Only an exact counter identity selects
+`StencilIndexProducer`; later C emission rejects explicit stores until Gate 3.
 
 No method may inspect a child class, return a selector string, use nil as an
 outcome, or carry semantic state in a Lua map.

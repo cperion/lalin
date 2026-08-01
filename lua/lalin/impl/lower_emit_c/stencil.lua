@@ -408,7 +408,17 @@ function Stencil.StencilSinkOp:cmat_c_emit_sink_op(state, def)
 end
 
 function Stencil.StencilSinkOpStore:cmat_c_emit_sink_op(state, def)
-  return state.values:cmat_c_lookup_stream(self.value):cmat_c_store_value(state, def, self.dst)
+  return self.index:cmat_c_emit_store_index(state, def, self)
+end
+function Stencil.StencilIndexProducer:cmat_c_emit_store_index(state, def, op)
+  return state.values:cmat_c_lookup_stream(op.value)
+    :cmat_c_store_value(state, def, op.dst)
+end
+function Stencil.StencilIndexExplicit:cmat_c_emit_store_index(_state, def, _op)
+  return CMat.CMatCSinkRejected({
+    CMat.CMatCEmissionUnsupportedSink(
+      def, "explicit store indexing requires a projected C address plan")
+  })
 end
 function CMat.CMatCStreamValueMissing:cmat_c_store_value(state, def, dst)
   return CMat.CMatCSinkRejected({ CMat.CMatCEmissionInvalidKernel(

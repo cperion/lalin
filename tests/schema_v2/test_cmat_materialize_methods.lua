@@ -14,7 +14,7 @@ local input = Stencil.StencilAccess("xs", Stencil.StencilAccessRead, i32, Stenci
 local output = Stencil.StencilAccess("out", Stencil.StencilAccessWrite, i32, Stencil.StencilAccessDirect(Stencil.StencilLayoutContiguous(4)))
 local stream_id = Stencil.StencilStreamId("x")
 local stream = Stencil.StencilStreamDef(stream_id, i32, Stencil.StencilStreamAccess(Stencil.StencilAccessRef("xs"), Stencil.StencilIndexProducer))
-local sink = Stencil.StencilSinkDef(Stencil.StencilSinkId("store"), Stencil.StencilSinkOpStore(Stencil.StencilAccessRef("out"), Stencil.StencilStreamRef(stream_id), Stencil.StencilStoreElementwise))
+local sink = Stencil.StencilSinkDef(Stencil.StencilSinkId("store"), Stencil.StencilSinkOpStore(Stencil.StencilAccessRef("out"), Stencil.StencilIndexProducer, Stencil.StencilStreamRef(stream_id), Stencil.StencilStoreElementwise))
 local computation = Stencil.StencilComputation(Stencil.StencilComputationId("map"), producer, { input, output }, { stream }, { sink }, Stencil.StencilFusionLegality({}, {}, {}), schedule, {})
 local result = computation:cmat_materialize(CMat.CMatMaterializationInput(CMat.CMatKernelId("map")))
 assert(asdl.classof(result) == CMat.CMatMaterializedFused)

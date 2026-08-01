@@ -1352,9 +1352,18 @@ function CMat.CMatCFragmentExprEmitted:cmat_finish_find_control(input)
     C.CBackendAtomLocal(self.state.index.id), self.atom, self.ty))
 end
 function Stencil.StencilSinkOpStore:cmat_fragment_emit_sink(state, sink)
-  return state.streams:cmat_fragment_lookup(self.value)
-:cmat_fragment_store_stream(
-  CMat.CMatCFragmentStoreRequest(state, sink, self.dst))
+  return self.index:cmat_fragment_emit_store_index(state, sink, self)
+end
+function Stencil.StencilIndexProducer:cmat_fragment_emit_store_index(state, sink, op)
+  return state.streams:cmat_fragment_lookup(op.value)
+    :cmat_fragment_store_stream(
+      CMat.CMatCFragmentStoreRequest(state, sink, op.dst))
+end
+function Stencil.StencilIndexExplicit:cmat_fragment_emit_store_index(_state, sink, _op)
+  return CMat.CMatCFragmentSinkRejected({
+    CMat.CMatCEmissionUnsupportedSink(
+      sink, "explicit store indexing requires a projected C address plan")
+  })
 end
 function CMat.CMatCFragmentStreamMissing:cmat_fragment_store_stream(_input)
   return CMat.CMatCFragmentSinkRejected({ CMat.CMatCEmissionMissingStream(self.stream) })

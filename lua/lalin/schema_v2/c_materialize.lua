@@ -5,6 +5,51 @@ return schema. LalinCMat {
   product. CMatKernelId { interned, text [str], },
   product. CMatLocalId { interned, text [str], },
 
+  sum. CMatMemoryUseId {
+    CMatStreamMemoryUse { variant_unique, stream [LalinStencil.StencilStreamRef], },
+    CMatWindowMemoryUse {
+      variant_unique,
+      stream [LalinStencil.StencilStreamRef],
+      ordinal [number],
+    },
+    CMatSinkMemoryUse { variant_unique, sink [LalinStencil.StencilSinkRef], },
+  },
+  sum. CMatMemoryUseRole {
+    CMatMemoryLoad,
+    CMatMemoryStore,
+  },
+  sum. CMatMemoryUseIndex {
+    CMatMemorySelectedIndex {
+      variant_unique,
+      selection [LalinStencil.StencilIndexSelection],
+    },
+    CMatMemoryWindowOffset {
+      variant_unique,
+      offset [LalinStencil.StencilWindowOffset],
+    },
+  },
+  product. CMatMemoryUse {
+    interned,
+    field. id [LalinCMat.CMatMemoryUseId],
+    access [LalinStencil.StencilAccessRef],
+    role [LalinCMat.CMatMemoryUseRole],
+    index [LalinCMat.CMatMemoryUseIndex],
+  },
+  product. CMatPointMemoryUseAssembly {
+    interned,
+    stream [LalinStencil.StencilStreamRef],
+    uses [many [LalinCMat.CMatMemoryUse]],
+    next_window_ordinal [number],
+  },
+  product. CMatMemoryUseContribution {
+    interned,
+    uses [many [LalinCMat.CMatMemoryUse]],
+  },
+  product. CMatMemoryUseSpine {
+    interned,
+    uses [many [LalinCMat.CMatMemoryUse]],
+  },
+
   sum. CMatConstCapability {
     CMatConstEligible,
     CMatConstIneligible { variant_unique, reason [str], },
