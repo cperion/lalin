@@ -576,7 +576,8 @@ local function compute_flow_facts(module, graph)
       end
     end
   end
-  return Flow.FlowFactSet(module.id, domains, edge_facts, loops, ranges, domain_shapes, domain_intents, {}, {}, rejects)
+  return Flow.FlowFactSet(
+    module.id, domains, edge_facts, loops, ranges, domain_shapes, domain_intents, rejects)
 end
 
 function Graph.CodeGraph:compute_flow(module)

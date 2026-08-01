@@ -50,8 +50,6 @@ local function make_loop_module(func_id, start_val, stop_val, step_val, stop_exc
         {},
         {},
         {},
-        {},
-        {},
         {}
     )
 

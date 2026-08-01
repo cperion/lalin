@@ -69,14 +69,12 @@ fused C and must not be revived.
 - preserve bounds, alignment, alias, mutability, and trap facts unchanged;
 - add equation and GCC `-O3` execution tests.
 
-### Gate D — delete obsolete vocabulary — in progress
+### Gate D — delete obsolete vocabulary — complete
 
-Schema-v2 `LowerCarrier*`, `LowerAddress*`, synthetic `sem_addr_*` generation,
-and the per-access projected source variant have been removed from canonical
-LOWER/CMat. `FlowCarrier*` and `FlowAddress*` remain in the shared old/v2 Flow
-context because the legacy compiler still consumes them; their final deletion is
-part of the old-schema ownership cutover, not a compatibility alias in the new
-address plan.
+`FlowCarrier*`, `FlowAddress*`, `LowerCarrier*`, `LowerAddress*`, synthetic
+carrier/address edge state, `sem_addr_*` generation, and the per-access projected
+source variant have been removed from both schema trees and all emitters. Legacy
+non-CMat Code emission now retains ordinary indexed places for GCC optimization.
 
 ## P1 — window coordinate generalization
 

@@ -5,9 +5,8 @@
 This document defines the schema-first replacement for the disconnected
 `FlowCarrier` / `FlowAddress` / `LowerCarrierPlan` / `LowerAddressPlan`
 machinery in schema v2. It is the design authority for fused memory addressing.
-Gates 1–3 are complete: exact memory uses project to exact coordinates and then
-to executable C address plans. The remaining retirement work is limited to the
-shared old-schema Flow ownership cutover described below.
+Gates 1–3 and the deletion sweep are complete: exact memory uses project to
+exact coordinates and then to executable C address plans.
 
 ## Semantic center
 
@@ -292,18 +291,18 @@ derived cursor local is never independently declared `restrict`.
 
 ## Retired vocabulary
 
-The schema-v2 CMat/LOWER cutover deletes rather than revives:
+The CMat/LOWER cutover deleted rather than revived:
 
+- `FlowCarrierThread`, `FlowCarrierTransfer`, and `FlowCarrierStep`;
+- `FlowAddressThread`, `FlowAddressUse`, and their `FlowFactSet` fields;
 - `LowerCarrierPlan` and its block/edge vocabulary;
 - `LowerAddressPlan`, synthetic address block parameters, edge transfers, lane
   lookups, and instruction-use projections;
 - per-access `CMatCFragmentAccessAddressProjected`.
 
-The older shared Flow context still declares and produces `FlowCarrier*` and
-`FlowAddress*` for the legacy compiler path. Canonical schema-v2 LOWER/CMat does
-not consume them. Their final deletion belongs to the old-schema ownership
-cutover; removing them from only the schema-v2 declaration would break the
-shared context-bound implementation.
+Both old and schema-v2 declarations are gone. The remaining legacy Code emitter
+uses ordinary indexed places when it does not enter canonical CMat; GCC owns
+strength reduction for that fallback path.
 
 Those declarations mix checked recurrence analysis, eliminated-CFG transport,
 and backend locals into a false spine. The fused loop and its memory-use spine
@@ -366,6 +365,6 @@ outcome, or carry semantic state in a Lua map.
    non-unit, nonzero-start, and constant-offset cursor equations.
 5. **GCC tests — active**: cursor preheader/step execution, centered loads and
    stores, multi-sink uses, windows, folds, and early exits execute under `-O3`.
-6. **Deletion sweep — partial**: stale schema-v2 LOWER/address-plan and projected
-   CMat source vocabulary is gone. Shared old-context `FlowCarrier*` /
-   `FlowAddress*` retirement remains part of the old-schema ownership cutover.
+6. **Deletion sweep — complete**: old and schema-v2 Flow/LOWER carrier/address
+   transfer vocabulary, synthetic address locals, and projected CMat access
+   sources are gone.

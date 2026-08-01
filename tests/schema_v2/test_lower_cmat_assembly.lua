@@ -352,7 +352,7 @@ assert(asdl.classof(missing_result.issues[1]) == Lower.LowerIssueFragmentRejecte
 ----------------------------------------------------------------------
 
 local flow_facts = Flow.FlowFactSet(
-  module.id, {}, {}, {}, {}, {}, {}, {}, {}, {})
+  module.id, {}, {}, {}, {}, {}, {}, {})
 local value_facts = Value.ValueFactSet(module.id, {}, {}, {})
 local mem_facts = Mem.MemSemanticFactSet(module.id, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 local effect_facts = Effect.EffectFactSet(module.id, {}, {}, {})

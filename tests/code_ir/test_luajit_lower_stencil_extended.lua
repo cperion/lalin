@@ -240,8 +240,6 @@ do
         base_flow.ranges,
         { shape_fact },
         base_flow.domain_intents or {},
-        base_flow.carriers or {},
-        base_flow.addresses or {},
         base_flow.rejects
     )
     compile_module(module, contracts, {

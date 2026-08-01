@@ -35,10 +35,6 @@ local function bind_context(T)
     local function c_sig_id(id) return C.CBackendFuncSigId(sanitize(id.text)) end
     local function c_synth_local_id(prefix, id) return C.CBackendLocalId(sanitize(prefix .. ":" .. id.text)) end
     local function c_synth_local_id2(prefix, id, suffix) return C.CBackendLocalId(sanitize(prefix .. ":" .. id.text .. ":" .. suffix)) end
-    local function c_compact_synth_local(c_emission, prefix)
-        c_emission.next_compact_synth_local = (c_emission.next_compact_synth_local or 0) + 1
-        return C.CBackendLocalId(sanitize(prefix .. ":" .. tostring(c_emission.next_compact_synth_local)))
-    end
 
     local function add_helper(c_emission, spec)
         local id = spec:c_helper_id()
@@ -283,61 +279,9 @@ local function bind_context(T)
     function Code.CodePlaceField:lower_code_place_to_c(c_emission)
         return C.CBackendPlaceField(place_to_c(c_emission, self.base), C.CBackendName(field_name(self.field)), c_ty(c_emission, self.ty), self.offset, self.size, self.align)
     end
-    function Lower.LowerAddressInstUse:code_to_c_matches_current_inst(c_emission)
-        return c_emission.current_func_id ~= nil
-            and c_emission.current_block_id ~= nil
-            and c_emission.current_inst_id ~= nil
-            and self.inst.func == c_emission.current_func_id
-            and self.inst.block == c_emission.current_block_id
-            and self.inst.inst == c_emission.current_inst_id
-    end
-    function Lower.LowerAddressPlan:code_to_c_matches_current_inst(c_emission)
-        for _, use in ipairs(self.insts or {}) do if use:code_to_c_matches_current_inst(c_emission) then return true end end
-        return false
-    end
-    function Lower.LowerCarrierPlan:code_to_c_param_for_current_block(c_emission)
-        if c_emission.current_func_id == nil or c_emission.current_block_id == nil then return nil end
-        for _, param in ipairs(self.blocks or {}) do
-            if param.block.func == c_emission.current_func_id and param.block.block == c_emission.current_block_id then return param end
-        end
-        return nil
-    end
-    function Lower.LowerAddressBlockParam:code_to_c_matches_current_block(c_emission)
-        return c_emission.current_func_id ~= nil
-            and c_emission.current_block_id ~= nil
-            and self.block.func == c_emission.current_func_id
-            and self.block.block == c_emission.current_block_id
-    end
-    function Lower.LowerAddressPlan:code_to_c_param_for_current_block(c_emission)
-        for _, param in ipairs(self.blocks or {}) do if param:code_to_c_matches_current_block(c_emission) then return param end end
-        return nil
-    end
-    function Lower.LowerAddressStrategy:code_to_c_place(plan, c_emission, ty)
-        error("code_to_c: unsupported LowerAddressStrategy " .. node_name(self), 2)
-    end
-    function Lower.LowerAddressReject:code_to_c_place(plan, c_emission, ty)
-        error("code_to_c: rejected LowerAddressPlan " .. plan.address.text .. ": " .. self.reason, 2)
-    end
-    function Lower.LowerAddressCarryProjected:code_to_c_place(plan, c_emission, ty)
-        local param = plan:code_to_c_param_for_current_block(c_emission)
-        if param == nil then error("code_to_c: carried LowerAddressPlan has no block param for current block " .. plan.address.text, 2) end
-        return C.CBackendPlaceDeref(C.CBackendAtomLocal(param.param), c_ty(c_emission, ty), nil)
-    end
-    function Lower.LowerAddressPlan:code_to_c_place(c_emission, ty)
-        if not self:code_to_c_matches_current_inst(c_emission) then return nil end
-        return self.strategy:code_to_c_place(self, c_emission, ty)
-    end
-    local function lower_address_place_for_current_inst(c_emission, ty)
-        for _, address in ipairs(c_emission.lower_addresses or {}) do
-            local place = address:code_to_c_place(c_emission, ty)
-            if place ~= nil then return place end
-        end
-        return nil
-    end
     function Code.CodePlaceIndex:lower_code_place_to_c(c_emission)
-        local address_place = lower_address_place_for_current_inst(c_emission, self.ty)
-        if address_place ~= nil then return address_place end
-        return C.CBackendPlaceIndex(place_to_c(c_emission, self.base), atom(self.index), c_ty(c_emission, self.ty), self.elem_size)
+        return C.CBackendPlaceIndex(place_to_c(c_emission, self.base),
+            atom(self.index), c_ty(c_emission, self.ty), self.elem_size)
     end
     function Code.CodePlaceBytes:lower_code_place_to_c(c_emission)
         return C.CBackendPlaceBytes(atom(self.base), self.offset, c_ty(c_emission, self.ty), self.size, self.align)
@@ -721,117 +665,6 @@ local function bind_context(T)
         return term:lower_code_term_to_c(c_emission)
     end
 
-    function Lower.LowerCarrierBlockParam:code_to_c_label_text() return c_label(self.block.block).text end
-    function Lower.LowerCarrierPlan:code_to_c_param_for_label(label_text) for _, param in ipairs(self.blocks or {}) do if param:code_to_c_label_text() == label_text then return param end end; return nil end
-    function Lower.LowerCarrierPlan:code_to_c_applies_to_func(func) for _, param in ipairs(self.blocks or {}) do if param.block.func == func.id then return true end end; return false end
-    function Lower.LowerCarrierEdgeTransfer:code_to_c_matches_labels(source_label, dest_label) return c_label(self.edge.from.block).text == source_label and c_label(self.edge.to.block).text == dest_label end
-    function Lower.LowerCarrierPlan:code_to_c_transfer_for_labels(source_label, dest_label) for _, transfer in ipairs(self.transfers or {}) do if transfer:code_to_c_matches_labels(source_label, dest_label) then return transfer end end; return nil end
-    function Lower.LowerCarrierEdgeSource:code_to_c_arg(c_emission, plan, transfer, source_label) return nil, {} end
-    function Lower.LowerCarrierEdgeRecompute:code_to_c_arg(c_emission, plan, transfer, source_label) return atom(self.index), {} end
-    function Lower.LowerCarrierEdgeCarrySame:code_to_c_arg(c_emission, plan, transfer, source_label) local p=plan:code_to_c_param_for_label(source_label); if p==nil then return nil,{} end; return C.CBackendAtomLocal(p.param),{} end
-    local function carrier_add_arg(c_emission, plan, source_label, suffix, rhs)
-        local p = plan:code_to_c_param_for_label(source_label); if p == nil then return nil, {} end
-        local dst = c_compact_synth_local(c_emission, "carrier_next")
-        c_emission.synthetic_carrier_locals = c_emission.synthetic_carrier_locals or {}; c_emission.synthetic_carrier_locals[dst.text] = plan.value_ty
-        return C.CBackendAtomLocal(dst), { C.CBackendHelperCall(dst, add_helper(c_emission, C.CBackendHelperIntBinary(Core.BinAdd, c_ty(c_emission, plan.value_ty), C.CBackendIntWrap)), { C.CBackendAtomLocal(p.param), rhs }) }
-    end
-    function Lower.LowerCarrierEdgeCarryConst:code_to_c_arg(c_emission, plan, transfer, source_label) return carrier_add_arg(c_emission, plan, source_label, sanitize(source_label .. transfer.dest_param.text), C.CBackendAtomLiteral(c_ty(c_emission, plan.value_ty), Core.LitInt(tostring(self.amount)))) end
-    function Lower.LowerCarrierEdgeCarryDynamic:code_to_c_arg(c_emission, plan, transfer, source_label) return carrier_add_arg(c_emission, plan, source_label, sanitize(source_label .. transfer.dest_param.text), atom(self.step)) end
-    function Lower.LowerCarrierEdgeTransfer:code_to_c_arg(c_emission, plan, source_label) return self.source:code_to_c_arg(c_emission, plan, self, source_label) end
-
-    function Lower.LowerAddressBlockParam:code_to_c_label_text() return c_label(self.block.block).text end
-    function Lower.LowerAddressPlan:code_to_c_param_for_label(label_text) for _, param in ipairs(self.blocks or {}) do if param:code_to_c_label_text() == label_text then return param end end; return nil end
-    function Lower.LowerAddressPlan:code_to_c_applies_to_func(func) for _, param in ipairs(self.blocks or {}) do if param.block.func == func.id then return true end end; return false end
-    function Lower.LowerAddressEdgeTransfer:code_to_c_matches_labels(source_label, dest_label) return c_label(self.edge.from.block).text == source_label and c_label(self.edge.to.block).text == dest_label end
-    function Lower.LowerAddressPlan:code_to_c_transfer_for_labels(source_label, dest_label) for _, transfer in ipairs(self.transfers or {}) do if transfer:code_to_c_matches_labels(source_label,dest_label) then return transfer end end; return nil end
-    function Lower.LowerAddressEdgeSource:code_to_c_arg(c_emission, plan, transfer, source_label) return nil, {} end
-    local function zero_index_atom(c_emission) return C.CBackendAtomLiteral(C.CBackendIndex, Core.LitInt("0")) end
-    local function address_ptr_temp(c_emission, plan, suffix, rhs, prefix)
-        local dst = c_compact_synth_local(c_emission, "address_next")
-        c_emission.synthetic_address_locals = c_emission.synthetic_address_locals or {}; c_emission.synthetic_address_locals[dst.text] = Code.CodeTyDataPtr(plan.base.elem_ty)
-        local pre = {}
-        for _, st in ipairs(prefix or {}) do pre[#pre + 1] = st end
-        pre[#pre + 1] = C.CBackendAssign(dst, rhs)
-        return C.CBackendAtomLocal(dst), pre
-    end
-    function Lower.LowerAddressEdgeRecomputeFromCarrier:code_to_c_arg(c_emission, plan, transfer, source_label)
-        local base_pre, base = plan.base.base:code_to_c_materialize_atom(c_emission)
-        if base == nil then error("code_to_c: cannot materialize address base for " .. plan.address.text, 2) end
-        return address_ptr_temp(c_emission, plan, sanitize(source_label .. transfer.dest_param.text), C.CBackendRPtrOffset(base, atom(self.index), plan.base.elem_size, 0), base_pre)
-    end
-    function Lower.LowerAddressEdgeCarrySame:code_to_c_arg(c_emission, plan, transfer, source_label)
-        local p = plan:code_to_c_param_for_label(source_label); if p == nil then return nil, {} end
-        return C.CBackendAtomLocal(p.param), {}
-    end
-    function Lower.LowerAddressEdgeCarryConstBytes:code_to_c_arg(c_emission, plan, transfer, source_label)
-        local p = plan:code_to_c_param_for_label(source_label); if p == nil then return nil, {} end
-        return address_ptr_temp(c_emission, plan, sanitize(source_label .. transfer.dest_param.text), C.CBackendRPtrOffset(C.CBackendAtomLocal(p.param), zero_index_atom(c_emission), 1, self.amount))
-    end
-    function Lower.LowerAddressEdgeCarryDynamicBytes:code_to_c_arg(c_emission, plan, transfer, source_label)
-        local p = plan:code_to_c_param_for_label(source_label); if p == nil then return nil, {} end
-        return address_ptr_temp(c_emission, plan, sanitize(source_label .. transfer.dest_param.text), C.CBackendRPtrOffset(C.CBackendAtomLocal(p.param), atom(self.step), self.elem_size, 0))
-    end
-    function Lower.LowerAddressEdgeTransfer:code_to_c_arg(c_emission, plan, source_label) return self.source:code_to_c_arg(c_emission, plan, self, source_label) end
-
-    local function append_args(base, extra) local out={}; for i=1,#(base or {}) do out[i]=base[i] end; for i=1,#(extra or {}) do out[#out+1]=extra[i] end; return out end
-    local function edge_carrier_args(c_emission, source_label, dest_label)
-        local args, pre = {}, {}
-        for _, plan in ipairs(c_emission.lower_carriers or {}) do
-            local dest_param = plan:code_to_c_param_for_label(dest_label)
-            local transfer=plan:code_to_c_transfer_for_labels(source_label,dest_label)
-            if dest_param ~= nil and transfer == nil then error("code_to_c: missing carrier transfer " .. plan.carrier.text .. " from " .. source_label .. " to " .. dest_label, 2) end
-            if transfer~=nil then local arg,pre_=transfer:code_to_c_arg(c_emission,plan,source_label); if arg==nil then error("code_to_c: failed carrier transfer " .. plan.carrier.text .. " from " .. source_label .. " to " .. dest_label, 2) end; for _,st in ipairs(pre_ or {}) do pre[#pre+1]=st end; args[#args+1]=arg end
-        end
-        return args, pre
-    end
-    local function edge_address_args(c_emission, source_label, dest_label)
-        local args, pre = {}, {}
-        for _, plan in ipairs(c_emission.lower_addresses or {}) do
-            local dest_param = plan:code_to_c_param_for_label(dest_label)
-            local transfer=plan:code_to_c_transfer_for_labels(source_label,dest_label)
-            if dest_param ~= nil and transfer == nil then error("code_to_c: missing address transfer " .. plan.address.text .. " from " .. source_label .. " to " .. dest_label, 2) end
-            if transfer~=nil then local arg,pre_=transfer:code_to_c_arg(c_emission,plan,source_label); if arg==nil then error("code_to_c: failed address transfer " .. plan.address.text .. " from " .. source_label .. " to " .. dest_label, 2) end; for _,st in ipairs(pre_ or {}) do pre[#pre+1]=st end; args[#args+1]=arg end
-        end
-        return args, pre
-    end
-    local function edge_lower_args(c_emission, source_label, dest_label)
-        local cargs, cpre = edge_carrier_args(c_emission, source_label, dest_label); if cargs == nil then return nil, nil end
-        local aargs, apre = edge_address_args(c_emission, source_label, dest_label); if aargs == nil then return nil, nil end
-        local args, pre = {}, {}
-        for _, a in ipairs(cargs) do args[#args+1] = a end; for _, a in ipairs(aargs) do args[#args+1] = a end
-        for _, st in ipairs(cpre or {}) do pre[#pre+1] = st end; for _, st in ipairs(apre or {}) do pre[#pre+1] = st end
-        return args, pre
-    end
-    function C.CBackendTerminator:code_to_c_apply_carrier_edges(c_emission, source_label) return self, {} end
-    function C.CBackendGoto:code_to_c_apply_carrier_edges(c_emission, source_label) local extra,pre=edge_lower_args(c_emission,source_label,self.dest.text); if extra==nil then return self,{} end; return C.CBackendGoto(self.dest,append_args(self.args,extra)),pre end
-    local function edge_transfer_label(c_emission, source_label, dest_label, suffix)
-        c_emission.next_edge_transfer = (c_emission.next_edge_transfer or 0) + 1
-        return C.CBackendLabel(sanitize("edge_xfer:" .. source_label .. ":" .. dest_label .. ":" .. suffix .. ":" .. tostring(c_emission.next_edge_transfer)))
-    end
-    local function edge_transfer_dest(c_emission, source_label, dest, args, extra, pre, suffix)
-        if #(pre or {}) == 0 then return dest, append_args(args, extra) end
-        local label = edge_transfer_label(c_emission, source_label, dest.text, suffix)
-        c_emission.edge_transfer_blocks = c_emission.edge_transfer_blocks or {}
-        c_emission.edge_transfer_blocks[#c_emission.edge_transfer_blocks + 1] = C.CBackendBlock(label, {}, pre, C.CBackendGoto(dest, append_args(args, extra)))
-        return label, {}
-    end
-    function C.CBackendIfGoto:code_to_c_apply_carrier_edges(c_emission, source_label)
-        local te,tp=edge_lower_args(c_emission,source_label,self.then_dest.text); local ee,ep=edge_lower_args(c_emission,source_label,self.else_dest.text); if te==nil or ee==nil then return self,{} end
-        local then_dest, then_args = edge_transfer_dest(c_emission, source_label, self.then_dest, self.then_args, te, tp, "then")
-        local else_dest, else_args = edge_transfer_dest(c_emission, source_label, self.else_dest, self.else_args, ee, ep, "else")
-        return C.CBackendIfGoto(self.cond, then_dest, then_args, else_dest, else_args), {}
-    end
-    function C.CBackendSwitchCase:code_to_c_apply_carrier_edge(c_emission, source_label)
-        local extra,pre=edge_lower_args(c_emission,source_label,self.dest.text); if extra==nil then return self end
-        local dest,args=edge_transfer_dest(c_emission,source_label,self.dest,self.args,extra,pre,"case")
-        return C.CBackendSwitchCase(self.literal,dest,args)
-    end
-    function C.CBackendSwitchGoto:code_to_c_apply_carrier_edges(c_emission, source_label)
-        local de,dp=edge_lower_args(c_emission,source_label,self.default_dest.text); if de==nil then return self,{} end
-        local default_dest,default_args=edge_transfer_dest(c_emission,source_label,self.default_dest,self.default_args,de,dp,"default")
-        local cases={}; for i=1,#self.cases do cases[i]=self.cases[i]:code_to_c_apply_carrier_edge(c_emission,source_label) end
-        return C.CBackendSwitchGoto(self.value,cases,default_dest,default_args),{}
-    end
 
     function Code.CodeInst:append_code_to_c_locals(c_emission, add)
         self.op:append_code_to_c_locals(c_emission, self, add)
@@ -984,8 +817,6 @@ local function bind_context(T)
         c_emission.param_values = {}
         c_emission.value_types = {}
         c_emission.const_atoms = {}
-        c_emission.synthetic_address_locals = nil
-        c_emission.synthetic_carrier_locals = nil
         local params = {}
         for i = 1, #(func.params or {}) do
             c_emission.param_values[func.params[i].value.text] = true
@@ -997,11 +828,8 @@ local function bind_context(T)
         end
         local locals = collect_value_locals(c_emission, func)
         c_emission.current_func_id = func.id
-        local saved_lower_carriers, saved_lower_addresses = c_emission.lower_carriers, c_emission.lower_addresses
-        if c_emission.lower_skip_funcs and c_emission.lower_skip_funcs[func.id.text] then c_emission.lower_carriers, c_emission.lower_addresses = {}, {} end
         local blocks = {}
         for i = 1, #(func.blocks or {}) do
-            c_emission.edge_transfer_blocks = {}
             local b = func.blocks[i]
             c_emission.current_block_id = b.id
             local stmts = {}
@@ -1013,29 +841,11 @@ local function bind_context(T)
             c_emission.current_inst_id = nil
             local params_ = {}
             for j = 1, #(b.params or {}) do params_[j] = C.CBackendBlockParam(c_local_id(b.params[j].value), c_ty(c_emission, b.params[j].ty)) end
-            for _, plan in ipairs(c_emission.lower_carriers or {}) do
-                local param = plan:code_to_c_param_for_label(c_label(b.id).text)
-                if param ~= nil and param.block.func == func.id then params_[#params_ + 1] = C.CBackendBlockParam(param.param, c_ty(c_emission, param.value_ty)) end
-            end
-            for _, plan in ipairs(c_emission.lower_addresses or {}) do
-                local param = plan:code_to_c_param_for_label(c_label(b.id).text)
-                if param ~= nil and param.block.func == func.id then params_[#params_ + 1] = C.CBackendBlockParam(param.param, c_ty(c_emission, Code.CodeTyDataPtr(param.elem_ty))) end
-            end
             local term = term_to_c(c_emission, b.term)
-            local carrier_pre
-            term, carrier_pre = term:code_to_c_apply_carrier_edges(c_emission, c_label(b.id).text)
-            for _, st in ipairs(carrier_pre or {}) do stmts[#stmts + 1] = st end
             blocks[#blocks + 1] = C.CBackendBlock(c_label(b.id), params_, stmts, term)
-            for _, edge_block in ipairs(c_emission.edge_transfer_blocks or {}) do blocks[#blocks + 1] = edge_block end
-            c_emission.edge_transfer_blocks = nil
         end
         c_emission.current_block_id = nil
         c_emission.current_func_id = nil
-        c_emission.lower_carriers, c_emission.lower_addresses = saved_lower_carriers, saved_lower_addresses
-        for id, ty in pairs(c_emission.synthetic_address_locals or {}) do locals[#locals + 1] = C.CBackendLocal(C.CBackendLocalId(id), C.CBackendName(id), c_ty(c_emission, ty)) end
-        for id, ty in pairs(c_emission.synthetic_carrier_locals or {}) do locals[#locals + 1] = C.CBackendLocal(C.CBackendLocalId(id), C.CBackendName(id), c_ty(c_emission, ty)) end
-        c_emission.synthetic_address_locals = nil
-        c_emission.synthetic_carrier_locals = nil
         local visibility = (func.linkage == Code.CodeLinkageExport) and Core.VisibilityExport or Core.VisibilityLocal
         return C.CBackendFunc(
             c_name(func.name),
@@ -1302,8 +1112,6 @@ local function bind_context(T)
             else result, c_type_projection = CodeType.code_type_to_c(c_type_projection, s.results[1]) end
             sigs[#sigs + 1] = C.CBackendFuncSig(c_sig_id(s.id), params, result)
         end
-        local lower_carrier_by_id = {}
-        for _, carrier in ipairs((opts.lower and opts.lower.carriers) or {}) do lower_carrier_by_id[carrier.carrier.text] = carrier end
         local c_emission = {
             module_name = module_name,
             target = CodeType.normalize_target(opts.target or opts.c_target or opts),
@@ -1312,10 +1120,6 @@ local function bind_context(T)
             helpers_by_id = {}, helper_order = {}, helpers = {},
             layout_env = opts.layout_env,
             c_type_layouts = c_type_layout_index(opts.layout_env),
-            lower_carriers = (opts.lower and opts.lower.carriers) or {},
-            lower_addresses = (opts.lower and opts.lower.addresses) or {},
-            lower_carrier_by_id = lower_carrier_by_id,
-            lower_skip_funcs = opts.lower_skip_funcs,
         }
         for i = 1, #(code_module.sigs or {}) do c_emission.sigs[code_module.sigs[i].id.text] = code_module.sigs[i] end
         for i = 1, #(code_module.funcs or {}) do c_emission.funcs[code_module.funcs[i].id.text] = code_module.funcs[i] end

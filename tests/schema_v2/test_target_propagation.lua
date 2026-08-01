@@ -23,7 +23,7 @@ local graph = Graph.CodeGraph(module_id, {})
 local spine = Lower.LowerBackSpine(module, graph, target)
 assert(spine.target == target, "LowerBackSpine must preserve the selected target")
 
-local flow = Flow.FlowFactSet(module_id, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+local flow = Flow.FlowFactSet(module_id, {}, {}, {}, {}, {}, {}, {})
 local values = Value.ValueFactSet(module_id, {}, {}, {})
 local memory = Mem.MemSemanticFactSet(module_id, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 local effects = Effect.EffectFactSet(module_id, {}, {}, {})

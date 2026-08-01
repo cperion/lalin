@@ -452,7 +452,9 @@ local function bind_context(T)
                 end
             end
         end
-        return Flow.FlowFactSet(module.id, domains, edge_facts, loops, ranges, domain_shapes, domain_intents, {}, {}, rejects)
+        return Flow.FlowFactSet(
+            module.id, domains, edge_facts, loops, ranges,
+            domain_shapes, domain_intents, rejects)
     end
 
     local function is_primary_induction(induction)

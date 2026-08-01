@@ -22,7 +22,7 @@ local induction_b = Flow.FlowInduction(
 local flow = Flow.FlowFactSet(module, { da, db }, {}, {
   Flow.FlowLoopFacts(a, da, counted, {}, { induction_a }, {}, {}),
   Flow.FlowLoopFacts(b, db, counted, {}, { induction_b }, {}, {})
-}, {}, {}, {}, {}, {}, {})
+}, {}, {}, {}, {})
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local zero = Value.ValueExprConst(Code.CodeConstLiteral(i32, require("lalin.schema_v2.core").LitInt("0")))
 local trip_a = Flow.FlowTripCountExact(Code.CodeValueId("trip:a"), nil, nil)

@@ -3,6 +3,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 local asdl = require("lalin.asdl")
 local T = require("lalin.schema_v2")
 local Lower = T.LalinLower
+local Flow = T.LalinFlow
 
 local function field_names(cls)
   local result = {}
@@ -12,6 +13,8 @@ end
 
 assert(field_names(Lower.LowerCModuleInput) ==
   "spine,plan,materializations")
+assert(not Flow.FlowCarrierId and not Flow.FlowAddressId)
+assert(not Lower.LowerCarrierPlan and not Lower.LowerAddressPlan)
 assert(field_names(Lower.LowerCTermEdgeOrigin) == "source,term")
 assert(field_names(Lower.LowerCIncomingEdgeArguments) ==
   "origin,occurrence,destination,args")

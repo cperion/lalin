@@ -48,8 +48,10 @@ assert(c_artifact.source:find("semantic_cmat_load", 1, true), "inline CMat shoul
 assert(c_artifact.source:find("semantic_cmat_bin", 1, true), "inline CMat should own point algebra")
 assert(not c_artifact.source:find("ml_stencil_store_n", 1, true), "main emit_c path must inline CMat, not call/outline a stencil C function")
 assert(not c_artifact.source:find("semantic vector main loop", 1, true), "old direct vector KernelEffect emitter must not be present")
-assert(c_artifact.source:find("semantic_carrier_", 1, true), "semantic loop lowering should emit LowerCarrierPlan carrier carries")
-assert(c_artifact.source:find("semantic_address_", 1, true), "semantic loop lowering should emit carried LowerAddressPlan address state")
+assert(not c_artifact.source:find("semantic_carrier_", 1, true),
+    "retired Flow carrier locals must not return")
+assert(not c_artifact.source:find("semantic_address_", 1, true),
+    "retired projected address locals must not return")
 assert(not c_artifact.source:find(")[v_zip_add_control_param_parsed_1_parsed_1_body_i]", 1, true), "semantic lane memory should use CMat/access materialization, not rediscovered indexed direct effect emission")
 
 if command_ok("command -v gcc >/dev/null 2>&1") then

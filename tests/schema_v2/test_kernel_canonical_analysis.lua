@@ -62,7 +62,7 @@ local induction = Flow.FlowInduction(
   Flow.FlowRangeUnknown(index))
 local flow = Flow.FlowFactSet(module_id, { domain }, {}, {
   Flow.FlowLoopFacts(loop_id, domain, counted, { graph_block }, { induction }, {}, {})
-}, {}, {}, {}, {}, {}, {})
+}, {}, {}, {}, {})
 local trip = Flow.FlowTripCountExact(Code.CodeValueId("trip"), nil, nil)
 local zero = Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("0")))
 local seven = Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("7")))

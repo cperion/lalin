@@ -91,7 +91,7 @@ local flow = Flow.FlowFactSet(module_id, { domain }, {}, {
   Flow.FlowDomainShapeFact(domain, Flow.FlowDomainShapeRange1D(
     i32, Value.ValueExprValue(start), Value.ValueExprValue(stop),
     1, Flow.FlowDomainForward), {}, Flow.FlowFactCheckerDerived),
-}, {}, {}, {}, {})
+}, {}, {})
 local trip = Flow.FlowTripCountExact(Code.CodeValueId("trip"), nil, nil)
 local zero = Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("0")))
 local seven = Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("7")))
@@ -211,7 +211,7 @@ local inclusive_counted = Flow.FlowCountedDomain(
 local inclusive_flow = Flow.FlowFactSet(module_id, { domain }, {}, {
   Flow.FlowLoopFacts(
     loop_id, domain, inclusive_counted, { graph_block }, { induction }, {}, {})
-}, {}, {}, {}, {}, {}, {})
+}, {}, {}, {}, {})
 local inclusive_semantics = inclusive_flow:compute_semantic_flow(module, graph)
 local inclusive_iteration = Stencil.StencilKernelIterationInput(
   module, graph, planned, inclusive_flow, inclusive_semantics)
@@ -367,7 +367,7 @@ local window_flow = Flow.FlowFactSet(module_id, { domain }, {}, {
   Flow.FlowLoopFacts(loop_id, domain, counted, { graph_block }, { induction }, {}, {})
 }, {}, {
   Flow.FlowDomainShapeFact(domain, window_shape, {}, Flow.FlowFactCheckerDerived),
-}, {}, {}, {}, {})
+}, {}, {})
 local window_semantics = window_flow:compute_semantic_flow(module, graph)
 local window_result = Kernel.KernelResultAll(
   Kernel.KernelExprLaneLoad(planned.body.lanes.entries[1].lane, window_index),
@@ -540,7 +540,7 @@ assert(module_projection.entries[1].kernel == store_kernel.id)
 assert(module_projection.entries[1].result.projection.computation.sinks[1].op.dst.name ==
   computation.sinks[1].op.dst.name)
 local stale_flow = Flow.FlowFactSet(
-  module_id, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+  module_id, {}, {}, {}, {}, {}, {}, {})
 local stale_module_projection = Stencil.StencilKernelModuleProjectionInput(
   module, graph, stale_flow, semantics, module_kernels, module_schedules, compiler)
 :project_kernel_module()
@@ -557,7 +557,7 @@ local unknown_counted = Flow.FlowCountedDomain(
 local unknown_flow = Flow.FlowFactSet(module_id, { domain }, {}, {
   Flow.FlowLoopFacts(
     loop_id, domain, unknown_counted, { graph_block }, { induction }, {}, {})
-}, {}, {}, {}, {}, {}, {})
+}, {}, {}, {}, {})
 local unknown_semantics = Flow.FlowSemanticFactSet(module_id, {
   Flow.FlowLoopNormalizedCounted(
     loop_id, unknown_counted, Flow.FlowLoopDirectionUnknown, trip),
@@ -571,7 +571,7 @@ local decreasing_counted = Flow.FlowCountedDomain(
 local decreasing_flow = Flow.FlowFactSet(module_id, { domain }, {}, {
   Flow.FlowLoopFacts(
     loop_id, domain, decreasing_counted, { graph_block }, { induction }, {}, {})
-}, {}, {}, {}, {}, {}, {})
+}, {}, {}, {}, {})
 local decreasing_semantics = Flow.FlowSemanticFactSet(module_id, {
   Flow.FlowLoopNormalizedCounted(
     loop_id, decreasing_counted, Flow.FlowLoopDecreasing, trip),

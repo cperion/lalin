@@ -22,7 +22,7 @@ local schedules = Schedule.ScheduleModulePlan(Code.CodeModuleId("m"), Schedule.S
 local projection = schedules:lower_schedule_projection()
 assert(asdl.classof(projection:lookup(kernel_id)) == Lower.LowerScheduleByKernelFound)
 assert(asdl.classof(projection:lookup(Kernel.KernelId("missing"))) == Lower.LowerScheduleByKernelMissing)
-local kernel_projection = Kernel.KernelModulePlan(Code.CodeModuleId("m"), Flow.FlowFactSet(Code.CodeModuleId("m"), {}, {}, {}, {}, {}, {}, {}, {}, {}, {}), Value.ValueFactSet(Code.CodeModuleId("m"), {}, {}, {}), require("lalin.schema_v2.mem").MemSemanticFactSet(Code.CodeModuleId("m"), {}, {}, {}, {}, {}, {}, {}, {}, {}, {}), require("lalin.schema_v2.effect").EffectFactSet(Code.CodeModuleId("m"), {}, {}, {}), { plan }):lower_kernel_projection()
+local kernel_projection = Kernel.KernelModulePlan(Code.CodeModuleId("m"), Flow.FlowFactSet(Code.CodeModuleId("m"), {}, {}, {}, {}, {}, {}, {}), Value.ValueFactSet(Code.CodeModuleId("m"), {}, {}, {}), require("lalin.schema_v2.mem").MemSemanticFactSet(Code.CodeModuleId("m"), {}, {}, {}, {}, {}, {}, {}, {}, {}, {}), require("lalin.schema_v2.effect").EffectFactSet(Code.CodeModuleId("m"), {}, {}, {}), { plan }):lower_kernel_projection()
 local candidate = kernel_projection:lookup(loop):lower_fragment_candidate(projection)
 assert(asdl.classof(candidate) == Lower.LowerFragmentKernelCandidate)
 assert(candidate.kernel == plan and candidate.schedule == schedule)
