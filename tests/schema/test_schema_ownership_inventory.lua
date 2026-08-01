@@ -4,7 +4,7 @@ local expected_names = {
   "bind", "check", "c", "c_materialize", "code", "compiler", "core", "effect",
   "exec", "flow", "graph", "init", "kernel", "lower", "mem", "parse",
   "phase", "project", "schedule", "sem", "source", "stencil",
-  "stencil_machine", "tree", "type", "value",
+  "tree", "type", "value",
 }
 table.sort(expected_names)
 
@@ -31,7 +31,6 @@ local ownership = {
   sem = { namespace = "LalinSem", owner = "lua/lalin/schema_v2/sem.lua" },
   source = { namespace = "LalinSource", owner = "lua/lalin/schema_v2/source.lua" },
   stencil = { namespace = "LalinStencil", owner = "lua/lalin/schema_v2/stencil.lua" },
-  stencil_machine = { namespace = "LalinStencilMachine", owner = "lua/lalin/schema_v2/stencil_machine.lua" },
   tree = { namespace = "LalinTree", owner = "lua/lalin/schema_v2/tree.lua" },
   type = { namespace = "LalinType", owner = "lua/lalin/schema_v2/type.lua" },
   value = { namespace = "LalinValue", owner = "lua/lalin/schema_v2/value.lua" },
@@ -60,8 +59,8 @@ for name in pairs(old_names) do
 end
 table.sort(duplicates)
 
-assert(#duplicates == 26, "schema ownership inventory must contain exactly 26 duplicate names, got " .. tostring(#duplicates))
-assert(#expected_names == 26)
+assert(#duplicates == 25, "schema ownership inventory must contain exactly 25 duplicate names, got " .. tostring(#duplicates))
+assert(#expected_names == 25)
 for i = 1, #expected_names do
   assert(duplicates[i] == expected_names[i], "schema ambiguity changed at slot " .. tostring(i) .. ": expected " .. expected_names[i] .. ", got " .. tostring(duplicates[i]))
 end
@@ -111,5 +110,5 @@ assert(v2_init:find('require("lalin.schema.luajit")', 1, true), "legacy stencil-
 assert(not v2_init:find('require("lalin.schema.luatrace")', 1, true), "LuaTrace must remain excluded from schema-v2")
 assert(not old_names.native and not v2_names.native, "retired native copy-patch schema must be absent")
 
-io.write("schema ownership inventory ok: 26 duplicate names, one intended owner each\n")
+io.write("schema ownership inventory ok: 25 duplicate names, one intended owner each\n")
 
