@@ -1085,7 +1085,8 @@ function Lower.LowerCMatAccessSourceReady:lower_cmat_finish_access(input)
   entries[#entries + 1] = CMat.CMatCFragmentAccessBindingEntry(
     input.fact.binding.access, input.fact.provenance.lane.id,
     input.fact.mem_access, self.source, input.fact.elem_size,
-    input.fact.stride, input.fact.alignment)
+    input.fact.stride, input.fact.alignment, input.fact.bounds,
+    input.fact.trap, input.fact.movement)
   return Lower.LowerCMatAccessBuildReady(
     Lower.LowerCMatAccessCollection(entries))
 end
@@ -1182,9 +1183,52 @@ function Lower.LowerCMatAccessPatternRejected:lower_cmat_continue_pattern(_evide
   return Lower.LowerCMatAccessesRejected(self.issue)
 end
 function Lower.LowerCMatAccessPatternAdmitted:lower_cmat_continue_pattern(evidence)
+  return evidence.backend.bounds:lower_cmat_admit_contract(evidence)
+:lower_cmat_continue_contract(evidence)
+end
+
+function Mem.MemBoundsUnknown:lower_cmat_admit_contract(evidence)
+  return Lower.LowerCMatAccessContractRejected(access_issue(
+    evidence.binding.access, "fused access requires exact bounds evidence"))
+end
+function Mem.MemBoundsInObject:lower_cmat_admit_contract(evidence)
+  return evidence.backend.trap:lower_cmat_admit_contract(evidence)
+end
+function Mem.MemBoundsRange:lower_cmat_admit_contract(evidence)
+  return evidence.backend.trap:lower_cmat_admit_contract(evidence)
+end
+function Mem.MemBoundsAssumed:lower_cmat_admit_contract(evidence)
+  return evidence.backend.trap:lower_cmat_admit_contract(evidence)
+end
+
+function Mem.MemMayTrap:lower_cmat_admit_contract(evidence)
+  return Lower.LowerCMatAccessContractRejected(access_issue(
+    evidence.binding.access, "potentially trapping access cannot enter fused CMat"))
+end
+function Mem.MemCheckedTrap:lower_cmat_admit_contract(evidence)
+  return Lower.LowerCMatAccessContractRejected(access_issue(
+    evidence.binding.access, "checked trapping order cannot enter fused CMat"))
+end
+function Mem.MemNonTrapping:lower_cmat_admit_contract(evidence)
+  return evidence.backend.movement:lower_cmat_admit_contract(evidence)
+end
+
+function Mem.MemMovementPinned:lower_cmat_admit_contract(evidence)
+  return Lower.LowerCMatAccessContractRejected(access_issue(
+    evidence.binding.access, "pinned access cannot enter fused CMat: " .. self.reason))
+end
+function Mem.MemMovementMovable:lower_cmat_admit_contract(_evidence)
+  return Lower.LowerCMatAccessContractAdmitted
+end
+
+function Lower.LowerCMatAccessContractRejected:lower_cmat_continue_contract(_evidence)
+  return Lower.LowerCMatAccessesRejected(self.issue)
+end
+function Lower.LowerCMatAccessContractAdmitted:lower_cmat_continue_contract(evidence)
   local fact = Lower.LowerCMatAccessFact(
     evidence.binding, evidence.provenance, evidence.mem_access,
-    evidence.backend.alignment, evidence.elem_size, evidence.stride)
+    evidence.backend.alignment, evidence.backend.bounds, evidence.backend.trap,
+    evidence.backend.movement, evidence.elem_size, evidence.stride)
   local source_input = Lower.LowerCMatAccessSourceInput(
     fact, evidence.request.values)
   return source_input:lower_cmat_access_source()

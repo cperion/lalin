@@ -87,14 +87,27 @@ whole projection. Forward, backward, unit, and non-unit element-distance behavio
 executes through GCC `-O3` tests. No loose metric tuples or inferred relative
 coordinates remain.
 
-## P1 — fusion contract recomputation
+## P1 — fusion contract recomputation — admission complete
 
-After coordinate/fusion changes:
+CMat access admission is now the exact conjunction of preserved backend facts:
 
-- recompute bounds, alias, alignment, mutability, and movement contracts;
-- retain exact noalias evidence requirements for `restrict`;
-- generalize multi-sink and supported window fusion only through typed plans;
-- reject unsupported combinations rather than installing fallback protocols.
+- bounds must be `MemBoundsInObject`, `MemBoundsRange`, or an explicit
+  `MemBoundsAssumed`; unknown bounds reject;
+- the access must be `MemNonTrapping` and `MemMovementMovable`; checked,
+  potentially trapping, or pinned accesses reject;
+- alignment, bounds, trap, and movement evidence are carried into each fragment
+  binding and validated against the exact provenance lane;
+- mutability remains derived from the authored Stencil access role;
+- `restrict` remains derived only from exact declared pairwise noalias facts.
+
+No pointer-shape inference, aggregate option bag, or fallback legality protocol is
+introduced. Unsupported combinations reject through typed LOWER/CMat results.
+
+A numeric aggregate window-footprint proof remains a separate schema gate. Current
+`MemBounds` proves or assumes each authored access but does not name the fused
+`(lower, upper, extent, step, boundary)` footprint. That proof must become an
+explicit ASDL guarantee before any compiler claims the aggregate footprint itself
+was checked; it must not be inferred from pointer shape or emitted masks.
 
 ## P2 — schema ownership cutover
 

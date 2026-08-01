@@ -361,6 +361,9 @@ return schema. LalinCMat {
     elem_size [number],
     stride [number],
     alignment [LalinMem.MemAlignment],
+    bounds [LalinMem.MemBounds],
+    trap [LalinMem.MemTrap],
+    movement [LalinMem.MemMovementDecision],
   },
   product. CMatCFragmentAccessBindingProjection {
     interned,

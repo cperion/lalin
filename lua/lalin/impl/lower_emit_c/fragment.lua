@@ -2610,12 +2610,15 @@ function CMat.CMatMaterializedKernelFragment:cmat_validate_fragment_materializat
       local expected_ty = provenance.access.ty:code_to_c_backend_type()
       local expected_size = expected_ty:cmat_fragment_size(request.target)
       local expected_stride = provenance.access.layout:cmat_fragment_direct_stride()
-      local alignment_matches = 0
+      local contract_matches = 0
       for k = 1, #provenance.lane.backend_info do
         local info = provenance.lane.backend_info[k]
         if info.access == binding.mem_access
-            and info.alignment == binding.alignment then
-          alignment_matches = alignment_matches + 1
+            and info.alignment == binding.alignment
+            and info.bounds == binding.bounds
+            and info.trap == binding.trap
+            and info.movement == binding.movement then
+          contract_matches = contract_matches + 1
         end
       end
       if provenance.lane.id == binding.lane
@@ -2623,7 +2626,7 @@ function CMat.CMatMaterializedKernelFragment:cmat_validate_fragment_materializat
           and binding.elem_size == expected_size
           and binding.stride == expected_stride
           and expected_size > 0 and expected_stride > 0
-          and alignment_matches == 1 then
+          and contract_matches == 1 then
         for k = 1, #provenance.lane.accesses do
           if provenance.lane.accesses[k] == binding.mem_access then
             matches = matches + 1

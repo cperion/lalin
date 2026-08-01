@@ -87,6 +87,8 @@ assert(CMat.CMatMaterializedKernelFragment and CMat.CMatRejectedKernelFragment)
 assert(CMat.CMatCFragmentEmitted and CMat.CMatCFragmentRejected)
 assert(CMat.CMatCExternalValueBindingFound and CMat.CMatCExternalValueBindingMissing)
 assert(CMat.CMatCFragmentAccessDirect)
+assert(field_names(CMat.CMatCFragmentAccessBindingEntry) ==
+  "access,lane,mem_access,source,elem_size,stride,alignment,bounds,trap,movement")
 assert(not CMat.CMatCFragmentAccessAddressProjected)
 assert(not CMat.CMatCIterationAddressing)
 assert(CMat.CMatCFragmentAccessBindingFound and CMat.CMatCFragmentAccessBindingMissing)

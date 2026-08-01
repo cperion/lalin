@@ -316,6 +316,27 @@ Address realization must not derive or alter:
 These remain fields of their existing memory/access facets. In particular, a
 derived cursor local is never independently declared `restrict`.
 
+## Fusion contract admission
+
+Every CMat fragment access binding carries the exact alignment, bounds, trap, and
+movement facts from its provenance lane. Admission is leaf-owned and conservative:
+
+- unknown bounds reject; object/range/explicitly-assumed bounds proceed;
+- potentially trapping or checked-trapping accesses reject;
+- pinned accesses reject; only `MemMovementMovable` proceeds;
+- fragment validation requires one exact matching provenance contract;
+- mutability remains the authored Stencil role;
+- `restrict` still requires exact declared pairwise noalias evidence.
+
+Address realization may consume these facts but cannot strengthen them. Window
+boundary transformation and fused scheduling therefore never manufacture safety
+or alias evidence.
+
+This gate validates exact contract presence and provenance, not a numeric aggregate
+window footprint. Existing `MemBounds` alternatives do not name the fused lower,
+upper, extent, step, and boundary relation. A future footprint guarantee must model
+that relation explicitly in ASDL; emitted clamp/wrap/zero code is not proof.
+
 ## Retired vocabulary
 
 The CMat/LOWER cutover deleted rather than revived:

@@ -199,10 +199,14 @@ local external_values = CMat.CMatCExternalValueBindingProjection({
 local fragment_accesses = CMat.CMatCFragmentAccessBindingProjection({
   CMat.CMatCFragmentAccessBindingEntry(
     Stencil.StencilAccessRef("input"), input_lane_id, input_access_id,
-    CMat.CMatCFragmentAccessDirect(input_param), 4, 4, Mem.MemAlignKnown(4)),
+    CMat.CMatCFragmentAccessDirect(input_param), 4, 4, Mem.MemAlignKnown(4),
+    input_lane.backend_info[1].bounds, input_lane.backend_info[1].trap,
+    input_lane.backend_info[1].movement),
   CMat.CMatCFragmentAccessBindingEntry(
     Stencil.StencilAccessRef("out"), lane_id, access_id,
-    CMat.CMatCFragmentAccessDirect(out_param), 4, 8, Mem.MemAlignKnown(4)),
+    CMat.CMatCFragmentAccessDirect(out_param), 4, 8, Mem.MemAlignKnown(4),
+    lane.backend_info[1].bounds, lane.backend_info[1].trap,
+    lane.backend_info[1].movement)
 })
 function CMat.CMatMemorySelectedIndex:test_coordinate(basis, _domain)
   local Lower = require("lalin.schema_v2.lower")
@@ -297,7 +301,9 @@ local emitted = request:emit_cmat_fragment()
 local bad_fragment_accesses = CMat.CMatCFragmentAccessBindingProjection({
   CMat.CMatCFragmentAccessBindingEntry(
     Stencil.StencilAccessRef("input"), input_lane_id, input_access_id,
-    CMat.CMatCFragmentAccessDirect(input_param), 4, 8, Mem.MemAlignKnown(4)),
+    CMat.CMatCFragmentAccessDirect(input_param), 4, 8, Mem.MemAlignKnown(4),
+    input_lane.backend_info[1].bounds, input_lane.backend_info[1].trap,
+    input_lane.backend_info[1].movement),
   fragment_accesses.entries[2],
 })
 local bad_access_emission = CMat.CMatCFragmentInput(

@@ -51,6 +51,10 @@ assert(field_names(Lower.LowerCMatWindowRelativeCoordinate) ==
 assert(field_names(Lower.LowerCMatWindowDynamicCoordinate) ==
   "basis,provenance,const_offset_bytes")
 assert(Lower.LowerCMatCoordinateWindowBoundaryUnsupported)
+assert(field_names(Lower.LowerCMatAccessFact) ==
+  "binding,provenance,mem_access,alignment,bounds,trap,movement,elem_size,stride")
+assert(Lower.LowerCMatAccessContractAdmitted and
+  Lower.LowerCMatAccessContractRejected)
 assert(Lower.LowerCMatCoordinateWindowDistanceOutsideExtent)
 assert(Lower.LowerBackEmitInput == nil, "obsolete generic lower input must be removed")
 assert(Lower.LowerCEmitInput == nil, "obsolete generic C emit input must be removed")

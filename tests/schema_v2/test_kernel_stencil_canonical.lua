@@ -420,7 +420,8 @@ local fragment_accesses = CMat.CMatCFragmentAccessBindingProjection({
   CMat.CMatCFragmentAccessBindingEntry(
     Stencil.StencilAccessRef(computation.accesses[1].name),
     store_kernel.body.lanes.entries[1].lane.id, access_id,
-    CMat.CMatCFragmentAccessDirect(base_local), 4, 4, Mem.MemAlignKnown(4)),
+    CMat.CMatCFragmentAccessDirect(base_local), 4, 4, Mem.MemAlignKnown(4),
+    backend.bounds, backend.trap, backend.movement)
 })
 local fragment_namespace = CMat.CMatCFragmentNamespace("kernel_store")
 local fragment_address_plan = cmat_state.coordinates.facet

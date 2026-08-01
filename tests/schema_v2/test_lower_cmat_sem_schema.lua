@@ -472,7 +472,9 @@ local lane = Kernel.KernelLane(
   })
 local provenance_access = Stencil.StencilAccessByKernelLaneEntry(lane, access)
 local fact = Lower.LowerCMatAccessFact(
-  binding, provenance_access, mem_access, Mem.MemAlignKnown(4), 4, 4)
+  binding, provenance_access, mem_access, Mem.MemAlignKnown(4),
+  Mem.MemBoundsInObject("fixture"), Mem.MemNonTrapping("fixture"),
+  Mem.MemMovementMovable("fixture"), 4, 4)
 local c_i32 = i32:code_to_c_backend_type()
 local base_local = C.CBackendLocal(
   C.CBackendLocalId("base_ptr"), C.CBackendName("base_ptr"),
@@ -505,6 +507,10 @@ local built_accesses = Lower.LowerCMatAccessBuildRequest(
 assert(asdl.classof(built_accesses) == Lower.LowerCMatAccessesReady)
 assert(#built_accesses.accesses.entries == 1)
 assert(built_accesses.accesses.entries[1].mem_access == mem_access)
+assert(built_accesses.accesses.entries[1].bounds == lane.backend_info[1].bounds)
+assert(built_accesses.accesses.entries[1].trap == lane.backend_info[1].trap)
+assert(built_accesses.accesses.entries[1].movement ==
+  lane.backend_info[1].movement)
 assert(asdl.classof(built_accesses.accesses.entries[1].source) ==
   CMat.CMatCFragmentAccessDirect)
 local second_access = Mem.MemAccessId("access_second")

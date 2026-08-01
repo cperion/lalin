@@ -168,11 +168,17 @@ local absolute_base = C.CBackendLocal(
 local address_accesses = CMat.CMatCFragmentAccessBindingProjection({
   CMat.CMatCFragmentAccessBindingEntry(
     xs_ref, lane.id, access_id, CMat.CMatCFragmentAccessDirect(xs_base),
-    4, 4, Mem.MemAlignKnown(4)),
+    4, 4, Mem.MemAlignKnown(4),
+    Mem.MemBoundsInObject("coordinate fixture"),
+    Mem.MemNonTrapping("coordinate fixture"),
+    Mem.MemMovementMovable("coordinate fixture")),
   CMat.CMatCFragmentAccessBindingEntry(
     absolute_ref, absolute_lane.id, absolute_access_id,
     CMat.CMatCFragmentAccessDirect(absolute_base),
-    4, 4, Mem.MemAlignKnown(4)),
+    4, 4, Mem.MemAlignKnown(4),
+    Mem.MemBoundsInObject("absolute coordinate fixture"),
+    Mem.MemNonTrapping("absolute coordinate fixture"),
+    Mem.MemMovementMovable("absolute coordinate fixture"))
 })
 local plan_input = CMat.CMatCAddressPlanInput(
   iteration, address_accesses, CMat.CMatCFragmentNamespace("coord"))

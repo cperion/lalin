@@ -172,10 +172,14 @@ local values = CMat.CMatCExternalValueBindingProjection({
 local accesses = CMat.CMatCFragmentAccessBindingProjection({
   CMat.CMatCFragmentAccessBindingEntry(
     Stencil.StencilAccessRef("out1"), lane1_id, access1_id,
-    CMat.CMatCFragmentAccessDirect(out1_local), 4, 4, Mem.MemAlignKnown(4)),
+    CMat.CMatCFragmentAccessDirect(out1_local), 4, 4, Mem.MemAlignKnown(4),
+    lane1.backend_info[1].bounds, lane1.backend_info[1].trap,
+    lane1.backend_info[1].movement),
   CMat.CMatCFragmentAccessBindingEntry(
     Stencil.StencilAccessRef("out2"), lane2_id, access2_id,
-    CMat.CMatCFragmentAccessDirect(out2_local), 4, 4, Mem.MemAlignKnown(4)),
+    CMat.CMatCFragmentAccessDirect(out2_local), 4, 4, Mem.MemAlignKnown(4),
+    lane2.backend_info[1].bounds, lane2.backend_info[1].trap,
+    lane2.backend_info[1].movement)
 })
 local address_spine = materialization.kernel:cmat_memory_use_spine()
 assert(#address_spine.uses == 2)

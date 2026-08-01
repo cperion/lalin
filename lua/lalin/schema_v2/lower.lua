@@ -798,6 +798,9 @@ return schema. LalinLower {
     provenance [LalinStencil.StencilAccessByKernelLaneEntry],
     mem_access [LalinMem.MemAccessId],
     alignment [LalinMem.MemAlignment],
+    bounds [LalinMem.MemBounds],
+    trap [LalinMem.MemTrap],
+    movement [LalinMem.MemMovementDecision],
     elem_size [number],
     stride [number],
   },
@@ -863,6 +866,13 @@ return schema. LalinLower {
   sum. LowerCMatAccessPatternAdmission {
     LowerCMatAccessPatternAdmitted,
     LowerCMatAccessPatternRejected {
+      variant_unique,
+      issue [LalinLower.LowerIssue],
+    },
+  },
+  sum. LowerCMatAccessContractAdmission {
+    LowerCMatAccessContractAdmitted,
+    LowerCMatAccessContractRejected {
       variant_unique,
       issue [LalinLower.LowerIssue],
     },
