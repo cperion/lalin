@@ -122,8 +122,7 @@ local function bind_context(T)
                 T.LalinCompiler.CompilerCCodegenRequest(
                     code_result, target, T.LalinStencil.StencilCompilerPolicy(
                         T.LalinStencil.StencilCompilerGcc,
-                        T.LalinStencil.StencilOptO3,
-                        T.LalinStencil.StencilMachineNative, {})))
+                        T.LalinStencil.StencilOptO3, {})))
         end
         opts.c_target = target
         opts.target = target

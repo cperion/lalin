@@ -88,11 +88,10 @@ local sink = Stencil.StencilSinkDef(
     Stencil.StencilAccessRef("out"), Stencil.StencilStreamRef(alias_stream_id),
     Stencil.StencilStoreElementwise))
 local compiler = Stencil.StencilCompilerPolicy(
-  Stencil.StencilCompilerGcc, Stencil.StencilOptO3,
-  Stencil.StencilMachineNative, {})
+  Stencil.StencilCompilerGcc, Stencil.StencilOptO3, {})
 local schedule = Stencil.StencilScheduleScalar(compiler)
 local computation = Stencil.StencilComputation(
-  Stencil.StencilMetastencilId("counted_fragment"), producer,
+  Stencil.StencilComputationId("counted_fragment"), producer,
   { input_access, output }, { stream, plus_stream, alias_stream }, { sink },
   Stencil.StencilFusionLegality({}, {}, {}), schedule, {})
 local function backend_info(mem_access)
@@ -297,7 +296,7 @@ local fold_sink = Stencil.StencilSinkDef(
       Stencil.StencilArithmeticInteger(exact_int)),
     i32, Stencil.StencilReduceInitIdentity, Stencil.StencilFoldReturnsValue))
 local fold_computation = Stencil.StencilComputation(
-  Stencil.StencilMetastencilId("counted_fragment_fold"), producer, {},
+  Stencil.StencilComputationId("counted_fragment_fold"), producer, {},
   { fold_stream }, { fold_sink }, Stencil.StencilFusionLegality({}, {}, {}),
   schedule, {})
 local fold_planned = Kernel.KernelPlanned(
@@ -411,7 +410,7 @@ local function run_window(tag, boundary, expected, offset)
       Stencil.StencilStreamRef(window_stream_id),
       Stencil.StencilStoreElementwise))
   local window_computation = Stencil.StencilComputation(
-    Stencil.StencilMetastencilId(tag), producer, { input_access, output },
+    Stencil.StencilComputationId(tag), producer, { input_access, output },
     { window_stream }, { window_sink }, Stencil.StencilFusionLegality({}, {}, {}),
     Stencil.StencilScheduleScalar(compiler), {})
   local source_window = Flow.FlowDomainShapeFact(
@@ -514,7 +513,7 @@ local function compile_bool_control(tag, sink_op, result, result_provenance)
   local sink = Stencil.StencilSinkDef(
     Stencil.StencilSinkId(tag .. ":sink"), sink_op(control_stream_id))
   local computation = Stencil.StencilComputation(
-    Stencil.StencilMetastencilId(tag), producer, {}, { control_stream }, { sink },
+    Stencil.StencilComputationId(tag), producer, {}, { control_stream }, { sink },
     Stencil.StencilFusionLegality({}, {}, {}),
     Stencil.StencilScheduleScalar(compiler), {})
   local control_body = Kernel.KernelBody(
@@ -670,7 +669,7 @@ local compare_sink = Stencil.StencilSinkDef(compare_sink_id,
     Stencil.StencilStreamRef(compare_left_stream.id),
     Stencil.StencilStreamRef(compare_right_stream.id), Core.CmpLt))
 local compare_computation = Stencil.StencilComputation(
-  Stencil.StencilMetastencilId(compare_tag), producer, {},
+  Stencil.StencilComputationId(compare_tag), producer, {},
   { compare_left_stream, compare_right_stream }, { compare_sink },
   Stencil.StencilFusionLegality({}, {}, {}),
   Stencil.StencilScheduleScalar(compiler), {})
@@ -767,7 +766,7 @@ local find_stream = Stencil.StencilStreamDef(
 local find_sink = Stencil.StencilSinkDef(find_sink_id, Stencil.StencilSinkOpFind(
   Stencil.StencilStreamRef(find_stream_id), find_pred, find_sentinel))
 local find_computation = Stencil.StencilComputation(
-  Stencil.StencilMetastencilId(find_tag), producer, {}, { find_stream }, { find_sink },
+  Stencil.StencilComputationId(find_tag), producer, {}, { find_stream }, { find_sink },
   Stencil.StencilFusionLegality({}, {}, {}),
   Stencil.StencilScheduleScalar(compiler), {})
 local find_planned = Kernel.KernelPlanned(

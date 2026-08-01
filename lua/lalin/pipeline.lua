@@ -21,7 +21,6 @@ require("lalin.impl.code_validate")
 require("lalin.impl.compiler_result")
 require("lalin.impl.stencil_plan")
 require("lalin.impl.stencil_reduction")
-require("lalin.impl.stencil_metastencil")
 require("lalin.impl.stencil_c")
 require("lalin.impl.exec_plan")
 
