@@ -423,11 +423,28 @@ return schema. LalinLower {
     LowerCBlockCovered,
     LowerCBlockOutsideCoverage,
   },
-  product. LowerCIncomingEdgeArguments {
+  product. LowerCTermEdgeOrigin {
     interned,
     source [LalinCode.CodeBlockId],
+    term [LalinCode.CodeTermId],
+  },
+  sum. LowerCTermEdgeOccurrence {
+    LowerCTermEdgeOnly,
+    LowerCTermEdgeThen,
+    LowerCTermEdgeElse,
+    LowerCTermEdgeCase { variant_unique, ordinal [number], },
+    LowerCTermEdgeDefault,
+  },
+  product. LowerCIncomingEdgeArguments {
+    interned,
+    origin [LalinLower.LowerCTermEdgeOrigin],
+    occurrence [LalinLower.LowerCTermEdgeOccurrence],
     destination [LalinCode.CodeBlockId],
     args [many [LalinCode.CodeValueId]],
+  },
+  product. LowerCIncomingEdgeProjection {
+    interned,
+    entries [many [LalinLower.LowerCIncomingEdgeArguments]],
   },
   product. LowerCBlockParamEntry {
     interned,
@@ -450,7 +467,7 @@ return schema. LalinLower {
   },
   product. LowerCIncomingBlockArgument {
     interned,
-    source [LalinCode.CodeBlockId],
+    edge [LalinLower.LowerCIncomingEdgeArguments],
     ordinal [number],
     field. value [LalinLower.LowerCValueTypeEntry],
     definition [LalinLower.LowerCValueDefinitionSite],
@@ -460,7 +477,7 @@ return schema. LalinLower {
     interned,
     func [LalinCode.CodeFuncId],
     replacement [LalinCode.CodeBlockId],
-    source [LalinCode.CodeBlockId],
+    edge [LalinLower.LowerCIncomingEdgeArguments],
     ordinal [number],
     field. value [LalinLower.LowerCValueTypeEntry],
     definition [LalinLower.LowerCValueDefinitionSite],

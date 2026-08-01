@@ -12,6 +12,17 @@ end
 
 assert(field_names(Lower.LowerCModuleInput) ==
   "spine,plan,materializations")
+assert(field_names(Lower.LowerCTermEdgeOrigin) == "source,term")
+assert(field_names(Lower.LowerCIncomingEdgeArguments) ==
+  "origin,occurrence,destination,args")
+assert(field_names(Lower.LowerCIncomingEdgeProjection) == "entries")
+assert(field_names(Lower.LowerCIncomingBlockArgument) ==
+  "edge,ordinal,value,definition,evidence")
+assert(field_names(Lower.LowerCIncomingArgumentInput) ==
+  "func,replacement,edge,ordinal,value,definition,dominance")
+assert(Lower.LowerCTermEdgeOnly and Lower.LowerCTermEdgeThen and
+  Lower.LowerCTermEdgeElse and Lower.LowerCTermEdgeCase and
+  Lower.LowerCTermEdgeDefault)
 assert(field_names(Lower.LowerFragmentEmissionInput) == "spine,code_func,plan,fragment,signatures,carriers,addresses")
 assert(field_names(Lower.LowerCFragment) == "blocks,locals,helpers,block_mappings,value_mappings")
 assert(field_names(Lower.LowerModule) == "module,target,kernels,schedules,carriers,addresses,funcs,issues")
