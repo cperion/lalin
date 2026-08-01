@@ -34,7 +34,8 @@ function CMat.CMatMemoryUse:lower_cmat_coordinate(input)
         self.id, self.access, #found))
   end
   return found[1]:lower_cmat_coordinate_memory(
-    Lower.LowerCMatLaneCoordinateInput(self, input.iteration, input.memory))
+    Lower.LowerCMatLaneCoordinateInput(
+      self, input.iteration, input.domain, input.memory))
 end
 
 function Stencil.StencilAccessByKernelLaneEntry:lower_cmat_coordinate_memory(input)
@@ -64,7 +65,8 @@ function Stencil.StencilAccessByKernelLaneEntry:lower_cmat_coordinate_memory(inp
         input.use.id, access_id, #found))
   end
   return Lower.LowerCMatUseMemoryFact(
-    input.use, input.iteration, self, found[1]):lower_cmat_coordinate_fact()
+    input.use, input.iteration, input.domain, self, found[1])
+:lower_cmat_coordinate_fact()
 end
 
 function Lower.LowerCMatUseMemoryFact:lower_cmat_coordinate_fact()
@@ -75,7 +77,7 @@ function Lower.LowerCMatUseMemoryFact:lower_cmat_coordinate_fact()
   end
   return self.memory.index:lower_cmat_index_coordinate(
     Lower.LowerCMatIndexCoordinateInput(
-      self.use, self.iteration, self.memory, self.memory.index))
+      self.use, self.iteration, self.domain, self.memory, self.memory.index))
 end
 
 function Mem.MemIndexNone:lower_cmat_index_coordinate(input)
@@ -117,16 +119,9 @@ function Stencil.StencilIndexExplicit:lower_cmat_value_coordinate(input)
 end
 
 function CMat.CMatMemoryWindowOffset:lower_cmat_induction_coordinate(input)
-  if self.offset.axis.index ~= 1 then
-    return Lower.LowerCMatUseCoordinateRejected(
-      Lower.LowerCMatCoordinateWindowAxisDisagreement(
-        input.use.id, self.offset))
-  end
-  local index = input.index
-  return index.induction.role:lower_cmat_align_induction(
-    Lower.LowerCMatInductionAlignmentInput(
-      input.use, input.memory.base, input.iteration, index.induction,
-      index.elem_size, index.const_offset + self.offset.offset * index.elem_size))
+  return input.domain:lower_cmat_window_coordinate(
+    Lower.LowerCMatWindowCoordinateInput(
+      input.use, input.memory.base, input.iteration, input.index, self.offset))
 end
 function CMat.CMatMemorySelectedIndex:lower_cmat_induction_coordinate(input)
   return self.selection:lower_cmat_induction_coordinate(input)
@@ -176,6 +171,108 @@ function Flow.FlowDerivedInduction:lower_cmat_align_induction(input)
 end
 function Flow.FlowPointerInduction:lower_cmat_align_induction(input)
   return induction_disagreement(input, Lower.LowerCMatAlignmentRole)
+end
+
+function Stencil.StencilKernelCountedDomain1D:lower_cmat_window_coordinate(input)
+  return Lower.LowerCMatUseCoordinateRejected(
+    Lower.LowerCMatCoordinateWindowDomainMissing(input.use.id, self))
+end
+
+local function finite_integer(value)
+  return type(value) == "number" and value == value
+    and value ~= math.huge and value ~= -math.huge
+    and value == math.floor(value)
+end
+
+function Stencil.StencilKernelCountedWindow1D:lower_cmat_window_coordinate(input)
+  if input.offset.axis.index ~= 1 then
+    return Lower.LowerCMatUseCoordinateRejected(
+      Lower.LowerCMatCoordinateWindowAxisDisagreement(
+        input.use.id, input.offset))
+  end
+  local before = self.window.extent.before.elements
+  local after = self.window.extent.after.elements
+  if not finite_integer(before) or not finite_integer(after)
+      or before < 0 or after < 0 then
+    return Lower.LowerCMatUseCoordinateRejected(
+      Lower.LowerCMatCoordinateWindowExtentInvalid(
+        input.use.id, self.window.extent))
+  end
+  local distance = input.offset.distance.elements
+  if not finite_integer(distance) then
+    return Lower.LowerCMatUseCoordinateRejected(
+      Lower.LowerCMatCoordinateWindowDistanceInvalid(
+        input.use.id, input.offset.distance))
+  end
+  local provenance = Lower.LowerCMatWindowCoordinateProvenance(
+    input.offset, self.window.extent, self.window.boundary)
+  if distance < -before or distance > after then
+    return Lower.LowerCMatUseCoordinateRejected(
+      Lower.LowerCMatCoordinateWindowDistanceOutsideExtent(
+        input.use.id, provenance))
+  end
+  local index = input.index
+  return index.induction.role:lower_cmat_align_window(
+    Lower.LowerCMatWindowAlignmentInput(
+      input.use, input.root, input.iteration, index.induction,
+      index.elem_size, index.const_offset, provenance))
+end
+
+function Flow.FlowPrimaryInduction:lower_cmat_align_window(input)
+  if input.induction.value ~= input.iteration.counter then
+    return induction_disagreement(input, Lower.LowerCMatAlignmentCounter)
+  end
+  if input.induction.ty ~= input.iteration.index_ty then
+    return induction_disagreement(input, Lower.LowerCMatAlignmentType)
+  end
+  if input.induction.init ~= input.iteration.start then
+    return induction_disagreement(input, Lower.LowerCMatAlignmentInit)
+  end
+  if input.induction.step ~= input.iteration.step then
+    return induction_disagreement(input, Lower.LowerCMatAlignmentStep)
+  end
+  local basis = Lower.LowerCMatAddressBasis(
+    input.root, input.induction, input.index_scale_bytes)
+  return input.provenance.boundary:lower_cmat_aligned_window(
+    Lower.LowerCMatAlignedWindowCoordinateInput(
+      input.use, basis, input.const_offset_bytes, input.provenance))
+end
+function Flow.FlowDerivedInduction:lower_cmat_align_window(input)
+  return induction_disagreement(input, Lower.LowerCMatAlignmentRole)
+end
+function Flow.FlowPointerInduction:lower_cmat_align_window(input)
+  return induction_disagreement(input, Lower.LowerCMatAlignmentRole)
+end
+
+local function dynamic_or_relative_window(input)
+  local distance = input.provenance.offset.distance.elements
+  if distance == 0 then
+    return Lower.LowerCMatUseCoordinateProduced(
+      Lower.LowerCMatUseCoordinateEntry(input.use.id,
+        Lower.LowerCMatWindowRelativeCoordinate(
+          input.basis, input.provenance, input.const_offset_bytes)))
+  end
+  return Lower.LowerCMatUseCoordinateProduced(
+    Lower.LowerCMatUseCoordinateEntry(input.use.id,
+      Lower.LowerCMatWindowDynamicCoordinate(
+        input.basis, input.provenance, input.const_offset_bytes)))
+end
+function Stencil.StencilWindowBoundaryClamp:lower_cmat_aligned_window(input)
+  return dynamic_or_relative_window(input)
+end
+function Stencil.StencilWindowBoundaryWrap:lower_cmat_aligned_window(input)
+  return dynamic_or_relative_window(input)
+end
+function Stencil.StencilWindowBoundaryZero:lower_cmat_aligned_window(input)
+  return dynamic_or_relative_window(input)
+end
+function Stencil.StencilWindowBoundaryReject:lower_cmat_aligned_window(input)
+  if input.provenance.offset.distance.elements ~= 0 then
+    return Lower.LowerCMatUseCoordinateRejected(
+      Lower.LowerCMatCoordinateWindowBoundaryUnsupported(
+        input.use.id, input.provenance))
+  end
+  return dynamic_or_relative_window(input)
 end
 
 function Lower.LowerCMatUseCoordinateProduced:lower_cmat_collect_coordinates(state)

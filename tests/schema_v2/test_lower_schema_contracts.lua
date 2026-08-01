@@ -42,6 +42,16 @@ assert(Lower.LowerFragmentCoverageResolved and Lower.LowerFragmentCoverageReject
 assert(Lower.LowerCMatEnvironmentReady and Lower.LowerCMatEnvironmentRejected)
 assert(Lower.LowerCFunctionAssemblyReady and Lower.LowerCFunctionAssemblyRejected)
 assert(Lower.LowerCModuleEmitted and Lower.LowerCModuleRejected)
+assert(field_names(Lower.LowerCMatCoordinateInput) ==
+  "iteration,domain,provenance,memory")
+assert(field_names(Lower.LowerCMatWindowCoordinateProvenance) ==
+  "offset,extent,boundary")
+assert(field_names(Lower.LowerCMatWindowRelativeCoordinate) ==
+  "basis,provenance,use_offset_bytes")
+assert(field_names(Lower.LowerCMatWindowDynamicCoordinate) ==
+  "basis,provenance,const_offset_bytes")
+assert(Lower.LowerCMatCoordinateWindowBoundaryUnsupported)
+assert(Lower.LowerCMatCoordinateWindowDistanceOutsideExtent)
 assert(Lower.LowerBackEmitInput == nil, "obsolete generic lower input must be removed")
 assert(Lower.LowerCEmitInput == nil, "obsolete generic C emit input must be removed")
 

@@ -23,8 +23,10 @@ local const_id = Stencil.StencilStreamId("constant")
 local point_window_id = Stencil.StencilStreamId("point-window")
 local gather_id = Stencil.StencilStreamId("gather")
 local sink_id = Stencil.StencilSinkId("store")
-local minus_one = Stencil.StencilWindowOffset(axis, -1)
-local plus_one = Stencil.StencilWindowOffset(axis, 1)
+local minus_one = Stencil.StencilWindowOffset(
+  axis, Stencil.StencilElementDistance(-1))
+local plus_one = Stencil.StencilWindowOffset(
+  axis, Stencil.StencilElementDistance(1))
 local centered = Stencil.StencilStreamDef(
   centered_id, i32, Stencil.StencilStreamAccess(
     Stencil.StencilAccessRef("xs"), Stencil.StencilIndexProducer))

@@ -27,6 +27,10 @@ assert(field_type(Stencil.StencilKernelProjectionInput, "semantics") ==
   "LalinFlow.FlowSemanticFactSet")
 assert(field_names(Stencil.StencilKernelIteration) ==
   "loop,counter,index_ty,start,stop,step,step_magnitude,stop_convention,order,trip")
+assert(field_names(Stencil.StencilElementDistance) == "elements")
+assert(field_names(Stencil.StencilWindowExtent) == "before,after")
+assert(field_names(Stencil.StencilWindowAxis) == "extent,boundary")
+assert(field_names(Stencil.StencilWindowOffset) == "axis,distance")
 assert(field_names(Stencil.StencilKernelIterationInput) ==
   "module,graph,kernel,flow,semantics")
 assert(field_names(Stencil.StencilKernelScheduleConversionInput) ==

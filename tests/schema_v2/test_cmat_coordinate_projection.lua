@@ -93,7 +93,20 @@ local store_id = CMat.CMatSinkMemoryUse(
   Stencil.StencilSinkRef(Stencil.StencilSinkId("store")))
 local absolute_id = CMat.CMatStreamMemoryUse(
   Stencil.StencilStreamRef(Stencil.StencilStreamId("absolute")))
-local offset = Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), -1)
+local window_extent = Stencil.StencilWindowExtent(
+  Stencil.StencilElementDistance(1), Stencil.StencilElementDistance(1))
+local window_axis = Stencil.StencilWindowAxis(
+  window_extent, Stencil.StencilWindowBoundaryClamp)
+local window_source = Flow.FlowDomainShapeFact(
+  Flow.FlowDomainLoop(loop), Flow.FlowDomainShapeWindowND({
+    Flow.FlowDomainAxis(i32, Value.ValueExprValue(start),
+      Value.ValueExprValue(stop), 2, Flow.FlowDomainForward, nil),
+  }, { Flow.FlowWindowAxis(1, 1, Flow.FlowWindowBoundaryClamp) }),
+  {}, Flow.FlowFactCheckerDerived)
+local window_domain = Stencil.StencilKernelCountedWindow1D(
+  window_source, window_axis)
+local offset = Stencil.StencilWindowOffset(
+  Stencil.StencilAxisRef(1), Stencil.StencilElementDistance(-1))
 local explicit = Stencil.StencilIndexExplicit(
   Stencil.StencilIndexPoint(Value.ValueExprValue(dynamic)))
 local spine = CMat.CMatMemoryUseSpine({
@@ -112,7 +125,7 @@ local spine = CMat.CMatMemoryUseSpine({
 })
 
 local input = Lower.LowerCMatCoordinateInput(
-  iteration, provenance, memory_projection)
+  iteration, window_domain, provenance, memory_projection)
 local projected = spine:lower_coordinates(input)
 assert(asdl.classof(projected) == Lower.LowerCMatCoordinatesProjected)
 local facet = projected.facet
@@ -126,7 +139,7 @@ local absolute = facet:lookup(absolute_id).entry.coordinate
 assert(asdl.classof(centered) ==
   Lower.LowerCMatIterationAffineCoordinate)
 assert(asdl.classof(window) ==
-  Lower.LowerCMatIterationAffineCoordinate)
+  Lower.LowerCMatWindowDynamicCoordinate)
 assert(asdl.classof(store) ==
   Lower.LowerCMatIterationAffineCoordinate)
 assert(centered.basis == window.basis and centered.basis == store.basis,
@@ -135,7 +148,10 @@ assert(centered.basis.root == root)
 assert(centered.basis.induction == induction)
 assert(centered.basis.index_scale_bytes == 4)
 assert(centered.use_offset_bytes == 8)
-assert(window.use_offset_bytes == 4)
+assert(window.const_offset_bytes == 8)
+assert(window.provenance.offset == offset)
+assert(window.provenance.extent == window_extent)
+assert(window.provenance.boundary == Stencil.StencilWindowBoundaryClamp)
 assert(store.use_offset_bytes == 8)
 assert(asdl.classof(absolute) == Lower.LowerCMatAbsoluteCoordinate)
 assert(absolute.root == absolute_root)
@@ -210,6 +226,61 @@ assert(asdl.classof(mismatched_iteration_plan) ==
 assert(asdl.classof(mismatched_iteration_plan.issues[1]) ==
   CMat.CMatCAddressIterationDisagreement)
 
+local zero_offset = Stencil.StencilWindowOffset(
+  Stencil.StencilAxisRef(1), Stencil.StencilElementDistance(0))
+local zero_id = CMat.CMatWindowMemoryUse(
+  Stencil.StencilStreamRef(Stencil.StencilStreamId("window-zero")), 1)
+local zero_spine = CMat.CMatMemoryUseSpine({ CMat.CMatMemoryUse(
+  zero_id, xs_ref, CMat.CMatMemoryLoad,
+  CMat.CMatMemoryWindowOffset(zero_offset)) })
+local zero_projection = zero_spine:lower_coordinates(input)
+assert(asdl.classof(zero_projection) == Lower.LowerCMatCoordinatesProjected)
+local zero_coordinate = zero_projection.facet.entries[1].coordinate
+assert(asdl.classof(zero_coordinate) ==
+  Lower.LowerCMatWindowRelativeCoordinate)
+assert(zero_coordinate.provenance.offset == zero_offset)
+local zero_plan = zero_projection.facet:materialize_c_address_plan(plan_input)
+assert(asdl.classof(zero_plan) == CMat.CMatCAddressPlanReady)
+assert(asdl.classof(zero_plan.plan.uses[1].addressing) ==
+  CMat.CMatCCursorAddressing)
+
+local reject_domain = Stencil.StencilKernelCountedWindow1D(
+  window_source, Stencil.StencilWindowAxis(
+    window_extent, Stencil.StencilWindowBoundaryReject))
+local reject_window = CMat.CMatMemoryUseSpine({ spine.uses[2] }):lower_coordinates(
+  Lower.LowerCMatCoordinateInput(
+    iteration, reject_domain, provenance, memory_projection))
+assert(asdl.classof(reject_window) == Lower.LowerCMatCoordinatesRejected)
+assert(asdl.classof(reject_window.issues[1]) ==
+  Lower.LowerCMatCoordinateWindowBoundaryUnsupported)
+
+local outside_offset = Stencil.StencilWindowOffset(
+  Stencil.StencilAxisRef(1), Stencil.StencilElementDistance(-2))
+local outside_use = CMat.CMatMemoryUse(
+  CMat.CMatWindowMemoryUse(
+    Stencil.StencilStreamRef(Stencil.StencilStreamId("window-outside")), 1),
+  xs_ref, CMat.CMatMemoryLoad, CMat.CMatMemoryWindowOffset(outside_offset))
+local outside = CMat.CMatMemoryUseSpine({ outside_use }):lower_coordinates(input)
+assert(asdl.classof(outside.issues[1]) ==
+  Lower.LowerCMatCoordinateWindowDistanceOutsideExtent)
+
+local fraction_offset = Stencil.StencilWindowOffset(
+  Stencil.StencilAxisRef(1), Stencil.StencilElementDistance(0.5))
+local fraction_use = CMat.CMatMemoryUse(
+  CMat.CMatWindowMemoryUse(
+    Stencil.StencilStreamRef(Stencil.StencilStreamId("window-fraction")), 1),
+  xs_ref, CMat.CMatMemoryLoad, CMat.CMatMemoryWindowOffset(fraction_offset))
+local fraction = CMat.CMatMemoryUseSpine({ fraction_use }):lower_coordinates(input)
+assert(asdl.classof(fraction.issues[1]) ==
+  Lower.LowerCMatCoordinateWindowDistanceInvalid)
+
+local missing_domain = CMat.CMatMemoryUseSpine({ spine.uses[2] }):lower_coordinates(
+  Lower.LowerCMatCoordinateInput(
+    iteration, Stencil.StencilKernelCountedDomain1D(window_source),
+    provenance, memory_projection))
+assert(asdl.classof(missing_domain.issues[1]) ==
+  Lower.LowerCMatCoordinateWindowDomainMissing)
+
 local missing_use = CMat.CMatMemoryUse(
   CMat.CMatStreamMemoryUse(
     Stencil.StencilStreamRef(Stencil.StencilStreamId("missing"))),
@@ -225,7 +296,7 @@ local dynamic_memory = memory_fact(
   access_id, ptr, root, Mem.MemIndexValue(counter, 4, 0), Mem.MemLoad)
 local no_induction = CMat.CMatMemoryUseSpine({ spine.uses[1] })
 :lower_coordinates(Lower.LowerCMatCoordinateInput(
-  iteration, provenance, Mem.MemAccessProjection({
+  iteration, window_domain, provenance, Mem.MemAccessProjection({
     Mem.MemAccessByIdEntry(dynamic_memory),
     Mem.MemAccessByIdEntry(absolute_memory),
   }, {}, {}, {})))
@@ -239,7 +310,7 @@ local wrong_start_iteration = Stencil.StencilKernelIteration(
   iteration.trip)
 local disagreement = CMat.CMatMemoryUseSpine({ spine.uses[1] })
 :lower_coordinates(Lower.LowerCMatCoordinateInput(
-  wrong_start_iteration, provenance, memory_projection))
+  wrong_start_iteration, window_domain, provenance, memory_projection))
 assert(asdl.classof(disagreement) ==
   Lower.LowerCMatCoordinatesRejected)
 assert(asdl.classof(disagreement.issues[1]) ==
@@ -251,7 +322,7 @@ local duplicate_provenance = Stencil.StencilAccessByKernelLaneProjection({
 })
 local ambiguous_access = CMat.CMatMemoryUseSpine({ spine.uses[1] })
 :lower_coordinates(Lower.LowerCMatCoordinateInput(
-  iteration, duplicate_provenance, memory_projection))
+  iteration, window_domain, duplicate_provenance, memory_projection))
 assert(asdl.classof(ambiguous_access.issues[1]) ==
   Lower.LowerCMatCoordinateAccessAmbiguous)
 
@@ -260,7 +331,7 @@ local duplicate_memory = Mem.MemAccessProjection({
 }, {}, {}, {})
 local ambiguous_memory = CMat.CMatMemoryUseSpine({ spine.uses[1] })
 :lower_coordinates(Lower.LowerCMatCoordinateInput(
-  iteration, Stencil.StencilAccessByKernelLaneProjection({
+  iteration, window_domain, Stencil.StencilAccessByKernelLaneProjection({
     provenance.entries[1],
   }), duplicate_memory))
 assert(asdl.classof(ambiguous_memory.issues[1]) ==
@@ -271,14 +342,14 @@ local mismatched_lane = Kernel.KernelLane(
   absolute_root, i32, Mem.MemAccessContiguous, {})
 local root_disagreement = CMat.CMatMemoryUseSpine({ spine.uses[1] })
 :lower_coordinates(Lower.LowerCMatCoordinateInput(
-  iteration, Stencil.StencilAccessByKernelLaneProjection({
+  iteration, window_domain, Stencil.StencilAccessByKernelLaneProjection({
     Stencil.StencilAccessByKernelLaneEntry(mismatched_lane, xs),
   }), memory_projection))
 assert(asdl.classof(root_disagreement.issues[1]) ==
   Lower.LowerCMatCoordinateRootDisagreement)
 
 local wrong_axis_offset = Stencil.StencilWindowOffset(
-  Stencil.StencilAxisRef(2), 1)
+  Stencil.StencilAxisRef(2), Stencil.StencilElementDistance(1))
 local wrong_axis_use = CMat.CMatMemoryUse(
   CMat.CMatWindowMemoryUse(
     Stencil.StencilStreamRef(Stencil.StencilStreamId("wrong-axis")), 1),

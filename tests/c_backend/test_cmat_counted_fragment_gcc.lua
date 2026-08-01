@@ -204,11 +204,15 @@ local fragment_accesses = CMat.CMatCFragmentAccessBindingProjection({
     Stencil.StencilAccessRef("out"), lane_id, access_id,
     CMat.CMatCFragmentAccessDirect(out_param), 4, 8, Mem.MemAlignKnown(4)),
 })
-function CMat.CMatMemorySelectedIndex:test_coordinate_offset(_scale)
-  return 0
+function CMat.CMatMemorySelectedIndex:test_coordinate(basis, _domain)
+  local Lower = require("lalin.schema_v2.lower")
+  return Lower.LowerCMatIterationAffineCoordinate(basis, 0)
 end
-function CMat.CMatMemoryWindowOffset:test_coordinate_offset(scale)
-  return self.offset.offset * scale
+function CMat.CMatMemoryWindowOffset:test_coordinate(basis, domain)
+  local Lower = require("lalin.schema_v2.lower")
+  return Lower.LowerCMatWindowDynamicCoordinate(
+    basis, Lower.LowerCMatWindowCoordinateProvenance(
+      self.offset, domain.window.extent, domain.window.boundary), 0)
 end
 function test_address_plan(materialization, accesses)
   local Lower = require("lalin.schema_v2.lower")
@@ -239,8 +243,8 @@ function test_address_plan(materialization, accesses)
     local basis = Lower.LowerCMatAddressBasis(
       provenance[1].lane.base, induction, scale)
     entries[#entries + 1] = Lower.LowerCMatUseCoordinateEntry(
-      use.id, Lower.LowerCMatIterationAffineCoordinate(
-        basis, use.index:test_coordinate_offset(scale)))
+      use.id, use.index:test_coordinate(
+        basis, materialization.provenance.domain))
   end
   local facet = Lower.LowerCMatCoordinateFacet(spine, iteration, entries)
   local projection = facet:materialize_c_address_plan(CMat.CMatCAddressPlanInput(
@@ -466,20 +470,41 @@ assert(fold_fn(1, 5) == 15)
 assert(fold_fn(7, 0) == 0)
 fold_session:free()
 
-local function run_window(tag, boundary, expected, offset)
-  local window = Stencil.StencilWindowAxis(1, 1, boundary)
+function Stencil.StencilProducerForward:test_flow_window_order()
+  return Flow.FlowDomainForward
+end
+function Stencil.StencilProducerBackward:test_flow_window_order()
+  return Flow.FlowDomainBackward
+end
+function Stencil.StencilProducerForward:test_cmat_window_order()
+  return CMat.CMatLoopForward
+end
+function Stencil.StencilProducerBackward:test_cmat_window_order()
+  return CMat.CMatLoopBackward
+end
+local function run_window(tag, boundary, expected, offset, step_magnitude,
+    order, start_argument, source_values, output_slots, output_size)
+  local window = Stencil.StencilWindowAxis(
+    Stencil.StencilWindowExtent(
+      Stencil.StencilElementDistance(1), Stencil.StencilElementDistance(1)),
+    boundary)
+  local window_iteration = Stencil.StencilKernelIteration(
+    loop_id, index, i32, start, stop, step, step_magnitude,
+    Stencil.StencilIterationStopInclusive, order,
+    Stencil.StencilKernelTripExact(trip))
   local producer = Stencil.StencilProducer(
     Stencil.StencilProducerOriginFlow(domain),
     Stencil.StencilProduceCountedWindow1D(
       i32, Stencil.StencilBoundValue(Value.ValueExprValue(start)),
-      Stencil.StencilBoundValue(Value.ValueExprValue(stop)), 1,
-      Stencil.StencilProducerForward, Stencil.StencilIterationStopInclusive,
+      Stencil.StencilBoundValue(Value.ValueExprValue(stop)), step_magnitude,
+      order, Stencil.StencilIterationStopInclusive,
       Stencil.StencilKernelTripExact(trip), window))
   local window_stream_id = Stencil.StencilStreamId(tag .. ":stream")
   local window_stream = Stencil.StencilStreamDef(
     window_stream_id, i32, Stencil.StencilStreamWindowAccess(
       Stencil.StencilAccessRef(input_access.name), {
-        Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), offset),
+        Stencil.StencilWindowOffset(
+          Stencil.StencilAxisRef(1), Stencil.StencilElementDistance(offset)),
       }))
   local window_sink = Stencil.StencilSinkDef(
     Stencil.StencilSinkId(tag .. ":sink"), Stencil.StencilSinkOpStore(
@@ -493,7 +518,7 @@ local function run_window(tag, boundary, expected, offset)
     domain, Flow.FlowDomainShapeWindowND({
       Flow.FlowDomainAxis(
         i32, Value.ValueExprValue(start), Value.ValueExprValue(stop),
-        1, Flow.FlowDomainForward, nil),
+        step_magnitude, order:test_flow_window_order(), nil),
     }, { Flow.FlowWindowAxis(1, 1,
       boundary == Stencil.StencilWindowBoundaryClamp and Flow.FlowWindowBoundaryClamp
         or boundary == Stencil.StencilWindowBoundaryWrap and Flow.FlowWindowBoundaryWrap
@@ -502,13 +527,17 @@ local function run_window(tag, boundary, expected, offset)
     }), {}, Flow.FlowFactCheckerDerived)
   local window_domain = Stencil.StencilKernelCountedWindow1D(source_window, window)
   local window_provenance = Stencil.StencilKernelProvenanceFacet(
-    planned, iteration, window_domain, access_projection,
+    planned, window_iteration, window_domain, access_projection,
     Stencil.StencilStreamByKernelValueProjection({
       Stencil.StencilStreamByKernelValueEntry(
         load_value, binding, window_stream),
     }), Stencil.StencilKernelResultVoid)
+  local window_loop = CMat.CMatLoopNest({ CMat.CMatLoopAxis(
+    Stencil.StencilAxisRef(1), CMat.CMatLocalId(tag .. ":index"), i32,
+    step_magnitude, order:test_cmat_window_order()),
+  }, fused.loop.policy)
   local window_fused = CMat.CMatFusedKernel(
-    CMat.CMatKernelId(tag), window_computation, fused.loop, {}, {}, {},
+    CMat.CMatKernelId(tag), window_computation, window_loop, {}, {}, {},
     window_computation.schedule, {})
   local window_materialization = materialize_kernel_fragment(
     tag, window_computation, window_provenance)
@@ -519,7 +548,8 @@ local function run_window(tag, boundary, expected, offset)
     CMat.CMatCFragmentNamespace(tag), {})
   local emission = request:emit_cmat_fragment()
   if boundary == Stencil.StencilWindowBoundaryReject
-      or offset < -window.before or offset > window.after
+      or offset < -window.extent.before.elements
+      or offset > window.extent.after.elements
       or offset ~= math.floor(offset) then
     assert(asdl.classof(emission) == CMat.CMatCFragmentRejected)
     assert(asdl.classof(emission.issues[1]) ==
@@ -552,32 +582,68 @@ local function run_window(tag, boundary, expected, offset)
   assert(compiled, compile_err and (compile_err.output or compile_err.message))
   local c_fn = assert(compiled:symbol(
     tag, "void (*)(int32_t *, int32_t *, int32_t, int32_t)"))
-  local input = ffi.new("int32_t[3]", { 10, 20, 30 })
-  local output_values = ffi.new("int32_t[5]", { -1, -1, -1, -1, -1 })
-  c_fn(input, output_values, 0, 3)
-  for i = 0, 2 do assert(output_values[i * 2] == expected[i + 1],
-    tag .. "[" .. i .. "]=" .. tonumber(output_values[i * 2])) end
-  for i = 0, 4 do output_values[i] = -7 end
-  c_fn(input, output_values, 0, 0)
-  for i = 0, 4 do assert(output_values[i] == -7) end
+  local input = ffi.new("int32_t[?]", #source_values)
+  for i = 1, #source_values do input[i - 1] = source_values[i] end
+  local output_values = ffi.new("int32_t[?]", output_size)
+  for i = 0, output_size - 1 do output_values[i] = -1 end
+  c_fn(input, output_values, start_argument, #expected)
+  for i = 1, #expected do
+    local slot = output_slots[i]
+    assert(output_values[slot] == expected[i],
+      tag .. "[" .. slot .. "]=" .. tonumber(output_values[slot]))
+  end
+  for i = 0, output_size - 1 do output_values[i] = -7 end
+  c_fn(input, output_values, start_argument, 0)
+  for i = 0, output_size - 1 do assert(output_values[i] == -7) end
   compiled:free()
 end
 
 run_window("counted_window_clamp", Stencil.StencilWindowBoundaryClamp,
-  { 10, 10, 20 }, -1)
+  { 10, 10, 20 }, -1, 1, Stencil.StencilProducerForward, 0,
+  { 10, 20, 30 }, { 0, 2, 4 }, 5)
 run_window("counted_window_wrap", Stencil.StencilWindowBoundaryWrap,
-  { 30, 10, 20 }, -1)
+  { 30, 10, 20 }, -1, 1, Stencil.StencilProducerForward, 0,
+  { 10, 20, 30 }, { 0, 2, 4 }, 5)
 run_window("counted_window_wrap_positive", Stencil.StencilWindowBoundaryWrap,
-  { 20, 30, 10 }, 1)
+  { 20, 30, 10 }, 1, 1, Stencil.StencilProducerForward, 0,
+  { 10, 20, 30 }, { 0, 2, 4 }, 5)
 run_window("counted_window_clamp_positive", Stencil.StencilWindowBoundaryClamp,
-  { 20, 30, 30 }, 1)
+  { 20, 30, 30 }, 1, 1, Stencil.StencilProducerForward, 0,
+  { 10, 20, 30 }, { 0, 2, 4 }, 5)
 run_window("counted_window_zero", Stencil.StencilWindowBoundaryZero,
-  { 0, 10, 20 }, -1)
+  { 0, 10, 20 }, -1, 1, Stencil.StencilProducerForward, 0,
+  { 10, 20, 30 }, { 0, 2, 4 }, 5)
 run_window("counted_window_zero_positive", Stencil.StencilWindowBoundaryZero,
-  { 20, 30, 0 }, 1)
-run_window("counted_window_reject", Stencil.StencilWindowBoundaryReject, {}, -1)
-run_window("counted_window_extent_reject", Stencil.StencilWindowBoundaryZero, {}, 2)
-run_window("counted_window_fraction_reject", Stencil.StencilWindowBoundaryZero, {}, 0.5)
+  { 20, 30, 0 }, 1, 1, Stencil.StencilProducerForward, 0,
+  { 10, 20, 30 }, { 0, 2, 4 }, 5)
+run_window("counted_window_reject", Stencil.StencilWindowBoundaryReject,
+  {}, -1, 1, Stencil.StencilProducerForward, 0,
+  { 10, 20, 30 }, {}, 5)
+run_window("counted_window_extent_reject", Stencil.StencilWindowBoundaryZero,
+  {}, 2, 1, Stencil.StencilProducerForward, 0,
+  { 10, 20, 30 }, {}, 5)
+run_window("counted_window_fraction_reject", Stencil.StencilWindowBoundaryZero,
+  {}, 0.5, 1, Stencil.StencilProducerForward, 0,
+  { 10, 20, 30 }, {}, 5)
+
+run_window("counted_window_step2_clamp", Stencil.StencilWindowBoundaryClamp,
+  { 10, 11, 21 }, -1, 2, Stencil.StencilProducerForward, 0,
+  { 10, 11, 20, 21, 30 }, { 0, 4, 8 }, 9)
+run_window("counted_window_step2_wrap", Stencil.StencilWindowBoundaryWrap,
+  { 30, 11, 21 }, -1, 2, Stencil.StencilProducerForward, 0,
+  { 10, 11, 20, 21, 30 }, { 0, 4, 8 }, 9)
+run_window("counted_window_step2_zero", Stencil.StencilWindowBoundaryZero,
+  { 0, 11, 21 }, -1, 2, Stencil.StencilProducerForward, 0,
+  { 10, 11, 20, 21, 30 }, { 0, 4, 8 }, 9)
+run_window("counted_window_backward_clamp", Stencil.StencilWindowBoundaryClamp,
+  { 21, 11, 10 }, -1, 2, Stencil.StencilProducerBackward, 4,
+  { 10, 11, 20, 21, 30 }, { 8, 4, 0 }, 9)
+run_window("counted_window_backward_wrap", Stencil.StencilWindowBoundaryWrap,
+  { 21, 11, 30 }, -1, 2, Stencil.StencilProducerBackward, 4,
+  { 10, 11, 20, 21, 30 }, { 8, 4, 0 }, 9)
+run_window("counted_window_backward_zero", Stencil.StencilWindowBoundaryZero,
+  { 21, 11, 0 }, -1, 2, Stencil.StencilProducerBackward, 4,
+  { 10, 11, 20, 21, 30 }, { 8, 4, 0 }, 9)
 
 local function compile_bool_control(tag, sink_op, result, result_provenance)
   local control_stream_id = Stencil.StencilStreamId(tag .. ":stream")

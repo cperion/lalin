@@ -62,7 +62,7 @@ CodeModule + CodeGraph
   -> StencilKernelComputationProjection       exact iteration and use semantics
   -> CMatFusedKernel + CMatMemoryUseSpine     fused memory-use identity/order
   -> LowerCMatCoordinateFacet                 proven use coordinates
-  -> CMatCAddressPlan                         absolute/cursor realization
+  -> CMatCAddressPlan                         absolute/cursor/dynamic realization
   -> CBackend blocks, cursor locals, and places
   -> emitted C -> GCC -O3
 ```
@@ -74,9 +74,34 @@ CodeModule + CodeGraph
 - `CMatMemoryUseSpine` changes when fused streams, sinks, or their index
   semantics change.
 - `LowerCMatCoordinateFacet` changes when the memory-use spine, canonical
-  memory facts, or Stencil iteration changes.
+  memory facts, Stencil iteration, or exact window domain provenance changes.
 - `CMatCAddressPlan` changes when the coordinate facet, C target, or selected
   CMat schedule changes.
+
+## Window coordinate units
+
+Window dimensions are explicit element-space values:
+
+```lua
+product. StencilElementDistance { elements [number] }
+product. StencilWindowExtent {
+  before [StencilElementDistance],
+  after [StencilElementDistance],
+}
+product. StencilWindowAxis {
+  extent [StencilWindowExtent],
+  boundary [StencilWindowBoundary],
+}
+product. StencilWindowOffset {
+  axis [StencilAxisRef],
+  distance [StencilElementDistance],
+}
+```
+
+A distance is independent of loop stride and direction. The projection validates
+that extents are nonnegative integers and that each distance is a finite integer
+inside the declared extent. Invalid evidence rejects the complete coordinate
+facet.
 
 ## Gate 1 — memory-use spine
 
@@ -185,8 +210,13 @@ window element offset multiplied by the scale. Centered, field, and constant
 window uses can therefore share one basis.
 
 Explicit `StencilIndexExpr` uses remain absolute and retain the memory fact's
-scale and constant byte offset. A producer or window use backed only by
-`MemIndexValue` is contradictory evidence and rejects rather than silently
+scale and constant byte offset. Window uses additionally retain a
+`LowerCMatWindowCoordinateProvenance` containing their exact typed distance,
+extent, and boundary. Centered window transformations produce
+`LowerCMatWindowRelativeCoordinate`; nonzero clamp/wrap/zero transformations
+produce `LowerCMatWindowDynamicCoordinate`. Reject-boundary displacement without
+proof rejects the facet. A producer or window use backed only by `MemIndexValue`
+is contradictory evidence and rejects rather than silently falling back.
 falling back to absolute addressing.
 
 ## Gate 3 — executable C address plan
@@ -263,12 +293,13 @@ The use-addressing leaves own:
 - Centered loads and stores may use an iteration-affine cursor.
 - Stores retain their exact index selection in Stencil and their use identity
   in CMat.
-- A constant window offset is a use displacement only after its boundary
-  transformation proves that representation.
-- Clamp, wrap, zero, or other dynamically transformed windows stay absolute
-  until a typed relative-coordinate result exists.
-- Backward and non-unit loops require no new semantic alternative: they change
-  the signed `step_bytes` of the cursor.
+- Window distance, extent, and boundary transformation remain explicit typed
+  provenance through LOWER.
+- Centered window uses are relative cursor coordinates. Nonzero clamp, wrap, and
+  zero boundaries use dynamic transformed coordinates; reject-boundary
+  displacement is rejected without an exact proof.
+- Backward and non-unit loops use the same element-distance semantics. Loop order
+  changes cursor stepping and domain bounds, never the meaning of window distance.
 - Early exits need no special address transfer. Cursor advancement belongs to
   the fused loop's common step block, not to the eliminated source CFG.
 

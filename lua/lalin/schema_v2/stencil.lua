@@ -167,16 +167,21 @@ return schema. LalinStencil {
     StencilWindowBoundaryWrap,
     StencilWindowBoundaryZero,
   },
+  product. StencilElementDistance { interned, elements [number], },
+  product. StencilWindowExtent {
+    interned,
+    before [LalinStencil.StencilElementDistance],
+    after [LalinStencil.StencilElementDistance],
+  },
   product. StencilWindowAxis {
     interned,
-    before [number],
-    after [number],
+    extent [LalinStencil.StencilWindowExtent],
     boundary [LalinStencil.StencilWindowBoundary],
   },
   product. StencilWindowOffset {
     interned,
     axis [LalinStencil.StencilAxisRef],
-    offset [number],
+    distance [LalinStencil.StencilElementDistance],
   },
   product. StencilAffineAxisTerm {
     interned,
@@ -1396,7 +1401,10 @@ return schema. LalinStencil {
   },
   sum. StencilKernelWindowIndexProjection {
     StencilKernelWindowIndexCenter,
-    StencilKernelWindowIndexOffset { variant_unique, offset [number], },
+    StencilKernelWindowIndexOffset {
+      variant_unique,
+      distance [LalinStencil.StencilElementDistance],
+    },
     StencilKernelWindowIndexRejected {
       variant_unique,
       reject [LalinStencil.StencilKernelProjectionReject],

@@ -36,7 +36,8 @@ end
 function CMat.CMatMaterializedKernelFragment:lower_cmat_state(input)
   local spine = self.kernel:cmat_memory_use_spine()
   local coordinates = spine:lower_coordinates(Lower.LowerCMatCoordinateInput(
-    self.provenance.iteration, self.provenance.accesses, input.memory))
+    self.provenance.iteration, self.provenance.domain,
+    self.provenance.accesses, input.memory))
   return Lower.LowerKernelCMatReady(
     input.projection, self, coordinates)
 end

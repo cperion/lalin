@@ -611,11 +611,11 @@ function CMat.CMatCFragmentState:cmat_window_select(input)
     state, C.CBackendAtomLocal(allocation.c_local.id), input.ty)
 end
 function Stencil.StencilStreamWindowAccess:cmat_window_offset(entry)
-  local offset = 0
+  local distance = Stencil.StencilElementDistance(0)
   local found = 0
   for i = 1, #self.offsets do
     if self.offsets[i].axis.index == 1 then
-      offset = self.offsets[i].offset
+      distance = self.offsets[i].distance
       found = found + 1
     else
       return CMat.CMatCWindowOffsetRejected(
@@ -628,14 +628,14 @@ function Stencil.StencilStreamWindowAccess:cmat_window_offset(entry)
       CMat.CMatCEmissionInvalidWindow(
         entry.definition, "window access repeats the primary axis"))
   end
-  return CMat.CMatCWindowOffsetResolved(offset)
+  return CMat.CMatCWindowOffsetResolved(distance)
 end
 function CMat.CMatCWindowOffsetRejected:cmat_emit_window_load(_request)
   return CMat.CMatCFragmentStateRejected({ self.issue })
 end
 function CMat.CMatCWindowOffsetResolved:cmat_emit_window_load(request)
   return request.state.window:cmat_emit_window_load(CMat.CMatCWindowLoadInput(
-    request.state, request.stream, request.access, self.offset))
+    request.state, request.stream, request.access, self.distance))
 end
 function CMat.CMatCFragmentNoWindow:cmat_emit_window_load(input)
   return CMat.CMatCFragmentStateRejected({
@@ -643,69 +643,55 @@ function CMat.CMatCFragmentNoWindow:cmat_emit_window_load(input)
       input.stream.definition, "window stream lacks a window producer")
   })
 end
+
 local function window_request_state(request, state)
   return CMat.CMatCWindowLoadInput(
-    state, request.stream, request.access, request.offset)
+    state, request.stream, request.access, request.distance)
 end
 local function window_positive_position(request, magnitude)
   local context, state = request.state.window, request.state
   local ty = context.index_ty
-  local zero = C.CBackendAtomLiteral(ty, Core.LitInt("0"))
   local amount = C.CBackendAtomLiteral(ty, Core.LitInt(tostring(magnitude)))
-  local remaining = state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
-    "window_remaining", Core.BinSub, context.trip,
-    C.CBackendAtomLocal(state.ordinal.id), ty))
-  local inside = remaining.state:cmat_window_compare(CMat.CMatCWindowCompareInput(
-    "window_inside", Core.CmpLt, amount, remaining.atom, ty))
-  local masked = inside.state:cmat_window_select(CMat.CMatCWindowSelectInput(
-    "window_masked_offset", inside.atom, amount, zero, ty))
-  local target = masked.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
-    "window_target", Core.BinAdd,
-    C.CBackendAtomLocal(masked.state.ordinal.id), masked.atom, ty))
-  return CMat.CMatCWindowPosition(target.state, inside.atom, target.atom)
+  local target = state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_target", Core.BinAdd, C.CBackendAtomLocal(state.index.id), amount, ty))
+  local inside = target.state:cmat_window_compare(CMat.CMatCWindowCompareInput(
+    "window_inside", Core.CmpLe, target.atom, context.upper, ty))
+  return CMat.CMatCWindowPosition(inside.state, inside.atom, target.atom)
 end
 local function window_negative_position(request, magnitude)
   local context, state = request.state.window, request.state
   local ty = context.index_ty
-  local zero = C.CBackendAtomLiteral(ty, Core.LitInt("0"))
   local amount = C.CBackendAtomLiteral(ty, Core.LitInt(tostring(magnitude)))
-  local inside = state:cmat_window_compare(CMat.CMatCWindowCompareInput(
-    "window_inside", Core.CmpGe, C.CBackendAtomLocal(state.ordinal.id), amount, ty))
-  local masked = inside.state:cmat_window_select(CMat.CMatCWindowSelectInput(
-    "window_masked_offset", inside.atom, amount, zero, ty))
-  local target = masked.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
-    "window_target", Core.BinSub,
-    C.CBackendAtomLocal(masked.state.ordinal.id), masked.atom, ty))
-  return CMat.CMatCWindowPosition(target.state, inside.atom, target.atom)
+  local target = state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_target", Core.BinSub, C.CBackendAtomLocal(state.index.id), amount, ty))
+  local inside = target.state:cmat_window_compare(CMat.CMatCWindowCompareInput(
+    "window_inside", Core.CmpGe, target.atom, context.lower, ty))
+  return CMat.CMatCWindowPosition(inside.state, inside.atom, target.atom)
 end
 local function window_position(request)
-  if request.offset >= 0 then
-    return window_positive_position(request, request.offset)
-  end
-  return window_negative_position(request, -request.offset)
+  local distance = request.distance.elements
+  if distance >= 0 then return window_positive_position(request, distance) end
+  return window_negative_position(request, -distance)
 end
 local function window_actual(position, request)
-  local context = position.state.window
-  local actual = position.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
-    "window_index", Core.BinAdd, context.start, position.target_ordinal,
-    context.index_ty))
   return CMat.CMatCWindowResolvedLoadInput(
-    window_request_state(request, actual.state), actual.atom)
+    window_request_state(request, position.state), position.target_index)
 end
+
 local function validate_window_offset(request, limit)
-  local offset = request.offset
-  if offset ~= offset or offset == math.huge or offset == -math.huge
-      or offset ~= math.floor(offset) or math.abs(offset) > limit then
+  local distance = request.distance.elements
+  if distance ~= distance or distance == math.huge or distance == -math.huge
+      or distance ~= math.floor(distance) or math.abs(distance) > limit then
     return CMat.CMatCWindowOffsetInvalid(
       CMat.CMatCEmissionInvalidWindow(request.stream.definition,
-        "window offset is not a finite representable index integer"))
+        "window distance is not a finite representable element integer"))
   end
   return CMat.CMatCWindowOffsetValid(request)
 end
 function C.CBackendType:cmat_validate_window_offset(request)
   return CMat.CMatCWindowOffsetInvalid(
     CMat.CMatCEmissionInvalidWindow(request.stream.definition,
-      "window index type cannot represent scalar offsets"))
+      "window index type cannot represent element distances"))
 end
 function C.CBackendScalar:cmat_validate_window_offset(request)
   return self.scalar:cmat_validate_window_offset(request)
@@ -713,7 +699,7 @@ end
 function Core.Scalar:cmat_validate_window_offset(request)
   return CMat.CMatCWindowOffsetInvalid(
     CMat.CMatCEmissionInvalidWindow(request.stream.definition,
-      "window index scalar cannot represent signed offsets"))
+      "window index scalar cannot represent signed element distances"))
 end
 function Core.ScalarI8:cmat_validate_window_offset(request)
   return validate_window_offset(request, 127)
@@ -737,19 +723,21 @@ function CMat.CMatCFragmentWindow1D:cmat_emit_window_load(input)
 end
 function CMat.CMatCWindowOffsetValid:cmat_emit_validated_window_load(window)
   local input = self.request
-  if input.offset < -window.window.before or input.offset > window.window.after then
+  local distance = input.distance.elements
+  if distance < -window.window.extent.before.elements
+      or distance > window.window.extent.after.elements then
     return CMat.CMatCWindowLoadRejected({
       CMat.CMatCEmissionInvalidWindow(input.stream.definition,
-        "window access offset exceeds the declared extent")
+        "window distance exceeds the declared element extent")
     })
   end
   return window.window.boundary:cmat_emit_window_boundary(input)
 end
 function Stencil.StencilWindowBoundaryReject:cmat_emit_window_boundary(request)
-  if request.offset ~= 0 then
+  if request.distance.elements ~= 0 then
     return CMat.CMatCWindowLoadRejected({
       CMat.CMatCEmissionInvalidWindow(request.stream.definition,
-        "reject boundary requires an in-bounds proof for nonzero offsets")
+        "reject boundary permits only centered window access")
     })
   end
   return CMat.CMatCWindowResolvedLoadInput(
@@ -759,87 +747,69 @@ end
 function Stencil.StencilWindowBoundaryClamp:cmat_emit_window_boundary(request)
   local position = window_position(request)
   local context, ty = position.state.window, position.state.window.index_ty
-  local zero = C.CBackendAtomLiteral(ty, Core.LitInt("0"))
-  local selected
-  if request.offset >= 0 then
-    local one = C.CBackendAtomLiteral(ty, Core.LitInt("1"))
-    local last = position.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
-      "window_last", Core.BinSub, context.trip, one, ty))
-    selected = last.state:cmat_window_select(CMat.CMatCWindowSelectInput(
-      "window_clamped", position.condition, position.target_ordinal, last.atom, ty))
-  else
-    selected = position.state:cmat_window_select(CMat.CMatCWindowSelectInput(
-      "window_clamped", position.condition, position.target_ordinal, zero, ty))
-  end
+  local edge = request.distance.elements >= 0 and context.upper or context.lower
+  local selected = position.state:cmat_window_select(CMat.CMatCWindowSelectInput(
+    "window_clamped", position.condition, position.target_index, edge, ty))
   return window_actual(
     CMat.CMatCWindowPosition(selected.state, position.condition, selected.atom),
     request):cmat_emit_resolved_window_load()
 end
+
 local function window_positive_wrapped_position(request, magnitude)
   local context, ty = request.state.window, request.state.window.index_ty
-  local zero = C.CBackendAtomLiteral(ty, Core.LitInt("0"))
+  local one = C.CBackendAtomLiteral(ty, Core.LitInt("1"))
   local amount = C.CBackendAtomLiteral(ty, Core.LitInt(tostring(magnitude)))
   local remainder = request.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
-    "window_offset_rem", Core.BinRem, amount, context.trip, ty))
+    "window_distance_rem", Core.BinRem, amount, context.extent, ty))
   local remaining = remainder.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
-    "window_remaining", Core.BinSub, context.trip,
-    C.CBackendAtomLocal(remainder.state.ordinal.id), ty))
+    "window_remaining", Core.BinSub, context.upper,
+    C.CBackendAtomLocal(remainder.state.index.id), ty))
   local direct_case = remaining.state:cmat_window_compare(CMat.CMatCWindowCompareInput(
-    "window_direct", Core.CmpLt, remainder.atom, remaining.atom, ty))
-  local direct_amount = direct_case.state:cmat_window_select(
-    CMat.CMatCWindowSelectInput(
-      "window_direct_amount", direct_case.atom, remainder.atom, zero, ty))
-  local direct = direct_amount.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_direct", Core.CmpLe, remainder.atom, remaining.atom, ty))
+  local direct = direct_case.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
     "window_direct_target", Core.BinAdd,
-    C.CBackendAtomLocal(direct_amount.state.ordinal.id), direct_amount.atom, ty))
-  local wrapped_amount = direct.state:cmat_window_select(CMat.CMatCWindowSelectInput(
-    "window_wrapped_amount", direct_case.atom, zero, remainder.atom, ty))
-  local wrapped_remaining = wrapped_amount.state:cmat_window_select(
-    CMat.CMatCWindowSelectInput(
-      "window_wrapped_remaining", direct_case.atom, zero, remaining.atom, ty))
-  local wrapped = wrapped_remaining.state:cmat_window_binary(
-    CMat.CMatCWindowBinaryInput(
-      "window_wrapped_target", Core.BinSub,
-      wrapped_amount.atom, wrapped_remaining.atom, ty))
+    C.CBackendAtomLocal(direct_case.state.index.id), remainder.atom, ty))
+  local delta = direct.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_wrap_delta", Core.BinSub, remainder.atom, remaining.atom, ty))
+  local past = delta.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_wrap_past", Core.BinSub, delta.atom, one, ty))
+  local wrapped = past.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_wrapped_target", Core.BinAdd, context.lower, past.atom, ty))
   local target = wrapped.state:cmat_window_select(CMat.CMatCWindowSelectInput(
     "window_target", direct_case.atom, direct.atom, wrapped.atom, ty))
   return CMat.CMatCWindowPosition(target.state, direct_case.atom, target.atom)
 end
 local function window_negative_wrapped_position(request, magnitude)
   local context, ty = request.state.window, request.state.window.index_ty
-  local zero = C.CBackendAtomLiteral(ty, Core.LitInt("0"))
+  local one = C.CBackendAtomLiteral(ty, Core.LitInt("1"))
   local amount = C.CBackendAtomLiteral(ty, Core.LitInt(tostring(magnitude)))
   local remainder = request.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
-    "window_offset_rem", Core.BinRem, amount, context.trip, ty))
-  local direct_case = remainder.state:cmat_window_compare(CMat.CMatCWindowCompareInput(
-    "window_direct", Core.CmpLe, remainder.atom,
-    C.CBackendAtomLocal(remainder.state.ordinal.id), ty))
-  local direct_amount = direct_case.state:cmat_window_select(
-    CMat.CMatCWindowSelectInput(
-      "window_direct_amount", direct_case.atom, remainder.atom, zero, ty))
-  local direct = direct_amount.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_distance_rem", Core.BinRem, amount, context.extent, ty))
+  local available = remainder.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_available", Core.BinSub,
+    C.CBackendAtomLocal(remainder.state.index.id), context.lower, ty))
+  local direct_case = available.state:cmat_window_compare(CMat.CMatCWindowCompareInput(
+    "window_direct", Core.CmpLe, remainder.atom, available.atom, ty))
+  local direct = direct_case.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
     "window_direct_target", Core.BinSub,
-    C.CBackendAtomLocal(direct_amount.state.ordinal.id), direct_amount.atom, ty))
-  local wrapped_amount = direct.state:cmat_window_select(CMat.CMatCWindowSelectInput(
-    "window_wrapped_amount", direct_case.atom, zero, remainder.atom, ty))
-  local wrapped_ordinal = wrapped_amount.state:cmat_window_select(
-    CMat.CMatCWindowSelectInput(
-      "window_wrapped_ordinal", direct_case.atom, zero,
-      C.CBackendAtomLocal(wrapped_amount.state.ordinal.id), ty))
-  local delta = wrapped_ordinal.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
-    "window_wrap_delta", Core.BinSub, wrapped_amount.atom, wrapped_ordinal.atom, ty))
-  local wrapped = delta.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
-    "window_wrapped_target", Core.BinSub, context.trip, delta.atom, ty))
+    C.CBackendAtomLocal(direct_case.state.index.id), remainder.atom, ty))
+  local delta = direct.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_wrap_delta", Core.BinSub, remainder.atom, available.atom, ty))
+  local past = delta.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_wrap_past", Core.BinSub, delta.atom, one, ty))
+  local wrapped = past.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_wrapped_target", Core.BinSub, context.upper, past.atom, ty))
   local target = wrapped.state:cmat_window_select(CMat.CMatCWindowSelectInput(
     "window_target", direct_case.atom, direct.atom, wrapped.atom, ty))
   return CMat.CMatCWindowPosition(target.state, direct_case.atom, target.atom)
 end
 function Stencil.StencilWindowBoundaryWrap:cmat_emit_window_boundary(request)
+  local distance = request.distance.elements
   local position
-  if request.offset >= 0 then
-    position = window_positive_wrapped_position(request, request.offset)
+  if distance >= 0 then
+    position = window_positive_wrapped_position(request, distance)
   else
-    position = window_negative_wrapped_position(request, -request.offset)
+    position = window_negative_wrapped_position(request, -distance)
   end
   return window_actual(position, request):cmat_emit_resolved_window_load()
 end
@@ -946,7 +916,7 @@ function CMat.CMatCFragmentPlaceEmitted:cmat_finish_guarded_window_load(input)
     CMat.CMatCWindowGuardedLoadInput(
       CMat.CMatCWindowLoadInput(
         state, input.guarded.request.stream, input.guarded.request.access,
-        input.guarded.request.offset),
+        input.guarded.request.distance),
       input.guarded.index, input.guarded.condition),
     input.result, input.zero_label, input.join_label)
   return input.result.ty:cmat_window_zero_atom():cmat_finish_window_zero(exact)
@@ -963,7 +933,7 @@ function CMat.CMatCFragmentAccessBindingFound:cmat_guarded_window_load(input)
     state, C.CBackendIfGoto(input.condition, load_label, {}, zero_label, {}),
     load_label, {}):cmat_fragment_seal()
   local request = CMat.CMatCWindowLoadInput(
-    state, input.request.stream, input.request.access, input.request.offset)
+    state, input.request.stream, input.request.access, input.request.distance)
   local guarded = CMat.CMatCWindowGuardedLoadInput(
     request, input.index, input.condition)
   return self:cmat_fragment_access_place(CMat.CMatCFragmentAccessPlaceInput(
@@ -1690,14 +1660,59 @@ end
 function CMat.CMatCFragmentCountedPlan:cmat_fragment_prepare_body(input)
   return CMat.CMatCFragmentStateReady(input.state)
 end
-function CMat.CMatCFragmentStateRejected:cmat_fragment_install_window(_input)
+function CMat.CMatCFragmentStateRejected:cmat_fragment_compute_window_bounds(_input)
   return self
 end
-function CMat.CMatCFragmentStateReady:cmat_fragment_install_window(input)
+function CMat.CMatCFragmentStateReady:cmat_fragment_compute_window_bounds(input)
+  return input.plan.axis.order:cmat_fragment_window_bounds(
+    CMat.CMatCFragmentWindowBoundsInput(self.state, input.plan, input.body))
+end
+
+function Stencil.StencilProducerForward:cmat_fragment_window_bounds(input)
+  local ty = input.body.start.ty
+  local one = C.CBackendAtomLiteral(ty, Core.LitInt("1"))
+  local step = C.CBackendAtomLiteral(
+    ty, Core.LitInt(tostring(input.plan.axis.step)))
+  local remaining = input.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_trip_minus_one", Core.BinSub, input.body.trip.atom, one,
+    input.body.start.ty))
+  local span = remaining.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_domain_span", Core.BinMul, remaining.atom, step, input.body.start.ty))
+  local upper = span.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_domain_upper", Core.BinAdd, input.body.start.atom, span.atom,
+    input.body.start.ty))
+  local extent = upper.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_domain_extent", Core.BinAdd, span.atom, one, input.body.start.ty))
+  local bounds = CMat.CMatCFragmentWindowBounds(
+    extent.state, input.body.start.atom, upper.atom, extent.atom)
+  return bounds:cmat_fragment_install_window(
+    CMat.CMatCFragmentWindowInstallInput(input.plan, bounds))
+end
+function Stencil.StencilProducerBackward:cmat_fragment_window_bounds(input)
+  local ty = input.body.start.ty
+  local one = C.CBackendAtomLiteral(ty, Core.LitInt("1"))
+  local step = C.CBackendAtomLiteral(
+    ty, Core.LitInt(tostring(input.plan.axis.step)))
+  local remaining = input.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_trip_minus_one", Core.BinSub, input.body.trip.atom, one,
+    input.body.start.ty))
+  local span = remaining.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_domain_span", Core.BinMul, remaining.atom, step, input.body.start.ty))
+  local lower = span.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_domain_lower", Core.BinSub, input.body.start.atom, span.atom,
+    input.body.start.ty))
+  local extent = lower.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
+    "window_domain_extent", Core.BinAdd, span.atom, one, input.body.start.ty))
+  local bounds = CMat.CMatCFragmentWindowBounds(
+    extent.state, lower.atom, input.body.start.atom, extent.atom)
+  return bounds:cmat_fragment_install_window(
+    CMat.CMatCFragmentWindowInstallInput(input.plan, bounds))
+end
+function CMat.CMatCFragmentWindowBounds:cmat_fragment_install_window(input)
   return CMat.CMatCFragmentStateReady(self.state:cmat_fragment_with_window(
     CMat.CMatCFragmentWindow1D(
-      input.plan.axis, input.plan.window, input.body.start.atom,
-      input.body.trip.atom, input.body.start.ty)))
+      input.plan.axis, input.plan.window, self.lower, self.upper, self.extent,
+      input.bounds.state.index.ty)))
 end
 function CMat.CMatCFragmentWindowPlan:cmat_fragment_prepare_body(input)
   if input.start.ty ~= self.materialization.provenance.iteration.index_ty:code_to_c_backend_type()
@@ -1707,16 +1722,9 @@ function CMat.CMatCFragmentWindowPlan:cmat_fragment_prepare_body(input)
         "window start/trip types disagree with exact iteration")
     })
   end
-  if self.axis.step ~= 1 or self.axis.order ~= Stencil.StencilProducerForward then
-    return CMat.CMatCFragmentStateRejected({
-      CMat.CMatCEmissionUnsupportedProducer(
-        self.materialization.kernel.computation.producer.shape,
-        "initial window emission requires a forward unit-step axis")
-    })
-  end
   return self.axis.index_ty:cmat_fragment_validate_window_plan(input)
-:cmat_fragment_install_window(
-  CMat.CMatCFragmentWindowInstallInput(self, input))
+:cmat_fragment_compute_window_bounds(
+    CMat.CMatCFragmentWindowBoundsInput(input.state, self, input))
 end
 function CMat.CMatCFragmentBoundEmitted:cmat_fragment_continue_trip(continuation)
   local materialization = continuation.plan:cmat_fragment_materialization()
@@ -2283,9 +2291,12 @@ end
 function Stencil.StencilKernelCountedWindow1D:cmat_fragment_window_plan(input)
   local iteration = input.materialization.provenance.iteration
   if self.source.domain ~= Flow.FlowDomainLoop(iteration.loop)
-      or self.window.before < 0 or self.window.after < 0
-      or self.window.before ~= math.floor(self.window.before)
-      or self.window.after ~= math.floor(self.window.after) then
+      or self.window.extent.before.elements < 0
+      or self.window.extent.after.elements < 0
+      or self.window.extent.before.elements ~=
+        math.floor(self.window.extent.before.elements)
+      or self.window.extent.after.elements ~=
+        math.floor(self.window.extent.after.elements) then
     return CMat.CMatCFragmentRejected({
       CMat.CMatCEmissionUnsupportedProducer(
         input.shape, "window provenance has an invalid domain or extent")

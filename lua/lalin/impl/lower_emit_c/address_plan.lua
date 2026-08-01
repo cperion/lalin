@@ -131,19 +131,24 @@ end
 function CMat.CMatSinkMemoryUse:cmat_materialize_affine_addressing(input)
   return input.assembly:cmat_address_cursor_for_basis(input)
 end
-function CMat.CMatWindowMemoryUse:cmat_materialize_affine_addressing(input)
-  return input.use.index:cmat_materialize_dynamic_window(input)
+function Lower.LowerCMatWindowRelativeCoordinate:cmat_materialize_addressing(input)
+  if self.basis.index_scale_bytes ~= input.binding.stride then
+    return input.assembly:cmat_address_add_issue(
+      CMat.CMatCAddressScaleDisagreement(input.use.access,
+        self.basis.index_scale_bytes, input.binding.stride))
+  end
+  return input.assembly:cmat_address_cursor_for_basis(input)
 end
-function CMat.CMatMemorySelectedIndex:cmat_materialize_dynamic_window(input)
-  return input.assembly:cmat_address_add_issue(
-    CMat.CMatCAddressInvalidUseIndex(input.use.id))
-end
-function CMat.CMatMemoryWindowOffset:cmat_materialize_dynamic_window(input)
-  local scale = input.coordinate.basis.index_scale_bytes
-  local const_offset = input.coordinate.use_offset_bytes - self.offset.offset * scale
+function Lower.LowerCMatWindowDynamicCoordinate:cmat_materialize_addressing(input)
+  local scale = self.basis.index_scale_bytes
+  if scale ~= input.binding.stride then
+    return input.assembly:cmat_address_add_issue(
+      CMat.CMatCAddressScaleDisagreement(input.use.access,
+        scale, input.binding.stride))
+  end
   return input.assembly:cmat_address_add_use(CMat.CMatCUseAddressingEntry(
     input.use.id, CMat.CMatCDynamicWindowAddressing(
-      input.binding.source.base, scale, const_offset)))
+      input.binding.source.base, scale, self.const_offset_bytes)))
 end
 
 function CMat.CMatCAddressAssemblyRejected:cmat_finish_address_plan(_input)

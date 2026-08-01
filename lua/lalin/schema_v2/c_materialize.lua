@@ -611,8 +611,9 @@ return schema. LalinCMat {
       variant_unique,
       axis [LalinStencil.StencilProducerAxis],
       window [LalinStencil.StencilWindowAxis],
-      start [LalinC.CBackendAtom],
-      trip [LalinC.CBackendAtom],
+      lower [LalinC.CBackendAtom],
+      upper [LalinC.CBackendAtom],
+      extent [LalinC.CBackendAtom],
       index_ty [LalinC.CBackendType],
     },
   },
@@ -1021,10 +1022,23 @@ return schema. LalinCMat {
     start [LalinCMat.CMatCFragmentBoundEmitted],
     trip [LalinCMat.CMatCFragmentBoundEmitted],
   },
+  product. CMatCFragmentWindowBoundsInput {
+    interned,
+    state [LalinCMat.CMatCFragmentState],
+    plan [LalinCMat.CMatCFragmentWindowPlan],
+    body [LalinCMat.CMatCFragmentPlanBodyInput],
+  },
+  product. CMatCFragmentWindowBounds {
+    interned,
+    state [LalinCMat.CMatCFragmentState],
+    lower [LalinC.CBackendAtom],
+    upper [LalinC.CBackendAtom],
+    extent [LalinC.CBackendAtom],
+  },
   product. CMatCFragmentWindowInstallInput {
     interned,
     plan [LalinCMat.CMatCFragmentWindowPlan],
-    body [LalinCMat.CMatCFragmentPlanBodyInput],
+    bounds [LalinCMat.CMatCFragmentWindowBounds],
   },
   product. CMatCFragmentCFGSealInput {
     interned,
@@ -1034,7 +1048,10 @@ return schema. LalinCMat {
     next_params [many [LalinC.CBackendBlockParam]],
   },
   sum. CMatCWindowOffsetResolution {
-    CMatCWindowOffsetResolved { variant_unique, offset [number], },
+    CMatCWindowOffsetResolved {
+      variant_unique,
+      distance [LalinStencil.StencilElementDistance],
+    },
     CMatCWindowOffsetRejected { variant_unique, issue [LalinCMat.CMatCEmissionIssue], },
   },
   sum. CMatCWindowOffsetValidation {
@@ -1082,13 +1099,13 @@ return schema. LalinCMat {
     state [LalinCMat.CMatCFragmentState],
     stream [LalinStencil.StencilStreamByKernelValueEntry],
     access [LalinStencil.StencilAccessRef],
-    offset [number],
+    distance [LalinStencil.StencilElementDistance],
   },
   product. CMatCWindowPosition {
     interned,
     state [LalinCMat.CMatCFragmentState],
     condition [LalinC.CBackendAtom],
-    target_ordinal [LalinC.CBackendAtom],
+    target_index [LalinC.CBackendAtom],
   },
   product. CMatCWindowResolvedLoadInput {
     interned,

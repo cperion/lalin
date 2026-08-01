@@ -502,7 +502,9 @@ function Flow.FlowDomainShapeWindowND:stencil_resolve_kernel_domain(input)
   end
   local source_window = self.windows[1]
   local window = Stencil.StencilWindowAxis(
-    source_window.before, source_window.after,
+    Stencil.StencilWindowExtent(
+      Stencil.StencilElementDistance(source_window.before),
+      Stencil.StencilElementDistance(source_window.after)),
     source_window.boundary:stencil_window_boundary())
   local axis = Stencil.StencilProducerAxis(
     iteration.index_ty, Stencil.StencilBoundValue(Value.ValueExprValue(iteration.start)),
@@ -779,10 +781,10 @@ function Core.LitInt:stencil_window_offset_literal(input)
     input.direction:stencil_window_offset_amount(amount))
 end
 function Stencil.StencilKernelWindowOffsetAdd:stencil_window_offset_amount(amount)
-  return amount
+  return Stencil.StencilElementDistance(amount)
 end
 function Stencil.StencilKernelWindowOffsetSubtract:stencil_window_offset_amount(amount)
-  return -amount
+  return Stencil.StencilElementDistance(-amount)
 end
 function Value.ValueExprAdd:stencil_project_window_index(input)
   return self.a:stencil_project_window_index(input):stencil_apply_window_offset(
@@ -798,12 +800,15 @@ function Stencil.StencilKernelWindowIndexRejected:stencil_window_lane_stream(_in
   return Stencil.StencilKernelStreamPreparationRejected(self.reject)
 end
 function Stencil.StencilKernelWindowIndexCenter:stencil_window_lane_stream(input)
-  return Stencil.StencilKernelWindowIndexOffset(0):stencil_window_lane_stream(input)
+  return Stencil.StencilKernelWindowIndexOffset(
+    Stencil.StencilElementDistance(0)):stencil_window_lane_stream(input)
 end
 function Stencil.StencilKernelWindowIndexOffset:stencil_window_lane_stream(input)
   local stream, access = input.stream, input.access
   local window = stream.construction.state.domain.window
-  if self.offset < -window.before or self.offset > window.after then
+  local distance = self.distance.elements
+  if distance < -window.extent.before.elements
+      or distance > window.extent.after.elements then
     return Stencil.StencilKernelStreamPreparationRejected(
       Stencil.StencilKernelUnsupportedWindowIndex(
         stream.binding.expr.index, "window offset exceeds declared extent"))
@@ -812,7 +817,7 @@ function Stencil.StencilKernelWindowIndexOffset:stencil_window_lane_stream(input
     stream.source, stream.binding, Stencil.StencilStreamDef(
       stream.id, stream.binding.ty, Stencil.StencilStreamWindowAccess(
         Stencil.StencilAccessRef(access.entry.access.name), {
-          Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), self.offset),
+          Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), self.distance),
         })))
 end
 function Stencil.StencilKernelCountedWindow1D:stencil_lane_stream(input)
@@ -1020,13 +1025,16 @@ function Stencil.StencilKernelWindowIndexRejected:stencil_prepare_window_result_
   return Stencil.StencilKernelResultStreamRejected(self.reject)
 end
 function Stencil.StencilKernelWindowIndexCenter:stencil_prepare_window_result_lane(input)
-  return Stencil.StencilKernelWindowIndexOffset(0)
+  return Stencil.StencilKernelWindowIndexOffset(
+    Stencil.StencilElementDistance(0))
 :stencil_prepare_window_result_lane(input)
 end
 function Stencil.StencilKernelWindowIndexOffset:stencil_prepare_window_result_lane(input)
   local result, access, expr = input.result, input.access, input.expr
   local window = result.construction.state.domain.window
-  if self.offset < -window.before or self.offset > window.after then
+  local distance = self.distance.elements
+  if distance < -window.extent.before.elements
+      or distance > window.extent.after.elements then
     return Stencil.StencilKernelResultStreamRejected(
       Stencil.StencilKernelUnsupportedWindowIndex(
         expr.index, "window result offset exceeds declared extent"))
@@ -1035,7 +1043,7 @@ function Stencil.StencilKernelWindowIndexOffset:stencil_prepare_window_result_la
   local definition = Stencil.StencilStreamDef(
     result.id, ty, Stencil.StencilStreamWindowAccess(
       Stencil.StencilAccessRef(access.entry.access.name), {
-        Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), self.offset),
+        Stencil.StencilWindowOffset(Stencil.StencilAxisRef(1), self.distance),
       }))
   local binding = Kernel.KernelBinding(
     Kernel.KernelValueId("kernel-result:" .. result.id.text), ty, expr)

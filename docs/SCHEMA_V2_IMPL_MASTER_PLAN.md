@@ -76,15 +76,16 @@ carrier/address edge state, `sem_addr_*` generation, and the per-access projecte
 source variant have been removed from both schema trees and all emitters. Legacy
 non-CMat Code emission now retains ordinary indexed places for GCC optimization.
 
-## P1 — window coordinate generalization
+## P1 — window coordinate generalization — complete
 
-Forward unit-step window emission remains canonical. Before widening:
-
-- define named element-space distance and extent products;
-- retain exact boundary transformation provenance;
-- choose absolute or relative coordinates per window use;
-- prove clamp, wrap, and zero behavior with GCC tests;
-- do not pass loose metric tuples or infer relative coordinates.
+Window semantics now use named `StencilElementDistance` and
+`StencilWindowExtent` products. The coordinate facet retains exact extent and
+boundary provenance in distinct relative and dynamic window-coordinate leaves.
+Centered window uses select shared cursors; transformed clamp/wrap/zero uses
+select dynamic addressing; unsupported reject-boundary displacement rejects the
+whole projection. Forward, backward, unit, and non-unit element-distance behavior
+executes through GCC `-O3` tests. No loose metric tuples or inferred relative
+coordinates remain.
 
 ## P1 — fusion contract recomputation
 

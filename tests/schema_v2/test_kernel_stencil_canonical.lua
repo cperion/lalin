@@ -386,8 +386,8 @@ assert(asdl.classof(window_projected) == Stencil.StencilKernelProjected)
 local window_projection = window_projected.projection
 assert(asdl.classof(window_projection.provenance.domain) ==
   Stencil.StencilKernelCountedWindow1D)
-assert(window_projection.provenance.domain.window.before == 1)
-assert(window_projection.provenance.domain.window.after == 1)
+assert(window_projection.provenance.domain.window.extent.before.elements == 1)
+assert(window_projection.provenance.domain.window.extent.after.elements == 1)
 assert(asdl.classof(window_projection.computation.producer.shape) ==
   Stencil.StencilProduceCountedWindow1D)
 local window_streams = {}
@@ -401,7 +401,7 @@ assert(#window_streams == 1)
 local window_stream = window_streams[1]
 assert(asdl.classof(window_stream.definition.op) ==
   Stencil.StencilStreamWindowAccess)
-assert(window_stream.definition.op.offsets[1].offset == -1)
+assert(window_stream.definition.op.offsets[1].distance.elements == -1)
 local c_i32 = C.CBackendScalar(Core.ScalarI32)
 local c_ptr = C.CBackendDataPtr(c_i32)
 local base_local = C.CBackendLocal(
