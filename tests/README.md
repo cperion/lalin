@@ -13,18 +13,16 @@ luajit tests/run.lua all          # includes optional/retired compiler suites
 
 Directories:
 
-- `asdl/` - ASDL model and builder mechanics
-- `compiler_process/` - compiler process/package orchestration tests
-- `frontend/` - syntax, parsing, open expansion, RNF, splicing
-- `code_ir/` - Tree/Code IR phases, validation, facts, lowering plans, explicit LuaJIT bytecode backend, and CMat fragment tests
-- `c_backend/` - C emission/AOT path
-- `host/` - hosted Lua builder/value APIs
-- `runtime/` - language-level execution and semantic behavior
-- `schema/` - schema smoke tests
-- `editor/` and `lsp/` - editor facts and LSP integration
-- `core/` - core operators, types, source utilities, std facade
-- `tooling/` - reports, explainer coverage, link planning
-- `debug/` - debug interpreter/debugger and ELF parser tests
-- `ui/` - retired SDL/UI tests; not in aggregate suites
-- `experiments/` - experiment/spongejit tests; may require experiment modules
-- `fixtures/` - fixture data consumed by tests
+- `asdl/` — ASDL model and builder mechanics
+- `compiler_process/` — compiler package and process orchestration
+- `frontend/` — syntax, parsing, expansion, RNF, and splicing
+- `code_ir/` — Tree/Code IR phases and explicit LuaJIT bytecode tests
+- `c_backend/` — canonical C emission and GCC execution
+- `runtime/` — language-level execution and semantic behavior
+- `schema/`, `schema_v2/` — schema ownership and semantic boundary tests
+- `core/` — operators, types, source utilities, and standard facade
+- `tooling/` — reports and planning tools
+- `hyper/`, `mlui/` — active package tests
+- `experiments/`, `retired/`, `ui/` — non-default or quarantined suites
+- `fixtures/` — shared fixture data
+- `backend/` — backend-specific focused fixtures not separately scheduled

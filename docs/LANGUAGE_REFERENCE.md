@@ -2216,9 +2216,8 @@ It is a separately selected artifact form.
 
 ### Retired Native Template Banks
 
-Native copy-patch template banks are retired and deleted; the patcher is not
-part of the architecture. See `docs/RESIDUAL_NATIVE_ARCHITECTURE.md` for the
-historical record.
+Native copy-patch template banks and the patcher are deleted and are not part of
+the architecture or supported language surface.
 ### C / AOT Emission
 
 Use `emit_c` when the desired product is a C artifact that the user compiles as

@@ -1,5 +1,7 @@
 # Lalin Lua VM Roadmap
 
+**Scope:** the `demo/lua_vm.lln` register-VM path. The separate
+`experiments/lua_interpreter_vm/` work is not governed by this roadmap.
 This is the staged plan for growing the register-VM demo into a Lua-family VM while preserving Lalin's ASDL/region architecture.
 
 ## Principles

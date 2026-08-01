@@ -98,9 +98,8 @@ Focused suites:
 
 ```sh
 luajit tests/run.lua frontend
-luajit tests/run.lua code_ir
-luajit tests/run.lua schema
-luajit tests/run.lua ui
+luajit tests/run.lua schema_v2
+luajit tests/run.lua c_backend
 ```
 
 Useful backend checks:
@@ -115,13 +114,13 @@ luajit tests/c_backend/test_stencil_c_gcc.lua
 
 ```text
 lua/llbl.lua                  LLBL extensible language workbench substrate
-lua/lalin/                   Lalin compiler, schemas, DSL, and backend
+lua/lalin/                   Lalin compiler, DSL, schemas, and backend
 lua/lalin/dsl/               authoring heads and namespace surface
-lua/lalin/schema/            ASDL/schema definitions
-lua/ui/                      UI kernel and widgets
+lua/lalin/schema_v2/         canonical compiler schemas
+lua/lalin/impl/              compiler phase and backend methods
 tests/                       standalone LuaJIT tests
 benchmarks/                  measurement scripts
-docs/                        consolidated documentation
+docs/                        consolidated authoritative documentation
 ```
 
 ## Language Shape
@@ -161,26 +160,21 @@ an encoded exit union and dispatch back to named exits.
 
 ## Documentation
 
-Core reference:
-- `docs/ASDL_GUIDE.md` - binding ASDL modeling doctrine and method discipline
-- `docs/LLBL_GUIDE.md` - central LLBL workbench and region guide
-- `docs/LANGUAGE_REFERENCE.md` - public Lalin language reference
-- `docs/ARCHITECTURE.md` - language, compiler, backend, and lowering architecture
-- `docs/TARGET_ASDL_ARCHITECTURE.md` - target ASDL schema and method file organization
-- `docs/DESIGN_BIBLE.md` - long-form design philosophy
+Authoritative reference:
+- `docs/ASDL_GUIDE.md` — binding ASDL and compiler-method doctrine
+- `docs/DESIGN_BIBLE.md` — long-form explicit architecture method
+- `docs/LANGUAGE_REFERENCE.md` — public Lalin language reference
+- `docs/LLBL_GUIDE.md` — LLBL workbench and region guide
+- `docs/ARCHITECTURE.md` — active compiler and backend architecture
+- `docs/CONVENTIONS.md` — naming, style, and repository conventions
 
-Backend and dialect design:
-- `docs/C_BACKEND_REDESIGN.md` - target C backend lowering design
-- `docs/C_LLBL_REDESIGN.md` - C LLBL dialect target design
-- `docs/LLBL_BRACKET_EVAL_ARCHITECTURE.md` - kernel-owned HostEval and role algebra
-
-Process and roadmap:
-- `docs/CONVENTIONS.md` - naming, style, and repository conventions
-- `docs/UI_GUIDE.md` - UI package guide
-- `docs/LUA_VM_ROADMAP.md` - staged Lua VM milestones
-
-Retired:
-- `docs/RESIDUAL_NATIVE_ARCHITECTURE.md` - retired native C-stencil copy-patch architecture (historical record; the stencil/CMat vocabulary survives as the emitted-C shape contract)
+Active compiler design and planning:
+- `docs/SCHEMA_OWNERSHIP.md` — schema ownership and cutover guard
+- `docs/SCHEMA_V2_IMPL_MASTER_PLAN.md` — concise active compiler queue
+- `docs/CMAT_MEMORY_COORDINATE_ARCHITECTURE.md` — fused memory-coordinate design
+- `docs/LLBL_BRACKET_EVAL_ARCHITECTURE.md` — role-directed bracket evaluation
+- `docs/LUA_VM_ROADMAP.md` — staged Lua VM milestones
+- `docs/HYPERMEDIA_ARCHITECTURE.md` — active hypermedia design proposal
 
 ## Design Rules
 

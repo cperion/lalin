@@ -1,6 +1,7 @@
 # LLBL Hypermedia Architecture
 
-**Status:** design proposal
+**Status:** active design proposal with a partial implementation under `lua/hyper/`.
+Unimplemented sections are target design, not claims about the current runtime.
 
 **Runtime target:** LuaJIT, initially hosted by Luvit
 

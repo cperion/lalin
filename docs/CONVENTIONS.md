@@ -148,9 +148,8 @@ semantic descriptor also owns how that descriptor becomes C, JIT-cooked shared
 object input, AOT source, or an explicitly selected experimental artifact.
 
 Native C-stencil copy-patch is retired and deleted; only the stencil vocabulary
-survives as the deterministic emitted-C shape contract.
-`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` is the historical record of the retired
-patcher.
+survives as the deterministic emitted-C shape contract. Historical patcher
+design documents are intentionally not retained in the active documentation set.
 
 LuaJIT bytecode is an explicit non-main mode. It is not an implicit fallback from
 GCC C execution, AOT emission, or the retired native patcher.

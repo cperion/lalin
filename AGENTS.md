@@ -187,8 +187,8 @@ The active fast path is GCC over `emit_c` output: `CBackendUnit -> emit_c -> gcc
 AOT artifact path. Fused emitted C + GCC -O3 is the performance path; generic
 fusion is a typed decision over the exact emitted shape plus declared
 memory/noalias/bounds facts, with contracts recomputed after fusion. The
-C-stencil copy-patch / binary-bank patcher architecture in
-`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` is retired and must not be reopened. Only
+The binary copy-patch / binary-bank backend is deleted and must not be reopened.
+Only the stencil/CMat vocabulary survives as the deterministic emitted-C shape
 the stencil/CMat vocabulary survives as the deterministic emitted-C shape
 contract (`schema_v2/stencil.lua` -> CMat fragment path -> `emit_c`). LuaJIT
 bytecode is explicit via `opts.luajit`, `opts.bytecode`, or `compile_luajit`.
@@ -342,26 +342,30 @@ LalinTree ASDL
 Key files:
 
 ```text
-lua/llbl.lua                  LLBL extensible language workbench substrate
-lua/lalin/dsl/               Lalin authoring heads
-lua/lalin/schema/            ASDL/schema definitions
-lua/lalin/frontend_pipeline.lua
-                             DSL/tree/typecheck/code pipeline
-lua/lalin/emit_c_compile.lua   GCC-over-emit_c shared-object runner
-lua/lalin/luajit_backend.lua explicit LuaTrace/LuaJIT bytecode backend facade
+lua/llbl.lua                       LLBL extensible language workbench substrate
+lua/lalin/dsl/                    Lalin authoring heads
+lua/lalin/schema_v2/              canonical ASDL/schema definitions
+lua/lalin/impl/                   compiler phase and backend methods
+lua/lalin/impl/compiler_api.lua   public compiler API implementation
+lua/lalin/impl/lower_emit_c/      CMat environment, fragment, and assembly
+lua/lalin/impl/cemit_emit.lua     CBackendUnit C emission
+lua/lalin/luajit_backend.lua      explicit LuaJIT bytecode backend facade
 ```
 
 ## Key Docs
 
 ```text
-docs/LLBL_GUIDE.md            central LLBL workbench and region guide
-docs/LANGUAGE_REFERENCE.md   public Lalin language reference
-docs/ARCHITECTURE.md         language, compiler, backend, and lowering architecture
-docs/RESIDUAL_NATIVE_ARCHITECTURE.md
-                             retired copy-patch architecture (historical record)
-docs/UI_GUIDE.md             UI package guide
-docs/CONVENTIONS.md          naming, style, and repository conventions
-docs/DESIGN_BIBLE.md         long-form design philosophy
+docs/ASDL_GUIDE.md          binding ASDL modeling doctrine
+docs/LLBL_GUIDE.md          central LLBL workbench and region guide
+docs/LANGUAGE_REFERENCE.md public Lalin language reference
+docs/ARCHITECTURE.md       active compiler and backend architecture
+docs/CMAT_MEMORY_COORDINATE_ARCHITECTURE.md
+                           fused memory-coordinate design authority
+docs/SCHEMA_V2_IMPL_MASTER_PLAN.md
+                           concise active compiler queue
+docs/SCHEMA_OWNERSHIP.md   schema ownership and cutover guard
+docs/CONVENTIONS.md        naming, style, and repository conventions
+docs/DESIGN_BIBLE.md       long-form design philosophy
 ```
 
 ## Non-Negotiable Rules
