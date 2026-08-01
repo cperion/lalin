@@ -915,6 +915,81 @@ function Lower.LowerCMatExitEnvironmentInput:lower_cmat_exits()
   return self.provenance.result:lower_cmat_exit_requirements(self.coverage)
 :lower_cmat_build_exits(self)
 end
+
+-- LowerCMatEnvironmentInput → immutable composition of the three CMat
+-- environments (values, accesses, exits) into one fragment request.
+-- The chain threads the named environment input and each computed typed
+-- result; no procedural state product is introduced.
+function Lower.LowerCMatEnvironmentInput:lower_cmat_environment()
+  if self.coverage.func ~= self.code_func.id
+      or self.baseline.source ~= self.code_func
+      or self.dominance.source ~= self.code_func
+      or self.adapters.source ~= self.code_func
+      or self.adapters.block ~= self.coverage.replacement_source then
+    return Lower.LowerCMatEnvironmentRejected(
+      Lower.LowerIssueValueEnvironmentRejected(
+        self.coverage.func,
+        "CMat environment function or replacement identity mismatch"))
+  end
+  return self.fragment.strategy:lower_cmat_environment_strategy(self)
+end
+
+function Lower.LowerStrategyKernel:lower_cmat_environment_strategy(input)
+  if self.kernel ~= input.materialization.provenance.kernel.id then
+    return Lower.LowerCMatEnvironmentRejected(
+      Lower.LowerIssueFragmentRejected(
+        input.fragment.id,
+        "CMat materialization provenance kernel disagrees with fragment strategy"))
+  end
+  return input:lower_cmat_environment_chain()
+end
+function Lower.LowerStrategyCode:lower_cmat_environment_strategy(input)
+  return Lower.LowerCMatEnvironmentRejected(
+    Lower.LowerIssueFragmentRejected(
+      input.fragment.id, "code strategy fragment has no CMat materialization"))
+end
+function Lower.LowerStrategyClosedForm:lower_cmat_environment_strategy(input)
+  return Lower.LowerCMatEnvironmentRejected(
+    Lower.LowerIssueFragmentRejected(
+      input.fragment.id, "closed-form fragment has no CMat materialization"))
+end
+
+function Lower.LowerCMatEnvironmentInput:lower_cmat_environment_chain()
+  local values = Lower.LowerCMatValueEnvironmentInput(
+    self.code_func, self.baseline, self.coverage, self.dominance, self.adapters)
+    :lower_cmat_values()
+  return values:lower_cmat_compose_accesses(self)
+end
+
+function Lower.LowerCMatValuesReady:lower_cmat_compose_accesses(input)
+  local accesses = Lower.LowerCMatAccessEnvironmentInput(
+    input.materialization, self.values, input.addresses, input.target)
+    :lower_cmat_accesses()
+  return accesses:lower_cmat_compose_exits(input, self)
+end
+function Lower.LowerCMatValuesRejected:lower_cmat_compose_accesses(_input)
+  return Lower.LowerCMatEnvironmentRejected(self.issue)
+end
+
+function Lower.LowerCMatAccessesReady:lower_cmat_compose_exits(input, values)
+  local exits = Lower.LowerCMatExitEnvironmentInput(
+    input.materialization.provenance, input.coverage, input.code_func)
+    :lower_cmat_exits()
+  return exits:lower_cmat_finish_environment(input, values, self)
+end
+function Lower.LowerCMatAccessesRejected:lower_cmat_compose_exits(_input, _values)
+  return Lower.LowerCMatEnvironmentRejected(self.issue)
+end
+
+function Lower.LowerCMatExitsReady:lower_cmat_finish_environment(input, values, accesses)
+  return Lower.LowerCMatEnvironmentReady(CMat.CMatCFragmentInput(
+    input.materialization, input.code_func, input.coverage.covered_blocks,
+    input.coverage.replacement_source, input.target, values.values,
+    accesses.accesses, self.exits, input.namespace, input.reserved_labels))
+end
+function Lower.LowerCMatExitsRejected:lower_cmat_finish_environment(_input, _values, _accesses)
+  return Lower.LowerCMatEnvironmentRejected(self.issue)
+end
 local function access_issue(access, reason)
   return Lower.LowerIssueAccessRejected(access, reason)
 end
