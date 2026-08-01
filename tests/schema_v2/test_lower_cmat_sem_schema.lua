@@ -305,6 +305,155 @@ assert(asdl.classof(loop_dominance) == Lower.LowerCDominanceReady)
 assert(loop_dominance.dominance:lower_c_dominance_lookup(
   Lower.LowerCDominanceQuery(loop_header, loop_exit)) ==
   Lower.LowerCDominates)
+
+-- Jump and branch occurrences are named on the typed edge projection.
+local dom_projection = dom_func:lower_c_incoming_edges()
+assert(asdl.classof(dom_projection) == Lower.LowerCIncomingEdgeProjection)
+assert(#dom_projection.entries == 2)
+assert(dom_projection.entries[1].occurrence == Lower.LowerCTermEdgeOnly)
+assert(dom_projection.entries[1].origin.source == dom_entry)
+assert(dom_projection.entries[1].origin.term == Code.CodeTermId("entry_jump"))
+assert(dom_projection.entries[2].occurrence == Lower.LowerCTermEdgeOnly)
+assert(dom_projection.entries[2].origin.term == Code.CodeTermId("body_jump"))
+
+-- Same-target branch: both arms jump to one destination; each arm keeps
+-- its own occurrence and the adapter phi inputs name them exactly.
+local bt_entry = Code.CodeBlockId("bt_entry")
+local bt_body = Code.CodeBlockId("bt_body")
+local bt_exit = Code.CodeBlockId("bt_exit")
+local bt_term_id = Code.CodeTermId("bt_branch")
+local bt_func = Code.CodeFunc(
+  Code.CodeFuncId("branch_same_target"), "branch_same_target",
+  Code.CodeLinkageLocal, dom_sig.id, {
+    Code.CodeParam(dom_param, "cond", i32, origin),
+  }, {}, bt_entry, {
+    Code.CodeBlock(bt_entry, "entry", {}, {}, Code.CodeTerm(
+      bt_term_id, Code.CodeTermBranch(
+        dom_param, bt_body, { dom_param }, bt_body, { dom_param }), origin), origin),
+    Code.CodeBlock(bt_body, "body", {
+      Code.CodeParam(dom_block_param, "block_param", i32, origin),
+    }, {}, Code.CodeTerm(Code.CodeTermId("bt_body_jump"),
+      Code.CodeTermJump(bt_exit, {}), origin), origin),
+    Code.CodeBlock(bt_exit, "exit", {}, {}, term, origin),
+  }, origin)
+local bt_graph = Graph.CodeFuncGraph(bt_func.id, {
+  Graph.GraphEdge(Graph.GraphBlockId(bt_func.id, bt_entry),
+    Graph.GraphBlockId(bt_func.id, bt_body), Graph.EdgeKindBranch),
+  Graph.GraphEdge(Graph.GraphBlockId(bt_func.id, bt_entry),
+    Graph.GraphBlockId(bt_func.id, bt_body), Graph.EdgeKindBranch),
+  Graph.GraphEdge(Graph.GraphBlockId(bt_func.id, bt_body),
+    Graph.GraphBlockId(bt_func.id, bt_exit), Graph.EdgeKindJump),
+}, {}, {}, {})
+local bt_dominance = Lower.LowerCDominanceConstructionInput(
+  bt_func, bt_graph):lower_c_dominance()
+assert(asdl.classof(bt_dominance) == Lower.LowerCDominanceReady)
+local bt_baseline = bt_func:lower_c_function(
+  Lower.LowerCFunctionInput(Lower.LowerCSignatureProjection({
+    dom_sig:lower_c_signature_entry(),
+  })))
+local bt_adapters = Lower.LowerCReplacementEntryAdapterInput(
+  bt_func, bt_baseline, bt_body, bt_dominance.dominance)
+:lower_c_entry_adapters()
+assert(asdl.classof(bt_adapters) ==
+  Lower.LowerCReplacementEntryAdapterReady)
+assert(#bt_adapters.projection.entries == 1)
+local bt_incoming = bt_adapters.projection.entries[1].incoming
+assert(#bt_incoming == 2)
+local bt_then, bt_else = 0, 0
+for i = 1, #bt_incoming do
+  assert(bt_incoming[i].edge.origin.source == bt_entry)
+  assert(bt_incoming[i].edge.origin.term == bt_term_id)
+  if bt_incoming[i].edge.occurrence == Lower.LowerCTermEdgeThen then
+    bt_then = bt_then + 1
+  elseif bt_incoming[i].edge.occurrence == Lower.LowerCTermEdgeElse then
+    bt_else = bt_else + 1
+  end
+end
+assert(bt_then == 1 and bt_else == 1)
+-- A graph omitting one of the two same-target branch occurrences is rejected.
+local bt_omitted = Graph.CodeFuncGraph(bt_func.id, {
+  Graph.GraphEdge(Graph.GraphBlockId(bt_func.id, bt_entry),
+    Graph.GraphBlockId(bt_func.id, bt_body), Graph.EdgeKindBranch),
+  Graph.GraphEdge(Graph.GraphBlockId(bt_func.id, bt_body),
+    Graph.GraphBlockId(bt_func.id, bt_exit), Graph.EdgeKindJump),
+}, {}, {}, {})
+assert(asdl.classof(Lower.LowerCDominanceConstructionInput(
+  bt_func, bt_omitted):lower_c_dominance()) ==
+  Lower.LowerCDominanceRejected)
+
+-- Same-target switch: two cases target one destination; each case is a
+-- distinct Case(ordinal) occurrence and the default arm is its own leaf.
+local sw_entry = Code.CodeBlockId("sw_entry")
+local sw_body = Code.CodeBlockId("sw_body")
+local sw_exit = Code.CodeBlockId("sw_exit")
+local sw_term_id = Code.CodeTermId("sw_switch")
+local sw_func = Code.CodeFunc(
+  Code.CodeFuncId("switch_same_target"), "switch_same_target",
+  Code.CodeLinkageLocal, dom_sig.id, {
+    Code.CodeParam(dom_param, "cond", i32, origin),
+  }, {}, sw_entry, {
+    Code.CodeBlock(sw_entry, "entry", {}, {}, Code.CodeTerm(
+      sw_term_id, Code.CodeTermSwitch(
+        dom_param, {
+          Code.CodeSwitchCase(Core.LitInt("1"), sw_body, { dom_param }),
+          Code.CodeSwitchCase(Core.LitInt("2"), sw_body, { dom_param }),
+        }, sw_exit, {}), origin), origin),
+    Code.CodeBlock(sw_body, "body", {
+      Code.CodeParam(dom_block_param, "block_param", i32, origin),
+    }, {}, Code.CodeTerm(Code.CodeTermId("sw_body_jump"),
+      Code.CodeTermJump(sw_exit, {}), origin), origin),
+    Code.CodeBlock(sw_exit, "exit", {}, {}, term, origin),
+  }, origin)
+local sw_graph = Graph.CodeFuncGraph(sw_func.id, {
+  Graph.GraphEdge(Graph.GraphBlockId(sw_func.id, sw_entry),
+    Graph.GraphBlockId(sw_func.id, sw_body), Graph.EdgeKindBranch),
+  Graph.GraphEdge(Graph.GraphBlockId(sw_func.id, sw_entry),
+    Graph.GraphBlockId(sw_func.id, sw_body), Graph.EdgeKindBranch),
+  Graph.GraphEdge(Graph.GraphBlockId(sw_func.id, sw_entry),
+    Graph.GraphBlockId(sw_func.id, sw_exit), Graph.EdgeKindJump),
+  Graph.GraphEdge(Graph.GraphBlockId(sw_func.id, sw_body),
+    Graph.GraphBlockId(sw_func.id, sw_exit), Graph.EdgeKindJump),
+}, {}, {}, {})
+local sw_dominance = Lower.LowerCDominanceConstructionInput(
+  sw_func, sw_graph):lower_c_dominance()
+assert(asdl.classof(sw_dominance) == Lower.LowerCDominanceReady)
+local sw_projection = sw_func:lower_c_incoming_edges()
+assert(#sw_projection.entries == 4)
+assert(sw_projection.entries[3].occurrence ==
+  Lower.LowerCTermEdgeDefault)
+assert(sw_projection.entries[3].origin.term == sw_term_id)
+local sw_baseline = sw_func:lower_c_function(
+  Lower.LowerCFunctionInput(Lower.LowerCSignatureProjection({
+    dom_sig:lower_c_signature_entry(),
+  })))
+local sw_adapters = Lower.LowerCReplacementEntryAdapterInput(
+  sw_func, sw_baseline, sw_body, sw_dominance.dominance)
+:lower_c_entry_adapters()
+assert(asdl.classof(sw_adapters) ==
+  Lower.LowerCReplacementEntryAdapterReady)
+local sw_incoming = sw_adapters.projection.entries[1].incoming
+assert(#sw_incoming == 2)
+local sw_case_ordinals = {}
+for i = 1, #sw_incoming do
+  assert(sw_incoming[i].edge.origin.source == sw_entry)
+  assert(sw_incoming[i].edge.origin.term == sw_term_id)
+  assert(asdl.classof(sw_incoming[i].edge.occurrence) ==
+    Lower.LowerCTermEdgeCase)
+  sw_case_ordinals[sw_incoming[i].edge.occurrence.ordinal] = true
+end
+assert(sw_case_ordinals[1] and sw_case_ordinals[2])
+-- A graph omitting one case occurrence of the same target is rejected.
+local sw_omitted = Graph.CodeFuncGraph(sw_func.id, {
+  Graph.GraphEdge(Graph.GraphBlockId(sw_func.id, sw_entry),
+    Graph.GraphBlockId(sw_func.id, sw_body), Graph.EdgeKindBranch),
+  Graph.GraphEdge(Graph.GraphBlockId(sw_func.id, sw_entry),
+    Graph.GraphBlockId(sw_func.id, sw_exit), Graph.EdgeKindJump),
+  Graph.GraphEdge(Graph.GraphBlockId(sw_func.id, sw_body),
+    Graph.GraphBlockId(sw_func.id, sw_exit), Graph.EdgeKindJump),
+}, {}, {}, {})
+assert(asdl.classof(Lower.LowerCDominanceConstructionInput(
+  sw_func, sw_omitted):lower_c_dominance()) ==
+  Lower.LowerCDominanceRejected)
 local base_value = Code.CodeValueId("base_ptr")
 local mem_access = Mem.MemAccessId("access")
 local access = Stencil.StencilAccess(
@@ -460,12 +609,5 @@ local ambiguous = Lower.LowerKernelCMatProjection({
 assert(asdl.classof(ambiguous) == Lower.LowerKernelCMatAmbiguous)
 assert(ambiguous.count == 2)
 
-assert(Lower.LowerCMatValuesReady)
-assert(Lower.LowerCMatAccessesReady)
-assert(Lower.LowerCMatExitsReady)
-assert(Lower.LowerCCodeFragment)
-assert(Lower.LowerCKernelCMatFragment)
-assert(Lower.LowerCLocalSubstitutionFound)
-assert(Lower.LowerCModuleResult)
 
 print("schema_v2 LOWER CMat semantic gate ok")

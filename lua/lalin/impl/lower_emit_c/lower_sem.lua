@@ -43,18 +43,19 @@ function Stencil.StencilKernelProjectionRejected:lower_cmat_state(_kernel)
 end
 
 function Stencil.StencilKernelModuleProjectedEntry:lower_cmat_entries()
-  return { Lower.LowerKernelCMatEntry(
-    self.kernel, self.result:lower_cmat_state(self.kernel)) }
+  return Lower.LowerKernelCMatProjection({
+    Lower.LowerKernelCMatEntry(
+      self.kernel, self.result:lower_cmat_state(self.kernel)) })
 end
 function Stencil.StencilKernelModuleRejectedEntry:lower_cmat_entries()
-  return {}
+  return Lower.LowerKernelCMatProjection({})
 end
 
 function Stencil.StencilKernelModuleProjected:lower_cmat_prepare()
   local entries = {}
   for i = 1, #self.projection.entries do
     local additions = self.projection.entries[i]:lower_cmat_entries()
-    for j = 1, #additions do entries[#entries + 1] = additions[j] end
+    for j = 1, #additions.entries do entries[#entries + 1] = additions.entries[j] end
   end
   return Lower.LowerKernelCMatPrepared(Lower.LowerKernelCMatProjection(entries))
 end
@@ -181,41 +182,55 @@ local function find_dominators(entries, block)
   end
   return found
 end
-function Code.CodeTermJump:lower_c_incoming_edges(source)
-  return { Lower.LowerCIncomingEdgeArguments(source, self.dest, self.args) }
+function Code.CodeTermJump:lower_c_incoming_edges(origin)
+  return Lower.LowerCIncomingEdgeProjection({
+    Lower.LowerCIncomingEdgeArguments(
+      origin, Lower.LowerCTermEdgeOnly, self.dest, self.args) })
 end
-function Code.CodeTermBranch:lower_c_incoming_edges(source)
-  return {
-    Lower.LowerCIncomingEdgeArguments(source, self.then_dest, self.then_args),
-    Lower.LowerCIncomingEdgeArguments(source, self.else_dest, self.else_args),
-  }
+function Code.CodeTermBranch:lower_c_incoming_edges(origin)
+  return Lower.LowerCIncomingEdgeProjection({
+    Lower.LowerCIncomingEdgeArguments(
+      origin, Lower.LowerCTermEdgeThen, self.then_dest, self.then_args),
+    Lower.LowerCIncomingEdgeArguments(
+      origin, Lower.LowerCTermEdgeElse, self.else_dest, self.else_args),
+  })
 end
-local function switch_edges(source, cases, default_dest, default_args)
+local function switch_edges(origin, cases, default_dest, default_args)
   local entries = {}
   for i = 1, #cases do
     entries[#entries + 1] = Lower.LowerCIncomingEdgeArguments(
-      source, cases[i].dest, cases[i].args)
+      origin, Lower.LowerCTermEdgeCase(i), cases[i].dest, cases[i].args)
   end
   entries[#entries + 1] = Lower.LowerCIncomingEdgeArguments(
-    source, default_dest, default_args)
-  return entries
+    origin, Lower.LowerCTermEdgeDefault, default_dest, default_args)
+  return Lower.LowerCIncomingEdgeProjection(entries)
 end
-function Code.CodeTermSwitch:lower_c_incoming_edges(source)
-  return switch_edges(source, self.cases, self.default_dest, self.default_args)
+function Code.CodeTermSwitch:lower_c_incoming_edges(origin)
+  return switch_edges(origin, self.cases, self.default_dest, self.default_args)
 end
-function Code.CodeTermVariantSwitch:lower_c_incoming_edges(source)
-  return switch_edges(source, self.cases, self.default_dest, self.default_args)
+function Code.CodeTermVariantSwitch:lower_c_incoming_edges(origin)
+  return switch_edges(origin, self.cases, self.default_dest, self.default_args)
 end
-function Code.CodeTermReturn:lower_c_incoming_edges(_source) return {} end
-function Code.CodeTermTrap:lower_c_incoming_edges(_source) return {} end
-function Code.CodeTermUnreachable:lower_c_incoming_edges(_source) return {} end
+function Code.CodeTermReturn:lower_c_incoming_edges(_origin)
+  return Lower.LowerCIncomingEdgeProjection({})
+end
+function Code.CodeTermTrap:lower_c_incoming_edges(_origin)
+  return Lower.LowerCIncomingEdgeProjection({})
+end
+function Code.CodeTermUnreachable:lower_c_incoming_edges(_origin)
+  return Lower.LowerCIncomingEdgeProjection({})
+end
 function Code.CodeFunc:lower_c_incoming_edges()
   local entries = {}
   for i = 1, #self.blocks do
-    local additions = self.blocks[i].term.op:lower_c_incoming_edges(self.blocks[i].id)
-    for j = 1, #additions do entries[#entries + 1] = additions[j] end
+    local block = self.blocks[i]
+    local origin = Lower.LowerCTermEdgeOrigin(block.id, block.term.id)
+    local additions = block.term.op:lower_c_incoming_edges(origin)
+    for j = 1, #additions.entries do
+      entries[#entries + 1] = additions.entries[j]
+    end
   end
-  return entries
+  return Lower.LowerCIncomingEdgeProjection(entries)
 end
 function Lower.LowerCDominanceConstructionInput:lower_c_dominance()
   if self.graph.func ~= self.code_func.id then
@@ -235,7 +250,7 @@ function Lower.LowerCDominanceConstructionInput:lower_c_dominance()
     return Lower.LowerCDominanceRejected(Lower.LowerIssueDominanceRejected(
       self.code_func.id, "function entry block is absent"))
   end
-  local edges = self.code_func:lower_c_incoming_edges()
+  local edges = self.code_func:lower_c_incoming_edges().entries
   for i = 1, #self.graph.edges do
     local edge = self.graph.edges[i]
     if edge.from.func ~= self.code_func.id or edge.to.func ~= self.code_func.id
@@ -246,7 +261,7 @@ function Lower.LowerCDominanceConstructionInput:lower_c_dominance()
     end
   end
   for i = 1, #edges do
-    if not contains(blocks, edges[i].source)
+    if not contains(blocks, edges[i].origin.source)
         or not contains(blocks, edges[i].destination) then
       return Lower.LowerCDominanceRejected(Lower.LowerIssueDominanceRejected(
         self.code_func.id, "terminator edge names an absent block"))
@@ -255,13 +270,13 @@ function Lower.LowerCDominanceConstructionInput:lower_c_dominance()
     local expected = 0
     for j = 1, #self.graph.edges do
       local edge = self.graph.edges[j]
-      if edge.from.block == edges[i].source
+      if edge.from.block == edges[i].origin.source
           and edge.to.block == edges[i].destination then
         matches = matches + 1
       end
     end
     for j = 1, #edges do
-      if edges[j].source == edges[i].source
+      if edges[j].origin.source == edges[i].origin.source
           and edges[j].destination == edges[i].destination then
         expected = expected + 1
       end
@@ -274,7 +289,7 @@ function Lower.LowerCDominanceConstructionInput:lower_c_dominance()
   for i = 1, #self.graph.edges do
     local matches = 0
     for j = 1, #edges do
-      if self.graph.edges[i].from.block == edges[j].source
+      if self.graph.edges[i].from.block == edges[j].origin.source
           and self.graph.edges[i].to.block == edges[j].destination then
         matches = matches + 1
       end
@@ -289,7 +304,7 @@ function Lower.LowerCDominanceConstructionInput:lower_c_dominance()
     local additions = {}
     for i = 1, #edges do
       local edge = edges[i]
-      if contains(reachable, edge.source)
+      if contains(reachable, edge.origin.source)
           and not contains(reachable, edge.destination)
           and not contains(additions, edge.destination) then
         additions[#additions + 1] = edge.destination
@@ -320,9 +335,9 @@ function Lower.LowerCDominanceConstructionInput:lower_c_dominance()
         local predecessors = {}
         for j = 1, #edges do
           local edge = edges[j]
-          if edge.destination == block and contains(reachable, edge.source)
-              and not contains(predecessors, edge.source) then
-            predecessors[#predecessors + 1] = edge.source
+          if edge.destination == block and contains(reachable, edge.origin.source)
+              and not contains(predecessors, edge.origin.source) then
+            predecessors[#predecessors + 1] = edge.origin.source
           end
         end
         dominators = { block }
@@ -377,27 +392,27 @@ end
 function Lower.LowerCFunctionParamSite:lower_c_resolve_incoming(input)
   return Lower.LowerCIncomingArgumentResolved(
     Lower.LowerCIncomingBlockArgument(
-      input.source, input.ordinal, input.value, self,
+      input.edge, input.ordinal, input.value, self,
       Lower.LowerCSourceFunctionParam))
 end
 function Lower.LowerCBlockParamSite:lower_c_resolve_incoming(input)
   local continuation = Lower.LowerCDominatingIncomingArgumentInput(input, self.block)
   return input.dominance:lower_c_dominance_lookup(
-    Lower.LowerCDominanceQuery(self.block, input.source))
+    Lower.LowerCDominanceQuery(self.block, input.edge.origin.source))
 :lower_c_resolve_incoming(continuation)
 end
 function Lower.LowerCInstructionSite:lower_c_resolve_incoming(input)
   local continuation = Lower.LowerCDominatingIncomingArgumentInput(input, self.block)
   return input.dominance:lower_c_dominance_lookup(
-    Lower.LowerCDominanceQuery(self.block, input.source))
+    Lower.LowerCDominanceQuery(self.block, input.edge.origin.source))
 :lower_c_resolve_incoming(continuation)
 end
 function Lower.LowerCDominates:lower_c_resolve_incoming(input)
   return Lower.LowerCIncomingArgumentResolved(
     Lower.LowerCIncomingBlockArgument(
-      input.request.source, input.request.ordinal, input.request.value,
+      input.request.edge, input.request.ordinal, input.request.value,
       input.request.definition, Lower.LowerCSourceDominates(
-        input.dominator, input.request.source)))
+        input.dominator, input.request.edge.origin.source)))
 end
 function Lower.LowerCDoesNotDominate:lower_c_resolve_incoming(input)
   return Lower.LowerCIncomingArgumentRejected(
@@ -465,7 +480,7 @@ function Lower.LowerCReplacementEntryAdapterInput:lower_c_entry_adapters()
         "replacement source block is absent or ambiguous"))
   end
   local incoming_edges = {}
-  local edges = self.code_func:lower_c_incoming_edges()
+  local edges = self.code_func:lower_c_incoming_edges().entries
   for i = 1, #edges do
     if edges[i].destination == self.replacement then
       incoming_edges[#incoming_edges + 1] = edges[i]
@@ -539,7 +554,7 @@ function Lower.LowerCReplacementEntryAdapterInput:lower_c_entry_adapters()
             "incoming argument lacks one exact typed definition site"))
       end
       local request = Lower.LowerCIncomingArgumentInput(
-        self.code_func.id, self.replacement, incoming_edges[i].source,
+        self.code_func.id, self.replacement, incoming_edges[i],
         ordinal, values[1], sites[1].site, self.dominance)
       collection = collection:lower_c_add_incoming(
         sites[1].site:lower_c_resolve_incoming(request))
