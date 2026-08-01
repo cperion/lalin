@@ -18,12 +18,12 @@ function Stencil.StencilAccessReduce:cmat_const_capability() return CMat.CMatCon
 function Stencil.StencilAccessControlResult:cmat_const_capability() return CMat.CMatConstIneligible("control result") end
 
 function Stencil.StencilLayoutScalar:cmat_restrict_capability() return CMat.CMatRestrictIneligible("scalar is not pointer-like") end
-function Stencil.StencilLayoutContiguous:cmat_restrict_capability() return CMat.CMatRestrictEligible end
-function Stencil.StencilLayoutIndexed:cmat_restrict_capability() return CMat.CMatRestrictEligible end
-function Stencil.StencilLayoutAffine1D:cmat_restrict_capability() return CMat.CMatRestrictEligible end
-function Stencil.StencilLayoutAffineND:cmat_restrict_capability() return CMat.CMatRestrictEligible end
-function Stencil.StencilLayoutFieldProjection:cmat_restrict_capability() return CMat.CMatRestrictEligible end
-function Stencil.StencilLayoutSoAComponent:cmat_restrict_capability() return CMat.CMatRestrictEligible end
+function Stencil.StencilLayoutContiguous:cmat_restrict_capability() return CMat.CMatRestrictIneligible("no declared noalias proof") end
+function Stencil.StencilLayoutIndexed:cmat_restrict_capability() return CMat.CMatRestrictIneligible("no declared noalias proof") end
+function Stencil.StencilLayoutAffine1D:cmat_restrict_capability() return CMat.CMatRestrictIneligible("no declared noalias proof") end
+function Stencil.StencilLayoutAffineND:cmat_restrict_capability() return CMat.CMatRestrictIneligible("no declared noalias proof") end
+function Stencil.StencilLayoutFieldProjection:cmat_restrict_capability() return CMat.CMatRestrictIneligible("no declared noalias proof") end
+function Stencil.StencilLayoutSoAComponent:cmat_restrict_capability() return CMat.CMatRestrictIneligible("no declared noalias proof") end
 function Stencil.StencilAccessDirect:cmat_restrict_capability() return self.base:cmat_restrict_capability() end
 function Stencil.StencilAccessDescribed:cmat_restrict_capability() return self.base:cmat_restrict_capability() end
 

@@ -113,9 +113,20 @@ function Stencil.StencilAccessDescribed:cmat_c_access_binding(binding)
     CMat.CMatCEmissionUnsupportedAccess(binding.source, "descriptor-backed access is outside scalar contiguous C emission"))
 end
 
+function CMat.CMatRestrictEligible:cmat_c_restrict_ptr() return true end
+function CMat.CMatRestrictIneligible:cmat_c_restrict_ptr() return false end
+function CMat.CMatConstEligible:cmat_c_const_ptr() return true end
+function CMat.CMatConstIneligible:cmat_c_const_ptr() return false end
+
+function CMat.CMatAccessBinding:cmat_c_access_ptr_type(elem)
+  return C.CBackendQualifiedDataPtr(elem,
+    self.const_capability:cmat_c_const_ptr(),
+    self.restrict_capability:cmat_c_restrict_ptr(), false)
+end
+
 function Stencil.StencilLayoutContiguous:cmat_c_access_binding(binding)
   local elem = binding.ty:code_to_c_backend_type()
-  local ptr = C.CBackendDataPtr(elem)
+  local ptr = binding:cmat_c_access_ptr_type(elem)
   local id = C.CBackendLocalId(binding.local_id.text)
   return CMat.CMatCAccessCBindingReady(
     CMat.CMatCAccessCEntry(binding.access, binding, C.CBackendLocal(id, C.CBackendName(id.text), ptr), self.stride))
