@@ -239,6 +239,19 @@ return schema. LalinFlow {
     role [LalinFlow.FlowInductionRole],
     range [LalinFlow.FlowValueRange],
   },
+  product. FlowInductionProjection {
+    interned,
+    inductions [many [LalinFlow.FlowInduction]],
+  },
+  sum. FlowInductionLookup {
+    FlowInductionFound { variant_unique, induction [LalinFlow.FlowInduction], },
+    FlowInductionMissing { variant_unique, field. value [LalinCode.CodeValueId], },
+    FlowInductionAmbiguous {
+      variant_unique,
+      field. value [LalinCode.CodeValueId],
+      count [number],
+    },
+  },
 
   product. FlowCarrierId { interned, text [str], },
   product. FlowAddressId { interned, text [str], },

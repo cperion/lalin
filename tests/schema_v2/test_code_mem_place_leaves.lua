@@ -2,14 +2,22 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local T = require("lalin.schema_v2")
 local asdl = require("lalin.asdl")
-local Code, Mem, Sem = T.LalinCode, T.LalinMem, T.LalinSem
+local Code, Flow, Mem, Sem = T.LalinCode, T.LalinFlow, T.LalinMem, T.LalinSem
 require("lalin.impl.code_mem")
 
 local fid = Code.CodeFuncId("f")
 local lid, gid, did = Code.CodeLocalId("l"), Code.CodeGlobalId("g"), Code.CodeDataId("d")
 local ptr, index = Code.CodeValueId("ptr"), Code.CodeValueId("i")
 local lo, go, dobj, pobj = Mem.MemObjectId("lo"), Mem.MemObjectId("go"), Mem.MemObjectId("do"), Mem.MemObjectId("po")
-local input = Mem.MemPlaceResolveInput(fid, { Mem.MemValueObjectEntry(ptr, pobj) }, { Mem.MemLocalObjectEntry(lid, lo) }, { Mem.MemGlobalObjectEntry(gid, go) }, { Mem.MemDataObjectEntry(did, dobj) }, {})
+local induction = Flow.FlowInduction(
+  index, Code.CodeTyIndex, Code.CodeValueId("init"), Code.CodeValueId("step"),
+  Flow.FlowPrimaryInduction, Flow.FlowRangeUnknown(index))
+local inductions = Flow.FlowInductionProjection({ induction })
+local input = Mem.MemPlaceResolveInput(
+  fid, { Mem.MemValueObjectEntry(ptr, pobj) },
+  { Mem.MemLocalObjectEntry(lid, lo) },
+  { Mem.MemGlobalObjectEntry(gid, go) },
+  { Mem.MemDataObjectEntry(did, dobj) }, {}, inductions)
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 
 local places = {
@@ -25,6 +33,12 @@ for _, place in ipairs(places) do
   local result = place:resolve_memory_place(input)
   assert(asdl.isa(result, Mem.MemPlaceResolved), tostring(place))
 end
+local indexed = places[5]:resolve_memory_place(input)
+assert(asdl.isa(indexed.index, Mem.MemIndexInduction))
+assert(indexed.index.induction == induction)
+local ordinary = inductions:classify_memory_index(
+  Mem.MemIndexClassifyInput(Code.CodeValueId("ordinary"), 4, 0))
+assert(asdl.isa(ordinary, Mem.MemIndexValue))
 
 local missing = Code.CodePlaceDeref(Code.CodeValueId("missing"), i32, nil):resolve_memory_place(input)
 assert(asdl.isa(missing, Mem.MemPlaceUnresolved))

@@ -148,6 +148,38 @@ local function find_data_object(entries, id)
   for _, entry in ipairs(entries) do if entry.data == id then return Mem.MemPlaceObjectFound(entry.object) end end
   return Mem.MemPlaceObjectMissing("data object is unavailable")
 end
+
+function Flow.FlowFactSet:project_inductions()
+  local inductions = {}
+  for _, loop in ipairs(self.loops) do
+    for _, induction in ipairs(loop.inductions) do
+      inductions[#inductions + 1] = induction
+    end
+  end
+  return Flow.FlowInductionProjection(inductions)
+end
+function Flow.FlowInductionProjection:lookup(value)
+  local matches = {}
+  for _, induction in ipairs(self.inductions) do
+    if induction.value == value then matches[#matches + 1] = induction end
+  end
+  if #matches == 0 then return Flow.FlowInductionMissing(value) end
+  if #matches > 1 then return Flow.FlowInductionAmbiguous(value, #matches) end
+  return Flow.FlowInductionFound(matches[1])
+end
+function Flow.FlowInductionFound:classify_memory_index(input)
+  return Mem.MemIndexInduction(
+    self.induction, input.elem_size, input.const_offset)
+end
+function Flow.FlowInductionMissing:classify_memory_index(input)
+  return Mem.MemIndexValue(input.value, input.elem_size, input.const_offset)
+end
+function Flow.FlowInductionAmbiguous:classify_memory_index(input)
+  return Mem.MemIndexValue(input.value, input.elem_size, input.const_offset)
+end
+function Flow.FlowInductionProjection:classify_memory_index(input)
+  return self:lookup(input.value):classify_memory_index(input)
+end
 function Mem.MemValueObjectFound:as_place_object(reason) return Mem.MemPlaceObjectFound(self.object) end
 function Mem.MemValueObjectMissing:as_place_object(reason) return Mem.MemPlaceObjectMissing(reason) end
 function Mem.MemPlaceObjectFound:resolve_place(base, index) return Mem.MemPlaceResolved(self.object, base, index, empty_discoveries()) end
@@ -170,7 +202,10 @@ function Code.CodePlaceDeref:resolve_memory_place(input)
 end
 
 function Mem.MemPlaceResolved:resolve_memory_index(place, input)
-  return Mem.MemPlaceResolved(self.object, self.base, Mem.MemIndexValue(place.index, place.elem_size, 0), self.discoveries)
+  local index = input.inductions:classify_memory_index(
+    Mem.MemIndexClassifyInput(place.index, place.elem_size, 0))
+  return Mem.MemPlaceResolved(
+    self.object, self.base, index, self.discoveries)
 end
 function Mem.MemPlaceUnresolved:resolve_memory_index(place, input) return self end
 function Code.CodePlaceIndex:resolve_memory_place(input) return self.base:resolve_memory_place(input):resolve_memory_index(self, input) end
@@ -394,7 +429,9 @@ function Code.CodeGlobalRefFunc:memory_referenced_object(input) return Mem.MemPl
 function Code.CodeGlobalRefExtern:memory_referenced_object(input) return Mem.MemPlaceObjectMissing("extern reference is not a memory object") end
 function Code.CodeInstGlobalRef:transfer_memory(input) return self.ref:memory_referenced_object(input):bind_transfer_object(input, self.dst) end
 function Code.CodeInstAddrOf:transfer_memory(input)
-  local place_input = Mem.MemPlaceResolveInput(input.func.id, input.facet.values, input.facet.locals, input.globals, input.data, input.facet.objects)
+  local place_input = Mem.MemPlaceResolveInput(
+    input.func.id, input.facet.values, input.facet.locals, input.globals,
+    input.data, input.facet.objects, input.inductions)
   return self.place:resolve_memory_place(place_input):bind_transfer_value(input, self.dst)
 end
 function Mem.MemPlaceResolved:bind_transfer_value(input, dst) return Mem.MemValueObjectFound(self.object):bind_transfer_object(input, dst) end
@@ -409,7 +446,13 @@ end
 function Mem.MemValueObjectMissing:transfer_pointer_offset(op, input) return unchanged(input) end
 function Mem.MemValueObjectFound:transfer_pointer_offset(op, input)
   local id = Mem.MemObjectId("ptr-offset:" .. op.dst.text)
-  return append_object_projection(input, op.dst, id, Mem.MemObjectPtrOffset(self.object, Mem.MemIndexValue(op.index, op.elem_size, op.const_offset), op.elem_size), Mem.MemProvProjection(self.object, Mem.MemProjectPtrOffset, op.const_offset), op.ptr_ty:memory_pointee_type(), Mem.MemExtentUnknown(Mem.MemExtentDynamicAllocation), Mem.MemStrideUnit)
+  local index = input.inductions:classify_memory_index(
+    Mem.MemIndexClassifyInput(op.index, op.elem_size, op.const_offset))
+  return append_object_projection(input, op.dst, id,
+    Mem.MemObjectPtrOffset(self.object, index, op.elem_size),
+    Mem.MemProvProjection(self.object, Mem.MemProjectPtrOffset, op.const_offset),
+    op.ptr_ty:memory_pointee_type(),
+    Mem.MemExtentUnknown(Mem.MemExtentDynamicAllocation), Mem.MemStrideUnit)
 end
 function Code.CodeInstPtrOffset:transfer_memory(input) return find_transfer_object(input.facet, self.base):transfer_pointer_offset(self, input) end
 function Code.CodeInstViewMake:transfer_memory(input)
@@ -461,7 +504,9 @@ function Mem.MemAtomicCas:nontrapping_movement(access, safety) return Mem.MemMov
 
 local function transfer_access(op_node, input, op, place, access)
   local facet = input.facet
-  local place_input = Mem.MemPlaceResolveInput(input.func.id, facet.values, facet.locals, input.globals, input.data, facet.objects)
+  local place_input = Mem.MemPlaceResolveInput(
+    input.func.id, facet.values, facet.locals, input.globals, input.data,
+    facet.objects, input.inductions)
   local resolved = place:resolve_memory_place(place_input)
   local safety_decision = resolved:memory_safety(input)
   local trap = safety_decision:refine_trap(access.trap:memory_trap(safety_decision))
@@ -648,12 +693,17 @@ end
 local function compute_mem_semantic(module, graph, flow, values, contracts)
   local contract_projection = contracts:project_memory_contract()
   local module_projection = module_memory_objects(module)
+  local inductions = flow:project_inductions()
   local objects, accesses, intervals, safety, effects, dependences, relations, backend, proofs = module_projection.objects, {}, {}, {}, {}, {}, {}, {}, {}
   for _, func in ipairs(module.funcs) do
     local facet = initial_function_facet(func, module_projection.objects)
     for _, block in ipairs(func.blocks) do
       local loop = loop_for_block(graph, func.id, block.id)
-      for _, inst in ipairs(block.insts) do facet = inst.op:transfer_memory(Mem.MemInstructionTransferInput(func, block, inst, loop, module_projection.globals, module_projection.data, facet)):next_facet() end
+      for _, inst in ipairs(block.insts) do
+        facet = inst.op:transfer_memory(Mem.MemInstructionTransferInput(
+          func, block, inst, loop, module_projection.globals,
+          module_projection.data, inductions, facet)):next_facet()
+      end
     end
     local projection = relation_projection(facet, contract_projection, func.id)
     local function_dependences = classify_dependences(facet, projection)

@@ -4,6 +4,7 @@ local T = require("lalin.schema_v2")
 local asdl = require("lalin.asdl")
 local Code, Effect = T.LalinCode, T.LalinEffect
 require("lalin.impl.code_graph")
+require("lalin.impl.code_flow")
 require("lalin.impl.code_mem")
 require("lalin.impl.code_effect")
 
@@ -21,7 +22,8 @@ local func = Code.CodeFunc(fid, "f", Code.CodeLinkageLocal, sig, {}, { local_dec
 local module = Code.CodeModule(mid, {}, {}, {}, {}, {}, { func }, origin)
 local contracts = Code.CodeContractFactSet(mid, {})
 local graph = module:build_graph()
-local mem = graph:compute_mem(module, nil, nil, contracts)
+local flow = graph:compute_flow(module)
+local mem = graph:compute_mem(module, flow, nil, contracts)
 assert(#mem.accesses == 1 and #mem.backend_info == 1)
 local analysis = graph:compute_effect_analysis(module, mem, contracts)
 assert(asdl.isa(analysis, Effect.EffectAnalysisResult))

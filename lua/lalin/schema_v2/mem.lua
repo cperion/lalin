@@ -642,6 +642,12 @@ return schema. LalinMem {
     relations [many [LalinMem.MemObjectRelation]],
     proofs [many [LalinMem.MemProof]],
   },
+  product. MemIndexClassifyInput {
+    interned,
+    field. value [LalinCode.CodeValueId],
+    elem_size [number],
+    const_offset [number],
+  },
   product. MemPlaceResolveInput {
     func [LalinCode.CodeFuncId],
     values [many [LalinMem.MemValueObjectEntry]],
@@ -649,6 +655,7 @@ return schema. LalinMem {
     globals [many [LalinMem.MemGlobalObjectEntry]],
     data [many [LalinMem.MemDataObjectEntry]],
     objects [many [LalinMem.MemObjectFact]],
+    inductions [LalinFlow.FlowInductionProjection],
   },
   sum. MemPlaceResolveResult {
     MemPlaceResolved { variant_unique, object [LalinMem.MemObjectId], base [LalinMem.MemBase], index [LalinMem.MemIndex], discoveries [LalinMem.MemPlaceDiscoveries], },
@@ -694,6 +701,7 @@ return schema. LalinMem {
     loop [optional [LalinGraph.GraphLoopId]],
     globals [many [LalinMem.MemGlobalObjectEntry]],
     data [many [LalinMem.MemDataObjectEntry]],
+    inductions [LalinFlow.FlowInductionProjection],
     facet [LalinMem.MemTransferFacet],
   },
   sum. MemInstructionTransferResult {
