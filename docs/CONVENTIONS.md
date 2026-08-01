@@ -147,13 +147,13 @@ option bags, string tags, raw hole tables, or side maps. The leaf that owns the
 semantic descriptor also owns how that descriptor becomes C, JIT-cooked shared
 object input, AOT source, or an explicitly selected experimental artifact.
 
-Native C-stencil copy-patch is experimental. `docs/RESIDUAL_NATIVE_ARCHITECTURE.md`
-records that research architecture for closed template banks, offline stencil
-compilation, and typed patch coordinates. It is not the default/main backend
-story.
+Native C-stencil copy-patch is retired and deleted; only the stencil vocabulary
+survives as the deterministic emitted-C shape contract.
+`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` is the historical record of the retired
+patcher.
 
 LuaJIT bytecode is an explicit non-main mode. It is not an implicit fallback from
-GCC C execution, AOT emission, or experimental native compilation.
+GCC C execution, AOT emission, or the retired native patcher.
 
 Keep the C path central in wording and code. `emit_c` is the public semantic C
 backend API: it emits the whole selected program as C so GCC can cook it for

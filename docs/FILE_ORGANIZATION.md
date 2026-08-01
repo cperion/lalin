@@ -20,7 +20,6 @@ lua/lalin/
   dsl/                 ← Builder API (lln.fn, lln.struct, etc.) — already exists
   emit_c_compile.lua   ← GCC-over-emit_c shared-object runner — already exists
   luajit_backend.lua   ← LuaJIT bytecode backend facade — already exists
-  native_backend.lua   ← Experimental native C-stencil backend facade — already exists
   frontend_pipeline.lua ← Legacy pipeline (refactor target, not delete target)
 ```
 
@@ -592,7 +591,7 @@ organization. They are NOT deleted until their replacement is complete.
 | `lua/lalin/frontend_pipeline.lua` | Replaced by `impl/tree_surface.lua` + `impl/tree_closure.lua` + `impl/tree_check.lua` + `pipeline.lua` |
 | `lua/lalin/emit_c_compile.lua` | Backend machine methods move to `impl/cemit_emit.lua`; GCC runner stays as a machine |
 | `lua/lalin/luajit_backend.lua` | Backend methods move to `impl/luajit_emit.lua` |
-| `lua/lalin/native_backend.lua` | Deferred — experimental, not in v2 scope |
+| `lua/lalin/native_backend.lua` | **Deleted** — retired copy-patch patcher |
 | DSL builder (`lua/lalin/dsl/`) | **Kept as-is** — this is the builder API, not schema or impl |
 
 ---
@@ -985,20 +984,14 @@ tables), and the target `impl/` file or disposition.
 | `residual_luatrace.lua` | 1651 | LuaJIT bytecode trace emission | ⚠️ method installations + functional |
 | `residual_bc.lua` | 118 | LuaJIT bytecode helpers | — utility |
 
-#### Native backend (DEFERRED — not in v2 scope)
+#### Native backend (DELETED — retired copy-patch patcher)
 
-| Old file | Lines | Receiver types | Clean? |
-|----------|-------|----------------|--------|
-| `native_backend.lua` | 216 | Composition driver — wires native, native_mc, native_code_methods, native_kernel_methods, native_stencil_methods | — composition |
-| `native.lua` | 1997 | `Native.NativeAxis` leaves, `Native.NativeCompileResult` — native bank operations | ✅ leaf methods |
-| `native_code_methods.lua` | **3926** | Code type → native template lowering | ✅ leaf methods; enormous |
-| `native_kernel_methods.lua` | 1587 | Kernel type → native template lowering | ✅ leaf methods |
-| `native_stencil_methods.lua` | 976 | Stencil type → native template lowering | ✅ leaf methods |
-| `native_mc.lua` | 1164 | Native machine-code operations (patching, assembly) | ✅ leaf methods |
-| `native_object.lua` | 397 | `Native.NativeTemplateBytes` (`:parse_native_object()`) | ✅ method installation |
-| `native_template_sources.lua` | **6674** | C template source strings | — data file, not implementation |
-| `native_template_support.lua` | 2006 | Template parsing, validation, source decomposition | — utility |
-
+The native copy-patch backend (`native_backend.lua`, `native.lua`, `native_mc.lua`,
+`native_object.lua`, `native_code_methods.lua`, `native_kernel_methods.lua`,
+`native_stencil_methods.lua`, `native_template_sources.lua`,
+`native_template_support.lua`) was retired and deleted. The canonical stencil
+vocabulary survives in `schema_v2/stencil.lua` + `impl/lower_emit_c/`. See
+`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` for the historical record.
 ### 15.6 STENCIL PHASES
 
 #### Cross-cutting: `stencil_artifact_plan.lua`

@@ -70,7 +70,7 @@ The default suite gained 23 passes and removed 18 failures. No previously passin
 | 17 | excluded LuaJIT | removed `StencilMachineSkeletonInput` | deferred |
 | 3 | excluded LuaJIT | stale `CodeInstIntrinsic` schema | deferred |
 | 1 | excluded LuaJIT | fixture omits typed schedule selection | deferred |
-| 1 | experimental native | removed readonly projection | deferred |
+| 1 | retired native | removed readonly projection | stopped |
 | 1 | abandoned LuaTrace | stale stencil payload | stopped |
 | 1 | stale harness | `Back`/`Backend` typo in function ABI test | AUX-FUNC-ABI |
 | 1 | stale harness | reversed canonical type-to-C test arguments | AUX-TYPE-C |
@@ -88,7 +88,7 @@ The slow profile adds one deferred embedded-binary module-name collision. Exclud
 - [x] Classify each cluster as main compiler, excluded backend, stale harness, or deferred packaging work.
 - [x] Give every active cluster a minimal focused reproducer.
 - [x] Record the 18 previously failing tests and five new tests now passing.
-- [x] Keep experimental native and abandoned LuaTrace work outside the main backend.
+- [x] Keep retired native and abandoned LuaTrace work outside the main backend.
 
 ### M0.2 Regression gates
 
@@ -240,7 +240,7 @@ The slow profile adds one deferred embedded-binary module-name collision. Exclud
 
 ### Deferred baseline clusters
 
-The native `CodeBackendReadonlyProjection` failure, slow embedded binary profile, LuaTrace, LuaJIT stencil/region repair, and experimental native copy-patch are not priorities in this plan. Reopen them only by explicit project-owner decision. The main path remains GCC over `emit_c`.
+The native `CodeBackendReadonlyProjection` failure, slow embedded binary profile, LuaTrace, and LuaJIT stencil/region repair are not priorities in this plan. Reopen them only by explicit project-owner decision. Native copy-patch is retired and must not be reopened; the CMat fragment path (`schema_v2/stencil.lua` + `impl/lower_emit_c/`) is load-bearing and continues in this plan. The main path remains GCC over `emit_c`, with fused emitted C + GCC -O3 as the performance path.
 
 ## Milestone 2 — Bounded Language and Main-C AUX Packages
 
@@ -339,7 +339,7 @@ Orders 1–6 may run concurrently where owned files do not overlap. Serialize `L
 - [ ] Run the new test and existing `test_emit_c_inline_cmat_copy.lua`, `...reduce.lua`, `...scan.lua`, and `test_emit_c_inline_soac_map.lua`.
 - [ ] Run frontend/C-backend suites and the default-suite no-regression gate.
 
-**Out of scope:** LuaJIT parity, LuaTrace, native copy-patch, scheduling optimization, and vectorization policy.
+**Out of scope:** LuaJIT parity, LuaTrace, scheduling optimization, and vectorization policy. Native copy-patch is retired and must not be reopened.
 
 ### LNG-EXT-C — Extern, builder, HostEval, and methods
 
@@ -864,7 +864,7 @@ For every work package:
 - [ ] Its relevant category suite passes.
 - [ ] The default suite is run and gains no failures relative to the refreshed M0 ledger.
 - [ ] Before M0 is green, unrelated known failures remain ledgered rather than becoming the package's responsibility.
-- [ ] Slow/experimental profiles run only when the package explicitly owns them; current LuaTrace/LuaJIT/native exclusions are not release priorities.
+- [ ] Slow/experimental profiles run only when the package explicitly owns them; current LuaTrace/LuaJIT exclusions and retired native work are not release priorities.
 - [ ] Emitted C is validated, compiled with GCC, executed, and checked for runtime values where applicable.
 - [ ] An independent reviewer checks ASDL ownership/doctrine compliance.
 - [ ] Integrated changes are synchronized into active worktrees.

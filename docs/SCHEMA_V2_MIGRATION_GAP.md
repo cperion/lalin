@@ -197,7 +197,7 @@ File: `impl/code_graph.lua`. The `add_use` helper passes string role names to `G
 
 ```
 OLD context (lalin/schema/): 37 files → schema_projection → asdl.context()
-  Used by: init.lua (public API), frontend_pipeline, emit_c_lower, luajit_backend, native_backend
+  Used by: init.lua (public API), frontend_pipeline, emit_c_lower, luajit_backend
   0 impl/ files reference lalin.schema
 
 NEW context (lalin/schema_v2/): 29 files → schema_v2/init.lua → asdl.context()
@@ -214,10 +214,11 @@ The only bridge: init.lua:41 passes schema_v2 to the DSL for type evaluation onl
 
 ```
 PUBLIC (init.lua):
-  emit_c / compile_c_gcc / compile_luajit / compile_native
+PUBLIC (init.lua):
+  emit_c / compile_c_gcc / compile_luajit
     → frontend_pipeline(OLD schema context)
-      → emit_c_lower / luajit_backend / native_backend
-        → GCC dlopen / Lua loadstring / Native bank
+      → emit_c_lower / luajit_backend
+        → GCC dlopen / Lua loadstring
 
   [NO ROUTE TO compiler_api / schema_v2 impl]
 

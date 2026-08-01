@@ -121,7 +121,7 @@ gain access to iteration bounds.
 When `KernelPlan` proves a loop is equivalent to a closed-form expression, a
 memcpy, a scan, or a find, the current `lower_to_c.lua` still emits the original
 loop as flat gotos. Kernel proofs are used for stencil artifact selection (the
-native copy-patch path) but never for Code IR simplification in the emit_c path.
+native loop as flat gotos. Kernel proofs drive CMat fragment eligibility and fusion in the emitted-C path: exact emitted C plus declared memory/noalias/bounds facts make fusion a typed decision, and contracts are recomputed after fusion.
 
 ### Design
 

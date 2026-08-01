@@ -4,8 +4,9 @@ Lalin is the compiled language member of the LLBL workbench. Lua is the
 metaprogramming layer; Lalin receives monomorphic programs, lowers them through
 typed ASDL facts into the semantic `emit_c` C backend, and uses that emitted C as
 both the main GCC-backed JIT-like execution path and the AOT artifact path.
-Native C-stencil copy-patch is now experimental; LuaJIT bytecode remains an
-explicit non-main mode.
+Native C-stencil copy-patch is retired and deleted; only the stencil/CMat
+vocabulary survives as the deterministic emitted-C shape contract. LuaJIT
+bytecode remains an explicit non-main mode.
 
 This reference treats the parsed syntax as the standard source surface. The
 Lua/LLBL DSL is documented in one chapter near the end because it is still the
@@ -34,7 +35,7 @@ The pipeline is:
   -> emit_c C output
   -> GCC shared-object cook + dlopen for JIT-like execution
      or user-owned AOT C build
-     or explicit LuaJIT bytecode / experimental native copy-patch when selected
+     or explicit LuaJIT bytecode when selected
 ```
 
 Important rules:
@@ -2151,7 +2152,7 @@ backend families.
 
 Facts determine whether a valid source loop becomes:
 
-- native template graph nodes selected from a matching `NativeTemplateBank`
+- fused CMat fragments in the emitted `CBackendUnit` when the exact shape plus declared memory/noalias/bounds facts admit fusion
 - an explicit LuaJIT bytecode artifact when that non-native mode is selected
 - a typed reject
 
@@ -2213,33 +2214,11 @@ local module2 = lalin.compile("demo", decls, {
 LuaJIT bytecode mode is not a recovery path for GCC C execution or AOT builds.
 It is a separately selected artifact form.
 
-### Experimental Native Template Banks
+### Retired Native Template Banks
 
-Native copy-patch template banks are experimental. Use `NativeTemplateBankRequest`
-and its `NativeTemplateSourceManifest` when you are explicitly working on that
-experimental path. A complete native bank is generated from closed native
-capability classes; subset support helpers are only for tests or explicit target
-subsets. The capability first computes a manifest, then generates exactly
-matching `NativeTemplateSource` C stencils. The offline generator consumes the
-request, compiles those stencils ahead of time, verifies typed object facts with
-Lalin's internal ELF/object parser, and emits the checked-in/native binary
-artifacts:
-
-```sh
-luajit tools/gen_lalin_mc_bank.lua \
-  target/lalin_binary/lalin_native_template_bank.c \
-  target/lalin_binary/lalin_native_template_bank.h \
-  target/lalin_binary/lalin_native_template_bank.lua
-```
-
-The generated Lua bridge reconstructs a `NativeEmbeddedTemplateBank` carrying the
-manifest, target, compiled templates, signatures, extraction facts, hole
-ordinals, relocations, and constant-pool layout. Extern-symbol hole ordinals are
-the source of patch identity; byte-pattern scanning is not part of the current
-bank format. Runtime symbols are admitted only through declared typed runtime
-capabilities and currently use x64 PC-relative call/jump relocations in the
-native template verifier/install path.
-
+Native copy-patch template banks are retired and deleted; the patcher is not
+part of the architecture. See `docs/RESIDUAL_NATIVE_ARCHITECTURE.md` for the
+historical record.
 ### C / AOT Emission
 
 Use `emit_c` when the desired product is a C artifact that the user compiles as
@@ -2258,8 +2237,8 @@ local artifact = lalin.emit_c(decls, {
 The C path lowers through the semantic `CBackendUnit` pipeline and emits the
 selected program as ordinary C translation units. The user then compiles that C
 with `gcc` or another C toolchain for AOT, or lets `compile_c_gcc` cook it into a
-shared object for JIT-like local execution. Experimental native copy-patch and
-explicit LuaJIT bytecode are separate paths.
+shared object for JIT-like local execution. Explicit LuaJIT bytecode is a
+separate, non-main path.
 
 ---
 
@@ -2430,7 +2409,7 @@ long-form splice.
 
 ### Compiling DSL Values
 
-For quick local execution without a prebuilt native bank, select explicit LuaJIT
+For quick local execution without a GCC cook, select explicit LuaJIT bytecode mode:
 bytecode mode:
 
 ```lua
@@ -2443,9 +2422,6 @@ or:
 local unit = lalin.unit("demo", { add })
 local module = lalin.compile("demo", unit, { bytecode = true })
 ```
-
-For native copy-patch, pass a compatible `NativeTemplateBank` or
-`NativeEmbeddedTemplateBank` as described in [Backend Defaults](#backend-defaults).
 
 ---
 

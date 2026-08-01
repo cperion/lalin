@@ -9,8 +9,9 @@ formatting, indexing, and generic regions. Region is the shared control algebra
 that composes the language. Lalin is the compiled dialect: it consumes LLBL regions and typed values,
 checks them, lowers them through the semantic `emit_c`/`CBackendUnit` path, and
 cooks that C with GCC for the main JIT-like execution path or as an AOT C
-artifact. Copy-patch native templates are now experimental research machinery,
-not the main backend story.
+artifact. Native copy-patch/binary-bank patchers are retired and must not be
+reopened; only the stencil/CMat vocabulary survives as the deterministic
+emitted-C shape contract. Fused emitted C + GCC -O3 is the performance path.
 
 ```text
 Lua source
@@ -83,9 +84,8 @@ build the vendored GCC under `.vendor/gcc/.local`; otherwise Lalin uses `CC` or
 `gcc` from the host. Runtime execution cooks `emit_c` output into a shared object
 and loads it with `dlopen`.
 
-The native copy-patch template-bank path is experimental. It still requires a
-prebuilt `NativeTemplateBank`/`NativeEmbeddedTemplateBank` and is selected
-explicitly through native APIs/options. LuaJIT bytecode remains an explicit
+The native copy-patch template-bank path is retired and must not be reopened;
+it is not selected by any supported API. LuaJIT bytecode remains an explicit
 non-main mode selected with `compile_luajit` or `{ bytecode = true }`.
 
 ## Test
@@ -106,14 +106,9 @@ luajit tests/run.lua ui
 Useful backend checks:
 
 ```sh
-luajit tests/code_ir/test_native_template_sources.lua
-luajit tests/code_ir/test_native_bank_generator.lua
-luajit tests/code_ir/test_native_mc_import.lua
-luajit tests/code_ir/test_native_code_graph_scalar.lua
-luajit tests/code_ir/test_native_code_control.lua
-luajit tests/code_ir/test_native_kernel_contracts.lua
-luajit tests/code_ir/test_native_stencil_contracts.lua
 luajit tests/code_ir/test_luajit_backend_bc.lua
+luajit tests/c_backend/test_cmat_counted_fragment_gcc.lua
+luajit tests/c_backend/test_stencil_c_gcc.lua
 ```
 
 ## Repository Map
@@ -184,8 +179,8 @@ Process and roadmap:
 - `docs/UI_GUIDE.md` - UI package guide
 - `docs/LUA_VM_ROADMAP.md` - staged Lua VM milestones
 
-Experimental:
-- `docs/RESIDUAL_NATIVE_ARCHITECTURE.md` - experimental native C-stencil copy-patch architecture (not the main backend)
+Retired:
+- `docs/RESIDUAL_NATIVE_ARCHITECTURE.md` - retired native C-stencil copy-patch architecture (historical record; the stencil/CMat vocabulary survives as the emitted-C shape contract)
 
 ## Design Rules
 

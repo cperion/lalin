@@ -1,15 +1,23 @@
-# Experimental Native Copy-Patch Architecture
+# Retired: Native Copy-Patch Architecture (historical record)
 
-This document records the experimental C-stencil copy-patch architecture. It is
-not the main Lalin JIT or AOT path. The main path is `CBackendUnit -> emit_c`,
-then either GCC-cooked shared-object loading for JIT-like execution or a
-user-owned AOT C build.
+**Status: retired.** The binary copy-patch patcher — template-bank import,
+object parsing/verifying, typed hole/continuation relocations, and
+executable-memory install — is abandoned and must not be reopened. What survives
+is the stencil vocabulary as the deterministic emitted-C shape contract:
+`schema_v2/stencil.lua` -> CMat fragment path -> `emit_c`, fused and cooked with
+GCC -O3 (the performance path). Fusion eligibility is a typed decision over the
+exact emitted shape plus declared memory/noalias/bounds facts, with contracts
+recomputed after fusion. See "Shape Survives, Patcher Retired" in
+`docs/ARCHITECTURE.md`.
+
+This document is kept as the historical record of that architecture; the body
+below is not rewritten.
 
 The filename still contains `RESIDUAL` for historical path stability. The
 architecture is residualless. Residual meant undefined compiler work hidden
 behind a bag name. That concept is deleted from the native compiler.
 
-The experimental native backend is a C-stencil copy-patch compiler:
+The retired native backend was a C-stencil copy-patch compiler:
 
 ```text
 LalinCode / LalinKernel / LalinStencil ASDL

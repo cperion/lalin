@@ -114,7 +114,7 @@ phase or cross-cutting concern they serve.
 | `emit_c_materialize_schema.lua` | 16 | Stencil→C materialization: CMatAccessBinding, CMatVectorPolicy, CMatMaterialization |
 | `stencil_schema.lua` | exp | Stencil descriptors, producers, accesses, sinks, metastencil |
 | `stencil_machine_schema.lua` | exp | Stencil→backend machine plan, StencilMachineKernelConfig (union), StencilMachinePointInput (union) |
-| `emit_native_schema.lua` | exp | Native copy-patch backend |
+| `emit_native_schema.lua` | del | Native copy-patch backend (retired/deleted) |
 | `emit_luajit_schema.lua` | exp | LuaJIT backend |
 | `emit_luatrace_schema.lua` | exp | LuaTrace backend |
 

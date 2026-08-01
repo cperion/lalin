@@ -7,7 +7,9 @@ formatting, indexing, dialect extension, and generic regions. Lalin is the compi
 language dialect that lowers typed programs through `CBackendUnit` to `emit_c`.
 The main JIT-like path cooks emitted C with GCC and exposes function pointers
 through LuaJIT FFI; the same emitted C is the AOT path. Native C-stencil
-copy-patch is experimental, and LuaJIT bytecode is explicitly selected.
+copy-patch / binary patchers are retired and must not be reopened; only the
+stencil/CMat vocabulary survives as the deterministic emitted-C shape contract.
+LuaJIT bytecode is explicitly selected.
 
 Before compiler/schema work, read `docs/ASDL_GUIDE.md`. Those rules are
 binding: ASDL reasoning first, leaf ASDL methods own semantics, no
@@ -182,11 +184,15 @@ meaning.
 
 The active fast path is GCC over `emit_c` output: `CBackendUnit -> emit_c -> gcc
 -shared/-O3 -> dlopen/dlsym -> LuaJIT FFI function pointer`. `emit_c` is also the
-AOT artifact path. The residualless C-stencil native copy-patch architecture in
-`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` is experimental and must not be described
-as the main/default backend. LuaJIT bytecode is explicit via `opts.luajit`,
-`opts.bytecode`, or `compile_luajit`. The old Cranelift/Rust runtime path is not
-part of the current architecture.
+AOT artifact path. Fused emitted C + GCC -O3 is the performance path; generic
+fusion is a typed decision over the exact emitted shape plus declared
+memory/noalias/bounds facts, with contracts recomputed after fusion. The
+C-stencil copy-patch / binary-bank patcher architecture in
+`docs/RESIDUAL_NATIVE_ARCHITECTURE.md` is retired and must not be reopened. Only
+the stencil/CMat vocabulary survives as the deterministic emitted-C shape
+contract (`schema_v2/stencil.lua` -> CMat fragment path -> `emit_c`). LuaJIT
+bytecode is explicit via `opts.luajit`, `opts.bytecode`, or `compile_luajit`.
+The old Cranelift/Rust runtime path is not part of the current architecture.
 
 ## Build
 
@@ -197,7 +203,7 @@ make
 `make gcc` builds the vendored GCC C compiler under `.vendor/gcc/.local` when a
 local GCC is desired for the `emit_c` cooking path. The main runtime C path uses
 GCC/cc to compile emitted C into a shared object and then `dlopen`s it.
-Experimental native bank generation has its own explicit prebuild flow.
+Native copy-patch bank generation is retired; it has no prebuild flow and must not be reopened.
 
 ## Authoring Lalin Code
 
@@ -290,14 +296,9 @@ luajit tests/run.lua schema
 Useful focused checks:
 
 ```sh
-luajit tests/code_ir/test_native_template_sources.lua
-luajit tests/code_ir/test_native_bank_generator.lua
-luajit tests/code_ir/test_native_mc_import.lua
-luajit tests/code_ir/test_native_code_graph_scalar.lua
-luajit tests/code_ir/test_native_code_control.lua
-luajit tests/code_ir/test_native_kernel_contracts.lua
-luajit tests/code_ir/test_native_stencil_contracts.lua
 luajit tests/code_ir/test_luajit_backend_bc.lua
+luajit tests/c_backend/test_cmat_counted_fragment_gcc.lua
+luajit tests/c_backend/test_stencil_c_gcc.lua
 luajit tests/compiler_process/test_compiler_driver.lua
 ```
 
@@ -334,7 +335,7 @@ LalinTree ASDL
   -> emit_c output
   -> GCC shared object + dlopen for JIT-like execution
      or user-owned AOT C build
-     or explicit LuaJIT bytecode / experimental copy-patch when selected
+     or explicit LuaJIT bytecode when selected
   -> loaded module / function pointers / artifact
 ```
 
@@ -347,7 +348,6 @@ lua/lalin/schema/            ASDL/schema definitions
 lua/lalin/frontend_pipeline.lua
                              DSL/tree/typecheck/code pipeline
 lua/lalin/emit_c_compile.lua   GCC-over-emit_c shared-object runner
-lua/lalin/native_backend.lua experimental native C-stencil copy-patch backend facade
 lua/lalin/luajit_backend.lua explicit LuaTrace/LuaJIT bytecode backend facade
 ```
 
@@ -358,7 +358,7 @@ docs/LLBL_GUIDE.md            central LLBL workbench and region guide
 docs/LANGUAGE_REFERENCE.md   public Lalin language reference
 docs/ARCHITECTURE.md         language, compiler, backend, and lowering architecture
 docs/RESIDUAL_NATIVE_ARCHITECTURE.md
-                             experimental native C-stencil copy-patch architecture
+                             retired copy-patch architecture (historical record)
 docs/UI_GUIDE.md             UI package guide
 docs/CONVENTIONS.md          naming, style, and repository conventions
 docs/DESIGN_BIBLE.md         long-form design philosophy

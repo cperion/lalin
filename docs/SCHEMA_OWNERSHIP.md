@@ -51,7 +51,7 @@ The main ownership cutover is for the neutral GCC-over-`emit_c` path. These back
 
 - `lua/lalin/schema/luajit.lua` (`LalinLuaJIT`): explicit LuaJIT bytecode and legacy stencil-machine references only.
 - `lua/lalin/schema/luatrace.lua` (`LalinLuaTrace`): LuaTrace is not part of the canonical main-C schema.
-- `lua/lalin/schema/native.lua` (`LalinNative`): experimental native copy-patch only.
+- `lua/lalin/schema/native.lua` (`LalinNative`): deleted — retired copy-patch patcher.
 
 No schema-v2 counterpart may be added for these names under OWN-0. Existing `LalinLuaJIT` references in `schema_v2/stencil_machine.lua` are quarantined backend debt for OWN-STENCIL, not permission to pull LuaJIT values into neutral C materialization. Backend cutover requires an explicit package outside this inventory.
 
