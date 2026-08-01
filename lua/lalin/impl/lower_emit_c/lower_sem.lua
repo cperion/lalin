@@ -75,9 +75,8 @@ function Lower.LowerKernelCMatPreparationInput:lower_prepare_cmat()
   :lower_cmat_prepare()
 end
 function Lower.LowerKernelCMatPrepared:lower_c_prepared_module(input)
-  local emission = input.plan:lower_c_module(Lower.LowerCModuleInput(
+  return input.plan:lower_c_module(Lower.LowerCModuleInput(
     input.spine, input.plan, self.projection))
-  return Lower.LowerCModuleEmitted(emission)
 end
 function Lower.LowerKernelCMatPreparationRejected:lower_c_prepared_module(_input)
   return Lower.LowerCModuleRejected({

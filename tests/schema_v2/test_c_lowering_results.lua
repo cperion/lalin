@@ -48,8 +48,10 @@ local input = Lower.LowerCModuleInput(
   Lower.LowerBackSpine(module, Graph.CodeGraph(id, {}), c_target), lower_module,
   Lower.LowerKernelCMatProjection({}))
 local module_result = lower_module:lower_c_module(input)
-assert(asdl.classof(module_result) == Lower.LowerCModuleEmission)
-assert(asdl.classof(module_result.unit) == C.CBackendUnit)
-assert(#module_result.functions == 1 and #module_result.signatures.entries == 1)
-assert(lower_module:emit_c(input) == module_result.unit)
+assert(asdl.classof(module_result) == Lower.LowerCModuleEmitted)
+local emission = module_result.emission
+assert(asdl.classof(emission) == Lower.LowerCModuleEmission)
+assert(asdl.classof(emission.unit) == C.CBackendUnit)
+assert(#emission.functions == 1 and #emission.signatures.entries == 1)
+assert(lower_module:emit_c(input) == emission.unit)
 io.write("schema_v2 typed C lowering results ok\n")

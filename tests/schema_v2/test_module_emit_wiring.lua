@@ -114,8 +114,10 @@ local c_target = C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64,
 local input = Lower.LowerCModuleInput(
   Lower.LowerBackSpine(code_module, Graph.CodeGraph(code_module.id, {}), c_target),
   lower_module, Lower.LowerKernelCMatProjection({}))
-local emission = lower_module:lower_c_module(input)
-assert(asdl.classof(emission) == Lower.LowerCModuleEmission, "module lowering must return typed emission")
+local module_result = lower_module:lower_c_module(input)
+assert(asdl.classof(module_result) == Lower.LowerCModuleEmitted, "module lowering must return typed result")
+local emission = module_result.emission
+assert(asdl.classof(emission) == Lower.LowerCModuleEmission, "module emission must be typed")
 local c_unit = emission.unit
 assert(asdl.classof(c_unit) == C.CBackendUnit, "typed emission must own CBackendUnit")
 assert(lower_module:emit_c(input) == c_unit, "public emit boundary must unwrap canonical typed result")

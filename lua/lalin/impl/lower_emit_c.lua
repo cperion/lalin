@@ -11,6 +11,7 @@ require("lalin.impl.lower_emit_c.materialize")
 require("lalin.impl.lower_emit_c.stencil")
 require("lalin.impl.lower_emit_c.fragment")
 require("lalin.impl.lower_emit_c.lower_sem")
+require("lalin.impl.lower_emit_c.assembly")
 
 function Lower.LowerCSignatureProjection:lower_c_signature_lookup(sig)
   for i = 1, #self.entries do
@@ -20,6 +21,20 @@ function Lower.LowerCSignatureProjection:lower_c_signature_lookup(sig)
 end
 function Lower.LowerCSignatureFound:lower_c_sig_id() return self.entry.c_sig_id end
 function Lower.LowerCSignatureMissing:lower_c_sig_id() error("C lowering missing validated signature " .. self.sig.text, 2) end
+function Lower.LowerFunctionPlanProjection:lower_function_plan_lookup(func)
+  for i = 1, #self.entries do
+    if self.entries[i].func == func then return Lower.LowerFunctionPlanFound(self.entries[i]) end
+  end
+  return Lower.LowerFunctionPlanMissing(func)
+end
+function Lower.LowerFunctionPlanFound:lower_c_function_assembly(input, func, baseline)
+  return Lower.LowerCFunctionAssemblyInput(input.spine, func, self.entry.plan, baseline,
+    input.materializations, input.plan.addresses):lower_c_function_assembly()
+end
+function Lower.LowerFunctionPlanMissing:lower_c_function_assembly(_input, func, baseline)
+  return Lower.LowerCFunctionAssemblyReady(Lower.LowerCFunctionAssembly(
+    func, baseline, {}, baseline:lower_c_body_blocks(), baseline.func.locals, baseline.helpers))
+end
 
 function Code.CodeSig:lower_c_signature_entry()
   local params = {}
@@ -161,12 +176,22 @@ function Lower.LowerModule:lower_c_module(input)
   local signatures = code_module:lower_c_signature_projection()
   local sigs = {}
   for i = 1, #signatures.entries do sigs[i] = signatures.entries[i].c_sig end
-  local functions, cfuncs, helpers = {}, {}, {}
+  local functions, cfuncs, helpers, issues = {}, {}, {}, {}
   for i = 1, #code_module.funcs do
-    local result = code_module.funcs[i]:lower_c_function(Lower.LowerCFunctionInput(signatures))
-    functions[#functions + 1], cfuncs[#cfuncs + 1] = result, result.func
-    append_helpers(helpers, result.helpers)
+    local func = code_module.funcs[i]
+    local baseline = func:lower_c_function(Lower.LowerCFunctionInput(signatures))
+    local assembly = input.plan.funcs:lower_function_plan_lookup(func.id)
+      :lower_c_function_assembly(input, func, baseline)
+    for _, emission in ipairs(assembly:lower_c_module_functions()) do
+      functions[#functions + 1] = emission
+    end
+    for _, issue in ipairs(assembly:lower_c_module_issues()) do
+      issues[#issues + 1] = issue
+    end
   end
+  if #issues > 0 then return Lower.LowerCModuleRejected(issues) end
+  for i = 1, #functions do cfuncs[#cfuncs + 1] = functions[i].func end
+  for i = 1, #functions do append_helpers(helpers, functions[i].helpers) end
   local externs = {}
   for i = 1, #code_module.externs do externs[i] = code_module.externs[i]:lower_c_extern() end
   local globals = {}
@@ -175,8 +200,12 @@ function Lower.LowerModule:lower_c_module(input)
   local types = {}
   for i = 1, #code_module.types do types[i] = code_module.types[i]:lower_code_type_decl_to_c() end
   local unit = C.CBackendUnit(code_module.id.text, spine.target, sigs, types, globals, externs, helpers, cfuncs)
-  return Lower.LowerCModuleEmission(unit, signatures, functions)
+  return Lower.LowerCModuleEmitted(Lower.LowerCModuleEmission(unit, signatures, functions))
 end
-function Lower.LowerModule:emit_c(input) return self:lower_c_module(input).unit end
+function Lower.LowerCModuleEmitted:lower_c_unit() return self.emission.unit end
+function Lower.LowerCModuleRejected:lower_c_unit()
+  error("typed canonical C lowering rejected with " .. #self.issues .. " issue(s)", 2)
+end
+function Lower.LowerModule:emit_c(input) return self:lower_c_module(input):lower_c_unit() end
 
 return Lower

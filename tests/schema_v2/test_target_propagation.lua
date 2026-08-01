@@ -37,7 +37,8 @@ local input = Lower.LowerCModuleInput(
   spine, plan, Lower.LowerKernelCMatProjection({}))
 assert(input.spine.target == target, "LowerCModuleInput must retain spine target")
 
-local emission = plan:lower_c_module(input)
+local module_result = plan:lower_c_module(input)
+local emission = module_result.emission
 assert(asdl.classof(emission.unit) == C.CBackendUnit)
 assert(emission.unit.target == target, "CBackendUnit must retain exact target identity")
 local prepared_input = Lower.LowerCPreparedModuleInput(spine, plan)
