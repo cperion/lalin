@@ -1683,6 +1683,21 @@ return schema. LalinStencil {
     field. lane [LalinKernel.KernelLane],
     mem [LalinMem.MemSemanticFactSet],
   },
+  product. StencilKernelMemAccessPairInput {
+    interned,
+    left [LalinMem.MemAccessId],
+    right [LalinMem.MemAccessId],
+  },
+  product. StencilKernelAliasLegalityInput {
+    interned,
+    legality [LalinStencil.StencilFusionLegality],
+    left [LalinStencil.StencilAccessRef],
+    right [LalinStencil.StencilAccessRef],
+  },
+  product. StencilKernelAliasProjectionInput {
+    interned,
+    mem [LalinMem.MemSemanticFactSet],
+  },
   product. StencilKernelAccessResolutionInput {
     interned,
     construction [LalinStencil.StencilKernelConstruction],

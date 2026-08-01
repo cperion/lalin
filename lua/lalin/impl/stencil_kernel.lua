@@ -382,6 +382,12 @@ function Stencil.StencilKernelConstructionState:with_access(input)
     self.stream_by_value, self.result_streams, self.sinks, self.deferred_reductions,
     self.legality, self.proofs, self.next_stream_ordinal)
 end
+function Stencil.StencilKernelConstructionState:with_legality(legality)
+  return Stencil.StencilKernelConstructionState(
+    self.kernel, self.iteration, self.domain, self.producer, self.access_by_lane,
+    self.stream_by_value, self.result_streams, self.sinks, self.deferred_reductions,
+    legality, self.proofs, self.next_stream_ordinal)
+end
 function Stencil.StencilKernelConstructionState:with_stream(input)
   return Stencil.StencilKernelConstructionState(
     self.kernel, self.iteration, self.domain, self.producer, self.access_by_lane,
@@ -1287,6 +1293,66 @@ function Schedule.SchedulePlanned:stencil_convert_kernel_schedule(input)
   return self.form:stencil_convert_schedule(input)
 end
 
+function Mem.MemDependenceFact:stencil_noalias_contribution(_input)
+  return Stencil.StencilAccessAliasPairNotMatched
+end
+function Mem.MemNoDependence:stencil_noalias_contribution(input)
+  if (self.before == input.left and self.after == input.right)
+      or (self.before == input.right and self.after == input.left) then
+    return self.proof:stencil_noalias_proof_contribution()
+  end
+  return Stencil.StencilAccessAliasPairNotMatched
+end
+function Mem.MemNoLoopCarriedDependence:stencil_noalias_contribution(input)
+  if (self.before == input.left and self.after == input.right)
+      or (self.before == input.right and self.after == input.left) then
+    return self.proof:stencil_noalias_proof_contribution()
+  end
+  return Stencil.StencilAccessAliasPairNotMatched
+end
+function Mem.MemProof:stencil_noalias_proof_contribution()
+  return Stencil.StencilAccessAliasPairNotMatched
+end
+function Mem.MemProofContract:stencil_noalias_proof_contribution()
+  return self.guarantee:stencil_noalias_guarantee_contribution()
+end
+function Mem.MemContractGuarantee:stencil_noalias_guarantee_contribution()
+  return Stencil.StencilAccessAliasPairNotMatched
+end
+function Mem.MemContractNoAlias:stencil_noalias_guarantee_contribution()
+  return Stencil.StencilAccessAliasPairMatched(Stencil.StencilAliasNoAlias)
+end
+function Stencil.StencilAccessAliasPairNotMatched:stencil_append_alias_legality(input)
+  return input.legality
+end
+function Stencil.StencilAccessAliasPairMatched:stencil_append_alias_legality(input)
+  local facts = append_one(input.legality.facts,
+    Stencil.StencilFusionAccessAliasRelation(input.left, input.right, self.relation))
+  return Stencil.StencilFusionLegality(
+    facts, input.legality.proof_obligations, input.legality.rejects)
+end
+function Stencil.StencilKernelConstructionState:stencil_with_alias_legality(input)
+  local legality = self.legality
+  local entries = self.access_by_lane.entries
+  for i = 1, #entries do
+    for j = i + 1, #entries do
+      local left, right = entries[i], entries[j]
+      local pair = Stencil.StencilKernelMemAccessPairInput(
+        left.lane.accesses[1], right.lane.accesses[1])
+      local alias_input = Stencil.StencilKernelAliasLegalityInput(
+        legality, Stencil.StencilAccessRef(left.access.name),
+        Stencil.StencilAccessRef(right.access.name))
+      for k = 1, #input.mem.dependences do
+        legality = input.mem.dependences[k]:stencil_noalias_contribution(pair)
+:stencil_append_alias_legality(alias_input)
+        alias_input = Stencil.StencilKernelAliasLegalityInput(
+          legality, alias_input.left, alias_input.right)
+      end
+    end
+  end
+  return self:with_legality(legality)
+end
+
 function Stencil.StencilKernelConstructionCollecting:stencil_finish_projection(_input)
   return Stencil.StencilKernelProjectionRejected(self.state.kernel, {
     Stencil.StencilKernelConstructionIncomplete(self.state.kernel.id),
@@ -1300,7 +1366,11 @@ function Stencil.StencilKernelConstructionFinalizable:stencil_finish_projection(
     input.kernel, input.schedule, input.compiler, input.target,
     self.state.access_by_lane, input.kernel.body.result)
   local converted = input.schedule:stencil_convert_kernel_schedule(schedule_input)
-  return self:stencil_finalize(Stencil.StencilKernelFinalizationInput(converted))
+  local construction = Stencil.StencilKernelConstructionFinalizable(
+    self.state:stencil_with_alias_legality(
+      Stencil.StencilKernelAliasProjectionInput(input.mem)))
+  return construction:stencil_finalize(
+    Stencil.StencilKernelFinalizationInput(converted))
 end
 
 function Stencil.StencilKernelScheduleRejected:stencil_finalize(construction)
