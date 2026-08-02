@@ -164,7 +164,6 @@ return schema. LalinCMat {
     CMatIssueUnsupportedAccess { variant_unique, access [LalinStencil.StencilAccess], reason [str], },
     CMatIssueUnsupportedSchedule { variant_unique, schedule [LalinStencil.StencilSchedule], reason [str], },
     CMatIssueUnsupportedSink { variant_unique, sink [LalinStencil.StencilSinkDef], reason [str], },
-    CMatIssueMissingProof { variant_unique, requirement [LalinStencil.StencilProofRequirement], reason [str], },
   },
   product. CMatMaterializationInput { interned, kernel [LalinCMat.CMatKernelId], },
   product. CMatKernelMaterializationInput { interned, kernel [LalinCMat.CMatKernelId], },

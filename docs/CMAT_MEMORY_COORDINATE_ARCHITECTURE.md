@@ -346,11 +346,27 @@ function/base identity and validates every iteration/extent field through leaf
 methods. The declaration itself asserts that this exact footprint fits its named
 base length, just as other Code contracts are trusted declarations; the compiler
 does not numerically re-derive that assertion. Ambiguous or disagreeing declarations
-reject the whole coordinate
-projection. Missing declarations do not infer safety: clamp/wrap/zero remain dynamic
-and reject-boundary displacement remains rejected. A proven declaration permits a
-relative cursor with the exact signed byte displacement. Existing `window_bounds`,
-`MemBounds`, emitted masks, and pointer shape never substitute for this guarantee.
+reject the whole coordinate projection. Missing declarations do not infer safety:
+clamp/wrap/zero remain dynamic and reject-boundary displacement remains rejected. A
+proven declaration permits a relative cursor with the exact signed byte displacement.
+Existing `window_bounds`, `MemBounds`, emitted masks, and pointer shape never
+substitute for this guarantee.
+
+## Fusion boundary
+
+Fusion is decided once, when a `StencilComputation` materializes as a
+`CMatMaterializedFused`/`CMatMaterializedKernelFragment`. That successful CMat value is
+the admission result; LOWER does not construct a second fusion verdict or duplicate
+access, use, alias, proof, and write facts into an aggregate contract. LOWER only
+closes exact coordinates and admitted accesses into an address plan and emits the
+already-fused CMat shape.
+
+Missing optimization capabilities do not prevent scalar fusion. Absent noalias
+evidence disables `restrict`; unknown alignment, dynamic trip counts, and non-unit
+stride select conservative emitted C. Provided kernel equivalence facts remain facts
+of the materialized kernel, but generic proof obligations are not CMat admission
+tokens. Only a typed structural or semantic contradiction may reject materialization.
+Multi-sink accesses retain deterministic spine order even when they may alias.
 
 ## Retired vocabulary
 

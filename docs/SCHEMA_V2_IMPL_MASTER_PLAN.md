@@ -87,7 +87,7 @@ whole projection. Forward, backward, unit, and non-unit element-distance behavio
 executes through GCC `-O3` tests. No loose metric tuples or inferred relative
 coordinates remain.
 
-## P1 — fusion contract recomputation — compiler gate complete
+## P1 — CMat materialization and access contracts — complete
 
 CMat access admission is now the exact conjunction of preserved backend facts:
 
@@ -113,6 +113,13 @@ reject-boundary displacement rejected; ambiguous or disagreeing declared evidenc
 rejects the whole coordinate projection. A matching declaration permits signed
 relative cursor displacement. No pointer-shape, mask, or numeric-range inference is
 used.
+
+Fusion has one boundary: successful Stencil-to-CMat materialization. The resulting
+`CMatMaterializedFused`/`CMatMaterializedKernelFragment` is the typed admission
+result. LOWER does not recompute fusion or duplicate access, use, alias, write, and
+proof planes into a whole-fusion contract. Missing optimization capabilities select
+conservative scalar C: noalias alone controls `restrict`, and generic proof
+obligations never gate CMat materialization.
 
 ## P2 — schema ownership cutover
 

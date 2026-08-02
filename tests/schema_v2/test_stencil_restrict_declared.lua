@@ -98,6 +98,26 @@ local obligation_only = computation({ a, b }, {
 })
 assert(asdl.classof(decision(obligation_only, ar)) ==
   Stencil.StencilAccessRestrictMissing)
+local obligation_fact_materialized = obligation_only:cmat_materialize(
+  CMat.CMatMaterializationInput(CMat.CMatKernelId("restrict:obligation-fact")))
+assert(asdl.classof(obligation_fact_materialized) == CMat.CMatMaterializedFused)
+for i = 1, #obligation_fact_materialized.kernel.accesses do
+  assert(asdl.classof(
+    obligation_fact_materialized.kernel.accesses[i].restrict_capability) ==
+    CMat.CMatRestrictIneligible)
+end
+
+local obligation_list_computation = Stencil.StencilComputation(
+  Stencil.StencilComputationId("restrict:obligation-list"), producer, { a, b }, {}, {},
+  Stencil.StencilFusionLegality({}, { obligation }, {}), schedule, {})
+local obligation_list_materialized = obligation_list_computation:cmat_materialize(
+  CMat.CMatMaterializationInput(CMat.CMatKernelId("restrict:obligation-list")))
+assert(asdl.classof(obligation_list_materialized) == CMat.CMatMaterializedFused)
+for i = 1, #obligation_list_materialized.kernel.accesses do
+  assert(asdl.classof(
+    obligation_list_materialized.kernel.accesses[i].restrict_capability) ==
+    CMat.CMatRestrictIneligible)
+end
 
 local materialized = full:cmat_materialize(
   CMat.CMatMaterializationInput(CMat.CMatKernelId("restrict:full")))

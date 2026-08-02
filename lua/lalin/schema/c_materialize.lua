@@ -209,7 +209,6 @@ return schema. LalinCMat {
   sum. CMatMaterializationIssue {
     CMatIssueUnsupportedProducer { variant_unique, producer [LalinStencil.StencilProducerShape], reason [str], },
     CMatIssueUnsupportedAccess { variant_unique, access [LalinStencil.StencilAccess], reason [str], },
-    CMatIssueMissingProof { variant_unique, requirement [LalinStencil.StencilProofRequirement], reason [str], },
   },
 
   sum. CMatMaterialization {
