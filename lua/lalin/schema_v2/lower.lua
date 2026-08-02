@@ -221,6 +221,13 @@ return schema. LalinLower {
     LowerCMatAlignmentInit,
     LowerCMatAlignmentStep,
   },
+  sum. LowerCMatWindowFootprintAxis {
+    LowerCMatWindowFootprintStart,
+    LowerCMatWindowFootprintTrip,
+    LowerCMatWindowFootprintOrder,
+    LowerCMatWindowFootprintStep,
+    LowerCMatWindowFootprintExtent,
+  },
   sum. LowerCMatCoordinateIssue {
     LowerCMatCoordinateAccessMissing {
       variant_unique,
@@ -312,6 +319,20 @@ return schema. LalinLower {
       use [LalinCMat.CMatMemoryUseId],
       provenance [LalinLower.LowerCMatWindowCoordinateProvenance],
     },
+    LowerCMatCoordinateWindowFootprintAmbiguous {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      root [LalinMem.MemBase],
+      count [number],
+    },
+    LowerCMatCoordinateWindowFootprintDisagreement {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      contract [LalinMem.MemContractWindowFootprintEntry],
+      iteration [LalinStencil.StencilKernelIteration],
+      extent [LalinStencil.StencilWindowExtent],
+      axis [LalinLower.LowerCMatWindowFootprintAxis],
+    },
     LowerCMatCoordinateMaterializationUnavailable {
       variant_unique,
       materialization [LalinCMat.CMatMaterialization],
@@ -328,6 +349,30 @@ return schema. LalinLower {
     offset [LalinStencil.StencilWindowOffset],
     extent [LalinStencil.StencilWindowExtent],
     boundary [LalinStencil.StencilWindowBoundary],
+  },
+  sum. LowerCMatWindowFootprintValidation {
+    LowerCMatWindowFootprintAbsent,
+    LowerCMatWindowFootprintProven {
+      variant_unique,
+      contract [LalinMem.MemContractWindowFootprintEntry],
+    },
+    LowerCMatWindowFootprintRejected {
+      variant_unique,
+      issue [LalinLower.LowerCMatCoordinateIssue],
+    },
+  },
+  product. LowerCMatWindowFootprintValidateInput {
+    interned,
+    use [LalinCMat.CMatMemoryUseId],
+    iteration [LalinStencil.StencilKernelIteration],
+    extent [LalinStencil.StencilWindowExtent],
+  },
+  product. LowerCMatWindowFootprintMatchInput {
+    interned,
+    use [LalinCMat.CMatMemoryUseId],
+    iteration [LalinStencil.StencilKernelIteration],
+    extent [LalinStencil.StencilWindowExtent],
+    contract [LalinMem.MemContractWindowFootprintEntry],
   },
   sum. LowerCMatUseCoordinate {
     LowerCMatAbsoluteCoordinate {
@@ -382,6 +427,7 @@ return schema. LalinLower {
     domain [LalinStencil.StencilKernelDomainProvenance],
     provenance [LalinStencil.StencilAccessByKernelLaneProjection],
     memory [LalinMem.MemAccessProjection],
+    footprints [LalinMem.MemWindowFootprintProjection],
   },
   product. LowerCMatLaneCoordinateInput {
     interned,
@@ -389,6 +435,7 @@ return schema. LalinLower {
     iteration [LalinStencil.StencilKernelIteration],
     domain [LalinStencil.StencilKernelDomainProvenance],
     memory [LalinMem.MemAccessProjection],
+    footprints [LalinMem.MemWindowFootprintProjection],
   },
   product. LowerCMatUseMemoryFact {
     interned,
@@ -397,6 +444,7 @@ return schema. LalinLower {
     domain [LalinStencil.StencilKernelDomainProvenance],
     provenance [LalinStencil.StencilAccessByKernelLaneEntry],
     memory [LalinMem.MemAccessFact],
+    footprints [LalinMem.MemWindowFootprintProjection],
   },
   product. LowerCMatIndexCoordinateInput {
     interned,
@@ -405,6 +453,7 @@ return schema. LalinLower {
     domain [LalinStencil.StencilKernelDomainProvenance],
     memory [LalinMem.MemAccessFact],
     index [LalinMem.MemIndex],
+    footprints [LalinMem.MemWindowFootprintProjection],
   },
   product. LowerCMatInductionAlignmentInput {
     interned,
@@ -419,9 +468,11 @@ return schema. LalinLower {
     interned,
     use [LalinCMat.CMatMemoryUse],
     root [LalinMem.MemBase],
+    func [LalinCode.CodeFuncId],
     iteration [LalinStencil.StencilKernelIteration],
     index [LalinMem.MemIndexInduction],
     offset [LalinStencil.StencilWindowOffset],
+    footprints [LalinMem.MemWindowFootprintProjection],
   },
   product. LowerCMatWindowAlignmentInput {
     interned,
@@ -432,6 +483,7 @@ return schema. LalinLower {
     index_scale_bytes [number],
     const_offset_bytes [number],
     provenance [LalinLower.LowerCMatWindowCoordinateProvenance],
+    footprint [LalinLower.LowerCMatWindowFootprintValidation],
   },
   product. LowerCMatAlignedWindowCoordinateInput {
     interned,
@@ -482,11 +534,13 @@ return schema. LalinLower {
     interned,
     kernel [LalinKernel.KernelId],
     memory [LalinMem.MemAccessProjection],
+    footprints [LalinMem.MemWindowFootprintProjection],
   },
   product. LowerKernelCMatMaterializationInput {
     interned,
     projection [LalinStencil.StencilKernelComputationProjection],
     memory [LalinMem.MemAccessProjection],
+    footprints [LalinMem.MemWindowFootprintProjection],
   },
   product. LowerCMatCoordinateContributionInput {
     interned,
@@ -533,6 +587,7 @@ return schema. LalinLower {
     kernels [LalinKernel.KernelModulePlan],
     schedules [LalinSchedule.ScheduleModulePlan],
     semantics [LalinFlow.FlowSemanticFactSet],
+    footprints [LalinMem.MemWindowFootprintProjection],
     compiler [LalinStencil.StencilCompilerPolicy],
   },
   sum. LowerKernelCMatPreparation {

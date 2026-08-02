@@ -332,10 +332,25 @@ Address realization may consume these facts but cannot strengthen them. Window
 boundary transformation and fused scheduling therefore never manufacture safety
 or alias evidence.
 
-This gate validates exact contract presence and provenance, not a numeric aggregate
-window footprint. Existing `MemBounds` alternatives do not name the fused lower,
-upper, extent, step, and boundary relation. A future footprint guarantee must model
-that relation explicitly in ASDL; emitted clamp/wrap/zero code is not proof.
+Aggregate footprint evidence is a separate typed plane. An exact
+`CodeContractWindowFootprint` carries:
+
+- base and declared base-length identities;
+- iteration start and trip-count identities;
+- typed forward/backward order and positive element step;
+- exact before/after element extent.
+
+The Code contract projects to `MemContractWindowFootprintEntry`; only the narrow
+`MemWindowFootprintProjection` crosses into LOWER. LOWER joins it by exact
+function/base identity and validates every iteration/extent field through leaf
+methods. The declaration itself asserts that this exact footprint fits its named
+base length, just as other Code contracts are trusted declarations; the compiler
+does not numerically re-derive that assertion. Ambiguous or disagreeing declarations
+reject the whole coordinate
+projection. Missing declarations do not infer safety: clamp/wrap/zero remain dynamic
+and reject-boundary displacement remains rejected. A proven declaration permits a
+relative cursor with the exact signed byte displacement. Existing `window_bounds`,
+`MemBounds`, emitted masks, and pointer shape never substitute for this guarantee.
 
 ## Retired vocabulary
 

@@ -33,6 +33,7 @@ local function contract_no_effect(input, reason) return Effect.ContractNoEffect(
 function Code.CodeContractBounds:contract_effect(input) return contract_no_effect(input, "bounds contract has no runtime effect") end
 function Code.CodeContractProjectionBounds:contract_effect(input) return contract_no_effect(input, "projection bounds contract has no runtime effect") end
 function Code.CodeContractWindowBounds:contract_effect(input) return contract_no_effect(input, "window bounds contract has no runtime effect") end
+function Code.CodeContractWindowFootprint:contract_effect(input) return contract_no_effect(input, "window footprint contract has no runtime effect") end
 function Code.CodeContractDisjoint:contract_effect(input) return contract_no_effect(input, "disjointness is alias evidence") end
 function Code.CodeContractSameLen:contract_effect(input) return contract_no_effect(input, "same-length is shape evidence") end
 function Code.CodeContractSoAComponent:contract_effect(input) return contract_no_effect(input, "SoA component is layout evidence") end

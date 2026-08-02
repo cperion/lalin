@@ -87,7 +87,7 @@ whole projection. Forward, backward, unit, and non-unit element-distance behavio
 executes through GCC `-O3` tests. No loose metric tuples or inferred relative
 coordinates remain.
 
-## P1 — fusion contract recomputation — admission complete
+## P1 — fusion contract recomputation — compiler gate complete
 
 CMat access admission is now the exact conjunction of preserved backend facts:
 
@@ -103,11 +103,16 @@ CMat access admission is now the exact conjunction of preserved backend facts:
 No pointer-shape inference, aggregate option bag, or fallback legality protocol is
 introduced. Unsupported combinations reject through typed LOWER/CMat results.
 
-A numeric aggregate window-footprint proof remains a separate schema gate. Current
-`MemBounds` proves or assumes each authored access but does not name the fused
-`(lower, upper, extent, step, boundary)` footprint. That proof must become an
-explicit ASDL guarantee before any compiler claims the aggregate footprint itself
-was checked; it must not be inferred from pointer shape or emitted masks.
+Aggregate window footprints now require the distinct
+`CodeContractWindowFootprint`; ordinary `window_bounds` and per-access `MemBounds`
+do not satisfy this gate. The contract names the exact base and base length,
+iteration start and trip identities, producer order, element step, and before/after
+extent. Its memory projection is joined to each window use by exact function/base
+identity. Missing evidence preserves dynamic clamp/wrap/zero realization and keeps
+reject-boundary displacement rejected; ambiguous or disagreeing declared evidence
+rejects the whole coordinate projection. A matching declaration permits signed
+relative cursor displacement. No pointer-shape, mask, or numeric-range inference is
+used.
 
 ## P2 — schema ownership cutover
 

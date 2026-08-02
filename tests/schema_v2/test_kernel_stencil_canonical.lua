@@ -248,7 +248,10 @@ local canonical_materialization = projected.projection:cmat_materialize_kernel(
 assert(canonical_materialization.provenance == projected.projection.provenance)
 assert(canonical_materialization.kernel.computation == computation)
 local cmat_state = projected:lower_cmat_state(
-  Lower.LowerKernelCMatStateInput(store_kernel.id, mem:project_accesses()))
+  Lower.LowerKernelCMatStateInput(
+    store_kernel.id, mem:project_accesses(),
+    Code.CodeContractFactSet(module_id, {}):project_memory_contract()
+:project_window_footprints()))
 assert(asdl.classof(cmat_state) == Lower.LowerKernelCMatReady)
 assert(asdl.classof(cmat_state.coordinates) ==
   Lower.LowerCMatCoordinatesProjected)

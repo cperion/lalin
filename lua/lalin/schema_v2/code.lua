@@ -796,6 +796,17 @@ return schema. LalinCode {
     CodeContractValueRef { variant_unique, field. value [LalinCode.CodeValueId], },
     CodeContractPlaceLoad { variant_unique, place [LalinCode.CodePlace], },
   },
+  sum. CodeWindowFootprintOrder {
+    CodeWindowFootprintForward,
+    CodeWindowFootprintBackward,
+  },
+  product. CodeWindowFootprintStep { interned, elements [number], },
+  product. CodeWindowFootprintDistance { interned, elements [number], },
+  product. CodeWindowFootprintExtent {
+    interned,
+    before [LalinCode.CodeWindowFootprintDistance],
+    after [LalinCode.CodeWindowFootprintDistance],
+  },
   sum. CodeContractFact {
     CodeContractBounds {
       variant_unique,
@@ -813,6 +824,16 @@ return schema. LalinCode {
       base_len [LalinCode.CodeValueId],
       start [LalinCode.CodeValueId],
       len [LalinCode.CodeValueId],
+    },
+    CodeContractWindowFootprint {
+      variant_unique,
+      base [LalinCode.CodeValueId],
+      base_len [LalinCode.CodeValueId],
+      start [LalinCode.CodeValueId],
+      trip [LalinCode.CodeValueId],
+      order [LalinCode.CodeWindowFootprintOrder],
+      step [LalinCode.CodeWindowFootprintStep],
+      extent [LalinCode.CodeWindowFootprintExtent],
     },
     CodeContractDisjoint {
       variant_unique,
