@@ -409,7 +409,7 @@ local function decl_to_item(parsed, named_env, anon_counter)
         for _, expr in ipairs(stmt.exprs or {}) do
           contracts[#contracts + 1] = contract_from_expr(expr)
         end
-      elseif type(stmt) == "table" and stmt.is_requires then
+      else
         body_src[#body_src + 1] = stmt
       end
     end

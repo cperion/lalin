@@ -231,6 +231,17 @@ function Code.CodeGlobalRefFunc:lower_code_global_ref_to_c_assign(c_emission, ds
   return C.CBackendAssign(dst, C.CBackendRFuncAddr(name, sig_id))
 end
 
+function Code.CodeGlobalRefData:lower_code_global_ref_to_c_assign(_c_emission, dst, ptr_ty)
+  return ptr_ty:lower_code_data_ref_assign(
+    Lower.LowerCodeDataRefAssignInput(self, dst))
+end
+function Code.CodeTyDataPtr:lower_code_data_ref_assign(input)
+  local place = C.CBackendPlaceGlobal(
+    C.CBackendGlobalId("__data_" .. input.ref.data.text),
+    self.pointee:code_to_c_backend_type())
+  return C.CBackendAssign(input.dst, C.CBackendRAddrOfPlace(place))
+end
+
 function Code.CodeGlobalRefExtern:lower_code_global_ref_to_c_assign(c_emission, dst)
   local name = self:lower_code_global_ref_to_c_name()
   local sig_id = self:lower_code_global_ref_to_c_sig()
@@ -473,7 +484,8 @@ function Code.CodeInstAddrOf:lower_code_inst_to_c(input)
   return emitted_value(self.dst, self.ptr_ty, { C.CBackendAssign(self.dst:code_to_c_local_id(), rhs) })
 end
 function Code.CodeInstGlobalRef:lower_code_inst_to_c(input)
-  local stmt = self.ref:lower_code_global_ref_to_c_assign(input, self.dst:code_to_c_local_id())
+  local stmt = self.ref:lower_code_global_ref_to_c_assign(
+    input, self.dst:code_to_c_local_id(), self.ptr_ty)
   return emitted_value(self.dst, self.ptr_ty, { stmt })
 end
 function Code.CodeInstPtrOffset:lower_code_inst_to_c(input)

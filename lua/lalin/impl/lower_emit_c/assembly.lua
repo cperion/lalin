@@ -204,7 +204,7 @@ end
 function C.CBackendSwitchGoto:lower_c_retarget_covered(replacements)
   local cases = {}
   for i = 1, #self.cases do
-    cases[i] = C.CBackendSwitchCase(self.cases[i].value,
+    cases[i] = C.CBackendSwitchCase(self.cases[i].literal,
       self.cases[i].dest:lower_c_retarget_label(replacements), self.cases[i].args)
   end
   return C.CBackendSwitchGoto(self.value, cases,

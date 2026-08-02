@@ -154,6 +154,11 @@ return schema. LalinLower {
     LowerCodeFuncGraphFound { variant_unique, graph [LalinGraph.CodeFuncGraph], },
     LowerCodeFuncGraphMissing { variant_unique, func [LalinCode.CodeFuncId], },
   },
+  product. LowerCodeDataRefAssignInput {
+    interned,
+    field. ref [LalinCode.CodeGlobalRef],
+    dst [LalinC.CBackendLocalId],
+  },
   sum. LowerKernelRelationContribution {
     LowerKernelRelationEntry { variant_unique, entry [LalinLower.LowerKernelByLoopEntry], },
     LowerKernelRelationOutsideLoop,
