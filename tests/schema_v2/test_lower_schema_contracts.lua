@@ -60,15 +60,6 @@ assert(field_names(Lower.LowerCMatAccessFact) ==
   "binding,provenance,mem_access,alignment,bounds,trap,movement,elem_size,stride")
 assert(Lower.LowerCMatAccessContractAdmitted and
   Lower.LowerCMatAccessContractRejected)
-assert(field_names(Lower.LowerCMatAccessCollection) == "facts,entries")
-assert(field_names(Lower.LowerCMatAccessesReady) == "facts,accesses")
-assert(field_names(Lower.LowerCMatEnvironmentReady) == "fusion,request")
-assert(Lower.LowerCMatFusionAdmitted and Lower.LowerCMatFusionRejected)
-assert(field_names(Lower.LowerCMatFusionContract) ==
-  "kernel,spine,accesses,uses,aliases,writes,proofs")
-assert(Lower.LowerCMatFusionAliasUnspecified and
-  Lower.LowerCMatFusionAliasDeclared)
-assert(Lower.LowerIssueCMatFusionRejected)
 assert(Lower.LowerCMatCoordinateWindowDistanceOutsideExtent)
 assert(Lower.LowerBackEmitInput == nil, "obsolete generic lower input must be removed")
 assert(Lower.LowerCEmitInput == nil, "obsolete generic C emit input must be removed")

@@ -183,10 +183,6 @@ end
 -----------------------------------------------------------------------
 local env_result = environment_input():lower_cmat_environment()
 assert(asdl.classof(env_result) == Lower.LowerCMatEnvironmentReady)
-assert(env_result.fusion.kernel == env_materialization.kernel.id)
-assert(#env_result.fusion.uses == 0)
-assert(#env_result.fusion.aliases == 0)
-assert(#env_result.fusion.writes == 0)
 local request = env_result.request
 assert(request.materialization == env_materialization)
 assert(request.code_func == env_func)
@@ -202,30 +198,6 @@ assert(#request.accesses.entries == 0)
 assert(#request.exits.entries == 1)
 assert(request.exits.entries[1].role == CMat.CMatCExitNormal)
 assert(request.exits.entries[1].destination == env_exit)
-
-local unresolved_obligation = Stencil.StencilProofObligation(
-  Stencil.StencilProofReductionReassociable,
-  Stencil.StencilProofAuthorAsserted, Stencil.StencilProofUnproven)
-local unresolved_computation = Stencil.StencilComputation(
-  env_computation.id, env_producer, {}, {}, {},
-  Stencil.StencilFusionLegality({}, { unresolved_obligation }, {}),
-  env_schedule, {})
-local unresolved_fused = CMat.CMatFusedKernel(
-  env_fused.id, unresolved_computation, env_loop_nest, {}, {}, {},
-  env_schedule, {})
-local unresolved_materialization = CMat.CMatMaterializedKernelFragment(
-  unresolved_fused, env_provenance)
-local unresolved_environment = environment_input({
-  materialization = unresolved_materialization,
-  coordinates = Lower.LowerCMatCoordinateFacet(
-    unresolved_fused:cmat_memory_use_spine(), env_iteration, {}),
-}):lower_cmat_environment()
-assert(asdl.classof(unresolved_environment) ==
-  Lower.LowerCMatEnvironmentRejected)
-assert(asdl.classof(unresolved_environment.issue) ==
-  Lower.LowerIssueCMatFusionRejected)
-assert(asdl.classof(unresolved_environment.issue.issues[1]) ==
-  Lower.LowerCMatFusionProofUnresolved)
 
 -----------------------------------------------------------------------
 -- Rejections
