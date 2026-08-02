@@ -38,6 +38,56 @@ return schema. LalinLower {
     LowerProofSchedule { variant_unique, schedule [LalinSchedule.ScheduleId], reason [str], },
     LowerProofFallback { variant_unique, reason [str], },
   },
+  sum. LowerCMatFusionIssue {
+    LowerCMatFusionLegalityRejected {
+      variant_unique,
+      reject [LalinStencil.StencilFusionReject],
+    },
+    LowerCMatFusionProofUnresolved {
+      variant_unique,
+      obligation [LalinStencil.StencilProofObligation],
+    },
+    LowerCMatFusionSpineDisagreement {
+      variant_unique,
+      expected [LalinCMat.CMatMemoryUseSpine],
+      actual [LalinCMat.CMatMemoryUseSpine],
+    },
+    LowerCMatFusionUseAccessMissing {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      access [LalinStencil.StencilAccessRef],
+    },
+    LowerCMatFusionUseAccessAmbiguous {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      access [LalinStencil.StencilAccessRef],
+      count [number],
+    },
+    LowerCMatFusionUseCoordinateMissing {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+    },
+    LowerCMatFusionUseCoordinateAmbiguous {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUseId],
+      count [number],
+    },
+    LowerCMatFusionUseRoleConflict {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUse],
+      mutability [LalinCMat.CMatAccessMutability],
+    },
+    LowerCMatFusionAliasAmbiguous {
+      variant_unique,
+      left [LalinStencil.StencilAccessRef],
+      right [LalinStencil.StencilAccessRef],
+      count [number],
+    },
+    LowerCMatFusionStoreUseNotSink {
+      variant_unique,
+      use [LalinCMat.CMatMemoryUse],
+    },
+  },
   sum. LowerFallbackKind {
     LowerFallbackNoKernel { reason_description [str] },
     LowerFallbackUnschedulable { reason_description [str] },
@@ -55,6 +105,11 @@ return schema. LalinLower {
       variant_unique,
       fragment [LalinLower.LowerFragmentId],
       issue [LalinCMat.CMatCEmissionIssue],
+    },
+    LowerIssueCMatFusionRejected {
+      variant_unique,
+      fragment [LalinLower.LowerFragmentId],
+      issues [many [LalinLower.LowerCMatFusionIssue]],
     },
     LowerIssueCoverageRejected {
       variant_unique,
@@ -859,6 +914,155 @@ return schema. LalinLower {
     elem_size [number],
     stride [number],
   },
+  product. LowerCMatAccessFactProjection {
+    interned,
+    entries [many [LalinLower.LowerCMatAccessFact]],
+  },
+  sum. LowerCMatAccessFactLookup {
+    LowerCMatAccessFactFound {
+      variant_unique,
+      fact [LalinLower.LowerCMatAccessFact],
+    },
+    LowerCMatAccessFactMissing {
+      variant_unique,
+      access [LalinStencil.StencilAccessRef],
+    },
+    LowerCMatAccessFactAmbiguous {
+      variant_unique,
+      access [LalinStencil.StencilAccessRef],
+      count [number],
+    },
+  },
+  product. LowerCMatFusionUseContract {
+    interned,
+    use [LalinCMat.CMatMemoryUse],
+    access [LalinLower.LowerCMatAccessFact],
+    coordinate [LalinLower.LowerCMatUseCoordinateEntry],
+  },
+  sum. LowerCMatFusionAliasClassification {
+    LowerCMatFusionAliasUnspecified,
+    LowerCMatFusionAliasDeclared {
+      variant_unique,
+      relation [LalinStencil.StencilAliasFact],
+    },
+  },
+  product. LowerCMatFusionAliasContract {
+    interned,
+    left [LalinStencil.StencilAccessRef],
+    right [LalinStencil.StencilAccessRef],
+    classification [LalinLower.LowerCMatFusionAliasClassification],
+  },
+  product. LowerCMatFusionWriteContract {
+    interned,
+    ordinal [number],
+    sink [LalinStencil.StencilSinkRef],
+    use [LalinCMat.CMatMemoryUseId],
+    access [LalinStencil.StencilAccessRef],
+    coordinate [LalinLower.LowerCMatUseCoordinateEntry],
+  },
+  product. LowerCMatFusionContract {
+    interned,
+    kernel [LalinCMat.CMatKernelId],
+    spine [LalinCMat.CMatMemoryUseSpine],
+    accesses [LalinLower.LowerCMatAccessFactProjection],
+    uses [many [LalinLower.LowerCMatFusionUseContract]],
+    aliases [many [LalinLower.LowerCMatFusionAliasContract]],
+    writes [many [LalinLower.LowerCMatFusionWriteContract]],
+    proofs [many [LalinStencil.StencilProofObligation]],
+  },
+  product. LowerCMatFusionAdmissionInput {
+    interned,
+    materialization [LalinCMat.CMatMaterializedKernelFragment],
+    coordinates [LalinLower.LowerCMatCoordinateFacet],
+    accesses [LalinLower.LowerCMatAccessFactProjection],
+  },
+  product. LowerCMatFusionUseInput {
+    interned,
+    admission [LalinLower.LowerCMatFusionAdmissionInput],
+    use [LalinCMat.CMatMemoryUse],
+  },
+  product. LowerCMatFusionUseMatchInput {
+    interned,
+    request [LalinLower.LowerCMatFusionUseInput],
+    fact [LalinLower.LowerCMatAccessFact],
+  },
+  product. LowerCMatFusionRoleInput {
+    interned,
+    use [LalinCMat.CMatMemoryUse],
+    fact [LalinLower.LowerCMatAccessFact],
+    coordinate [LalinLower.LowerCMatUseCoordinateEntry],
+  },
+  product. LowerCMatFusionWriteInput {
+    interned,
+    contract [LalinLower.LowerCMatFusionUseContract],
+    ordinal [number],
+  },
+  product. LowerCMatFusionCollectInput {
+    interned,
+    assembly [LalinLower.LowerCMatFusionAssembly],
+    ordinal [number],
+  },
+  product. LowerCMatFusionAliasInput {
+    interned,
+    assembly [LalinLower.LowerCMatFusionAssembly],
+    left [LalinLower.LowerCMatAccessFact],
+    right [LalinLower.LowerCMatAccessFact],
+  },
+  product. LowerCMatFusionProofInput {
+    interned,
+    assembly [LalinLower.LowerCMatFusionAssembly],
+    obligation [LalinStencil.StencilProofObligation],
+  },
+  sum. LowerCMatFusionUseAdmission {
+    LowerCMatFusionUseAdmitted {
+      variant_unique,
+      contract [LalinLower.LowerCMatFusionUseContract],
+    },
+    LowerCMatFusionUseRejected {
+      variant_unique,
+      issue [LalinLower.LowerCMatFusionIssue],
+    },
+  },
+  sum. LowerCMatFusionWriteContribution {
+    LowerCMatFusionNoWrite,
+    LowerCMatFusionWriteAdmitted {
+      variant_unique,
+      contract [LalinLower.LowerCMatFusionWriteContract],
+    },
+    LowerCMatFusionWriteRejected {
+      variant_unique,
+      issue [LalinLower.LowerCMatFusionIssue],
+    },
+  },
+  sum. LowerCMatFusionAssembly {
+    LowerCMatFusionCollecting {
+      variant_unique,
+      input [LalinLower.LowerCMatFusionAdmissionInput],
+      uses [many [LalinLower.LowerCMatFusionUseContract]],
+      aliases [many [LalinLower.LowerCMatFusionAliasContract]],
+      writes [many [LalinLower.LowerCMatFusionWriteContract]],
+      proofs [many [LalinStencil.StencilProofObligation]],
+    },
+    LowerCMatFusionAssemblyRejected {
+      variant_unique,
+      input [LalinLower.LowerCMatFusionAdmissionInput],
+      uses [many [LalinLower.LowerCMatFusionUseContract]],
+      aliases [many [LalinLower.LowerCMatFusionAliasContract]],
+      writes [many [LalinLower.LowerCMatFusionWriteContract]],
+      proofs [many [LalinStencil.StencilProofObligation]],
+      issues [many [LalinLower.LowerCMatFusionIssue]],
+    },
+  },
+  sum. LowerCMatFusionAdmission {
+    LowerCMatFusionAdmitted {
+      variant_unique,
+      contract [LalinLower.LowerCMatFusionContract],
+    },
+    LowerCMatFusionRejected {
+      variant_unique,
+      issues [many [LalinLower.LowerCMatFusionIssue]],
+    },
+  },
   product. LowerCMatAccessSourceInput {
     interned,
     fact [LalinLower.LowerCMatAccessFact],
@@ -882,6 +1086,7 @@ return schema. LalinLower {
   },
   product. LowerCMatAccessCollection {
     interned,
+    facts [many [LalinLower.LowerCMatAccessFact]],
     entries [many [LalinCMat.CMatCFragmentAccessBindingEntry]],
   },
   product. LowerCMatAccessFinishInput {
@@ -953,6 +1158,7 @@ return schema. LalinLower {
   sum. LowerCMatAccessEnvironment {
     LowerCMatAccessesReady {
       variant_unique,
+      facts [LalinLower.LowerCMatAccessFactProjection],
       accesses [LalinCMat.CMatCFragmentAccessBindingProjection],
     },
     LowerCMatAccessesRejected { variant_unique, issue [LalinLower.LowerIssue], },
@@ -1033,11 +1239,18 @@ return schema. LalinLower {
     },
     LowerCMatExitsRejected { variant_unique, issue [LalinLower.LowerIssue], },
   },
+  product. LowerCMatFusionContinuationInput {
+    interned,
+    environment [LalinLower.LowerCMatEnvironmentInput],
+    values [LalinLower.LowerCMatValuesReady],
+    accesses [LalinLower.LowerCMatAccessesReady],
+  },
   product. LowerCMatAddressEnvironmentInput {
     interned,
     environment [LalinLower.LowerCMatEnvironmentInput],
     values [LalinLower.LowerCMatValuesReady],
     accesses [LalinLower.LowerCMatAccessesReady],
+    fusion [LalinLower.LowerCMatFusionContract],
   },
   product. LowerCMatAddressPlanReadyInput {
     interned,
@@ -1061,6 +1274,7 @@ return schema. LalinLower {
   sum. LowerCMatEnvironment {
     LowerCMatEnvironmentReady {
       variant_unique,
+      fusion [LalinLower.LowerCMatFusionContract],
       request [LalinCMat.CMatCFragmentInput],
     },
     LowerCMatEnvironmentRejected { variant_unique, issue [LalinLower.LowerIssue], },

@@ -195,6 +195,147 @@ local address_coordinates = Lower.LowerCMatCoordinateFacet(
       Lower.LowerCMatIterationAffineCoordinate(
         Lower.LowerCMatAddressBasis(lane2.base, address_induction, 4), 0)),
   })
+
+local function fusion_facts_for(mat)
+  return Lower.LowerCMatAccessFactProjection({
+    Lower.LowerCMatAccessFact(
+      mat.kernel.accesses[1], access_projection.entries[1], access1_id,
+      lane1.backend_info[1].alignment, lane1.backend_info[1].bounds,
+      lane1.backend_info[1].trap, lane1.backend_info[1].movement, 4, 4),
+    Lower.LowerCMatAccessFact(
+      mat.kernel.accesses[2], access_projection.entries[2], access2_id,
+      lane2.backend_info[1].alignment, lane2.backend_info[1].bounds,
+      lane2.backend_info[1].trap, lane2.backend_info[1].movement, 4, 4),
+  })
+end
+
+local function materialization_with_legality(legality)
+  local candidate = Stencil.StencilComputation(
+    computation.id, producer, { out1, out2 }, { seven_stream, nine_stream },
+    { store1, store2 }, legality, schedule, {})
+  return candidate:cmat_materialize(
+    CMat.CMatMaterializationInput(CMat.CMatKernelId("multisink_kernel")))
+  :cmat_attach_kernel_provenance(provenance)
+end
+
+local fusion = Lower.LowerCMatFusionAdmissionInput(
+  materialization, address_coordinates, fusion_facts_for(materialization))
+:lower_cmat_admit_fusion()
+assert(asdl.classof(fusion) == Lower.LowerCMatFusionAdmitted)
+assert(fusion.contract.spine == address_spine)
+assert(#fusion.contract.uses == 2 and #fusion.contract.writes == 2)
+assert(#fusion.contract.aliases == 1)
+assert(fusion.contract.uses[1].access.bounds ==
+  lane1.backend_info[1].bounds)
+assert(fusion.contract.uses[1].access.alignment ==
+  lane1.backend_info[1].alignment)
+assert(fusion.contract.uses[1].access.trap == lane1.backend_info[1].trap)
+assert(fusion.contract.uses[1].access.movement ==
+  lane1.backend_info[1].movement)
+assert(fusion.contract.uses[1].access.binding.mutability ==
+  CMat.CMatAccessWriteOnly)
+assert(fusion.contract.uses[1].coordinate == address_coordinates.entries[1])
+assert(fusion.contract.aliases[1].classification ==
+  Lower.LowerCMatFusionAliasUnspecified)
+assert(fusion.contract.writes[1].ordinal == 1
+  and fusion.contract.writes[2].ordinal == 2)
+assert(fusion.contract.writes[1].sink == Stencil.StencilSinkRef(sink1_id))
+assert(fusion.contract.writes[2].sink == Stencil.StencilSinkRef(sink2_id))
+
+local declared = materialization_with_legality(Stencil.StencilFusionLegality({
+  Stencil.StencilFusionAccessAliasRelation(
+    Stencil.StencilAccessRef("out1"), Stencil.StencilAccessRef("out2"),
+    Stencil.StencilAliasNoAlias),
+}, {}, {}))
+local declared_fusion = Lower.LowerCMatFusionAdmissionInput(
+  declared, address_coordinates, fusion_facts_for(declared))
+:lower_cmat_admit_fusion()
+assert(asdl.classof(declared_fusion) == Lower.LowerCMatFusionAdmitted)
+assert(asdl.classof(declared_fusion.contract.aliases[1].classification) ==
+  Lower.LowerCMatFusionAliasDeclared)
+assert(declared_fusion.contract.aliases[1].classification.relation ==
+  Stencil.StencilAliasNoAlias)
+assert(declared.kernel.accesses[1].restrict_capability ==
+  CMat.CMatRestrictEligible)
+assert(declared.kernel.accesses[2].restrict_capability ==
+  CMat.CMatRestrictEligible)
+
+local may_alias = materialization_with_legality(Stencil.StencilFusionLegality({
+  Stencil.StencilFusionAccessAliasRelation(
+    Stencil.StencilAccessRef("out1"), Stencil.StencilAccessRef("out2"),
+    Stencil.StencilAliasMayAlias),
+}, {}, {}))
+local may_alias_fusion = Lower.LowerCMatFusionAdmissionInput(
+  may_alias, address_coordinates, fusion_facts_for(may_alias))
+:lower_cmat_admit_fusion()
+assert(asdl.classof(may_alias_fusion) == Lower.LowerCMatFusionAdmitted)
+assert(may_alias_fusion.contract.aliases[1].classification.relation ==
+  Stencil.StencilAliasMayAlias)
+assert(asdl.classof(may_alias.kernel.accesses[1].restrict_capability) ==
+  CMat.CMatRestrictIneligible)
+assert(asdl.classof(may_alias.kernel.accesses[2].restrict_capability) ==
+  CMat.CMatRestrictIneligible)
+
+local ambiguous = materialization_with_legality(Stencil.StencilFusionLegality({
+  Stencil.StencilFusionAccessAliasRelation(
+    Stencil.StencilAccessRef("out1"), Stencil.StencilAccessRef("out2"),
+    Stencil.StencilAliasNoAlias),
+  Stencil.StencilFusionAccessAliasRelation(
+    Stencil.StencilAccessRef("out1"), Stencil.StencilAccessRef("out2"),
+    Stencil.StencilAliasMayAlias),
+}, {}, {}))
+local ambiguous_fusion = Lower.LowerCMatFusionAdmissionInput(
+  ambiguous, address_coordinates, fusion_facts_for(ambiguous))
+:lower_cmat_admit_fusion()
+assert(asdl.classof(ambiguous_fusion) == Lower.LowerCMatFusionRejected)
+assert(asdl.classof(ambiguous_fusion.issues[1]) ==
+  Lower.LowerCMatFusionAliasAmbiguous)
+
+local obligation = Stencil.StencilProofObligation(
+  Stencil.StencilProofNoAlias(
+    Stencil.StencilAccessRef("out1"), Stencil.StencilAccessRef("out2")),
+  Stencil.StencilProofAuthorAsserted, Stencil.StencilProofUnproven)
+local unresolved = materialization_with_legality(
+  Stencil.StencilFusionLegality({}, { obligation }, {}))
+local unresolved_fusion = Lower.LowerCMatFusionAdmissionInput(
+  unresolved, address_coordinates, fusion_facts_for(unresolved))
+:lower_cmat_admit_fusion()
+assert(asdl.classof(unresolved_fusion) == Lower.LowerCMatFusionRejected)
+assert(asdl.classof(unresolved_fusion.issues[1]) ==
+  Lower.LowerCMatFusionProofUnresolved)
+
+local provided_obligation = Stencil.StencilProofObligation(
+  obligation.requirement, Stencil.StencilProofAuthorAsserted,
+  Stencil.StencilProofProvided(
+    Kernel.KernelProofFunctionEquivalence("provided noalias fixture")))
+local provided = materialization_with_legality(
+  Stencil.StencilFusionLegality({}, { provided_obligation }, {}))
+local provided_fusion = Lower.LowerCMatFusionAdmissionInput(
+  provided, address_coordinates, fusion_facts_for(provided))
+:lower_cmat_admit_fusion()
+assert(asdl.classof(provided_fusion) == Lower.LowerCMatFusionAdmitted)
+assert(#provided_fusion.contract.proofs == 1)
+assert(provided_fusion.contract.proofs[1] == provided_obligation)
+
+local original = materialization.kernel.accesses[1]
+local readonly = CMat.CMatAccessBinding(
+  original.access, original.source, original.local_id, original.ty,
+  original.layout, CMat.CMatAccessReadOnly, original.restrict_capability,
+  original.const_capability, original.alignment)
+local original_facts = fusion_facts_for(materialization)
+local role_conflict = Lower.LowerCMatFusionAdmissionInput(
+  materialization, address_coordinates, Lower.LowerCMatAccessFactProjection({
+    Lower.LowerCMatAccessFact(
+      readonly, original_facts.entries[1].provenance,
+      original_facts.entries[1].mem_access,
+      original_facts.entries[1].alignment, original_facts.entries[1].bounds,
+      original_facts.entries[1].trap, original_facts.entries[1].movement, 4, 4),
+    original_facts.entries[2],
+  }))
+:lower_cmat_admit_fusion()
+assert(asdl.classof(role_conflict) == Lower.LowerCMatFusionRejected)
+assert(asdl.classof(role_conflict.issues[1]) ==
+  Lower.LowerCMatFusionUseRoleConflict)
 local address_projection = address_coordinates:materialize_c_address_plan(
   CMat.CMatCAddressPlanInput(iteration, accesses,
     CMat.CMatCFragmentNamespace("multisink_address")))

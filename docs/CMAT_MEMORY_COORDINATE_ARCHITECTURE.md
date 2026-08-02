@@ -346,11 +346,33 @@ function/base identity and validates every iteration/extent field through leaf
 methods. The declaration itself asserts that this exact footprint fits its named
 base length, just as other Code contracts are trusted declarations; the compiler
 does not numerically re-derive that assertion. Ambiguous or disagreeing declarations
-reject the whole coordinate
-projection. Missing declarations do not infer safety: clamp/wrap/zero remain dynamic
-and reject-boundary displacement remains rejected. A proven declaration permits a
-relative cursor with the exact signed byte displacement. Existing `window_bounds`,
-`MemBounds`, emitted masks, and pointer shape never substitute for this guarantee.
+reject the whole coordinate projection. Missing declarations do not infer safety:
+clamp/wrap/zero remain dynamic and reject-boundary displacement remains rejected. A
+proven declaration permits a relative cursor with the exact signed byte displacement.
+Existing `window_bounds`, `MemBounds`, emitted masks, and pointer shape never
+substitute for this guarantee.
+
+## Whole-fusion admission
+
+After per-access and coordinate admission, LOWER builds one immutable
+`LowerCMatFusionContract`. It retains:
+
+- every exact access fact, including alignment, bounds, trap, movement, and authored
+  mutability;
+- one coordinate contract for every memory use, preserving absolute, affine, dynamic
+  window, and footprint-proven relative alternatives;
+- one alias classification for every access pair; missing declarations remain typed
+  as unspecified, while ambiguous declarations reject;
+- every sink write with its exact memory-use identity and deterministic ordinal;
+- every provided proof obligation; unproven obligations remain typed rejects.
+
+Stencil fusion rejects or unresolved proof obligations, missing or ambiguous use
+relations, role/mutability contradictions, and non-sink store uses reject the whole
+admission. Alias absence does not become either safety or failure: it disables
+`restrict` and is preserved as `LowerCMatFusionAliasUnspecified`. Only an exact
+declared `StencilAliasNoAlias` relation can produce restrict eligibility. The admitted
+contract is retained on `LowerCMatEnvironmentReady` and is the gate to canonical
+fragment construction.
 
 ## Retired vocabulary
 

@@ -35,7 +35,7 @@ local function contract_evidence(backend)
     Mem.MemAccessContiguous, { backend })
   return Lower.LowerCMatAccessEvidence(
     request, binding, Stencil.StencilAccessByKernelLaneEntry(lane, access),
-    access_id, backend, 4, 4, Lower.LowerCMatAccessCollection({}), 2)
+    access_id, backend, 4, 4, Lower.LowerCMatAccessCollection({}, {}), 2)
 end
 
 local function backend(bounds, trap, movement)

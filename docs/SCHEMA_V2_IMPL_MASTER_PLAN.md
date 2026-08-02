@@ -114,6 +114,17 @@ rejects the whole coordinate projection. A matching declaration permits signed
 relative cursor displacement. No pointer-shape, mask, or numeric-range inference is
 used.
 
+Whole-fusion admission now follows per-access and coordinate admission. The immutable
+`LowerCMatFusionContract` retains the exact access-fact projection, one typed
+coordinate contract per memory use, the complete declared/unspecified alias matrix,
+and ordered sink-write contracts. Provided obligations are retained; Stencil legality
+rejects or unresolved proof obligations, ambiguous alias declarations, missing or
+ambiguous use relations, and
+mutability/use-role disagreements reject through typed fusion issues. Missing alias
+evidence is represented as unspecified and never produces `restrict`; exact declared
+noalias remains the sole restrict source. The admitted contract is retained on
+`LowerCMatEnvironmentReady` and gates canonical fragment construction.
+
 ## P2 — schema ownership cutover
 
 The duplicate-owner guard remains authoritative. Domain cutovers are serialized

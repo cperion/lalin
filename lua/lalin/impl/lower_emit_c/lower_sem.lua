@@ -6,6 +6,7 @@ require("lalin.impl.lower_emit_c.coordinates")
 require("lalin.impl.lower_emit_c.code_to_c")
 require("lalin.impl.lower_emit_c.fragment")
 require("lalin.impl.lower_emit_c.address_plan")
+require("lalin.impl.lower_emit_c.fusion_admission")
 
 local Lower = require("lalin.schema_v2.lower")
 local Stencil = require("lalin.schema_v2.stencil")
@@ -989,11 +990,25 @@ function Lower.LowerCMatValuesRejected:lower_cmat_compose_accesses(_input)
 end
 
 function Lower.LowerCMatAccessesReady:lower_cmat_compose_exits(input, values)
-  local address_input = Lower.LowerCMatAddressEnvironmentInput(input, values, self)
-  return input.coordinates:materialize_c_address_plan(
+  return Lower.LowerCMatFusionAdmissionInput(
+    input.materialization, input.coordinates, self.facts)
+:lower_cmat_admit_fusion():lower_cmat_continue_fusion(
+    Lower.LowerCMatFusionContinuationInput(input, values, self))
+end
+function Lower.LowerCMatFusionAdmitted:lower_cmat_continue_fusion(input)
+  local environment = input.environment
+  local address_input = Lower.LowerCMatAddressEnvironmentInput(
+    environment, input.values, input.accesses, self.contract)
+  return environment.coordinates:materialize_c_address_plan(
     CMat.CMatCAddressPlanInput(
-      input.materialization.provenance.iteration, self.accesses, input.namespace))
+      environment.materialization.provenance.iteration,
+      input.accesses.accesses, environment.namespace))
 :lower_cmat_compose_exits(address_input)
+end
+function Lower.LowerCMatFusionRejected:lower_cmat_continue_fusion(input)
+  return Lower.LowerCMatEnvironmentRejected(
+    Lower.LowerIssueCMatFusionRejected(
+      input.environment.fragment.id, self.issues))
 end
 function CMat.CMatCAddressPlanRejected:lower_cmat_compose_exits(input)
   if #self.issues == 0 then
@@ -1020,7 +1035,8 @@ end
 function Lower.LowerCMatExitsReady:lower_cmat_finish_environment(input)
   local address_input = input.environment
   local environment = address_input.environment
-  return Lower.LowerCMatEnvironmentReady(CMat.CMatCFragmentInput(
+  return Lower.LowerCMatEnvironmentReady(address_input.fusion,
+    CMat.CMatCFragmentInput(
     environment.materialization, environment.code_func,
     environment.coverage.covered_blocks,
     environment.coverage.replacement_source, environment.target,
@@ -1081,6 +1097,8 @@ function Lower.LowerCMatAccessSourceInput:lower_cmat_access_source()
       self.fact.binding.access, self.values, expected))
 end
 function Lower.LowerCMatAccessSourceReady:lower_cmat_finish_access(input)
+  local facts = copy(input.collection.facts)
+  facts[#facts + 1] = input.fact
   local entries = copy(input.collection.entries)
   entries[#entries + 1] = CMat.CMatCFragmentAccessBindingEntry(
     input.fact.binding.access, input.fact.provenance.lane.id,
@@ -1088,7 +1106,7 @@ function Lower.LowerCMatAccessSourceReady:lower_cmat_finish_access(input)
     input.fact.stride, input.fact.alignment, input.fact.bounds,
     input.fact.trap, input.fact.movement)
   return Lower.LowerCMatAccessBuildReady(
-    Lower.LowerCMatAccessCollection(entries))
+    Lower.LowerCMatAccessCollection(facts, entries))
 end
 function Lower.LowerCMatAccessSourceRejected:lower_cmat_finish_access(_input)
   return Lower.LowerCMatAccessBuildRejected(self.issue)
@@ -1127,7 +1145,7 @@ function Lower.LowerCMatAccessBuildRequest:lower_validate_access_relation()
 end
 function Lower.LowerCMatAccessRelationValid:lower_cmat_build_accesses(request)
   return Lower.LowerCMatAccessBuildReady(
-    Lower.LowerCMatAccessCollection({}))
+    Lower.LowerCMatAccessCollection({}, {}))
 :lower_cmat_continue_accesses(Lower.LowerCMatAccessFoldInput(request, 1))
 end
 function Lower.LowerCMatAccessRelationRejected:lower_cmat_build_accesses(_request)
@@ -1241,6 +1259,7 @@ function Lower.LowerCMatAccessBuildReady:lower_cmat_continue_accesses(input)
   local request = input.request
   if input.index > #request.bindings then
     return Lower.LowerCMatAccessesReady(
+      Lower.LowerCMatAccessFactProjection(self.collection.facts),
       CMat.CMatCFragmentAccessBindingProjection(self.collection.entries))
   end
   local binding = request.bindings[input.index]
