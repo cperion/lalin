@@ -118,6 +118,19 @@ proof planes into a whole-fusion contract. Missing optimization capabilities sel
 conservative scalar C: noalias alone controls `restrict`, and generic proof
 obligations never gate CMat materialization.
 
+## P1.5 — public schema-v2 compiler convergence — scalar gate complete
+
+The explicit public `lalin.compile_v2` path now preserves parsed function bodies and
+executes scalar `.lln -> schema-v2 -> emitted C -> GCC` programs. Data references for
+string/slice construction and covered-switch retargeting are also closed, with a
+public GCC execution regression.
+
+The default `lalin.compile_c_gcc` path is not switched yet. Schema-v2 loop parsing
+still emits raw `StmtForRange`/fold/scan tables before the typed `ParsedStmt` boundary,
+and its flow-domain recovery still depends on encoded block names. The next cut is a
+typed parsed-loop/domain vocabulary and explicit domain projection; no cross-context
+constructor adapter or fallback to the legacy C backend is permitted.
+
 ## P2 — schema ownership cutover
 
 The duplicate-owner guard remains authoritative. Domain cutovers are serialized
