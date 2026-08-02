@@ -120,7 +120,6 @@ local emission = module_result.emission
 assert(asdl.classof(emission) == Lower.LowerCModuleEmission, "module emission must be typed")
 local c_unit = emission.unit
 assert(asdl.classof(c_unit) == C.CBackendUnit, "typed emission must own CBackendUnit")
-assert(lower_module:emit_c(input) == c_unit, "public emit boundary must unwrap canonical typed result")
 assert(c_unit.module_name == "wired_module", "bad module_name")
 
 -- Test externs

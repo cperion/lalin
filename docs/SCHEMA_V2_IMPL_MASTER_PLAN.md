@@ -121,11 +121,23 @@ obligations never gate CMat materialization.
 ## P1.5 — public schema-v2 compiler convergence — typed 1D window gate complete
 
 The explicit public `lalin.compile_v2` path preserves parsed function bodies and
-executes scalar and one-dimensional clamp-window `.lln -> schema-v2 Tree -> Code ->
-Flow -> Stencil -> CMat -> LOWER -> emitted C -> GCC -O3` programs. Parsed loops,
-axes, windows, reducers, and sinks cross the `ParsedStmt` boundary as ASDL values.
-Tree loop domains are projected through `CodeOriginLoopDomain`; Flow consumes that
-typed origin directly. Encoded block-name domain recovery has been deleted.
+executes scalar and one-dimensional clamp/wrap/zero windows, centered reject windows,
+window arithmetic streams, and deterministic multisink stores through `.lln ->
+schema-v2 Tree -> Code -> Flow -> Stencil -> CMat -> LOWER
+-> emitted C -> GCC -O3`. Parsed loops, axes, windows, reducers, and sinks cross the
+`ParsedStmt` boundary as ASDL values. Tree loop domains are projected through
+`CodeOriginLoopDomain`; Flow consumes that typed origin directly. Encoded block-name
+domain recovery has been deleted. LOWER rejection now crosses the compiler backend
+as `CompilerCBackendRejected` and becomes a typed `CompilerArtifactError` only at the
+artifact boundary; it does not escape `CompilerSession:compile()` as a Lua error.
+Nonzero `boundary = reject` displacement remains conservative until ordinary memory
+extent and authored-domain evidence can prove a narrow affine interior. Wrap realization
+is covered for distances larger than the domain extent. Integer division, remainder, and
+shift helpers emit their declared guards and operations; unsupported helper leaves fail
+during emission instead of silently returning the first operand. Canonical and schema-v2
+registry paths now return `CompilerCBackendOutcome`; phase execution carries that exact
+outcome, while successful schema-v2 artifacts enforce C validation before source is
+accepted. Static data and slice descriptors are covered through GCC execution.
 
 The default `lalin.compile_c_gcc` path is not switched yet. Schema-v2 intentionally
 rejects parsed fold/scan, tiled, multi-axis, backward, nonzero-start, and non-unit-step

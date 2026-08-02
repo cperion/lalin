@@ -38,7 +38,9 @@ local function bind_context(T)
         KernelValidate.validate(code_module, graph, flow, values, mem_semantics, effects, kernels, schedules, lower_plan, { collector = collector })
         c_opts.validate = false
         local c_unit = LowerToC.module(code_module, lower_plan, c_opts)
-        return T.LalinCompiler.CompilerCBackendResult(c_unit, CValidate.validate(c_unit, collector))
+        return T.LalinCompiler.CompilerCBackendEmitted(
+            T.LalinCompiler.CompilerCBackendResult(
+                c_unit, CValidate.validate(c_unit, collector)))
     end
 
     return api

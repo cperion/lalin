@@ -139,7 +139,7 @@ return schema. LalinPhase {
     PhaseValueTreeModule { variant_unique, field. module [LalinTree.Module], },
     PhaseValueCheckedModule { variant_unique, checked [LalinCheck.TypeModuleResult], },
     PhaseValueCompilerCode { variant_unique, code [LalinCompiler.CodeResult], },
-    PhaseValueCBackend { variant_unique, result [LalinCompiler.CompilerCBackendResult], },
+    PhaseValueCBackend { variant_unique, outcome [LalinCompiler.CompilerCBackendOutcome], },
     PhaseValueNumber { variant_unique, field. value [number], },
   },
 

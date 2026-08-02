@@ -37,6 +37,16 @@ return schema. LalinCompiler {
     unit [LalinC.CBackendUnit],
     report [LalinC.CBackendValidationReport],
   },
+  sum. CompilerCBackendOutcome {
+    CompilerCBackendEmitted {
+      variant_unique,
+      backend [LalinCompiler.CompilerCBackendResult],
+    },
+    CompilerCBackendRejected {
+      variant_unique,
+      issues [many [LalinLower.LowerIssue]],
+    },
+  },
 
   sum. TreeCodeImplementation {
     TreeCodeCanonicalImplementation,

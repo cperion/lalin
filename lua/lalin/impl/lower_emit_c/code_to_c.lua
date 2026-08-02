@@ -170,7 +170,7 @@ function Code.CodePlaceGlobal:lower_code_place_to_c(c_emission)
 end
 function Code.CodePlaceData:lower_code_place_to_c(c_emission)
   local cty = self.ty:code_to_c_backend_type()
-  return C.CBackendPlaceGlobal(C.CBackendGlobalId("__data_" .. self.data.text), cty)
+  return C.CBackendPlaceGlobal(C.CBackendGlobalId(self.data.text), cty)
 end
 function Code.CodePlaceDeref:lower_code_place_to_c(c_emission)
   local cty = self.ty:code_to_c_backend_type()
@@ -209,10 +209,10 @@ function Code.CodeGlobalRefExtern:lower_code_global_ref_to_c_name(c_emission)
   return C.CBackendName(self.extern.text)
 end
 function Code.CodeGlobalRefGlobal:lower_code_global_ref_to_c_name(c_emission)
-  return C.CBackendName("__global_" .. self.global.text)
+  return C.CBackendName(self.global.text)
 end
 function Code.CodeGlobalRefData:lower_code_global_ref_to_c_name(c_emission)
-  return C.CBackendName("__data_" .. self.data.text)
+  return C.CBackendName(self.data.text)
 end
 
 function Code.CodeGlobalRefFunc:lower_code_global_ref_to_c_sig(c_emission)
@@ -236,10 +236,8 @@ function Code.CodeGlobalRefData:lower_code_global_ref_to_c_assign(_c_emission, d
     Lower.LowerCodeDataRefAssignInput(self, dst))
 end
 function Code.CodeTyDataPtr:lower_code_data_ref_assign(input)
-  local place = C.CBackendPlaceGlobal(
-    C.CBackendGlobalId("__data_" .. input.ref.data.text),
-    self.pointee:code_to_c_backend_type())
-  return C.CBackendAssign(input.dst, C.CBackendRAddrOfPlace(place))
+  return C.CBackendAssign(input.dst, C.CBackendRAtom(
+    C.CBackendAtomGlobal(C.CBackendGlobalId(input.ref.data.text))))
 end
 
 function Code.CodeGlobalRefExtern:lower_code_global_ref_to_c_assign(c_emission, dst)

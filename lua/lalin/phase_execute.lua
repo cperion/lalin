@@ -112,7 +112,18 @@ local function install_methods(T)
     function P.PhaseValueTreeModule:compiler_value() return self.module end
     function P.PhaseValueCheckedModule:compiler_value() return self.checked end
     function P.PhaseValueCompilerCode:compiler_value() return self.code end
-    function P.PhaseValueCBackend:compiler_value() return self.result.unit end
+    function T.LalinCompiler.CompilerCBackendEmitted:compiler_value()
+        return self.backend.unit
+    end
+    function T.LalinCompiler.CompilerCBackendRejected:compiler_value()
+        local issues = {}
+        for i = 1, #self.issues do issues[i] = tostring(self.issues[i]) end
+        error("C backend rejected with " .. #issues
+            .. " issue(s): " .. table.concat(issues, "; "), 2)
+    end
+    function P.PhaseValueCBackend:compiler_value()
+        return self.outcome:compiler_value()
+    end
     function P.PhaseValueNumber:compiler_value() return self.value end
 end
 

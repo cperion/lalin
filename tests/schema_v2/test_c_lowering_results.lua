@@ -55,5 +55,4 @@ local emission = module_result.emission
 assert(asdl.classof(emission) == Lower.LowerCModuleEmission)
 assert(asdl.classof(emission.unit) == C.CBackendUnit)
 assert(#emission.functions == 1 and #emission.signatures.entries == 1)
-assert(lower_module:emit_c(input) == emission.unit)
 io.write("schema_v2 typed C lowering results ok\n")

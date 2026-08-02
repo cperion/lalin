@@ -166,10 +166,10 @@ local function lower_inits(inits)
   return result
 end
 function Code.CodeGlobal:lower_c_global()
-  return C.CBackendGlobal(C.CBackendGlobalId(self.id.text), C.CBackendName(self.name), self.linkage:lower_c_visibility(), self.ty:code_to_c_backend_type(), self.size or 0, self.align or 8, lower_inits(self.inits))
+  return C.CBackendGlobal(C.CBackendGlobalId(self.id.text), C.CBackendName(self.id.text), self.linkage:lower_c_visibility(), self.ty:code_to_c_backend_type(), self.size or 0, self.align or 8, lower_inits(self.inits))
 end
 function Code.CodeData:lower_c_global()
-  return C.CBackendGlobal(C.CBackendGlobalId(self.id.text), C.CBackendName(self.name), self.linkage:lower_c_visibility(), C.CBackendDataPtr(nil), self.size, self.align, lower_inits(self.inits))
+  return C.CBackendGlobal(C.CBackendGlobalId(self.id.text), C.CBackendName(self.id.text), self.linkage:lower_c_visibility(), C.CBackendDataPtr(nil), self.size, self.align, lower_inits(self.inits))
 end
 function Code.CodeExtern:lower_c_extern() return C.CBackendExtern(C.CBackendName(self.name), self.symbol, C.CBackendFuncSigId(self.sig.text), nil) end
 
@@ -205,10 +205,5 @@ function Lower.LowerModule:lower_c_module(input)
   local unit = C.CBackendUnit(code_module.id.text, spine.target, sigs, types, globals, externs, helpers, cfuncs)
   return Lower.LowerCModuleEmitted(Lower.LowerCModuleEmission(unit, signatures, functions))
 end
-function Lower.LowerCModuleEmitted:lower_c_unit() return self.emission.unit end
-function Lower.LowerCModuleRejected:lower_c_unit()
-  error("typed canonical C lowering rejected with " .. #self.issues .. " issue(s)", 2)
-end
-function Lower.LowerModule:emit_c(input) return self:lower_c_module(input):lower_c_unit() end
 
 return Lower

@@ -116,7 +116,9 @@ local function lower_input(module)
     lower_module, Lower.LowerKernelCMatProjection({}))
 end
 
-local c_unit = lower_module:emit_c(lower_input(code_module))
+local c_result = lower_module:lower_c_module(lower_input(code_module))
+assert(asdl.classof(c_result) == Lower.LowerCModuleEmitted)
+local c_unit = c_result.emission.unit
 
 -- Assertions
 assert(c_unit ~= nil, "emit_c returned nil")
@@ -174,7 +176,9 @@ local empty_module = Code.CodeModule(
   {},  -- no funcs
   Code.CodeOriginSource("empty")
 )
-local empty_unit = lower_module:emit_c(lower_input(empty_module))
+local empty_result = lower_module:lower_c_module(lower_input(empty_module))
+assert(asdl.classof(empty_result) == Lower.LowerCModuleEmitted)
+local empty_unit = empty_result.emission.unit
 assert(empty_unit ~= nil, "emit_c empty module returned nil")
 assert(#empty_unit.funcs == 0, "empty module should have 0 funcs")
 print("\nEmpty module: OK")

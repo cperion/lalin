@@ -32,33 +32,34 @@ require("lalin.impl.exec_plan")
 
 local CodeValidation = require("lalin.schema_v2.code_validation")
 
+function Compiler.CompilerCBackendRejected:compiler_emit_c_artifact()
+  local issues = {}
+  for i = 1, #self.issues do issues[i] = tostring(self.issues[i]) end
+  return Compiler.CompilerArtifactError(
+    "typed canonical C lowering rejected with " .. #issues
+      .. " issue(s): " .. table.concat(issues, "; "))
+end
+function Compiler.CompilerCBackendEmitted:compiler_emit_c_artifact()
+  local issues = self.backend.report.issues
+  if #issues ~= 0 then
+    local messages = {}
+    for i = 1, #issues do messages[i] = tostring(issues[i]) end
+    return Compiler.CompilerArtifactError(
+      "c_backend_validate: " .. table.concat(messages, "; "))
+  end
+  local artifact = self.emitter:emit_module(self.backend.unit)
+  return Compiler.CompilerArtifactC(artifact.source, artifact.header)
+end
+
 local function compile_validated(input)
   local code_module = input.module
   local contracts = input.contracts
-  local graph_ok, graph = pcall(function() return code_module:build_graph() end)
-  if not graph_ok then return Compiler.CompilerArtifactError("build_graph: " .. tostring(graph)) end
-  local flow = graph:compute_flow(code_module)
-  local values = graph:compute_values(code_module, flow)
-  local mem = graph:compute_mem(code_module, flow, values, contracts)
-  local effect_analysis = graph:compute_effect_analysis(code_module, mem, contracts)
-  local effects = effect_analysis.facts
-  local kernels = mem:plan_kernels(code_module, graph, flow, values, effects)
-  local schedules = kernels:plan_schedules(code_module, flow, values, mem, effects)
   local code_result = Compiler.CodeResult(code_module, contracts, Sem.LayoutEnv({}))
   local request = Compiler.CompilerCCodegenRequest(
     code_result, input.target, Stencil.StencilCompilerPolicy(
       Stencil.StencilCompilerGcc, Stencil.StencilOptO3, {}))
   local backend = require("lalin.compiler_schema_v2_c_backend").code_result_to_c(request)
-  local Cemit = require("lalin.schema_v2.cemit")
-  local Lower_schema = require("lalin.schema_v2.lower")
-  local spine = Lower_schema.LowerBackSpine(code_module, graph, input.target)
-  local c_sig_entries = {}
-  for i = 1, #backend.unit.sigs do
-    local sig = backend.unit.sigs[i]
-    c_sig_entries[i] = Cemit.CEmitCSigEntry(sig.id.text, sig)
-  end
-  local artifact = Cemit.CEmitMachine(spine, c_sig_entries, backend.unit.sigs, {}, {}):emit_module(backend.unit)
-  return Compiler.CompilerArtifactC(artifact.source, artifact.header)
+  return backend:compiler_emit_c_artifact()
 end
 
 function CodeValidation.CodeValidateOk:compiler_compile(input)

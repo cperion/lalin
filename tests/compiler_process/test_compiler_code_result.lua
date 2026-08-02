@@ -35,7 +35,9 @@ assert(asdl.classof(c_code) == C.CodeResult)
 local c_report = abi.validate_code_result(c_code)
 assert(#c_report.issues == 0)
 
-local c_backend = Machines.code_to_c(stage, c_code)
+local c_outcome = Machines.code_to_c(stage, c_code)
+assert(asdl.classof(c_outcome) == C.CompilerCBackendEmitted)
+local c_backend = c_outcome.backend
 assert(asdl.classof(c_backend) == C.CompilerCBackendResult)
 assert(tostring(asdl.classof(c_backend.unit)):match("LalinC%.CBackendUnit"))
 assert(#c_backend.report.issues == 0)

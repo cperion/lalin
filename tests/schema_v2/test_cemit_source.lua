@@ -20,6 +20,10 @@ local Lower = require("lalin.schema_v2.lower")
 
 -- Types
 local i32_ty = C.CBackendScalar(Core.ScalarI32)
+assert(C.CBackendQualifiedDataPtr(i32_ty, true, true, false):c_emit_type()
+  == "const int32_t* restrict")
+assert(C.CBackendQualifiedDataPtr(i32_ty, false, false, true):c_emit_type()
+  == "volatile int32_t*")
 
 -- Function signature: (i32, i32) -> i32
 local sig_id = C.CBackendFuncSigId("add_sig")

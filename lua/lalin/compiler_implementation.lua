@@ -3,6 +3,16 @@ local M = {}
 function M.install_canonical(T)
     local Compiler = T.LalinCompiler
 
+    function Compiler.CompilerCBackendEmitted:public_c_backend_result()
+        return self.backend
+    end
+    function Compiler.CompilerCBackendRejected:public_c_backend_result()
+        local issues = {}
+        for i = 1, #self.issues do issues[i] = tostring(self.issues[i]) end
+        error("C backend rejected with " .. #issues
+            .. " issue(s): " .. table.concat(issues, "; "), 2)
+    end
+
     function Compiler.CompilerImplementationOwner:compiler_implementation_registry()
         return Compiler.CompilerImplementationRegistry(Compiler.TreeCodeCanonicalImplementation)
     end

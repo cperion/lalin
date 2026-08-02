@@ -616,6 +616,7 @@ return schema. LalinCMat {
       lower [LalinC.CBackendAtom],
       upper [LalinC.CBackendAtom],
       extent [LalinC.CBackendAtom],
+      index [LalinC.CBackendAtom],
       index_ty [LalinC.CBackendType],
     },
   },
@@ -1023,6 +1024,7 @@ return schema. LalinCMat {
     state [LalinCMat.CMatCFragmentState],
     start [LalinCMat.CMatCFragmentBoundEmitted],
     trip [LalinCMat.CMatCFragmentBoundEmitted],
+    iteration_index [LalinC.CBackendAtom],
   },
   product. CMatCFragmentWindowBoundsInput {
     interned,
@@ -1034,6 +1036,7 @@ return schema. LalinCMat {
     interned,
     state [LalinCMat.CMatCFragmentState],
     index_ty [LalinC.CBackendType],
+    index [LalinC.CBackendAtom],
     lower [LalinC.CBackendAtom],
     upper [LalinC.CBackendAtom],
     extent [LalinC.CBackendAtom],

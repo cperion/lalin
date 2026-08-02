@@ -559,7 +559,7 @@ local function prepare_c_backend(decl, name, opts)
         target = opts.target,
         c_target = opts.c_target,
     })
-    local c_result = Pipeline.code_result_to_c(code_result, {
+    local c_outcome = Pipeline.code_result_to_c(code_result, {
         context = T,
         site = "emit_c:c",
         name = name,
@@ -569,6 +569,7 @@ local function prepare_c_backend(decl, name, opts)
         target_model = opts.target_model,
         back_target_model = opts.backend_target_model,
     })
+    local c_result = c_outcome:public_c_backend_result()
     if opts.reject_on_c_issues ~= false and #c_result.report.issues ~= 0 then
         local messages = {}
         for i = 1, #c_result.report.issues do messages[#messages + 1] = tostring(c_result.report.issues[i]) end

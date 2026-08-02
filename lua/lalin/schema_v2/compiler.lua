@@ -36,6 +36,21 @@ return schema. LalinCompiler {
     unit [LalinC.CBackendUnit],
     report [LalinC.CBackendValidationReport],
   },
+  sum. CompilerCBackendOutcome {
+    CompilerCBackendEmitted {
+      variant_unique,
+      backend [LalinCompiler.CompilerCBackendResult],
+      emitter [LalinCEmit.CEmitMachine],
+    },
+    CompilerCBackendRejected {
+      variant_unique,
+      issues [many [LalinLower.LowerIssue]],
+    },
+  },
+  product. CompilerCBackendEmissionInput {
+    interned,
+    spine [LalinLower.LowerBackSpine],
+  },
   product. CompilerCodeGenerationInput {
     field. module [LalinCode.CodeModule],
     contracts [LalinCode.CodeContractFactSet],

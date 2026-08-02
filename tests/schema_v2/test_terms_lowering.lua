@@ -107,9 +107,11 @@ local i32_type = Code.CodeTyInt(32, Code.CodeSigned)
 local lower_module = make_lower_module()
 local c_target = C.CBackendTarget(C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian, true)
 local function emit_module(module)
-  return lower_module:emit_c(Lower.LowerCModuleInput(
+  local result = lower_module:lower_c_module(Lower.LowerCModuleInput(
     Lower.LowerBackSpine(module, Graph.CodeGraph(module.id, {}), c_target),
     lower_module, Lower.LowerKernelCMatProjection({})))
+  assert(asdl.classof(result) == Lower.LowerCModuleEmitted)
+  return result.emission.unit
 end
 
 ----------------------------------------------------------------------

@@ -1,15 +1,32 @@
 local M = {}
 local Lower = require("lalin.schema_v2.lower")
 local Compiler = require("lalin.schema_v2.compiler")
+local Cemit = require("lalin.schema_v2.cemit")
 
-function Lower.LowerCModuleEmitted:compiler_c_backend_result()
+function Lower.LowerCModuleEmitted:compiler_c_backend_result(input)
     local unit = self.emission.unit
     local validation = require("lalin.impl.lower_emit_c.validate").validate(unit)
-    return Compiler.CompilerCBackendResult(unit, validation)
+    local backend = Compiler.CompilerCBackendResult(unit, validation)
+    local signatures = {}
+    for i = 1, #unit.sigs do
+        signatures[i] = Cemit.CEmitCSigEntry(unit.sigs[i].id.text, unit.sigs[i])
+    end
+    return Compiler.CompilerCBackendEmitted(backend,
+        Cemit.CEmitMachine(input.spine, signatures, unit.sigs, {}, {}))
 end
 
-function Lower.LowerCModuleRejected:compiler_c_backend_result()
-    error("typed canonical C lowering rejected with " .. #self.issues .. " issue(s)", 2)
+function Lower.LowerCModuleRejected:compiler_c_backend_result(_input)
+    return Compiler.CompilerCBackendRejected(self.issues)
+end
+
+function Compiler.CompilerCBackendEmitted:public_c_backend_result()
+    return self.backend
+end
+function Compiler.CompilerCBackendRejected:public_c_backend_result()
+    local issues = {}
+    for i = 1, #self.issues do issues[i] = tostring(self.issues[i]) end
+    error("typed canonical C lowering rejected with " .. #issues
+        .. " issue(s): " .. table.concat(issues, "; "), 2)
 end
 
 function M.code_result_to_c(request)
@@ -42,7 +59,7 @@ function M.code_result_to_c(request)
     local spine = Lower.LowerBackSpine(module, graph, target)
     return prepared:lower_c_prepared_module(
       Lower.LowerCPreparedModuleInput(spine, lower_plan))
-:compiler_c_backend_result()
+:compiler_c_backend_result(Compiler.CompilerCBackendEmissionInput(spine))
 end
 
 return M

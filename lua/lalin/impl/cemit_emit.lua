@@ -129,6 +129,11 @@ function Cemit.CEmitMachine:emit_source(c_unit)
   lines[#lines + 1] = '#include <string.h>'
   lines[#lines + 1] = '#include <stdlib.h>'
   lines[#lines + 1] = ''
+  lines[#lines + 1] = 'typedef struct { void* data; size_t len; } lalin_slice_t;'
+  lines[#lines + 1] = 'typedef struct { uint8_t* data; size_t len; } lalin_bytespan_t;'
+  lines[#lines + 1] = 'typedef struct { void* data; size_t len; size_t stride; } lalin_view_t;'
+  lines[#lines + 1] = 'typedef struct { void* fn; void* ctx; } lalin_closure_t;'
+  lines[#lines + 1] = ''
 
   -- Type declarations
   if c_unit.types and #c_unit.types > 0 then
@@ -147,6 +152,14 @@ function Cemit.CEmitMachine:emit_source(c_unit)
       end
       lines[#lines + 1] = ''
     end
+  end
+
+  -- Globals and immutable data.
+  if c_unit.globals and #c_unit.globals > 0 then
+    for _, global in ipairs(c_unit.globals) do
+      global:c_emit_global(lines)
+    end
+    lines[#lines + 1] = ''
   end
 
   -- Function bodies
@@ -172,6 +185,11 @@ function Cemit.CEmitMachine:emit_header(c_unit)
   lines[#lines + 1] = '#include <stdint.h>'
   lines[#lines + 1] = '#include <stddef.h>'
   lines[#lines + 1] = '#include <stdbool.h>'
+  lines[#lines + 1] = ''
+  lines[#lines + 1] = 'typedef struct { void* data; size_t len; } lalin_slice_t;'
+  lines[#lines + 1] = 'typedef struct { uint8_t* data; size_t len; } lalin_bytespan_t;'
+  lines[#lines + 1] = 'typedef struct { void* data; size_t len; size_t stride; } lalin_view_t;'
+  lines[#lines + 1] = 'typedef struct { void* fn; void* ctx; } lalin_closure_t;'
   lines[#lines + 1] = ''
 
   -- Type declarations
@@ -309,7 +327,69 @@ function C.CBackendQualifiedDataPtr:c_emit_type()
   if self.const_pointee then q[#q + 1] = "const" end
   if self.volatile_pointee then q[#q + 1] = "volatile" end
   local base = self.pointee and self.pointee:c_emit_type() or "void"
-  return table.concat(q, " ") .. " " .. base .. "*"
+  local pointer = base .. "*"
+  if self.restrict_ptr then pointer = pointer .. " restrict" end
+  if #q == 0 then return pointer end
+  return table.concat(q, " ") .. " " .. pointer
+end
+
+function Core.VisibilityLocal:c_emit_global_storage() return "static " end
+function Core.VisibilityExport:c_emit_global_storage() return "" end
+function C.CBackendDataInit:c_emit_byte_entries(_entries)
+  error("data initializer cannot be emitted as byte storage: " .. tostring(self), 2)
+end
+function C.CBackendDataZero:c_emit_byte_entries(_entries) end
+function C.CBackendDataScalar:c_emit_byte_entries(_entries)
+  error("scalar byte-storage initialization requires explicit target bytes", 2)
+end
+function C.CBackendDataReloc:c_emit_byte_entries(_entries)
+  error("relocation byte-storage initialization is not implemented", 2)
+end
+function C.CBackendDataBytes:c_emit_byte_entries(entries)
+  for i = 1, #self.bytes do
+    entries[#entries + 1] = "[" .. tostring(self.offset + i - 1)
+      .. "] = " .. tostring(self.bytes:byte(i))
+  end
+end
+function C.CBackendDataInit:c_emit_scalar_global_init() return nil end
+function C.CBackendDataScalar:c_emit_scalar_global_init()
+  if self.offset == 0 then return self.literal:c_emit_literal() end
+  return nil
+end
+function C.CBackendDataInit:c_emit_forces_byte_global() return false end
+function C.CBackendDataBytes:c_emit_forces_byte_global() return true end
+function C.CBackendType:c_emit_global_byte_storage() return false end
+function C.CBackendDataPtr:c_emit_global_byte_storage() return true end
+function C.CBackendType:c_emit_accepts_scalar_global_init() return false end
+function C.CBackendBool8:c_emit_accepts_scalar_global_init() return true end
+function C.CBackendIndex:c_emit_accepts_scalar_global_init() return true end
+function C.CBackendScalar:c_emit_accepts_scalar_global_init() return true end
+function C.CBackendGlobal:c_emit_scalar_global_init()
+  if #self.inits ~= 1 or not self.ty:c_emit_accepts_scalar_global_init() then
+    return nil
+  end
+  return self.inits[1]:c_emit_scalar_global_init()
+end
+function C.CBackendGlobal:c_emit_global(lines)
+  local byte_storage = self.ty:c_emit_global_byte_storage()
+  for i = 1, #self.inits do
+    if self.inits[i]:c_emit_forces_byte_global() then byte_storage = true end
+  end
+  local storage = self.visibility:c_emit_global_storage()
+  local name = self.id.text
+  if byte_storage then
+    local entries = {}
+    for i = 1, #self.inits do self.inits[i]:c_emit_byte_entries(entries) end
+    local init = #entries == 0 and "{0}"
+      or "{ " .. table.concat(entries, ", ") .. " }"
+    lines[#lines + 1] = storage .. "unsigned char " .. name .. "["
+      .. tostring(self.size) .. "] = " .. init .. ";"
+    return
+  end
+  local scalar = self:c_emit_scalar_global_init()
+  local declaration = storage .. self.ty:c_emit_decl(name)
+  lines[#lines + 1] = scalar and declaration .. " = " .. scalar .. ";"
+    or declaration .. ";"
 end
 function C.CBackendCodePtr:c_emit_type()
   return self.sig and self.sig.text or "void(*)(void)"
@@ -878,8 +958,95 @@ function C.CBackendHelperTrap:c_helper_signature()
   return C.CBackendHelperSignature({}, C.CBackendVoid)
 end
 
-function C.CBackendHelperSpec:c_emit_helper_body(lines, ret)
-  lines[#lines + 1] = "    return a1;"
+function C.CBackendHelperSpec:c_emit_helper_body(_lines, _ret)
+  error("missing c_emit_helper_body leaf method for " .. tostring(self), 2)
+end
+
+function C.CBackendDivTrapOnZero:c_emit_division_guards(lines, ty, ret)
+  lines[#lines + 1] = "    if (a2 == 0) abort();"
+  ty:c_emit_signed_division_overflow_guard(lines, ret)
+end
+function C.CBackendType:c_emit_signed_division_overflow_guard(_lines, _ret) end
+function C.CBackendScalar:c_emit_signed_division_overflow_guard(lines, ret)
+  return self.scalar:c_emit_signed_division_overflow_guard(lines, ret)
+end
+function Core.Scalar:c_emit_signed_division_overflow_guard(_lines, _ret) end
+local function signed_division_guard(lines, ret, minimum)
+  lines[#lines + 1] = "    if (a1 == (" .. ret .. ")(" .. minimum .. ") && a2 == (" .. ret .. ")-1) abort();"
+end
+function Core.ScalarI8:c_emit_signed_division_overflow_guard(lines, ret)
+  signed_division_guard(lines, ret, "INT8_MIN")
+end
+function Core.ScalarI16:c_emit_signed_division_overflow_guard(lines, ret)
+  signed_division_guard(lines, ret, "INT16_MIN")
+end
+function Core.ScalarI32:c_emit_signed_division_overflow_guard(lines, ret)
+  signed_division_guard(lines, ret, "INT32_MIN")
+end
+function Core.ScalarI64:c_emit_signed_division_overflow_guard(lines, ret)
+  signed_division_guard(lines, ret, "INT64_MIN")
+end
+function C.CBackendDivTrapOnZeroOrOverflow:c_emit_division_guards(lines, ty, ret)
+  lines[#lines + 1] = "    if (a2 == 0) abort();"
+  ty:c_emit_signed_division_overflow_guard(lines, ret)
+end
+function C.CBackendHelperDivRem:c_emit_helper_body(lines, ret)
+  self.mode:c_emit_division_guards(lines, self.ty, ret)
+  lines[#lines + 1] = "    return (" .. ret .. ")("
+    .. self.op:c_helper_expr("a1", "a2") .. ");"
+end
+
+function C.CBackendType:c_emit_shift_width()
+  error("shift helper requires a scalar integer type", 2)
+end
+function C.CBackendScalar:c_emit_shift_width() return self.scalar:c_emit_shift_width() end
+function Core.ScalarI8:c_emit_shift_width() return "8" end
+function Core.ScalarU8:c_emit_shift_width() return "8" end
+function Core.ScalarI16:c_emit_shift_width() return "16" end
+function Core.ScalarU16:c_emit_shift_width() return "16" end
+function Core.ScalarI32:c_emit_shift_width() return "32" end
+function Core.ScalarU32:c_emit_shift_width() return "32" end
+function Core.ScalarI64:c_emit_shift_width() return "64" end
+function Core.ScalarU64:c_emit_shift_width() return "64" end
+function Core.ScalarIndex:c_emit_shift_width() return "(sizeof(size_t) * 8)" end
+function C.CBackendShiftMaskCount:c_emit_shift_count(_lines, ty)
+  return "((uint64_t)a2 & (" .. ty:c_emit_shift_width() .. " - 1))"
+end
+function C.CBackendShiftTrapOutOfRange:c_emit_shift_count(lines, ty)
+  local width = ty:c_emit_shift_width()
+  lines[#lines + 1] = "    if ((uint64_t)a2 >= " .. width .. ") abort();"
+  return "((uint64_t)a2)"
+end
+function C.CBackendType:c_emit_unsigned_shift_type()
+  error("shift helper requires a scalar integer type", 2)
+end
+function C.CBackendScalar:c_emit_unsigned_shift_type()
+  return self.scalar:c_emit_unsigned_shift_type()
+end
+function Core.ScalarI8:c_emit_unsigned_shift_type() return "uint8_t" end
+function Core.ScalarU8:c_emit_unsigned_shift_type() return "uint8_t" end
+function Core.ScalarI16:c_emit_unsigned_shift_type() return "uint16_t" end
+function Core.ScalarU16:c_emit_unsigned_shift_type() return "uint16_t" end
+function Core.ScalarI32:c_emit_unsigned_shift_type() return "uint32_t" end
+function Core.ScalarU32:c_emit_unsigned_shift_type() return "uint32_t" end
+function Core.ScalarI64:c_emit_unsigned_shift_type() return "uint64_t" end
+function Core.ScalarU64:c_emit_unsigned_shift_type() return "uint64_t" end
+function Core.ScalarIndex:c_emit_unsigned_shift_type() return "size_t" end
+function Core.BinShl:c_emit_shift_expression(ty, count)
+  local unsigned = ty:c_emit_unsigned_shift_type()
+  return "((" .. unsigned .. ")a1 << " .. count .. ")"
+end
+function Core.BinLShr:c_emit_shift_expression(ty, count)
+  local unsigned = ty:c_emit_unsigned_shift_type()
+  return "((" .. unsigned .. ")a1 >> " .. count .. ")"
+end
+function Core.BinAShr:c_emit_shift_expression(_ty, count)
+  return "(a1 >> " .. count .. ")"
+end
+function C.CBackendHelperShift:c_emit_helper_body(lines, ret)
+  local count = self.mode:c_emit_shift_count(lines, self.ty)
+  lines[#lines + 1] = "    return (" .. ret .. ")"
+    .. self.op:c_emit_shift_expression(self.ty, count) .. ";"
 end
 
 function C.CBackendHelperIntBinary:c_emit_helper_body(lines, ret)
