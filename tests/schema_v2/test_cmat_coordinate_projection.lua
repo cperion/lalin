@@ -56,7 +56,7 @@ local function memory_fact(id, pointer, base, index, op)
 end
 
 local memory = memory_fact(
-  access_id, ptr, root, Mem.MemIndexInduction(induction, 4, 8), Mem.MemLoad)
+  access_id, ptr, root, Mem.MemIndexInduction(induction, induction.value, 4, 8, 0), Mem.MemLoad)
 local absolute_memory = memory_fact(
   absolute_access_id, ptr_absolute, absolute_root,
   Mem.MemIndexValue(dynamic, 4, 3), Mem.MemLoad)

@@ -59,6 +59,30 @@ return schema. LalinFlow {
       tile_sizes [many [number]],
     },
   },
+  product. FlowLoopDomainProjectionInput {
+    interned,
+    domain [LalinFlow.FlowDomain],
+    header [LalinCode.CodeBlock],
+    edges [many [LalinFlow.FlowEdgeFact]],
+    loop [LalinGraph.GraphLoop],
+  },
+  product. FlowLoopShapeProjectionInput {
+    interned,
+    axes [many [LalinFlow.FlowDomainAxis]],
+  },
+  sum. FlowLoopDomainProjection {
+    FlowLoopDomainAbsent,
+    FlowLoopDomainProjected {
+      variant_unique,
+      shape [LalinFlow.FlowDomainShape],
+      proof [LalinFlow.FlowProof],
+    },
+    FlowLoopDomainRejected {
+      variant_unique,
+      domain [LalinFlow.FlowDomain],
+      reason [str],
+    },
+  },
 
   sum. FlowProofSource {
     FlowProofAuthor,
@@ -158,6 +182,11 @@ return schema. LalinFlow {
     FlowRejectUnknownValue {
       variant_unique,
       field. value [LalinCode.CodeValueId],
+      reason [str],
+    },
+    FlowRejectDomainProjection {
+      variant_unique,
+      domain [LalinFlow.FlowDomain],
       reason [str],
     },
   },
@@ -277,6 +306,29 @@ return schema. LalinFlow {
     max [LalinFlow.FlowBound],
     max_exclusive [bool],
     reason [str],
+  },
+
+  product. FlowGraphLoopEntry {
+    interned,
+    loop [LalinGraph.GraphLoop],
+  },
+  product. FlowGraphLoopProjection {
+    interned,
+    entries [many [LalinFlow.FlowGraphLoopEntry]],
+  },
+  sum. FlowGraphLoopLookup {
+    FlowGraphLoopFound { variant_unique, entry [LalinFlow.FlowGraphLoopEntry], },
+    FlowGraphLoopMissing { variant_unique, field. id [LalinGraph.GraphLoopId], },
+  },
+  product. FlowTripEntryInput {
+    interned,
+    field. module [LalinCode.CodeModule],
+    counted [LalinFlow.FlowCountedDomain],
+    edges [many [LalinFlow.FlowEdgeFact]],
+  },
+  sum. FlowTripEntryResult {
+    FlowTripEntryFound { variant_unique, field. value [LalinCode.CodeValueId], },
+    FlowTripEntryFallback,
   },
 
   sum. FlowLoopSemanticFact {

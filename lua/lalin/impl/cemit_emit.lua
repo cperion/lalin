@@ -708,11 +708,17 @@ function C.CBackendPlaceGlobal:c_emit_place() return self.global.text end
 function C.CBackendPlaceDeref:c_emit_place()
   return "(*(" .. self.ty:c_emit_type() .. "*)" .. self.addr:c_emit_atom() .. ")"
 end
+function C.CBackendPlace:c_emit_index_base()
+  return "(" .. self:c_emit_place() .. ")"
+end
+function C.CBackendPlaceDeref:c_emit_index_base()
+  return "((" .. self.ty:c_emit_type() .. "*)" .. self.addr:c_emit_atom() .. ")"
+end
 function C.CBackendPlaceField:c_emit_place()
   return self.base:c_emit_place() .. "." .. self.field.text
 end
 function C.CBackendPlaceIndex:c_emit_place()
-  return self.base:c_emit_place() .. "[" .. self.index:c_emit_atom() .. "]"
+  return self.base:c_emit_index_base() .. "[" .. self.index:c_emit_atom() .. "]"
 end
 function C.CBackendPlacePtrIndex:c_emit_place()
   return self.base:c_emit_atom() .. "[" .. self.index:c_emit_atom() .. "]"

@@ -1524,6 +1524,12 @@ return schema. LalinStencil {
   sum. StencilKernelStepLookup {
     StencilKernelStepDefinitionMissing { variant_unique, step [LalinCode.CodeValueId], },
     StencilKernelStepDefinitionFound { variant_unique, func [LalinCode.CodeFuncId], step [LalinCode.CodeValueId], constant [LalinCode.CodeConst], },
+    StencilKernelStepDefinitionAlias {
+      variant_unique,
+      func [LalinCode.CodeFuncId],
+      step [LalinCode.CodeValueId],
+      source [LalinCode.CodeValueId],
+    },
     StencilKernelStepDefinitionAmbiguous { variant_unique, step [LalinCode.CodeValueId], count [number], },
   },
   product. StencilKernelStepContributionInput {
@@ -1805,6 +1811,15 @@ return schema. LalinStencil {
     construction [LalinStencil.StencilKernelConstruction],
     sink [LalinStencil.StencilSinkId],
     stream [LalinStencil.StencilStreamDef],
+  },
+  product. StencilKernelLiveBindingProjection {
+    interned,
+    values [many [LalinKernel.KernelValueId]],
+  },
+  product. StencilKernelLiveStreamInput {
+    interned,
+    construction [LalinStencil.StencilKernelConstruction],
+    entry [LalinKernel.KernelBindingByCodeValueEntry],
   },
   product. StencilKernelStreamContributionInput {
     interned,

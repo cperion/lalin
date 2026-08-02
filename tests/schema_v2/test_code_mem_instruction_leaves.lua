@@ -16,8 +16,9 @@ local term = Code.CodeTerm(Code.CodeTermId("ret"), Code.CodeTermReturn({}), orig
 local block = Code.CodeBlock(bid, "entry", {}, {}, term, origin)
 local func = Code.CodeFunc(fid, "f", Code.CodeLinkageLocal, Code.CodeSigId("sig"), {}, {}, bid, { block }, origin)
 local object = Mem.MemObjectFact(oid, fid, Mem.MemObjectLocal, Mem.MemProvLocal(lid), i32, Mem.MemExtentBytes(4, Mem.MemExtentByConstruction), Mem.MemStrideUnit)
-local facet = Mem.MemTransferFacet({}, { Mem.MemLocalObjectEntry(lid, oid) }, {}, {}, {}, { object }, {}, {}, {}, {}, {}, {}, {}, {})
+local facet = Mem.MemTransferFacet({}, { Mem.MemLocalObjectEntry(lid, oid) }, {}, {}, {}, {}, { object }, {}, {}, {}, {}, {}, {}, {})
 local inductions = Flow.FlowInductionProjection({})
+local flow = Flow.FlowFactSet(Code.CodeModuleId("m"), {}, {}, {}, {}, {}, {}, {})
 
 local ops = {
   Code.CodeInstLoad(Code.CodeValueId("load"), place, access),
@@ -33,18 +34,18 @@ local c3 = Code.CodeInstConst(Code.CodeValueId("c3"), Code.CodeConstLiteral(i32,
 for index, op in ipairs({ c2, c3 }) do
   local ci = Code.CodeInst(Code.CodeInstId("c" .. index), op, origin)
   current = op:transfer_memory(Mem.MemInstructionTransferInput(
-    func, block, ci, nil, {}, {}, inductions, current)):next_facet()
+    func, block, ci, nil, {}, {}, inductions, flow, current)):next_facet()
 end
 local mul = Code.CodeInstBinary(Code.CodeValueId("stride"), Core.BinMul, i32, Code.CodeIntSemantics(Code.CodeIntWrap, Code.CodeDivTrapOnZero, Code.CodeShiftMaskCount), Code.CodeValueId("c2"), Code.CodeValueId("c3"))
 local mi = Code.CodeInst(Code.CodeInstId("mul"), mul, origin)
 current = mul:transfer_memory(Mem.MemInstructionTransferInput(
-  func, block, mi, nil, {}, {}, inductions, current)):next_facet()
+  func, block, mi, nil, {}, {}, inductions, flow, current)):next_facet()
 assert(#current.constants == 2 and #current.scaled_strides == 1)
 assert(asdl.isa(current.scaled_strides[1].stride, Mem.MemScaledStrideKnown) and current.scaled_strides[1].stride.elems == 6)
 for i, op in ipairs(ops) do
   local inst = Code.CodeInst(Code.CodeInstId("i" .. i), op, origin)
   local result = op:transfer_memory(Mem.MemInstructionTransferInput(
-    func, block, inst, nil, {}, {}, inductions, current))
+    func, block, inst, nil, {}, {}, inductions, flow, current))
   assert(asdl.isa(result, Mem.MemTransferUpdated))
   current = result:next_facet()
 end
@@ -56,6 +57,6 @@ assert(Mem.MemAtomicCas:access_mode() == Mem.MemAccessModeReadWrite)
 local unary = Code.CodeInstUnary(Code.CodeValueId("u"), Core.UnaryNeg, i32, Code.CodeValueId("v"))
 local ui = Code.CodeInst(Code.CodeInstId("u"), unary, origin)
 assert(asdl.isa(unary:transfer_memory(Mem.MemInstructionTransferInput(
-  func, block, ui, nil, {}, {}, inductions, current)),
+  func, block, ui, nil, {}, {}, inductions, flow, current)),
   Mem.MemTransferUnchanged))
 print("test_code_mem_instruction_leaves: ok")

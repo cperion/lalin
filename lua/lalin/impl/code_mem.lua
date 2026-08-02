@@ -169,16 +169,56 @@ function Flow.FlowInductionProjection:lookup(value)
 end
 function Flow.FlowInductionFound:classify_memory_index(input)
   return Mem.MemIndexInduction(
-    self.induction, input.elem_size, input.const_offset)
+    self.induction, input.value, input.elem_size, input.const_offset, 0)
 end
-function Flow.FlowInductionMissing:classify_memory_index(input)
+function Flow.FlowFactSet:memory_induction_source(value)
+  local found = {}
+  for i = 1, #self.edges do
+    for j = 1, #self.edges[i].args do
+      local arg = self.edges[i].args[j]
+      if arg.dst_param == value then found[#found + 1] = arg.src end
+    end
+  end
+  if #found == 1 then return found[1] end
+  return value
+end
+function Flow.FlowInductionFound:classify_memory_offset(input, offset)
+  return Mem.MemIndexInduction(self.induction, input.value, input.elem_size,
+    input.const_offset, offset.element_offset)
+end
+function Flow.FlowInductionMissing:classify_memory_offset(input, _offset)
   return Mem.MemIndexValue(input.value, input.elem_size, input.const_offset)
 end
-function Flow.FlowInductionAmbiguous:classify_memory_index(input)
+function Flow.FlowInductionAmbiguous:classify_memory_offset(input, _offset)
+  return Mem.MemIndexValue(input.value, input.elem_size, input.const_offset)
+end
+function Flow.FlowInductionFound:classify_memory_alias(input, _projection)
+  return Mem.MemIndexInduction(
+    self.induction, input.value, input.elem_size, input.const_offset, 0)
+end
+function Flow.FlowInductionAmbiguous:classify_memory_alias(input, _projection)
+  return Mem.MemIndexValue(input.value, input.elem_size, input.const_offset)
+end
+function Flow.FlowInductionMissing:classify_memory_alias(input, projection)
+  local found = {}
+  for i = 1, #input.offsets do
+    if input.offsets[i].value == input.value then found[#found + 1] = input.offsets[i] end
+  end
+  if #found ~= 1 then
+    return Mem.MemIndexValue(input.value, input.elem_size, input.const_offset)
+  end
+  local base = input.flow:memory_induction_source(found[1].base)
+  return projection:lookup(base):classify_memory_offset(input, found[1])
+end
+function Flow.FlowInductionMissing:classify_memory_index(input, projection)
+  local base = input.flow:memory_induction_source(input.value)
+  return projection:lookup(base):classify_memory_alias(input, projection)
+end
+function Flow.FlowInductionAmbiguous:classify_memory_index(input, _projection)
   return Mem.MemIndexValue(input.value, input.elem_size, input.const_offset)
 end
 function Flow.FlowInductionProjection:classify_memory_index(input)
-  return self:lookup(input.value):classify_memory_index(input)
+  return self:lookup(input.value):classify_memory_index(input, self)
 end
 function Mem.MemValueObjectFound:as_place_object(reason) return Mem.MemPlaceObjectFound(self.object) end
 function Mem.MemValueObjectMissing:as_place_object(reason) return Mem.MemPlaceObjectMissing(reason) end
@@ -203,7 +243,8 @@ end
 
 function Mem.MemPlaceResolved:resolve_memory_index(place, input)
   local index = input.inductions:classify_memory_index(
-    Mem.MemIndexClassifyInput(place.index, place.elem_size, 0))
+    Mem.MemIndexClassifyInput(place.index, place.elem_size, 0,
+      input.index_offsets, input.flow))
   return Mem.MemPlaceResolved(
     self.object, self.base, index, self.discoveries)
 end
@@ -392,13 +433,13 @@ function Code.CodeInstCall:transfer_memory(input) return unchanged(input) end
 function Code.CodeInstAtomicFence:transfer_memory(input) return unchanged(input) end
 
 local function replace_values(facet, values)
-  return Mem.MemTransferFacet(values, facet.locals, facet.constants, facet.loaded_places, facet.scaled_strides, facet.objects, facet.accesses, facet.dependence_accesses, facet.intervals, facet.safety, facet.relations, facet.backend, facet.proofs)
+  return Mem.MemTransferFacet(values, facet.locals, facet.constants, facet.index_offsets, facet.loaded_places, facet.scaled_strides, facet.objects, facet.accesses, facet.dependence_accesses, facet.intervals, facet.safety, facet.relations, facet.backend, facet.proofs)
 end
 local function replace_constants(facet, constants)
-  return Mem.MemTransferFacet(facet.values, facet.locals, constants, facet.loaded_places, facet.scaled_strides, facet.objects, facet.accesses, facet.dependence_accesses, facet.intervals, facet.safety, facet.relations, facet.backend, facet.proofs)
+  return Mem.MemTransferFacet(facet.values, facet.locals, constants, facet.index_offsets, facet.loaded_places, facet.scaled_strides, facet.objects, facet.accesses, facet.dependence_accesses, facet.intervals, facet.safety, facet.relations, facet.backend, facet.proofs)
 end
 local function replace_scaled_strides(facet, strides)
-  return Mem.MemTransferFacet(facet.values, facet.locals, facet.constants, facet.loaded_places, strides, facet.objects, facet.accesses, facet.dependence_accesses, facet.intervals, facet.safety, facet.relations, facet.backend, facet.proofs)
+  return Mem.MemTransferFacet(facet.values, facet.locals, facet.constants, facet.index_offsets, facet.loaded_places, strides, facet.objects, facet.accesses, facet.dependence_accesses, facet.intervals, facet.safety, facet.relations, facet.backend, facet.proofs)
 end
 local function find_transfer_object(facet, value) return find_value_object(facet.values, value) end
 function Mem.MemValueObjectFound:bind_transfer_object(input, dst)
@@ -433,13 +474,55 @@ local function find_constant(facet, value)
   for _, entry in ipairs(facet.constants) do if entry.value == value then return Mem.MemConstantKnown(entry.number_value) end end
   return Mem.MemConstantUnavailable
 end
+local function replace_index_offsets(facet, offsets)
+  return Mem.MemTransferFacet(facet.values, facet.locals, facet.constants, offsets,
+    facet.loaded_places, facet.scaled_strides, facet.objects, facet.accesses,
+    facet.dependence_accesses, facet.intervals, facet.safety, facet.relations,
+    facet.backend, facet.proofs)
+end
+function Mem.MemConstantKnown:transfer_cast_constant(op, input)
+  return Mem.MemTransferUpdated(replace_constants(input.facet,
+    append_one(input.facet.constants, Mem.MemConstantEntry(op.dst, self.number_value))))
+end
+function Mem.MemConstantUnavailable:transfer_cast_constant(op, input)
+  return find_transfer_object(input.facet, op.value):bind_transfer_object(input, op.dst)
+end
+function Code.CodeInstCast:transfer_memory(input)
+  return find_constant(input.facet, self.value):transfer_cast_constant(self, input)
+end
+function Mem.MemConstantKnown:record_index_add(op, base, input)
+  return Mem.MemTransferUpdated(replace_index_offsets(input.facet,
+    append_one(input.facet.index_offsets,
+      Mem.MemIndexOffsetEntry(op.dst, base, self.number_value))))
+end
+function Mem.MemConstantUnavailable:record_index_add(op, _base, input)
+  return find_constant(input.facet, op.lhs):record_index_add_left(op, input)
+end
+function Mem.MemConstantKnown:record_index_add_left(op, input)
+  return self:record_index_add(op, op.rhs, input)
+end
+function Mem.MemConstantUnavailable:record_index_add_left(_op, input)
+  return unchanged(input)
+end
+function Mem.MemConstantKnown:record_index_sub(op, input)
+  return Mem.MemTransferUpdated(replace_index_offsets(input.facet,
+    append_one(input.facet.index_offsets,
+      Mem.MemIndexOffsetEntry(op.dst, op.lhs, -self.number_value))))
+end
+function Mem.MemConstantUnavailable:record_index_sub(op, input)
+  return unchanged(input)
+end
 function Mem.MemConstantKnown:multiply_stride(other) return other:multiply_known_stride(self.number_value) end
 function Mem.MemConstantUnavailable:multiply_stride(other) return Mem.MemScaledStrideDynamic end
 function Mem.MemConstantKnown:multiply_known_stride(value) return Mem.MemScaledStrideKnown(value * self.number_value) end
 function Mem.MemConstantUnavailable:multiply_known_stride(value) return Mem.MemScaledStrideDynamic end
 local function unchanged_binary(op, input) return unchanged(input) end
-function Core.BinAdd:transfer_memory_binary(op, input) return unchanged_binary(op, input) end
-function Core.BinSub:transfer_memory_binary(op, input) return unchanged_binary(op, input) end
+function Core.BinAdd:transfer_memory_binary(op, input)
+  return find_constant(input.facet, op.rhs):record_index_add(op, op.lhs, input)
+end
+function Core.BinSub:transfer_memory_binary(op, input)
+  return find_constant(input.facet, op.rhs):record_index_sub(op, input)
+end
 function Core.BinMul:transfer_memory_binary(op, input)
   local stride = find_constant(input.facet, op.lhs):multiply_stride(find_constant(input.facet, op.rhs))
   local next_strides = append_one(input.facet.scaled_strides, Mem.MemScaledStrideEntry(op.dst, stride))
@@ -463,7 +546,8 @@ function Code.CodeInstGlobalRef:transfer_memory(input) return self.ref:memory_re
 function Code.CodeInstAddrOf:transfer_memory(input)
   local place_input = Mem.MemPlaceResolveInput(
     input.func.id, input.facet.values, input.facet.locals, input.globals,
-    input.data, input.facet.objects, input.inductions)
+    input.data, input.facet.objects, input.inductions,
+    input.facet.index_offsets, input.flow)
   return self.place:resolve_memory_place(place_input):bind_transfer_value(input, self.dst)
 end
 function Mem.MemPlaceResolved:bind_transfer_value(input, dst) return Mem.MemValueObjectFound(self.object):bind_transfer_object(input, dst) end
@@ -472,14 +556,15 @@ function Mem.MemPlaceUnresolved:bind_transfer_value(input, dst) return unchanged
 local function append_object_projection(input, dst, object, form, provenance, elem_ty, extent, stride)
   local fact = Mem.MemObjectFact(object, input.func.id, form, provenance, elem_ty, extent, stride)
   local facet = input.facet
-  local next_facet = Mem.MemTransferFacet(append_one(facet.values, Mem.MemValueObjectEntry(dst, object)), facet.locals, facet.constants, facet.loaded_places, facet.scaled_strides, append_one(facet.objects, fact), facet.accesses, facet.dependence_accesses, facet.intervals, facet.safety, facet.relations, facet.backend, facet.proofs)
+  local next_facet = Mem.MemTransferFacet(append_one(facet.values, Mem.MemValueObjectEntry(dst, object)), facet.locals, facet.constants, facet.index_offsets, facet.loaded_places, facet.scaled_strides, append_one(facet.objects, fact), facet.accesses, facet.dependence_accesses, facet.intervals, facet.safety, facet.relations, facet.backend, facet.proofs)
   return Mem.MemTransferUpdated(next_facet)
 end
 function Mem.MemValueObjectMissing:transfer_pointer_offset(op, input) return unchanged(input) end
 function Mem.MemValueObjectFound:transfer_pointer_offset(op, input)
   local id = Mem.MemObjectId("ptr-offset:" .. op.dst.text)
   local index = input.inductions:classify_memory_index(
-    Mem.MemIndexClassifyInput(op.index, op.elem_size, op.const_offset))
+    Mem.MemIndexClassifyInput(op.index, op.elem_size, op.const_offset,
+      input.facet.index_offsets, input.flow))
   return append_object_projection(input, op.dst, id,
     Mem.MemObjectPtrOffset(self.object, index, op.elem_size),
     Mem.MemProvProjection(self.object, Mem.MemProjectPtrOffset, op.const_offset),
@@ -538,7 +623,7 @@ local function transfer_access(op_node, input, op, place, access)
   local facet = input.facet
   local place_input = Mem.MemPlaceResolveInput(
     input.func.id, facet.values, facet.locals, input.globals, input.data,
-    facet.objects, input.inductions)
+    facet.objects, input.inductions, facet.index_offsets, input.flow)
   local resolved = place:resolve_memory_place(place_input)
   local safety_decision = resolved:memory_safety(input)
   local trap = safety_decision:refine_trap(access.trap:memory_trap(safety_decision))
@@ -552,7 +637,7 @@ local function transfer_access(op_node, input, op, place, access)
   local dependence = Mem.MemDependenceAccess(fact, resolved:memory_object_lookup(), input.loop, safety_decision, #facet.dependence_accesses + 1)
   local loaded = facet.loaded_places
   if op == Mem.MemLoad or op == Mem.MemAtomicLoad then loaded = append_one(loaded, Mem.MemLoadedPlaceEntry(place, op_node.dst)) end
-  local next_facet = Mem.MemTransferFacet(facet.values, facet.locals, facet.constants, loaded, facet.scaled_strides, append_all(facet.objects, resolved.discoveries.objects), append_one(facet.accesses, fact), append_one(facet.dependence_accesses, dependence), facet.intervals, facet.safety, append_all(facet.relations, resolved.discoveries.relations), append_one(facet.backend, backend), append_all(append_one(facet.proofs, proof), resolved.discoveries.proofs))
+  local next_facet = Mem.MemTransferFacet(facet.values, facet.locals, facet.constants, facet.index_offsets, loaded, facet.scaled_strides, append_all(facet.objects, resolved.discoveries.objects), append_one(facet.accesses, fact), append_one(facet.dependence_accesses, dependence), facet.intervals, facet.safety, append_all(facet.relations, resolved.discoveries.relations), append_one(facet.backend, backend), append_all(append_one(facet.proofs, proof), resolved.discoveries.proofs))
   return Mem.MemTransferUpdated(next_facet)
 end
 function Code.CodeInstLoad:transfer_memory(input) return transfer_access(self, input, Mem.MemLoad, self.place, self.access) end
@@ -653,19 +738,32 @@ local function module_memory_objects(module)
   return Mem.MemModuleObjects(objects, globals, data)
 end
 
-local function initial_function_facet(func, module_objects)
+function Mem.MemContractBoundsEntry:memory_param_extent(func, param, elem_ty, current)
+  if self.func == func.id and self.base == param.value then
+    return Mem.MemExtentElements(self.len, elem_ty, Mem.MemExtentLengthFromContract)
+  end
+  return current
+end
+local function initial_function_facet(func, module_objects, contracts)
   local values, locals, objects = {}, {}, module_objects
   for _, param in ipairs(func.params) do
     local id = object_id_for(func.name .. ":param", param.value.text)
     values = append_one(values, Mem.MemValueObjectEntry(param.value, id))
-    objects = append_unique_object(objects, Mem.MemObjectFact(id, func.id, Mem.MemObjectParam, Mem.MemProvValue(param.value), param.ty:memory_object_elem_type(), Mem.MemExtentUnknown(Mem.MemExtentOpaquePointer(param.value.text)), Mem.MemStrideUnit))
+    local elem_ty = param.ty:memory_object_elem_type()
+    local extent = Mem.MemExtentUnknown(Mem.MemExtentOpaquePointer(param.value.text))
+    for j = 1, #contracts.bounds do
+      extent = contracts.bounds[j]:memory_param_extent(func, param, elem_ty, extent)
+    end
+    objects = append_unique_object(objects, Mem.MemObjectFact(
+      id, func.id, Mem.MemObjectParam, Mem.MemProvValue(param.value),
+      elem_ty, extent, Mem.MemStrideUnit))
   end
   for _, local_decl in ipairs(func.locals) do
     local id = object_id_for(func.name .. ":local", local_decl.id.text)
     locals = append_one(locals, Mem.MemLocalObjectEntry(local_decl.id, id))
     objects = append_unique_object(objects, Mem.MemObjectFact(id, func.id, Mem.MemObjectLocal, Mem.MemProvLocal(local_decl.id), local_decl.ty:memory_object_elem_type(), Mem.MemExtentUnknown(Mem.MemExtentDynamicAllocation), Mem.MemStrideUnit))
   end
-  return Mem.MemTransferFacet(values, locals, {}, {}, {}, objects, {}, {}, {}, {}, {}, {}, {})
+  return Mem.MemTransferFacet(values, locals, {}, {}, {}, {}, objects, {}, {}, {}, {}, {}, {}, {})
 end
 
 function Mem.MemValueObjectMissing:add_contract_disjoint(other, source, entries) return entries end
@@ -728,13 +826,13 @@ local function compute_mem_semantic(module, graph, flow, values, contracts)
   local inductions = flow:project_inductions()
   local objects, accesses, intervals, safety, effects, dependences, relations, backend, proofs = module_projection.objects, {}, {}, {}, {}, {}, {}, {}, {}
   for _, func in ipairs(module.funcs) do
-    local facet = initial_function_facet(func, module_projection.objects)
+    local facet = initial_function_facet(func, module_projection.objects, contract_projection)
     for _, block in ipairs(func.blocks) do
       local loop = loop_for_block(graph, func.id, block.id)
       for _, inst in ipairs(block.insts) do
         facet = inst.op:transfer_memory(Mem.MemInstructionTransferInput(
           func, block, inst, loop, module_projection.globals,
-          module_projection.data, inductions, facet)):next_facet()
+          module_projection.data, inductions, flow, facet)):next_facet()
       end
     end
     local projection = relation_projection(facet, contract_projection, func.id)

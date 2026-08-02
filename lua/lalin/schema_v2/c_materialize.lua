@@ -1033,6 +1033,7 @@ return schema. LalinCMat {
   product. CMatCFragmentWindowBounds {
     interned,
     state [LalinCMat.CMatCFragmentState],
+    index_ty [LalinC.CBackendType],
     lower [LalinC.CBackendAtom],
     upper [LalinC.CBackendAtom],
     extent [LalinC.CBackendAtom],

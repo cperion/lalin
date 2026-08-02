@@ -29,6 +29,9 @@ end
 function Tr.StmtControl:typecheck_tree_control_facts(ctx)
   return self.region:typecheck_tree_region_control_facts(ctx)
 end
+function Tr.StmtDomainControl:typecheck_tree_control_facts(ctx)
+  return self.region:typecheck_tree_region_control_facts(ctx)
+end
 function Tr.Stmt:typecheck_tree_body_control_facts(body, ctx, facts)
   for _, s in ipairs(body or {}) do
     local f = s:typecheck_tree_control_facts(ctx)

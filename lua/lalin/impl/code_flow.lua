@@ -226,6 +226,75 @@ local function incoming_arg_for(edge_facts, header, param, skip_from)
   return nil
 end
 
+function Code.CodeLoopOrder:flow_domain_order()
+  error("missing code-loop order projection", 2)
+end
+function Code.CodeLoopForward:flow_domain_order() return Flow.FlowDomainForward end
+function Code.CodeLoopBackward:flow_domain_order() return Flow.FlowDomainBackward end
+function Code.CodeWindowBoundary:flow_window_boundary()
+  error("missing code-window boundary projection", 2)
+end
+function Code.CodeWindowReject:flow_window_boundary() return Flow.FlowWindowBoundaryReject end
+function Code.CodeWindowClamp:flow_window_boundary() return Flow.FlowWindowBoundaryClamp end
+function Code.CodeWindowWrap:flow_window_boundary() return Flow.FlowWindowBoundaryWrap end
+function Code.CodeWindowZero:flow_window_boundary() return Flow.FlowWindowBoundaryZero end
+function Code.CodeWindowAxisDeclaration:flow_window_axis()
+  return Flow.FlowWindowAxis(self.before, self.after, self.boundary:flow_window_boundary())
+end
+function Code.CodeLoopShapeRangeND:flow_loop_shape(input)
+  if #input.axes == 1 then
+    local axis = input.axes[1]
+    return Flow.FlowDomainShapeRange1D(
+      axis.index_ty, axis.start, axis.stop, axis.step, axis.order)
+  end
+  return Flow.FlowDomainShapeRangeND(input.axes)
+end
+function Code.CodeLoopShapeWindowND:flow_loop_shape(input)
+  local windows = {}
+  for i = 1, #self.windows do windows[i] = self.windows[i]:flow_window_axis() end
+  return Flow.FlowDomainShapeWindowND(input.axes, windows)
+end
+function Code.CodeLoopShapeTiledND:flow_loop_shape(input)
+  return Flow.FlowDomainShapeTiledND(input.axes, self.tile_sizes)
+end
+
+local function code_param_by_value(header, value)
+  for i = 1, #(header.params or {}) do
+    if header.params[i].value == value then return header.params[i] end
+  end
+  return nil
+end
+function Code.CodeOrigin:flow_project_loop_domain(_input)
+  return Flow.FlowLoopDomainAbsent
+end
+function Code.CodeOriginLoopDomain:flow_project_loop_domain(input)
+  local latch = input.loop.latches and input.loop.latches[1] or nil
+  local skip_from = latch and latch.from and latch.from.block or nil
+  local axes = {}
+  for i = 1, #self.declaration.axes do
+    local axis = self.declaration.axes[i]
+    local start_param = code_param_by_value(input.header, axis.start)
+    local stop_param = code_param_by_value(input.header, axis.stop)
+    if start_param == nil or stop_param == nil then
+      return Flow.FlowLoopDomainRejected(
+        input.domain, "declared loop axis parameter is absent from header")
+    end
+    local start = incoming_arg_for(input.edges, input.loop.header.block, start_param, skip_from)
+    local stop = axis.stop
+    if start == nil then
+      return Flow.FlowLoopDomainRejected(
+        input.domain, "declared loop axis has no unique entry argument")
+    end
+    axes[i] = Flow.FlowDomainAxis(axis.index_ty,
+      Value.ValueExprValue(start), Value.ValueExprValue(stop), axis.step,
+      axis.order:flow_domain_order(), axis.index_name)
+  end
+  local shape = self.declaration.shape:flow_loop_shape(
+    Flow.FlowLoopShapeProjectionInput(axes))
+  return Flow.FlowLoopDomainProjected(shape,
+    Flow.FlowProofDomain(input.domain, "lln.loop authored an explicit typed domain"))
+end
+
 local function backedge_arg_for(edge_fact, param)
   for _, arg in ipairs(edge_fact and edge_fact.args or {}) do if arg.dst_param == param.value then return arg.src end end
   return nil
@@ -245,8 +314,9 @@ local function same_canonical_value(a, b, aliases)
   return a ~= nil and b ~= nil and a == b
 end
 
-local function recurrence_direction(step, consts, positive, negative)
-  local value = step and consts[step.text] or nil
+local numeric_const
+local function recurrence_direction(step, defs, consts, positive, negative)
+  local value = numeric_const(step, defs, consts)
   if value == nil or value == 0 then
     return Flow.FlowLoopDirectionUnknown, "induction step sign is not proven"
   end
@@ -267,18 +337,18 @@ local function induction_step(param_value, back_value, defs, aliases, consts)
   if op == Core.BinAdd then
     if same_canonical_value(k.lhs, param_value, aliases) then
       local direction, note = recurrence_direction(
-        k.rhs, consts, Flow.FlowLoopIncreasing, Flow.FlowLoopDecreasing)
+        k.rhs, defs, consts, Flow.FlowLoopIncreasing, Flow.FlowLoopDecreasing)
       return k.rhs, note, direction
     end
     if same_canonical_value(k.rhs, param_value, aliases) then
       local direction, note = recurrence_direction(
-        k.lhs, consts, Flow.FlowLoopIncreasing, Flow.FlowLoopDecreasing)
+        k.lhs, defs, consts, Flow.FlowLoopIncreasing, Flow.FlowLoopDecreasing)
       return k.lhs, note, direction
     end
   elseif op == Core.BinSub then
     if same_canonical_value(k.lhs, param_value, aliases) then
       local direction, note = recurrence_direction(
-        k.rhs, consts, Flow.FlowLoopDecreasing, Flow.FlowLoopIncreasing)
+        k.rhs, defs, consts, Flow.FlowLoopDecreasing, Flow.FlowLoopIncreasing)
       return k.rhs, note, direction
     end
   end
@@ -301,134 +371,57 @@ local function compare_stop(cond, induction_value, defs)
   end
   return nil, nil
 end
-
 local function range_for_induction(value, init, stop, exclusive, consts)
   local min = consts[init.text] and Flow.FlowBoundConst(tostring(consts[init.text])) or Flow.FlowBoundValue(init)
   local max_val = stop and (consts[stop.text] and Flow.FlowBoundConst(tostring(consts[stop.text])) or Flow.FlowBoundValue(stop)) or Flow.FlowBoundUnknown
   return Flow.FlowRangeDerived(value, min, max_val, "recognized counted loop induction range"), min, max_val, exclusive == true
 end
 
-local function numeric_const(value, defs, consts, seen)
+function Code.CodeInst:flow_numeric_const(_defs, _consts, _seen) return nil end
+function Code.CodeInstAlias:flow_numeric_const(defs, consts, seen)
+  return numeric_const(self.src, defs, consts, seen)
+end
+function Code.CodeInstCast:flow_numeric_const(defs, consts, seen)
+  return numeric_const(self.value, defs, consts, seen)
+end
+numeric_const = function(value, defs, consts, seen)
   if value == nil then return nil end
   if consts[value.text] ~= nil then return consts[value.text] end
   seen = seen or {}
   if seen[value.text] then return nil end
   seen[value.text] = true
-  local k = defs[value.text]
-  if k ~= nil and rawget(k, "value") ~= nil and rawget(k, "src") ~= nil then
-    -- CodeInstAlias path
-    return numeric_const(k.src, defs, consts, seen)
-  end
-  if k ~= nil and rawget(k, "from") ~= nil and rawget(k, "to") ~= nil then
-    -- CodeInstCast path
-    return numeric_const(k.value, defs, consts, seen)
-  end
-  return nil
+  local inst = defs[value.text]
+  if inst == nil then return nil end
+  return inst:flow_numeric_const(defs, consts, seen)
 end
 
-local function native_window_boundary(name)
-  if name == "clamp" then return Flow.FlowWindowBoundaryClamp end
-  if name == "wrap" then return Flow.FlowWindowBoundaryWrap end
-  if name == "zero" then return Flow.FlowWindowBoundaryZero end
-  return Flow.FlowWindowBoundaryReject
+
+function Flow.FlowLoopDomainAbsent:append_native_loop_domain_facts()
+  return self
 end
-
-local function native_nd_shape_from_header(header_name, axes)
-  local stem = tostring(header_name or ""):gsub("_scan_axis_%d+$", "")
-  local tiled = stem:match("_tiled_([%dx]+)$")
-  if tiled ~= nil then
-    local tile_sizes = {}
-    for raw in tiled:gmatch("%d+") do tile_sizes[#tile_sizes + 1] = tonumber(raw) end
-    if #tile_sizes == #axes then return Flow.FlowDomainShapeTiledND(axes, tile_sizes) end
-  end
-  local window = stem:match("_window_(.+)$")
-  if window ~= nil then
-    local windows = {}
-    for boundary, before, after in window:gmatch("([a-z]+)_(%d+)_(%d+)") do
-      windows[#windows + 1] = Flow.FlowWindowAxis(tonumber(before), tonumber(after), native_window_boundary(boundary))
-    end
-    if #windows == #axes then return Flow.FlowDomainShapeWindowND(axes, windows) end
-  end
-  return Flow.FlowDomainShapeRangeND(axes)
-end
-
-local function native_nd_axis_facts(header_block, edge_facts, graph_loop)
-  if type(header_block and header_block.name) ~= "string" or header_block.name:match("^ctl%.lln_loop_nd_") == nil then return nil end
-  local latch = graph_loop and graph_loop.latches and graph_loop.latches[1] or nil
-  local skip_from = latch and latch.from and latch.from.block or nil
-  local grouped = {}
-  for _, param in ipairs(header_block.params or {}) do
-    local axis_i, index_name, field, step, order = tostring(param.name or ""):match("^__lln_axis_[^_]+_(%d+)_idx_([_%a][_%w]*)_(%a+)_step_(%d+)_order_(%a+)$")
-    if axis_i == nil then
-      axis_i, field, step, order = tostring(param.name or ""):match("^__lln_axis_[^_]+_(%d+)_(%a+)_step_(%d+)_order_(%a+)$")
-    end
-    if axis_i ~= nil and (field == "start" or field == "stop" or field == "trip") then
-      axis_i = tonumber(axis_i)
-      grouped[axis_i] = grouped[axis_i] or { step = tonumber(step), order = order, ty = param.ty }
-      grouped[axis_i][field] = incoming_arg_for(edge_facts, graph_loop.header.block, param, skip_from)
-      grouped[axis_i].ty = grouped[axis_i].ty or param.ty
-      grouped[axis_i].index_name = grouped[axis_i].index_name or index_name
-    end
-  end
-  local axes = {}
-  local i = 1
-  while grouped[i] ~= nil do
-    local axis = grouped[i]
-    if axis.start == nil or axis.stop == nil or axis.step == nil then return nil end
-    axes[#axes + 1] = Flow.FlowDomainAxis(
-      axis.ty or Code.CodeTyIndex,
-      Value.ValueExprValue(axis.start),
-      Value.ValueExprValue(axis.stop),
-      axis.step,
-      axis.order == "backward" and Flow.FlowDomainBackward or Flow.FlowDomainForward,
-      axis.index_name
-    )
-    i = i + 1
-  end
-  if #axes < 1 then return nil end
-  return native_nd_shape_from_header(header_block.name, axes)
-end
-
-local function append_native_loop_domain_facts(domain_shapes, domain_intents, loop_fact, defs, consts, header_block, edge_facts, graph_loop)
-  local domain = loop_fact and loop_fact.domain
-  local nd_shape = native_nd_axis_facts(header_block, edge_facts, graph_loop)
-  if nd_shape ~= nil then
-    local proof = Flow.FlowProofDomain(domain, "lln.loop authored an explicit multi-axis producer")
-    domain_shapes[#domain_shapes + 1] = Flow.FlowDomainShapeFact(
-      domain, nd_shape, { proof }, Flow.FlowFactFrontendFact("lln.nd_producer"))
-    domain_intents[#domain_intents + 1] = Flow.FlowDomainIntentFact(
-      domain, Flow.FlowDomainIntentNativeLoop("lln.loop"),
-      { Flow.FlowProofFrontendFact("lln.loop authored this loop domain") },
-      Flow.FlowFactFrontendFact("lln.loop"))
-    return
-  end
-
-  local counted = loop_fact and loop_fact.counted
-  local primary = nil
-  for _, induction in ipairs(loop_fact and loop_fact.inductions or {}) do
-    if induction.role == Flow.FlowPrimaryInduction then primary = primary or induction end
-  end
-  if counted == nil or primary == nil then return end
-  local step_num = numeric_const(counted.step, defs, consts)
-  if step_num == nil or step_num == 0 then return end
-  local order = step_num < 0 and Flow.FlowDomainBackward or Flow.FlowDomainForward
-  local proof = Flow.FlowProofDomain(domain, "lln.loop authored a regular counted range")
+function Flow.FlowLoopDomainProjected:append_native_loop_domain_facts(
+    domain_shapes, domain_intents, loop_fact)
+  local domain = loop_fact.domain
   domain_shapes[#domain_shapes + 1] = Flow.FlowDomainShapeFact(
-    domain,
-    Flow.FlowDomainShapeRange1D(
-      primary.ty or Code.CodeTyIndex,
-      Value.ValueExprValue(counted.start),
-      Value.ValueExprValue(counted.stop),
-      math.abs(step_num),
-      order
-    ),
-    { proof },
-    Flow.FlowFactFrontendFact("lln.range")
-  )
+    domain, self.shape, { self.proof }, Flow.FlowFactFrontendFact("lln.typed_domain"))
   domain_intents[#domain_intents + 1] = Flow.FlowDomainIntentFact(
     domain, Flow.FlowDomainIntentNativeLoop("lln.loop"),
-    { Flow.FlowProofFrontendFact("lln.loop authored this loop domain") },
-    Flow.FlowFactFrontendFact("lln.loop"))
+    { self.proof }, Flow.FlowFactFrontendFact("lln.typed_domain"))
+end
+function Flow.FlowLoopDomainRejected:append_native_loop_domain_facts(
+    _domain_shapes, _domain_intents, _loop_fact, _defs, _consts,
+    _header_block, _edge_facts, _graph_loop, rejects)
+  rejects[#rejects + 1] = Flow.FlowRejectDomainProjection(self.domain, self.reason)
+  return self
+end
+local function append_native_loop_domain_facts(domain_shapes, domain_intents, loop_fact,
+    defs, consts, header_block, edge_facts, graph_loop, rejects)
+  local projection = header_block.origin:flow_project_loop_domain(
+    Flow.FlowLoopDomainProjectionInput(
+      loop_fact.domain, header_block, edge_facts, graph_loop))
+  return projection:append_native_loop_domain_facts(
+    domain_shapes, domain_intents, loop_fact, defs, consts,
+    header_block, edge_facts, graph_loop, rejects)
 end
 
 ----------------------------------------------------------------------
@@ -506,11 +499,6 @@ local function analyze_loop(func, block_by_id, graph_loop, edge_facts, defs, typ
   return Flow.FlowLoopFacts(graph_loop.id, Flow.FlowDomainLoop(graph_loop.id), counted, graph_loop.body or {}, inductions, exits, rejects)
 end
 
-local function is_native_loop_header(block_by_id, graph_loop)
-  local header = graph_loop and graph_loop.header and block_by_id[graph_loop.header.block.text]
-  return type(header and header.name) == "string" and header.name:match("^ctl%.lln_loop_") ~= nil
-end
-
 ----------------------------------------------------------------------
 -- edge_arg_facts: build edge argument facts for a function
 ----------------------------------------------------------------------
@@ -569,9 +557,8 @@ local function compute_flow_facts(module, graph)
         domains[#domains + 1] = Flow.FlowDomainLoop(graph_loop.id)
         local lf = analyze_loop(func, block_by_id, graph_loop, func_edge_facts, defs, types, consts)
         loops[#loops + 1] = lf
-        if is_native_loop_header(block_by_id, graph_loop) then
-          append_native_loop_domain_facts(domain_shapes, domain_intents, lf, defs, consts, block_by_id[graph_loop.header.block.text], func_edge_facts, graph_loop)
-        end
+        append_native_loop_domain_facts(domain_shapes, domain_intents, lf, defs, consts,
+          block_by_id[graph_loop.header.block.text], func_edge_facts, graph_loop, rejects)
         for _, reject in ipairs(lf.rejects or {}) do rejects[#rejects + 1] = reject end
       end
     end
@@ -613,6 +600,64 @@ local function compute_trip_expr(counted, consts)
   return counted.stop_convention:flow_trip_expression(counted, diff_expr, step_is_one, idx_ty)
 end
 
+function Flow.FlowStopConvention:flow_materialize_trip(counted, _defs, _consts, trip_expr, _trip_entry)
+  return Flow.FlowTripCountRejected(
+    Flow.FlowTripCountNotMaterialized(
+      "trip-count expression has no materialized CodeValueId"), trip_expr)
+end
+function Flow.FlowStopExclusive:flow_materialize_trip(counted, defs, consts, trip_expr, trip_entry)
+  local start = numeric_const(counted.start, defs, consts)
+  local step = numeric_const(counted.step, defs, consts)
+  if start == 0 and step == 1 then
+    local value = trip_entry:flow_trip_value(counted.stop)
+    return Flow.FlowTripCountExact(
+      value, Value.ValueExprValue(value), nil)
+  end
+  return Flow.FlowTripCountRejected(
+    Flow.FlowTripCountNotMaterialized(
+      "only zero-based unit-stride trips are directly materialized"), trip_expr)
+end
+
+function Graph.CodeGraph:flow_graph_loop_projection()
+  local entries = {}
+  for i = 1, #self.funcs do
+    for j = 1, #self.funcs[i].loops do
+      entries[#entries + 1] = Flow.FlowGraphLoopEntry(self.funcs[i].loops[j])
+    end
+  end
+  return Flow.FlowGraphLoopProjection(entries)
+end
+function Flow.FlowGraphLoopProjection:lookup(id)
+  for i = 1, #self.entries do
+    if self.entries[i].loop.id == id then return Flow.FlowGraphLoopFound(self.entries[i]) end
+  end
+  return Flow.FlowGraphLoopMissing(id)
+end
+function Flow.FlowGraphLoopMissing:flow_trip_entry(_input)
+  return Flow.FlowTripEntryFallback
+end
+function Flow.FlowGraphLoopFound:flow_trip_entry(input)
+  local graph_loop = self.entry.loop
+  for i = 1, #input.module.funcs do
+    for j = 1, #input.module.funcs[i].blocks do
+      local header = input.module.funcs[i].blocks[j]
+      if header.id == graph_loop.header.block then
+        local param = code_param_by_value(header, input.counted.stop)
+        if param == nil then return Flow.FlowTripEntryFallback end
+        local latch = graph_loop.latches and graph_loop.latches[1] or nil
+        local skip = latch and latch.from and latch.from.block or nil
+        local value = incoming_arg_for(
+          input.edges, graph_loop.header.block, param, skip)
+        if value ~= nil then return Flow.FlowTripEntryFound(value) end
+        return Flow.FlowTripEntryFallback
+      end
+    end
+  end
+  return Flow.FlowTripEntryFallback
+end
+function Flow.FlowTripEntryFound:flow_trip_value(_fallback) return self.value end
+function Flow.FlowTripEntryFallback:flow_trip_value(fallback) return fallback end
+
 function Flow.FlowFactSet:compute_semantic_flow(module, graph)
   local defs_by_func, consts_by_func = {}, {}
   for _, func in ipairs(module.funcs or {}) do
@@ -621,10 +666,14 @@ function Flow.FlowFactSet:compute_semantic_flow(module, graph)
     consts_by_func[func.id.text] = const_values(defs)
   end
 
+  local graph_loops = graph and graph:flow_graph_loop_projection()
+    or Flow.FlowGraphLoopProjection({})
   local graph_loop_func = {}
   if graph ~= nil then
     for _, fg in ipairs(graph.funcs or {}) do
-      for _, loop in ipairs(fg.loops or {}) do graph_loop_func[loop.id.text] = fg.func end
+      for _, loop in ipairs(fg.loops or {}) do
+        graph_loop_func[loop.id.text] = fg.func
+      end
     end
   end
 
@@ -636,19 +685,14 @@ function Flow.FlowFactSet:compute_semantic_flow(module, graph)
         if induction.role == Flow.FlowPrimaryInduction then primary = primary or induction end
       end
       local func_id = graph_loop_func[loop.loop.text]
+      local defs = func_id and defs_by_func[func_id.text] or {}
       local consts = func_id and consts_by_func[func_id.text] or {}
       local direction = loop.counted.direction
       local trip_expr = compute_trip_expr(loop.counted, consts)
-      local trip_count
-      if trip_expr ~= nil then
-        trip_count = Flow.FlowTripCountRejected(
-          Flow.FlowTripCountNotMaterialized("trip-count expression has no materialized CodeValueId"),
-          trip_expr)
-      else
-        trip_count = Flow.FlowTripCountRejected(
-          Flow.FlowTripCountNotMaterialized("no explicit trip-count CodeValueId is available"),
-          nil)
-      end
+      local trip_entry = graph_loops:lookup(loop.loop):flow_trip_entry(
+        Flow.FlowTripEntryInput(module, loop.counted, self.edges))
+      local trip_count = loop.counted.stop_convention:flow_materialize_trip(
+        loop.counted, defs, consts, trip_expr, trip_entry)
       out[#out + 1] = Flow.FlowLoopNormalizedCounted(loop.loop, loop.counted, direction, trip_count)
       if primary ~= nil and direction == Flow.FlowLoopIncreasing
           and loop.counted.stop_convention == Flow.FlowStopExclusive then

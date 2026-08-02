@@ -118,18 +118,20 @@ proof planes into a whole-fusion contract. Missing optimization capabilities sel
 conservative scalar C: noalias alone controls `restrict`, and generic proof
 obligations never gate CMat materialization.
 
-## P1.5 — public schema-v2 compiler convergence — scalar gate complete
+## P1.5 — public schema-v2 compiler convergence — typed 1D window gate complete
 
-The explicit public `lalin.compile_v2` path now preserves parsed function bodies and
-executes scalar `.lln -> schema-v2 -> emitted C -> GCC` programs. Data references for
-string/slice construction and covered-switch retargeting are also closed, with a
-public GCC execution regression.
+The explicit public `lalin.compile_v2` path preserves parsed function bodies and
+executes scalar and one-dimensional clamp-window `.lln -> schema-v2 Tree -> Code ->
+Flow -> Stencil -> CMat -> LOWER -> emitted C -> GCC -O3` programs. Parsed loops,
+axes, windows, reducers, and sinks cross the `ParsedStmt` boundary as ASDL values.
+Tree loop domains are projected through `CodeOriginLoopDomain`; Flow consumes that
+typed origin directly. Encoded block-name domain recovery has been deleted.
 
-The default `lalin.compile_c_gcc` path is not switched yet. Schema-v2 loop parsing
-still emits raw `StmtForRange`/fold/scan tables before the typed `ParsedStmt` boundary,
-and its flow-domain recovery still depends on encoded block names. The next cut is a
-typed parsed-loop/domain vocabulary and explicit domain projection; no cross-context
-constructor adapter or fallback to the legacy C backend is permitted.
+The default `lalin.compile_c_gcc` path is not switched yet. Schema-v2 intentionally
+rejects parsed fold/scan, tiled, multi-axis, backward, nonzero-start, and non-unit-step
+lowering until those alternatives have complete typed projections and execution
+coverage. No raw-loop adapter, cross-context constructor adapter, encoded-name
+fallback, or fallback to the legacy C backend is permitted.
 
 ## P2 — schema ownership cutover
 

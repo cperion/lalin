@@ -34,7 +34,7 @@ local CodeValidation = require("lalin.schema_v2.code_validation")
 
 local function compile_validated(input)
   local code_module = input.module
-  local contracts = Code.CodeContractFactSet(code_module.id, input.contracts)
+  local contracts = input.contracts
   local graph_ok, graph = pcall(function() return code_module:build_graph() end)
   if not graph_ok then return Compiler.CompilerArtifactError("build_graph: " .. tostring(graph)) end
   local flow = graph:compute_flow(code_module)

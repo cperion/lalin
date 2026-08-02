@@ -376,6 +376,13 @@ end
 function Tr.StmtControl:region_expand_stmt(input)
   return self.region:region_expand_control(input)
 end
+function Tr.StmtDomainControl:region_expand_stmt(input)
+  local result = self.region:region_expand_control(input)
+  local control = result.stmts[1]
+  return Tr.RegionStmtExpansionResult(result.next_state,
+    { Tr.StmtDomainControl(control.h, control.region, self.domain) },
+    result.blocks, result.issues)
+end
 
 
 local function reject(reject_leaf) return Tr.RegionInvokeRejected(reject_leaf) end

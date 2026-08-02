@@ -1047,6 +1047,7 @@ function Tree.StmtJumpCont:tree_code_collect_address_taken_stmt(out) for j=1,#(s
 function Tree.StmtRegionEmit:tree_code_collect_address_taken_stmt(out) for j=1,#(self.args or {}) do collect_address_taken_expr(self.args[j], out) end end
 function Tree.StmtRegionCall:tree_code_collect_address_taken_stmt(out) for j=1,#(self.args or {}) do collect_address_taken_expr(self.args[j], out) end end
 function Tree.StmtControl:tree_code_collect_address_taken_stmt(out) collect_address_taken_stmts(self.region.entry.body, out); for j=1,#(self.region.blocks or {}) do collect_address_taken_stmts(self.region.blocks[j].body, out) end end
+function Tree.StmtDomainControl:tree_code_collect_address_taken_stmt(out) collect_address_taken_stmts(self.region.entry.body, out); for j=1,#(self.region.blocks or {}) do collect_address_taken_stmts(self.region.blocks[j].body, out) end end
 
 collect_address_taken_place = function(place, out) place:tree_code_collect_address_taken_place(out) end
 collect_address_taken_expr = function(expr, out) if expr == nil then return end; expr:tree_code_collect_address_taken_expr(out) end
@@ -1821,6 +1822,10 @@ function Tree.StmtTrap:lower_tree_stmt_to_code(input)
 end
 
 function Tree.StmtControl:lower_tree_stmt_to_code(input) return self.region:tree_code_lower_stmt_control_to_code(input) end
+function Tree.StmtDomainControl:lower_tree_stmt_to_code(input)
+  return self.region:tree_code_lower_stmt_control_with_domain(
+    TreeCode.TreeCodeDomainControlInput(input, self.domain))
+end
 function Tree.StmtJumpCont:lower_tree_stmt_to_code(input) unsupported(self, "continuation slot jump") end
 function Tree.StmtRegionEmit:lower_tree_stmt_to_code(input) unsupported(self, "region emit before expansion") end
 function Tree.StmtRegionCall:lower_tree_stmt_to_code(input) unsupported(self, "region call before expansion") end
@@ -2129,7 +2134,51 @@ function Tree.ControlExprRegion:tree_code_lower_expr_control_to_code(input)
   return input:tree_code_expr_result(rva.value, rty)
 end
 
-function Tree.ControlStmtRegion:tree_code_lower_stmt_control_to_code(input)
+function Tree.ControlLoopOrder:tree_code_loop_order()
+  error("missing control-loop order projection", 2)
+end
+function Tree.ControlLoopForward:tree_code_loop_order() return Code.CodeLoopForward end
+function Tree.ControlLoopBackward:tree_code_loop_order() return Code.CodeLoopBackward end
+function Tree.ControlWindowBoundary:tree_code_window_boundary()
+  error("missing control-window boundary projection", 2)
+end
+function Tree.ControlWindowReject:tree_code_window_boundary() return Code.CodeWindowReject end
+function Tree.ControlWindowClamp:tree_code_window_boundary() return Code.CodeWindowClamp end
+function Tree.ControlWindowWrap:tree_code_window_boundary() return Code.CodeWindowWrap end
+function Tree.ControlWindowZero:tree_code_window_boundary() return Code.CodeWindowZero end
+function Tree.ControlWindowAxis:tree_code_window_axis()
+  return Code.CodeWindowAxisDeclaration(
+    self.before, self.after, self.boundary:tree_code_window_boundary())
+end
+function Tree.ControlLoopRangeND:tree_code_loop_shape()
+  return Code.CodeLoopShapeRangeND
+end
+function Tree.ControlLoopWindowND:tree_code_loop_shape()
+  local windows = {}
+  for i = 1, #self.windows do windows[i] = self.windows[i]:tree_code_window_axis() end
+  return Code.CodeLoopShapeWindowND(windows)
+end
+function Tree.ControlLoopTiledND:tree_code_loop_shape()
+  return Code.CodeLoopShapeTiledND(self.tile_sizes)
+end
+function Tree.ControlLoopAxis:tree_code_loop_axis(params)
+  local start = assert(params[self.start_param_ordinal], "missing loop start parameter")
+  local stop = assert(params[self.stop_param_ordinal], "missing loop stop parameter")
+  local trip = assert(params[self.trip_param_ordinal], "missing loop trip parameter")
+  return Code.CodeLoopAxisDeclaration(self.index_name, start.ty,
+    start.value, stop.value, trip.value, self.step, self.order:tree_code_loop_order())
+end
+function Tree.ControlLoopDomain:tree_code_block_origin(input)
+  if self.header ~= input.label then return input.fallback end
+  local axes = {}
+  for i = 1, #self.axes do axes[i] = self.axes[i]:tree_code_loop_axis(input.params) end
+  return Code.CodeOriginLoopDomain(
+    Code.CodeLoopDomainDeclaration(axes, self:tree_code_loop_shape()))
+end
+function Tree.ControlLoopNoDomain:tree_code_block_origin(input) return input.fallback end
+
+function Tree.ControlStmtRegion:tree_code_lower_stmt_control_with_domain(request)
+  local input, domain = request.input, request.domain
   local saved_a, saved_as = input:tree_code_state():tree_code_alpha_snapshot()
   local ac = input:tree_code_state():tree_code_next_counter("control_scope"); input = input:tree_code_with_result_state(ac)
   local alpha_s = "ctl" .. tostring(ac.value)
@@ -2170,7 +2219,11 @@ function Tree.ControlStmtRegion:tree_code_lower_stmt_control_to_code(input)
     local rec = records[i]
     input = input:tree_code_with_result_state(input:tree_code_restore_bindings(saved_outer))
     input = input:tree_code_with_result_state(input:tree_code_state():tree_code_use_alpha(setmetatable({},{__index=region_alpha}), alpha_s.."_b"..tostring(i)))
-    input = input:tree_code_with_result_state(input:tree_code_start_block(rec.id, rec.name, rec.params, origin_generated("control block "..rec.label.name)))
+    local fallback_origin = origin_generated("control block "..rec.label.name)
+    local block_origin = domain:tree_code_block_origin(
+      TreeCode.TreeCodeControlBlockOriginInput(rec.label, rec.params, fallback_origin))
+    input = input:tree_code_with_result_state(input:tree_code_start_block(
+      rec.id, rec.name, rec.params, block_origin))
     for j = 1, #rec.binds do
       local b = rec.binds[j]
       input = input:tree_code_with_result_state(input:tree_code_state():tree_code_note_binding(b.binding, b.value))
@@ -2189,6 +2242,11 @@ function Tree.ControlStmtRegion:tree_code_lower_stmt_control_to_code(input)
     input = input:tree_code_with_result_state(input:tree_code_start_block(exr.id, "ctl.stmt.exit", {}, origin_generated("control exit")))
   end
   return TreeCode.TreeCodeStmtResult(input:tree_code_state())
+end
+
+function Tree.ControlStmtRegion:tree_code_lower_stmt_control_to_code(input)
+  return self:tree_code_lower_stmt_control_with_domain(
+    TreeCode.TreeCodeDomainControlInput(input, Tree.ControlLoopNoDomain))
 end
 
 ----------------------------------------------------------------------

@@ -57,7 +57,15 @@ function Tr.ExprBinary:typecheck_tree_expr(input)
   local rr = self.rhs:typecheck_tree_expr(input); if rr.ty == nil then return rr end
   local result_ty = self.op:tree_check_result_type(lr.ty, rr.ty)
   if not result_ty:tree_check_is_void_type() then
-    return LCheck.TypeExprResult(Tr.ExprBinary(Tr.ExprTyped(result_ty), self.op, lr.expr, rr.expr), result_ty, {})
+    local lhs, rhs = lr.expr, rr.expr
+    if lr.ty ~= result_ty then
+      lhs = Tr.ExprCast(Tr.ExprTyped(result_ty), C.SurfaceCast, result_ty, lhs)
+    end
+    if rr.ty ~= result_ty then
+      rhs = Tr.ExprCast(Tr.ExprTyped(result_ty), C.SurfaceCast, result_ty, rhs)
+    end
+    return LCheck.TypeExprResult(
+      Tr.ExprBinary(Tr.ExprTyped(result_ty), self.op, lhs, rhs), result_ty, {})
   end
   return LCheck.TypeExprResult(nil, nil, {})
 end
@@ -148,16 +156,28 @@ function Tr.ExprField:typecheck_tree_expr(input)
 end
 
 function Tr.ExprIndex:typecheck_tree_expr(input)
-  local base_ty = self.base:typecheck_tree_index_base_ty(input)
-  if base_ty == nil then return LCheck.TypeExprResult(nil, nil, {}) end
-  local ir = self.index:typecheck_tree_expr(input); if ir.ty == nil then return ir end
-  local elem_ty = base_ty:tree_code_index_elem_type()
-  return LCheck.TypeExprResult(Tr.ExprIndex(Tr.ExprTyped(elem_ty), self.base, ir.expr), elem_ty, {})
+  local br = self.base:typecheck_tree_index_base(LCheck.TypeIndexBaseInput(input.scope))
+  local ir = self.index:typecheck_tree_expr(input)
+  local issues = {}
+  for i = 1, #(br.issues or {}) do issues[#issues + 1] = br.issues[i] end
+  for i = 1, #(ir.issues or {}) do issues[#issues + 1] = ir.issues[i] end
+  return LCheck.TypeExprResult(
+    Tr.ExprIndex(Tr.ExprTyped(br.elem), br.base, ir.expr), br.elem, issues)
 end
 
-function Tr.IndexBase:typecheck_tree_index_base_ty(input) return nil end
-function Tr.IndexBaseExpr:typecheck_tree_index_base_ty(input)
-  return self.base:typecheck_tree_expr(input).ty
+function Tr.IndexBase:typecheck_tree_index_base(_input)
+  return LCheck.TypeIndexBaseResult(self, Ty.TScalar(C.ScalarVoid),
+    { LCheck.TypeIssueExpected("index base", Ty.TPtr(Ty.TScalar(C.ScalarVoid)), Ty.TScalar(C.ScalarVoid)) })
+end
+function Tr.IndexBaseExpr:typecheck_tree_index_base(input)
+  local result = self.base:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+  local elem = result.ty:tree_code_index_elem_type()
+  return LCheck.TypeIndexBaseResult(Tr.IndexBaseExpr(result.expr), elem, result.issues or {})
+end
+function Tr.IndexBasePlace:typecheck_tree_index_base(input)
+  local result = self.base:typecheck_tree_place(LCheck.TypePlaceInput(input.scope))
+  return LCheck.TypeIndexBaseResult(
+    Tr.IndexBasePlace(result.place, self.elem), self.elem, result.issues or {})
 end
 
 -- ExprIntrinsic moved below; see full implementation
@@ -188,9 +208,18 @@ end
 function Tr.PlaceDeref:typecheck_tree_place(input)
   local er = self.base:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
   if er.ty and er.ty:tree_check_is_ptr_type() then
-    return LCheck.TypePlaceResult(self, er.ty.elem, {})
+    return LCheck.TypePlaceResult(Tr.PlaceDeref(Tr.PlaceTyped(er.ty.elem), er.expr), er.ty.elem, er.issues or {})
   end
   return LCheck.TypePlaceResult(self, nil, er.issues or {})
+end
+function Tr.PlaceIndex:typecheck_tree_place(input)
+  local base = self.base:typecheck_tree_index_base(LCheck.TypeIndexBaseInput(input.scope))
+  local index = self.index:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+  local issues = {}
+  for i = 1, #(base.issues or {}) do issues[#issues + 1] = base.issues[i] end
+  for i = 1, #(index.issues or {}) do issues[#issues + 1] = index.issues[i] end
+  return LCheck.TypePlaceResult(
+    Tr.PlaceIndex(Tr.PlaceTyped(base.elem), base.base, index.expr), base.elem, issues)
 end
 
 -- ============================================================

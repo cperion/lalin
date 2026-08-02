@@ -129,12 +129,23 @@ function Stencil.StencilKernelStepDefinitionAmbiguous:stencil_add_step_definitio
   return Stencil.StencilKernelStepDefinitionAmbiguous(
     input.contribution.step, self.count + 1)
 end
+function Stencil.StencilKernelStepDefinitionAlias:stencil_add_step_definition(input)
+  return Stencil.StencilKernelStepDefinitionAmbiguous(input.contribution.step, 2)
+end
 
 function Code.CodeInstOp:stencil_step_contribution(input) return input.lookup end
 function Code.CodeInstConst:stencil_step_contribution(input)
   if self.dst ~= input.step then return input.lookup end
   return input.lookup:stencil_add_step_definition(
     Stencil.StencilKernelStepDefinitionInput(input, self.const))
+end
+function Code.CodeInstCast:stencil_step_contribution(input)
+  if self.dst ~= input.step then return input.lookup end
+  return Stencil.StencilKernelStepDefinitionAlias(input.func, input.step, self.value)
+end
+function Code.CodeInstAlias:stencil_step_contribution(input)
+  if self.dst ~= input.step then return input.lookup end
+  return Stencil.StencilKernelStepDefinitionAlias(input.func, input.step, self.src)
 end
 function Code.CodeFunc:stencil_kernel_step_lookup(step)
   local lookup = Stencil.StencilKernelStepDefinitionMissing(step)
@@ -169,6 +180,14 @@ end
 function Stencil.StencilKernelStepDefinitionAmbiguous:stencil_resolve_step(_cursor)
   return Stencil.StencilKernelIterationRejected(
     Stencil.StencilKernelAmbiguousStepDefinition(self.step, self.count))
+end
+function Stencil.StencilKernelStepDefinitionAlias:stencil_resolve_step(cursor)
+  local lookup = Stencil.StencilKernelStepDefinitionMissing(self.source)
+  for i = 1, #cursor.request.module.funcs do
+    local func = cursor.request.module.funcs[i]
+    if func.id == self.func then lookup = func:stencil_kernel_step_lookup(self.source) end
+  end
+  return lookup:stencil_resolve_step(cursor)
 end
 function Stencil.StencilKernelStepDefinitionFound:stencil_resolve_step(cursor)
   return self.constant:stencil_integer_step(
@@ -682,6 +701,116 @@ end
 function Stencil.StencilKernelConstructionFinalizable:stencil_contribute_access(input)
   return self:stencil_reject(Stencil.StencilKernelConstructionIncomplete(self.state.kernel.id))
 end
+function Kernel.KernelBindingProjection:stencil_add_live_code_value(live, value)
+  for i = 1, #self.entries do
+    if self.entries[i].value == value then
+      return Kernel.KernelExprKernelValue(
+        self.entries[i].binding.id):stencil_add_live_binding(live)
+    end
+  end
+  return live
+end
+function Value.ValueExpr:stencil_add_live_dependencies(live, _bindings) return live end
+function Value.ValueExprValue:stencil_add_live_dependencies(live, bindings)
+  return bindings:stencil_add_live_code_value(live, self.value)
+end
+function Value.ValueExprUnary:stencil_add_live_dependencies(live, bindings)
+  return self.value:stencil_add_live_dependencies(live, bindings)
+end
+function Value.ValueExprCast:stencil_add_live_dependencies(live, bindings)
+  return self.value:stencil_add_live_dependencies(live, bindings)
+end
+function Value.ValueExprBinary:stencil_add_live_dependencies(live, bindings)
+  return self.b:stencil_add_live_dependencies(
+    self.a:stencil_add_live_dependencies(live, bindings), bindings)
+end
+Value.ValueExprAdd.stencil_add_live_dependencies = Value.ValueExprBinary.stencil_add_live_dependencies
+Value.ValueExprSub.stencil_add_live_dependencies = Value.ValueExprBinary.stencil_add_live_dependencies
+Value.ValueExprMul.stencil_add_live_dependencies = Value.ValueExprBinary.stencil_add_live_dependencies
+Value.ValueExprDiv.stencil_add_live_dependencies = Value.ValueExprBinary.stencil_add_live_dependencies
+Value.ValueExprRem.stencil_add_live_dependencies = Value.ValueExprBinary.stencil_add_live_dependencies
+function Value.ValueExprCmp:stencil_add_live_dependencies(live, bindings)
+  return self.b:stencil_add_live_dependencies(
+    self.a:stencil_add_live_dependencies(live, bindings), bindings)
+end
+function Value.ValueExprSelect:stencil_add_live_dependencies(live, bindings)
+  live = self.cond:stencil_add_live_dependencies(live, bindings)
+  live = self.t:stencil_add_live_dependencies(live, bindings)
+  return self.f:stencil_add_live_dependencies(live, bindings)
+end
+function Kernel.KernelExpr:stencil_add_live_dependencies(live, _bindings) return live end
+function Kernel.KernelExprValue:stencil_add_live_dependencies(live, bindings)
+  return bindings:stencil_add_live_code_value(live, self.value)
+end
+function Kernel.KernelExprAlgebra:stencil_add_live_dependencies(live, bindings)
+  return self.expr:stencil_add_live_dependencies(live, bindings)
+end
+function Kernel.KernelExprLaneLoad:stencil_add_live_dependencies(live, bindings)
+  return self.index:stencil_add_live_dependencies(live, bindings)
+end
+function Kernel.KernelExprKernelValue:stencil_add_live_dependencies(live, _bindings)
+  return self:stencil_add_live_binding(live)
+end
+function Kernel.KernelBindingProjection:stencil_complete_live_bindings(live)
+  local previous = -1
+  while previous ~= #live.values do
+    previous = #live.values
+    for i = 1, #self.entries do
+      for j = 1, #live.values do
+        if self.entries[i].binding.id == live.values[j] then
+          live = self.entries[i].binding.expr:stencil_add_live_dependencies(live, self)
+        end
+      end
+    end
+  end
+  return live
+end
+function Kernel.KernelExpr:stencil_add_live_binding(projection) return projection end
+function Kernel.KernelExprKernelValue:stencil_add_live_binding(projection)
+  for i = 1, #projection.values do
+    if projection.values[i] == self.value then return projection end
+  end
+  return Stencil.StencilKernelLiveBindingProjection(
+    append_one(projection.values, self.value))
+end
+function Kernel.KernelEffect:stencil_add_live_bindings(projection) return projection end
+function Kernel.KernelEffectStore:stencil_add_live_bindings(projection)
+  return self.value:stencil_add_live_binding(projection)
+end
+function Kernel.KernelResult:stencil_add_live_bindings(projection) return projection end
+function Kernel.KernelResultValue:stencil_add_live_bindings(projection)
+  return self.expr:stencil_add_live_binding(projection)
+end
+function Kernel.KernelResultFind:stencil_add_live_bindings(projection)
+  return self.src:stencil_add_live_binding(projection)
+end
+function Kernel.KernelResultAll:stencil_add_live_bindings(projection)
+  return self.src:stencil_add_live_binding(projection)
+end
+function Kernel.KernelResultAny:stencil_add_live_bindings(projection)
+  return self.src:stencil_add_live_binding(projection)
+end
+function Kernel.KernelResultAllCompare:stencil_add_live_bindings(projection)
+  return self.right:stencil_add_live_binding(
+    self.left:stencil_add_live_binding(projection))
+end
+function Kernel.KernelBody:stencil_live_bindings()
+  local projection = Stencil.StencilKernelLiveBindingProjection({})
+  for i = 1, #self.effects.entries do
+    projection = self.effects.entries[i].effect:stencil_add_live_bindings(projection)
+  end
+  projection = self.result:stencil_add_live_bindings(projection)
+  return self.bindings:stencil_complete_live_bindings(projection)
+end
+function Stencil.StencilKernelLiveBindingProjection:stencil_contribute_stream(input)
+  for i = 1, #self.values do
+    if self.values[i] == input.entry.binding.id then
+      return input.construction:stencil_contribute_stream(
+        Stencil.StencilKernelStreamContributionInput(input.entry))
+    end
+  end
+  return input.construction
+end
 function Stencil.StencilKernelConstructionRejected:stencil_contribute_access(_input) return self end
 
 function Kernel.KernelExprValue:stencil_prepare_stream(input)
@@ -738,6 +867,9 @@ function Value.ValueExpr:stencil_window_offset_literal(input)
   return Stencil.StencilKernelWindowIndexRejected(
     Stencil.StencilKernelUnsupportedWindowIndex(
       input.window.index, "window offset is not an integer literal"))
+end
+function Value.ValueExprCast:stencil_window_offset_literal(input)
+  return self.value:stencil_window_offset_literal(input)
 end
 function Value.ValueExprConst:stencil_window_offset_literal(input)
   return self.const:stencil_window_offset_literal(input)
@@ -1087,13 +1219,22 @@ function Stencil.StencilKernelResultStreamPrepared:stencil_apply_control_stream(
     Stencil.StencilKernelControlFinishInput(
       construction, input.sink, self.entry.definition))
 end
-function Kernel.KernelResultVoid:stencil_contribute_result(input)
-  if #input.construction.state.deferred_reductions > 0 then
-    return input.construction:stencil_reject(
+function Stencil.StencilKernelConstructionCollecting:stencil_finish_void_result(result)
+  if #self.state.deferred_reductions > 0 then
+    return self:stencil_reject(
       Stencil.StencilKernelDeferredReductionMismatch(
-        input.construction.state.deferred_reductions, self))
+        self.state.deferred_reductions, result))
   end
-  return Stencil.StencilKernelConstructionFinalizable(input.construction.state)
+  return Stencil.StencilKernelConstructionFinalizable(self.state)
+end
+function Stencil.StencilKernelConstructionFinalizable:stencil_finish_void_result(_result)
+  return self
+end
+function Stencil.StencilKernelConstructionRejected:stencil_finish_void_result(_result)
+  return self
+end
+function Kernel.KernelResultVoid:stencil_contribute_result(input)
+  return input.construction:stencil_finish_void_result(self)
 end
 function Kernel.KernelResultAll:stencil_contribute_result(input)
   local sink = Stencil.StencilSinkId("kernel-sink:all")
@@ -1448,13 +1589,14 @@ function Stencil.StencilKernelDomainResolved:stencil_continue_domain(input)
   local construction = projection.kernel.body.equivalence:stencil_initialize_construction(
     Stencil.StencilKernelConstructionInitInput(
       projection.kernel, iteration, self.domain, self.producer))
+  local live_bindings = projection.kernel.body:stencil_live_bindings()
   for _, entry in ipairs(projection.kernel.body.lanes.entries) do
     construction = construction:stencil_contribute_access(
       Stencil.StencilKernelAccessContributionInput(entry.lane, projection.mem))
   end
   for _, entry in ipairs(projection.kernel.body.bindings.entries) do
-    construction = construction:stencil_contribute_stream(
-      Stencil.StencilKernelStreamContributionInput(entry))
+    construction = live_bindings:stencil_contribute_stream(
+      Stencil.StencilKernelLiveStreamInput(construction, entry))
   end
   for _, entry in ipairs(projection.kernel.body.effects.entries) do
     construction = construction:stencil_contribute_sink(

@@ -93,107 +93,121 @@ local function jump_args_from_payload(payload)
   return out
 end
 
--- Helpers for for-loop lowering (plain tables, not Ast.node)
-local function positional(value) return { value = value } end
-local function keyed(key, value) return { key = key, value = value } end
 local function number_lit(value)
   return Tree.ExprLit(Tree.ExprSurface, Core.LitInt(tostring(value)))
 end
-local function string_lit(value)
-  local raw = string.format("%q", tostring(value))
-  return Tree.ExprLit(Tree.ExprSurface, Core.LitString(raw))
-end
 
-local function synthetic_record(fields)
-  -- Returns a plain table mimicking the old Record AST for for_to_loop consumption
-  local rec = { tag = "Record", fields = {} }
-  for i, f in ipairs(fields) do rec.fields[i] = f end
-  return rec
-end
-
-local function parse_range_domain(lex, ctx)
+local function parse_range_axis(lex, ctx)
   local start = Expr.parse(lex, ctx)
   lex:expect("..")
   local stop = Expr.parse(lex, ctx)
-  local step = nil
-  if lex:next_if("..") then
-    step = Expr.parse(lex, ctx)
-  end
-  local fields = { positional(start), positional(stop) }
-  if step ~= nil then fields[#fields + 1] = positional(step) end
-  return synthetic_record(fields)
+  local step = number_lit(1)
+  if lex:next_if("..") then step = Expr.parse(lex, ctx) end
+  return P.ParsedLoopAxis(start, stop, step)
 end
 
-local function parse_range_domain_list(lex, ctx)
-  local items = {}
+local function parse_range_axes(lex, ctx)
+  local axes = {}
   lex:expect("(")
   if not lex:next_if(")") then
-    repeat
-      items[#items + 1] = positional(parse_range_domain(lex, ctx))
-    until not lex:next_if(",")
+    repeat axes[#axes + 1] = parse_range_axis(lex, ctx) until not lex:next_if(",")
     lex:expect(")")
   end
-  return synthetic_record(items)
+  return axes
 end
 
-local function parse_boundary_value(lex)
-  if lex:peek().kind == "string" then
-    return Expr.parse(lex, {})
+local boundary_by_name = {
+  reject = Tree.ControlWindowReject,
+  clamp = Tree.ControlWindowClamp,
+  wrap = Tree.ControlWindowWrap,
+  zero = Tree.ControlWindowZero,
+}
+
+local function parse_boundary(lex)
+  local tok = lex:next()
+  local name = tostring(tok.value or ""):gsub('^"', ""):gsub('"$', "")
+  local boundary = boundary_by_name[name]
+  if boundary == nil then
+    lex:error_at(tok, "window boundary must be reject, clamp, wrap, or zero")
   end
-  return string_lit(lex:expect_name("window boundary").value)
+  return boundary
 end
 
 local function parse_window_domain(lex, ctx)
-  local axes = {}
-  local before = number_lit(0)
-  local after = number_lit(0)
-  local boundary = string_lit("reject")
+  local before, after = number_lit(0), number_lit(0)
+  local boundary = Tree.ControlWindowReject
   lex:expect("(")
-  axes[#axes + 1] = positional(parse_range_domain(lex, ctx))
+  local axis = parse_range_axis(lex, ctx)
   while lex:next_if(",") do
     local key = lex:expect_name("window option").value
     lex:expect("=")
-    if key == "before" then
-      before = Expr.parse(lex, ctx)
-    elseif key == "after" then
-      after = Expr.parse(lex, ctx)
-    elseif key == "boundary" then
-      boundary = parse_boundary_value(lex)
-    else
-      lex:error_at(lex.last, "unknown window option `" .. tostring(key) .. "`")
-    end
+    if key == "before" then before = Expr.parse(lex, ctx)
+    elseif key == "after" then after = Expr.parse(lex, ctx)
+    elseif key == "boundary" then boundary = parse_boundary(lex)
+    else lex:error_at(lex.last, "unknown window option `" .. tostring(key) .. "`") end
   end
   lex:expect(")")
-  local window = synthetic_record({ positional(before), positional(after), keyed("boundary", boundary) })
-  return synthetic_record({
-    keyed("axes", synthetic_record(axes)),
-    keyed("windows", synthetic_record({ positional(window) })),
-  })
+  return P.ParsedLoopWindowND(
+    { axis }, { P.ParsedWindowAxis(before, after, boundary) })
 end
 
 local function parse_loop_domain(lex, ctx)
   if lex:next_if("tiled") then
     lex:expect("grid")
-    local axes = parse_range_domain_list(lex, ctx)
+    local axes = parse_range_axes(lex, ctx)
     lex:expect("by")
     local tiles = {}
-    repeat
-      tiles[#tiles + 1] = Expr.parse(lex, ctx)
-    until not lex:next_if(",")
-    return "tiled_nd", { synthetic_record({
-      keyed("axes", axes),
-      keyed("tiles", synthetic_record((function()
-        local out = {}
-        for i, tile in ipairs(tiles) do out[i] = positional(tile) end
-        return out
-      end)())),
-    }) }
+    repeat tiles[#tiles + 1] = Expr.parse(lex, ctx) until not lex:next_if(",")
+    return P.ParsedLoopTiledND(axes, tiles)
   elseif lex:next_if("grid") then
-    return "range_nd", { synthetic_record({ keyed("axes", parse_range_domain_list(lex, ctx)) }) }
+    return P.ParsedLoopRangeND(parse_range_axes(lex, ctx))
   elseif lex:next_if("window") then
-    return "window_nd", { parse_window_domain(lex, ctx) }
+    return parse_window_domain(lex, ctx)
   end
-  return "range", { parse_range_domain(lex, ctx) }
+  return P.ParsedLoopRangeND({ parse_range_axis(lex, ctx) })
+end
+
+local reducer_by_name = {
+  add = P.ParsedLoopAdd, mul = P.ParsedLoopMul,
+  band = P.ParsedLoopBitAnd, ["and"] = P.ParsedLoopBitAnd,
+  bor = P.ParsedLoopBitOr, ["or"] = P.ParsedLoopBitOr,
+  bxor = P.ParsedLoopBitXor, xor = P.ParsedLoopBitXor,
+  min = P.ParsedLoopMin, max = P.ParsedLoopMax,
+}
+
+local function parse_reducer(lex)
+  local tok = lex:expect_name("loop reducer")
+  local reducer = reducer_by_name[tok.value]
+  if reducer == nil then
+    lex:error_at(tok, "loop reducer must be add, mul, band, bor, bxor, min, or max")
+  end
+  return reducer
+end
+
+function P.ParsedStmt:parsed_loop_body_contribution()
+  return P.ParsedLoopBodyStmt(self)
+end
+function P.StmtFoldParsed:parsed_loop_body_contribution()
+  return P.ParsedLoopBodySink(P.ParsedLoopFoldSink(
+    self.name, self.ty_source, self.init, self.reducer, self.step))
+end
+function P.StmtScanParsed:parsed_loop_body_contribution()
+  return P.ParsedLoopBodySink(P.ParsedLoopScanSink(
+    self.name, self.ty_source, self.init, self.reducer, self.axis, self.step, self.into))
+end
+
+function P.ParsedLoopBodyStmt:parsed_loop_collect(body, sink)
+  body[#body + 1] = self.stmt
+  return sink
+end
+function P.ParsedLoopBodySink:parsed_loop_collect(_body, sink)
+  return sink:parsed_loop_accept_sink(self.sink)
+end
+function P.ParsedLoopSink:parsed_loop_accept_sink(_sink)
+  error("parsed loop accepts only one fold or scan sink", 2)
+end
+function P.ParsedLoopNoSink:parsed_loop_accept_sink(sink)
+  return sink
 end
 
 function Stmt.parse_block(lex, ctx, stops)
@@ -292,78 +306,53 @@ function Stmt.parse(lex, ctx)
     while lex:next_if(",") do
       indexes[#indexes + 1] = lex:expect_name("loop index").value
     end
-    local index = indexes[1]
     lex:expect("in")
-    local producer, args = parse_loop_domain(lex, ctx)
+    local domain = parse_loop_domain(lex, ctx)
     lex:expect("do")
-    local body = Stmt.parse_block(lex, ctx, { "end" })
+    local parsed_body = Stmt.parse_block(lex, ctx, { "end" })
     lex:expect("end")
-    -- Return intermediate for for_to_loop lowering
-    return {
-      tag = "StmtForRange",
-      index = index,
-      indexes = indexes,
-      producer = producer,
-      args = args,
-      result_type = nil,
-      body = body,
-      origin = Ast.origin(lex, start, lex.last, "parsed:loop"),
-    }
+    local body, sink = {}, P.ParsedLoopNoSink
+    for i = 1, #parsed_body do
+      sink = parsed_body[i]:parsed_loop_body_contribution():parsed_loop_collect(body, sink)
+    end
+    local loop_id = "parsed.loop." .. tostring(start.line or 0)
+      .. "." .. tostring(start.col or 0)
+    return P.StmtLoopParsed(loop_id, indexes, domain, body, sink)
 
   elseif t.value == "fold" then
-    local start = lex:next()
+    lex:next()
     local name = lex:expect_name("fold accumulator").value
-    local ty = Type.parse(lex, ctx)
+    local ty_source = Type.parse(lex, ctx)
     lex:expect("=")
     local init = Expr.parse(lex, ctx)
     lex:expect("by")
-    local by = lex:expect_name("fold reducer").value
+    local reducer = parse_reducer(lex)
     lex:expect("step")
-    local step = Expr.parse(lex, ctx)
-    return {
-      tag = "StmtFold",
-      name = name,
-      type = ty,
-      init = init,
-      by = by,
-      step = step,
-      origin = Ast.origin(lex, start, lex.last, "parsed:fold"),
-    }
+    return P.StmtFoldParsed(name, ty_source, init, reducer, Expr.parse(lex, ctx))
 
   elseif t.value == "scan" then
-    local start = lex:next()
+    lex:next()
     local name = lex:expect_name("scan accumulator").value
-    local ty = Type.parse(lex, ctx)
+    local ty_source = Type.parse(lex, ctx)
     lex:expect("=")
     local init = Expr.parse(lex, ctx)
     lex:expect("by")
-    local by = lex:expect_name("scan reducer").value
-    local axis = nil
+    local reducer = parse_reducer(lex)
+    local axis = P.ParsedLoopScanAxisDefault
     if lex:next_if("axis") then
       lex:error_at(lex.last, "scan axis uses `over`, not `axis`")
     end
     if lex:next_if("over") then
       if lex:peek().kind == "name" then
-        axis = lex:next().value
+        axis = P.ParsedLoopScanAxisName(lex:next().value)
       else
-        axis = Expr.parse(lex, ctx)
+        axis = P.ParsedLoopScanAxisExpr(Expr.parse(lex, ctx))
       end
     end
     lex:expect("step")
     local step = Expr.parse(lex, ctx)
     lex:expect("into")
-    local into = Expr.parse(lex, ctx)
-    return {
-      tag = "StmtScan",
-      name = name,
-      type = ty,
-      init = init,
-      by = by,
-      axis = axis,
-      step = step,
-      into = into,
-      origin = Ast.origin(lex, start, lex.last, "parsed:scan"),
-    }
+    return P.StmtScanParsed(name, ty_source, init, reducer, axis, step, Expr.parse(lex, ctx))
   elseif t.value == "let" or t.value == "var" then
     local start = lex:next()
     local mutable = start.value == "var"

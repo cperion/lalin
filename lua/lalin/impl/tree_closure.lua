@@ -233,6 +233,7 @@ function Tr.StmtYieldValue:closure_collect(input) return self.value:closure_coll
 function Tr.StmtReturnVoid:closure_collect(input) return collected(input) end
 function Tr.StmtReturnValue:closure_collect(input) return self.value:closure_collect(input) end
 function Tr.StmtControl:closure_collect(input) return self.region:closure_collect(input) end
+function Tr.StmtDomainControl:closure_collect(input) return self.region:closure_collect(input) end
 function Tr.StmtTrap:closure_collect(input) return collected(input) end
 
 function Tr.JumpArg:closure_collect(input) return self.value:closure_collect(input) end
@@ -513,6 +514,7 @@ function Tr.StmtYieldValue:closure_rewrite(input) local r=self.value:closure_rew
 function Tr.StmtReturnVoid:closure_rewrite(input) return unchanged_stmt(self,input) end
 function Tr.StmtReturnValue:closure_rewrite(input) local r=self.value:closure_rewrite(input); return r:closure_status():closure_stmt_result(self,asdl.with(self,{value=r:closure_value()}),r.input) end
 function Tr.StmtControl:closure_rewrite(input) local r=rewrite_control_children(self.region,input); return r.status:closure_stmt_result(self,asdl.with(self,{region=asdl.with(self.region,{entry=r.entry,blocks=r.blocks})}),r.input) end
+function Tr.StmtDomainControl:closure_rewrite(input) local r=rewrite_control_children(self.region,input); return r.status:closure_stmt_result(self,asdl.with(self,{region=asdl.with(self.region,{entry=r.entry,blocks=r.blocks})}),r.input) end
 function Tr.StmtTrap:closure_rewrite(input) return unchanged_stmt(self,input) end
 
 ----------------------------------------------------------------------

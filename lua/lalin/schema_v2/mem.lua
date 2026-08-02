@@ -231,8 +231,10 @@ return schema. LalinMem {
     MemIndexInduction {
       variant_unique,
       induction [LalinFlow.FlowInduction],
+      field. value [LalinCode.CodeValueId],
       elem_size [number],
       const_offset [number],
+      element_offset [number],
     },
   },
 
@@ -642,11 +644,19 @@ return schema. LalinMem {
     relations [many [LalinMem.MemObjectRelation]],
     proofs [many [LalinMem.MemProof]],
   },
+  product. MemIndexOffsetEntry {
+    interned,
+    field. value [LalinCode.CodeValueId],
+    base [LalinCode.CodeValueId],
+    element_offset [number],
+  },
   product. MemIndexClassifyInput {
     interned,
     field. value [LalinCode.CodeValueId],
     elem_size [number],
     const_offset [number],
+    offsets [many [LalinMem.MemIndexOffsetEntry]],
+    flow [LalinFlow.FlowFactSet],
   },
   product. MemPlaceResolveInput {
     func [LalinCode.CodeFuncId],
@@ -656,6 +666,8 @@ return schema. LalinMem {
     data [many [LalinMem.MemDataObjectEntry]],
     objects [many [LalinMem.MemObjectFact]],
     inductions [LalinFlow.FlowInductionProjection],
+    index_offsets [many [LalinMem.MemIndexOffsetEntry]],
+    flow [LalinFlow.FlowFactSet],
   },
   sum. MemPlaceResolveResult {
     MemPlaceResolved { variant_unique, object [LalinMem.MemObjectId], base [LalinMem.MemBase], index [LalinMem.MemIndex], discoveries [LalinMem.MemPlaceDiscoveries], },
@@ -683,6 +695,7 @@ return schema. LalinMem {
     values [many [LalinMem.MemValueObjectEntry]],
     locals [many [LalinMem.MemLocalObjectEntry]],
     constants [many [LalinMem.MemConstantEntry]],
+    index_offsets [many [LalinMem.MemIndexOffsetEntry]],
     loaded_places [many [LalinMem.MemLoadedPlaceEntry]],
     scaled_strides [many [LalinMem.MemScaledStrideEntry]],
     objects [many [LalinMem.MemObjectFact]],
@@ -702,6 +715,7 @@ return schema. LalinMem {
     globals [many [LalinMem.MemGlobalObjectEntry]],
     data [many [LalinMem.MemDataObjectEntry]],
     inductions [LalinFlow.FlowInductionProjection],
+    flow [LalinFlow.FlowFactSet],
     facet [LalinMem.MemTransferFacet],
   },
   sum. MemInstructionTransferResult {

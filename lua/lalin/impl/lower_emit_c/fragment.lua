@@ -1684,7 +1684,7 @@ function Stencil.StencilProducerForward:cmat_fragment_window_bounds(input)
   local extent = upper.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
     "window_domain_extent", Core.BinAdd, span.atom, one, input.body.start.ty))
   local bounds = CMat.CMatCFragmentWindowBounds(
-    extent.state, input.body.start.atom, upper.atom, extent.atom)
+    extent.state, input.body.start.ty, input.body.start.atom, upper.atom, extent.atom)
   return bounds:cmat_fragment_install_window(
     CMat.CMatCFragmentWindowInstallInput(input.plan, bounds))
 end
@@ -1704,7 +1704,7 @@ function Stencil.StencilProducerBackward:cmat_fragment_window_bounds(input)
   local extent = lower.state:cmat_window_binary(CMat.CMatCWindowBinaryInput(
     "window_domain_extent", Core.BinAdd, span.atom, one, input.body.start.ty))
   local bounds = CMat.CMatCFragmentWindowBounds(
-    extent.state, lower.atom, input.body.start.atom, extent.atom)
+    extent.state, input.body.start.ty, lower.atom, input.body.start.atom, extent.atom)
   return bounds:cmat_fragment_install_window(
     CMat.CMatCFragmentWindowInstallInput(input.plan, bounds))
 end
@@ -1712,7 +1712,27 @@ function CMat.CMatCFragmentWindowBounds:cmat_fragment_install_window(input)
   return CMat.CMatCFragmentStateReady(self.state:cmat_fragment_with_window(
     CMat.CMatCFragmentWindow1D(
       input.plan.axis, input.plan.window, self.lower, self.upper, self.extent,
-      input.bounds.state.index.ty)))
+      self.index_ty)))
+end
+function Code.CodeType:cmat_fragment_prepare_window_bounds(input)
+  return self:cmat_fragment_validate_window_plan(input.body)
+    :cmat_fragment_compute_window_bounds(input)
+end
+function Code.CodeTyIndex:cmat_fragment_prepare_window_bounds(input)
+  local signed_ty = Code.CodeTyInt(64, Code.CodeSigned):code_to_c_backend_type()
+  local start_alloc = input.state:cmat_fragment_allocate("window_start_signed", signed_ty)
+  local state = start_alloc.state:cmat_fragment_add_body(C.CBackendAssign(
+    start_alloc.c_local.id, C.CBackendRCast(
+      Core.MachineCastIdentity, signed_ty, input.body.start.atom)))
+  local trip_alloc = state:cmat_fragment_allocate("window_trip_signed", signed_ty)
+  state = trip_alloc.state:cmat_fragment_add_body(C.CBackendAssign(
+    trip_alloc.c_local.id, C.CBackendRCast(
+      Core.MachineCastIdentity, signed_ty, input.body.trip.atom)))
+  local body = CMat.CMatCFragmentPlanBodyInput(state,
+    CMat.CMatCFragmentBoundEmitted(state, C.CBackendAtomLocal(start_alloc.c_local.id), signed_ty),
+    CMat.CMatCFragmentBoundEmitted(state, C.CBackendAtomLocal(trip_alloc.c_local.id), signed_ty))
+  return input.plan.axis.order:cmat_fragment_window_bounds(
+    CMat.CMatCFragmentWindowBoundsInput(state, input.plan, body))
 end
 function CMat.CMatCFragmentWindowPlan:cmat_fragment_prepare_body(input)
   if input.start.ty ~= self.materialization.provenance.iteration.index_ty:code_to_c_backend_type()
@@ -1722,8 +1742,7 @@ function CMat.CMatCFragmentWindowPlan:cmat_fragment_prepare_body(input)
         "window start/trip types disagree with exact iteration")
     })
   end
-  return self.axis.index_ty:cmat_fragment_validate_window_plan(input)
-:cmat_fragment_compute_window_bounds(
+  return self.axis.index_ty:cmat_fragment_prepare_window_bounds(
     CMat.CMatCFragmentWindowBoundsInput(input.state, self, input))
 end
 function CMat.CMatCFragmentBoundEmitted:cmat_fragment_continue_trip(continuation)

@@ -134,7 +134,7 @@ local access = Mem.MemAccessFact(
   place,
   memory_access,
   Mem.MemBaseValue(ptr),
-  Mem.MemIndexInduction(induction, 4, 0),
+  Mem.MemIndexInduction(induction, induction.value, 4, 0, 0),
   Mem.MemAccessScalar,
   Mem.MemAlignKnown(4),
   Mem.MemBoundsInObject("counted loop access"),
@@ -242,7 +242,8 @@ assert(projected.projection.provenance.kernel == store_kernel)
 assert(projected.projection.provenance.iteration.counter == index)
 assert(projected.projection.provenance.accesses.entries[1].lane ==
   store_kernel.body.lanes.entries[1].lane)
-assert(projected.projection.provenance.streams.entries[3].source == stored)
+assert(#projected.projection.provenance.streams.entries == 1)
+assert(projected.projection.provenance.streams.entries[1].source == stored)
 local canonical_materialization = projected.projection:cmat_materialize_kernel(
   CMat.CMatKernelMaterializationInput(CMat.CMatKernelId("kernel:store")))
 assert(canonical_materialization.provenance == projected.projection.provenance)
@@ -262,7 +263,7 @@ assert(computation.producer.shape.stop_convention ==
 assert(#computation.accesses == 1)
 assert(computation.accesses[1].layout.base.stride == 4)
 assert(computation.accesses[1].role == Stencil.StencilAccessWrite)
-assert(#computation.streams == 3)
+assert(#computation.streams == 1)
 assert(#computation.sinks == 1)
 assert(computation.sinks[1].op.dst.name == computation.accesses[1].name)
 assert(computation.sinks[1].op.index == Stencil.StencilIndexProducer)
@@ -314,10 +315,10 @@ assert(control_provenance.src_value == stored)
 assert(control_provenance.pred == Stencil.StencilPredNonZero)
 assert(control_provenance.success == control_success)
 assert(control_provenance.failure == control_failure)
-local control_stream = control_projection.provenance.streams.entries[4]
+local control_stream = control_projection.provenance.streams.entries[1]
 assert(control_stream.source == stored)
 assert(control_stream.binding == planned.body.bindings.entries[3].binding)
-assert(control_stream.definition == control_projection.computation.streams[4])
+assert(control_stream.definition == control_projection.computation.streams[1])
 assert(control_projection.computation.sinks[1] ==
   Stencil.StencilSinkDef(control_provenance.sink,
     Stencil.StencilSinkOpAll(control_provenance.src, control_provenance.pred)))
@@ -516,9 +517,8 @@ local mismatched_exit = CMat.CMatCFragmentInput(
   CMat.CMatCFragmentNamespace("typed_exit"), {}):emit_cmat_fragment()
 assert(asdl.classof(mismatched_exit) == CMat.CMatCFragmentRejected)
 local wrong_trip_values = CMat.CMatCExternalValueBindingProjection({
-  external_values.entries[1],
   CMat.CMatCExternalValueBindingEntry(
-    trip.count, C.CBackendLocal(
+    computation.producer.shape.trip.trip_count.count, C.CBackendLocal(
       C.CBackendLocalId("trip64"), C.CBackendName("trip64"), c_i64)),
   external_values.entries[3],
 })

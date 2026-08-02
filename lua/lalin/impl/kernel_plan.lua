@@ -1,6 +1,7 @@
 -- impl/kernel_plan.lua — typed kernel loop-fact projection and planning.
 require("lalin.schema_v2")
 require("lalin.impl.code_mem")
+require("lalin.impl.code_flow")
 local Code = require("lalin.schema_v2.code")
 local Graph = require("lalin.schema_v2.graph")
 local Flow = require("lalin.schema_v2.flow")
@@ -108,8 +109,8 @@ function Kernel.KernelClosedFormMissing:kernel_candidate(projection, fact)
   return projection:lookup_reductions(fact.loop):kernel_candidate(fact)
 end
 function Kernel.KernelReductionFound:kernel_candidate(fact) return Kernel.KernelLoopReductionCandidate(self.entries[1].reduction) end
-function Kernel.KernelReductionMissing:kernel_candidate(fact)
-  return Kernel.KernelLoopOriginalControlCandidate({ Kernel.KernelRejectNoFacts(Kernel.KernelSubjectLoop(fact.loop), "no closed-form, reduction, or skeleton candidate") })
+function Kernel.KernelReductionMissing:kernel_candidate(_fact)
+  return Kernel.KernelLoopSkeletonCandidate(Kernel.KernelResultVoid)
 end
 function Kernel.KernelLoopCounted:kernel_candidate(projection, fact) return projection:lookup_closed_forms(fact.loop):kernel_candidate(projection, fact) end
 function Kernel.KernelLoopNotCountedEvidence:kernel_candidate(projection, fact) return Kernel.KernelLoopNotCounted({ self.reject }) end
@@ -198,7 +199,12 @@ end
 function Kernel.KernelLoopPlanReduction:materialize_kernel_build(request, build)
   return planned(request, build, Kernel.KernelResultReduction(self.reduction), { Kernel.KernelProofValue(self.reduction.proof, "reduction fact") })
 end
-function Kernel.KernelLoopPlanSkeleton:materialize_kernel_build(request, build) return planned(request, build, self.result, {}) end
+function Kernel.KernelLoopPlanSkeleton:materialize_kernel_build(request, build)
+  if #build.effects.entries == 0 then
+    return Kernel.KernelNoPlan(Kernel.KernelSubjectLoop(request.fact.loop), {})
+  end
+  return planned(request, build, self.result, {})
+end
 
 function Kernel.KernelNoPlan:schedule_eligibility() return Kernel.KernelScheduleIneligible(self.subject, self.rejects) end
 function Kernel.KernelPlanned:schedule_eligibility() return Kernel.KernelScheduleEligible(self) end
@@ -420,21 +426,79 @@ function Effect.EffectFactSet:kernel_analyze_instruction_effects(input, analysis
   end
   return current
 end
-function Mem.MemIndexNone:kernel_index_expr() return Value.ValueExprConst(Code.CodeConstLiteral(Code.CodeTyIndex, require("lalin.schema_v2.core").LitInt("0"))) end
-function Mem.MemIndexValue:kernel_index_expr() return Value.ValueExprValue(self.value) end
-function Mem.MemIndexInduction:kernel_index_expr() return Value.ValueExprValue(self.induction.value) end
+function Value.ValueFact:kernel_index_expr_contribution(_value, current) return current end
+function Value.ValueExprFact:kernel_index_expr_contribution(value, current)
+  if self.value == value then return self.expr end
+  return current
+end
+function Value.ValueFactSet:kernel_index_expr(value)
+  local result = Value.ValueExprValue(value)
+  for i = 1, #self.values do
+    result = self.values[i]:kernel_index_expr_contribution(value, result)
+  end
+  return result
+end
+function Value.ValueExpr:kernel_resolve_index_expr(_flow, _values) return self end
+function Value.ValueExprValue:kernel_resolve_index_expr(flow, values)
+  return flow:kernel_resolve_index_value(
+    Kernel.KernelIndexExprProjectionInput(values, self.value))
+end
+function Value.ValueExprAffine:kernel_resolve_index_expr(_flow, _values)
+  local affine = self.affine
+  if tonumber(affine.constant) == 0 and #affine.terms == 1
+      and tonumber(affine.terms[1].coeff) == 1 then
+    return Value.ValueExprValue(affine.terms[1].value)
+  end
+  return self
+end
+function Value.ValueExprCast:kernel_resolve_index_expr(flow, values)
+  return Value.ValueExprCast(self.op, self.from, self.to,
+    self.value:kernel_resolve_index_expr(flow, values))
+end
+function Value.ValueExprAdd:kernel_resolve_index_expr(flow, values)
+  return Value.ValueExprAdd(self.a:kernel_resolve_index_expr(flow, values),
+    self.b:kernel_resolve_index_expr(flow, values), self.ty, self.sem)
+end
+function Value.ValueExprSub:kernel_resolve_index_expr(flow, values)
+  return Value.ValueExprSub(self.a:kernel_resolve_index_expr(flow, values),
+    self.b:kernel_resolve_index_expr(flow, values), self.ty, self.sem)
+end
+function Flow.FlowFactSet:kernel_resolve_index_value(input)
+  local found = {}
+  for i = 1, #self.edges do
+    for j = 1, #self.edges[i].args do
+      local arg = self.edges[i].args[j]
+      if arg.dst_param == input.value then found[#found + 1] = arg.src end
+    end
+  end
+  if #found == 1 and found[1] ~= input.value then
+    return input.values:kernel_index_expr(found[1])
+      :kernel_resolve_index_expr(self, input.values)
+  end
+  return input.values:kernel_index_expr(input.value)
+end
+function Mem.MemIndexNone:kernel_index_expr(_input) return Value.ValueExprConst(Code.CodeConstLiteral(Code.CodeTyIndex, require("lalin.schema_v2.core").LitInt("0"))) end
+function Mem.MemIndexValue:kernel_index_expr(input)
+  return input.values:kernel_index_expr(self.value)
+    :kernel_resolve_index_expr(input.flow, input.values)
+end
+function Mem.MemIndexInduction:kernel_index_expr(input)
+  return input.values:kernel_index_expr(self.value)
+    :kernel_resolve_index_expr(input.flow, input.values)
+end
 function Kernel.KernelLaneMissing:kernel_bind_load(input, analysis, op, access)
   return analysis:kernel_reject(input.fact, Kernel.KernelRejectUnsupportedMemory(access.id, "load has no analyzed kernel lane"))
 end
 function Kernel.KernelLaneFound:kernel_bind_load(input, analysis, op, access)
-  return analysis:kernel_add_binding(input, op.dst, op.access.ty, Kernel.KernelExprLaneLoad(self.entry.lane, access.index:kernel_index_expr()))
+  return analysis:kernel_add_binding(input, op.dst, op.access.ty, Kernel.KernelExprLaneLoad(self.entry.lane, access.index:kernel_index_expr(input)))
 end
 function Kernel.KernelLaneMissing:kernel_store_effect(input, analysis, op, access, inst)
   return analysis:kernel_reject(input.fact, Kernel.KernelRejectUnsupportedMemory(access.id, "store has no analyzed kernel lane"))
 end
 function Kernel.KernelLaneFound:kernel_store_effect(input, analysis, op, access, inst)
   local value = analysis.build.bindings:lookup(op.value):kernel_effect_value()
-  return analysis:kernel_add_effect(input, inst, Kernel.KernelEffectStore(self.entry.lane, access.index:kernel_index_expr(), value))
+  return analysis:kernel_add_effect(input, inst, Kernel.KernelEffectStore(
+    self.entry.lane, access.index:kernel_index_expr(input), value))
 end
 
 local function access_for_instruction(input, func, block, inst)
@@ -510,5 +574,8 @@ function Kernel.KernelModulePlanRequest:plan_kernels()
   return Kernel.KernelModulePlan(self.module.id, self.flow, self.values, self.mem, self.effects, plans)
 end
 function Mem.MemSemanticFactSet:plan_kernels(module, graph, flow, values, effects)
-  return Kernel.KernelModulePlanRequest(module, graph, flow, values, self, effects, values:project_kernel_trips()):plan_kernels()
+  local semantic_trips = flow:compute_semantic_flow(module, graph):project_kernel_trips()
+  local trips = semantic_trips:merged(values:project_kernel_trips())
+  return Kernel.KernelModulePlanRequest(
+    module, graph, flow, values, self, effects, trips):plan_kernels()
 end

@@ -48,6 +48,24 @@ end
 function Tr.FuncExport:surface_resolve_item(mod_name)
   return Tr.FuncLocal:surface_resolve_item(self, mod_name)
 end
+function Tr.FuncLocalContract:surface_resolve_item(mod_name)
+  local params = {}
+  for i = 1, #(self.params or {}) do
+    local p = self.params[i]
+    params[i] = Ty.Param(p.name, p.ty:tree_surface_resolve_ty(mod_name), p.attrs)
+  end
+  return Tr.FuncLocalContract(self.name, params,
+    self.result:tree_surface_resolve_ty(mod_name), self.contracts, self.body)
+end
+function Tr.FuncExportContract:surface_resolve_item(mod_name)
+  local params = {}
+  for i = 1, #(self.params or {}) do
+    local p = self.params[i]
+    params[i] = Ty.Param(p.name, p.ty:tree_surface_resolve_ty(mod_name), p.attrs)
+  end
+  return Tr.FuncExportContract(self.name, params,
+    self.result:tree_surface_resolve_ty(mod_name), self.contracts, self.body)
+end
 
 -- Type resolution methods (below are unchanged)
 function Tr.TypeDeclStruct:tree_surface_resolve(mod_name)

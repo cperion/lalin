@@ -1,722 +1,319 @@
 -- lalin.syntax_v2.for_to_loop
--- Lowers parsed StmtForRange into LalinTree.ControlStmtRegion/ControlExprRegion.
--- Adapted from lalin.syntax.for_to_loop for the v2 pipeline (expressions are
--- already Tree.Expr, statements are already Tree.Stmt).
-
-local asdl = require("lalin.asdl")
+-- Typed parsed-domain lowering into an explicit Tree control region.
 
 local function bind_context(T)
-  assert(T and T.LalinCore and T.LalinTree and T.LalinType and T.LalinBind,
-    "lalin.syntax_v2.for_to_loop(T) expects a projected Lalin schema context")
-  local C, Ty, B, Tr = T.LalinCore, T.LalinType, T.LalinBind, T.LalinTree
-  local llbl = require("llbl")
-
-  -- Minimal to_tree adapter for v2: expressions are already Tree.Expr,
-  -- statements are already Tree.Stmt.  Only types need resolution from HostEval.
-  local to_tree = {}
-
-  function to_tree.expr(v)
-    if v == nil then return nil end
-    local cls = asdl.classof(v)
-    if cls then return v end
-    if type(v) == "table" and v.tag then
-      -- Could be a synthetic Record/Literal from domain parsing
-      return nil -- handled by ast_scalar/ast_record
-    end
-    if type(v) == "number" then
-      return Tr.ExprLit(Tr.ExprSurface,
-        (v == v and v % 1 == 0) and C.LitInt(tostring(v)) or C.LitFloat(tostring(v)))
-    end
-    if type(v) == "string" then
-      return Tr.ExprLit(Tr.ExprSurface, C.LitString(v))
-    end
-    if type(v) == "boolean" then
-      return Tr.ExprLit(Tr.ExprSurface, C.LitBool(v))
-    end
-    return v
-  end
-
-  function to_tree.stmts(list)
-    -- Body stmts are already Tree.Stmt in v2
-    return list or {}
-  end
-
-  function to_tree.parsed_type(ptype)
-    if ptype == nil then return Ty.TScalar(C.ScalarVoid) end
-    local cls = asdl.classof(ptype)
-    if cls then return ptype end
-    if llbl.is(ptype, "HostEval") then
-      return llbl.host_eval.value(ptype, { env = _G })
-    end
-    if type(ptype) == "table" and ptype.tag == "HostEscape" then
-      return ptype.value
-    end
-    return Ty.TScalar(C.ScalarVoid)
-  end
-
-  function to_tree.place(v)
-    local cls = asdl.classof(v)
-    if cls == Tr.PlaceRef or cls == Tr.PlaceDot or cls == Tr.PlaceIndex or cls == Tr.PlaceDeref then
-      return v
-    end
-    if cls == Tr.ExprRef then
-      return Tr.PlaceRef(Tr.PlaceSurface, v.ref)
-    elseif cls == Tr.ExprDot then
-      return Tr.PlaceDot(Tr.PlaceSurface, to_tree.place(v.base), v.name)
-    elseif cls == Tr.ExprIndex then
-      return Tr.PlaceIndex(Tr.PlaceSurface, v.base, v.index)
-    elseif cls == Tr.ExprDeref then
-      return Tr.PlaceDeref(Tr.PlaceSurface, v.value)
-    end
-    return v
-  end
-
-  function to_tree.product_fields(fields)
-    return fields or {}
-  end
-
-  function to_tree.variants(variants)
-    return variants or {}
-  end
-
-  function to_tree.conts(exits)
-    return exits or {}
-  end
-
-  function to_tree.decls(value)
-    return value or {}
-  end
-
-  function to_tree.switch_key(k)
-    local cls = asdl.classof(k)
-    if cls == Tr.SwitchKeyInt or cls == Tr.SwitchKeyBool or cls == Tr.SwitchKeyName or cls == Tr.SwitchKeyExpr then
-      return k
-    end
-    return Tr.SwitchKeyExpr(to_tree.expr(k))
-  end
-
-  local M = {}
-  local loop_seq = 0
+  local C, Ty, B, Tr, P = T.LalinCore, T.LalinType, T.LalinBind, T.LalinTree, T.LalinParse
   local idx_ty = Ty.TScalar(C.ScalarIndex)
 
-  local function binding(name, ty)
-    return B.Binding(C.Id("parsed." .. tostring(name)), name, ty, B.BindingRoleLocalValue)
-  end
-
   local function lit(n)
-    -- Create a Tree.ExprLit directly (v2 style)
-    if type(n) == "number" then
-      if n == n and n % 1 == 0 then
-        return Tr.ExprLit(Tr.ExprSurface, C.LitInt(tostring(n)))
-      end
-      return Tr.ExprLit(Tr.ExprSurface, C.LitFloat(tostring(n)))
-    end
-    return Tr.ExprLit(Tr.ExprSurface, C.LitInt(tostring(n or 0)))
+    return Tr.ExprLit(Tr.ExprSurface, C.LitInt(tostring(n)))
+  end
+  local function ref(name)
+    return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(name))
+  end
+  local function cast_idx(expr)
+    return Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, idx_ty, expr)
+  end
+  local function bin(op, lhs, rhs)
+    return Tr.ExprBinary(Tr.ExprSurface, op, lhs, rhs)
   end
 
-  local function ast_scalar(v)
-    if type(v) ~= "table" then return v end
-    -- Handle old-style parsed AST Literal (from synthetic_record)
-    if v.tag == "Literal" then
-      if v.kind == "string" then
-        local raw = tostring(v.source or "")
-        return raw:sub(1, 1) == raw:sub(-1) and raw:sub(2, -2) or raw
-      end
-      return v.value
+  function Tr.Expr:parsed_loop_integer()
+    return P.ParsedLoopIntegerRejected("loop extent must be an integer literal")
+  end
+  function Tr.ExprLit:parsed_loop_integer()
+    return self.value:parsed_loop_integer_literal()
+  end
+  function Tr.ExprCast:parsed_loop_integer()
+    return self.value:parsed_loop_integer()
+  end
+  function C.Literal:parsed_loop_integer_literal()
+    return P.ParsedLoopIntegerRejected("loop extent must be an integer literal")
+  end
+  function C.LitInt:parsed_loop_integer_literal()
+    local value = tonumber(self.raw)
+    if value == nil or value ~= math.floor(value) then
+      return P.ParsedLoopIntegerRejected("loop extent must be an integer literal")
     end
-    -- Handle v2 Tree.ExprLit
-    local cls = asdl.classof(v)
-    if cls == Tr.ExprLit then
-      local litcls = asdl.classof(v.value)
-      if litcls == C.LitInt then return tonumber(v.value.raw) or 0 end
-      if litcls == C.LitBool then return v.value.value end
-      if litcls == C.LitString then return v.value.bytes end
-      if litcls == C.LitFloat then return tonumber(v.value.raw) or 0 end
-    end
-    -- Handle v2 Tree.ExprCast (cast to index type)
-    if cls == Tr.ExprCast then return ast_scalar(v.value) end
-    return v
+    return P.ParsedLoopInteger(value)
+  end
+  function P.ParsedLoopInteger:parsed_loop_integer_value(_site) return self.value end
+  function P.ParsedLoopIntegerRejected:parsed_loop_integer_value(site)
+    error(tostring(site) .. ": " .. self.reason, 2)
   end
 
-  local function ast_record(v)
-    if type(v) ~= "table" then return nil end
-    -- Old-style Record
-    if v.tag == "Record" then
-      local out = {}
-      for _, f in ipairs(v.fields or {}) do
-        local value = ast_scalar(f.value)
-        if f.key then out[f.key] = value else out[#out + 1] = value end
-      end
-      return out
-    end
-    -- v2 ExprAgg (named record) - return field inits
-    local cls = asdl.classof(v)
-    if cls == Tr.ExprAgg then
-      local out = {}
-      for _, f in ipairs(v.fields or {}) do
-        local value = ast_scalar(f.value)
-        if f.name then out[f.name] = value else out[#out + 1] = value end
-      end
-      return out
-    end
-    if cls == Tr.ExprArray then
-      local out = {}
-      for i, e in ipairs(v.elems or {}) do
-        out[i] = ast_scalar(e)
-      end
-      return out
-    end
-    return nil
+  function P.ParsedLoopAxis:resolve_parsed_loop_axis()
+    local step = self.step:parsed_loop_integer():parsed_loop_integer_value("loop step")
+    if step == 0 then error("loop step must be nonzero", 2) end
+    if step < 0 then error("backward parsed loops are not implemented", 2) end
+    return P.ParsedResolvedLoopAxis(
+      self.start, self.stop, step, Tr.ControlLoopForward, idx_ty)
+  end
+  function P.ParsedWindowAxis:resolve_parsed_window_axis()
+    local before = self.before:parsed_loop_integer():parsed_loop_integer_value("window before")
+    local after = self.after:parsed_loop_integer():parsed_loop_integer_value("window after")
+    if before < 0 or after < 0 then error("window extents must be nonnegative", 2) end
+    return P.ParsedResolvedWindowAxis(before, after, self.boundary)
   end
 
-  local function ast_table(v)
-    local record = ast_record(v)
-    if not record then return ast_scalar(v) end
-    for k, value in pairs(record) do
-      if type(value) == "table" and (value.tag == "Record" or asdl.classof(value)) then
-        if asdl.classof(value) == Tr.ExprAgg or asdl.classof(value) == Tr.ExprArray then
-          record[k] = ast_table(value)
-        end
-      end
+  local function resolve_axes(axes)
+    local out = {}
+    for i = 1, #axes do out[i] = axes[i]:resolve_parsed_loop_axis() end
+    return out
+  end
+  function P.ParsedLoopRangeND:resolve_parsed_loop_domain()
+    return P.ParsedResolvedLoopRangeND(resolve_axes(self.axes))
+  end
+  function P.ParsedLoopWindowND:resolve_parsed_loop_domain()
+    if #self.axes ~= #self.windows then error("window domain axis/window arity mismatch", 2) end
+    local windows = {}
+    for i = 1, #self.windows do windows[i] = self.windows[i]:resolve_parsed_window_axis() end
+    return P.ParsedResolvedLoopWindowND(resolve_axes(self.axes), windows)
+  end
+  function P.ParsedLoopTiledND:resolve_parsed_loop_domain()
+    local tiles = {}
+    for i = 1, #self.tile_sizes do
+      tiles[i] = self.tile_sizes[i]:parsed_loop_integer():parsed_loop_integer_value("tile size")
+      if tiles[i] <= 0 then error("tile sizes must be positive", 2) end
     end
-    return record
+    return P.ParsedResolvedLoopTiledND(resolve_axes(self.axes), tiles)
   end
 
-  local function expr_from_value(v)
-    if type(v) == "table" then
-      local cls = asdl.classof(v)
-      if cls then return v end
-      if v.tag then
-        -- It's a parsed Record/Name/etc — convert to Tree
-        if v.tag == "Literal" then return lit(v.value) end
-        if v.tag == "Name" then
-          return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(v.name))
-        end
-        return Tr.ExprLit(Tr.ExprSurface, C.LitInt(tostring(v.value or 0)))
-      end
-    end
-    return lit(v)
+  local lower_1d_no_sink
+  function P.ParsedResolvedLoopSink:lower_parsed_loop_1d(_input, _domain)
+    return P.ParsedLoopLowerRejected(
+      "fold/scan lowering is not implemented on the schema-v2 parsed path")
+  end
+  function P.ParsedResolvedLoopNoSink:lower_parsed_loop_1d(input, domain)
+    return lower_1d_no_sink(input, domain)
   end
 
-  local function source_zero(v)
-    return type(v) == "number" and v == 0
+
+  function B.ValueRef:parsed_loop_rewrite_index(_input, original) return original end
+  function B.ValueRefName:parsed_loop_rewrite_index(input, original)
+    if self.name == input.index_name then return input.replacement end
+    return original
+  end
+  function Tr.Expr:parsed_loop_rewrite_index(_input) return self end
+  function Tr.ExprRef:parsed_loop_rewrite_index(input)
+    return self.ref:parsed_loop_rewrite_index(input, self)
+  end
+  local function rewrite_exprs(values, input)
+    local out = {}
+    for i = 1, #values do out[i] = values[i]:parsed_loop_rewrite_index(input) end
+    return out
+  end
+  local function rewrite_stmts(values, input)
+    local out = {}
+    for i = 1, #values do out[i] = values[i]:parsed_loop_rewrite_index(input) end
+    return out
+  end
+  function Tr.ExprUnary:parsed_loop_rewrite_index(input)
+    return Tr.ExprUnary(self.h, self.op, self.value:parsed_loop_rewrite_index(input))
+  end
+  function Tr.ExprLogic:parsed_loop_rewrite_index(input)
+    return Tr.ExprLogic(self.h, self.op,
+      self.lhs:parsed_loop_rewrite_index(input), self.rhs:parsed_loop_rewrite_index(input))
+  end
+  function Tr.ExprMachineCast:parsed_loop_rewrite_index(input)
+    return Tr.ExprMachineCast(self.h, self.op, self.ty,
+      self.value:parsed_loop_rewrite_index(input))
+  end
+  function Tr.ExprCall:parsed_loop_rewrite_index(input)
+    return Tr.ExprCall(self.h, self.callee:parsed_loop_rewrite_index(input),
+      rewrite_exprs(self.args, input))
+  end
+  function Tr.ExprDot:parsed_loop_rewrite_index(input)
+    return Tr.ExprDot(self.h, self.base:parsed_loop_rewrite_index(input), self.name)
+  end
+  function Tr.ExprDeref:parsed_loop_rewrite_index(input)
+    return Tr.ExprDeref(self.h, self.value:parsed_loop_rewrite_index(input))
+  end
+  function Tr.ExprLen:parsed_loop_rewrite_index(input)
+    return Tr.ExprLen(self.h, self.value:parsed_loop_rewrite_index(input))
+  end
+  function Tr.ExprField:parsed_loop_rewrite_index(input)
+    return Tr.ExprField(self.h, self.base:parsed_loop_rewrite_index(input), self.field)
+  end
+  function Tr.ExprIf:parsed_loop_rewrite_index(input)
+    return Tr.ExprIf(self.h, self.cond:parsed_loop_rewrite_index(input),
+      self.then_expr:parsed_loop_rewrite_index(input),
+      self.else_expr:parsed_loop_rewrite_index(input))
+  end
+  function Tr.ExprSelect:parsed_loop_rewrite_index(input)
+    return Tr.ExprSelect(self.h, self.cond:parsed_loop_rewrite_index(input),
+      self.then_expr:parsed_loop_rewrite_index(input),
+      self.else_expr:parsed_loop_rewrite_index(input))
+  end
+  function Tr.ExprCast:parsed_loop_rewrite_index(input)
+    return Tr.ExprCast(self.h, self.op, self.ty, self.value:parsed_loop_rewrite_index(input))
+  end
+  function Tr.ExprBinary:parsed_loop_rewrite_index(input)
+    return Tr.ExprBinary(self.h, self.op,
+      self.lhs:parsed_loop_rewrite_index(input), self.rhs:parsed_loop_rewrite_index(input))
+  end
+  function Tr.ExprCompare:parsed_loop_rewrite_index(input)
+    return Tr.ExprCompare(self.h, self.op,
+      self.lhs:parsed_loop_rewrite_index(input), self.rhs:parsed_loop_rewrite_index(input))
+  end
+  function Tr.IndexBase:parsed_loop_rewrite_index(_input) return self end
+  function Tr.IndexBaseExpr:parsed_loop_rewrite_index(input)
+    return Tr.IndexBaseExpr(self.base:parsed_loop_rewrite_index(input))
+  end
+  function Tr.IndexBasePlace:parsed_loop_rewrite_index(input)
+    return Tr.IndexBasePlace(self.base:parsed_loop_rewrite_index(input), self.elem)
+  end
+  function Tr.ExprIndex:parsed_loop_rewrite_index(input)
+    return Tr.ExprIndex(self.h, self.base:parsed_loop_rewrite_index(input),
+      self.index:parsed_loop_rewrite_index(input))
+  end
+  function Tr.Place:parsed_loop_rewrite_index(_input) return self end
+  function Tr.PlaceDeref:parsed_loop_rewrite_index(input)
+    return Tr.PlaceDeref(self.h, self.base:parsed_loop_rewrite_index(input))
+  end
+  function Tr.PlaceField:parsed_loop_rewrite_index(input)
+    return Tr.PlaceField(self.h, self.base:parsed_loop_rewrite_index(input), self.field)
+  end
+  function Tr.PlaceIndex:parsed_loop_rewrite_index(input)
+    return Tr.PlaceIndex(self.h, self.base:parsed_loop_rewrite_index(input),
+      self.index:parsed_loop_rewrite_index(input))
+  end
+  function Tr.PlaceDot:parsed_loop_rewrite_index(input)
+    return Tr.PlaceDot(self.h, self.base:parsed_loop_rewrite_index(input), self.name)
+  end
+  function Tr.Stmt:parsed_loop_rewrite_index(_input) return self end
+  function Tr.StmtSet:parsed_loop_rewrite_index(input)
+    return Tr.StmtSet(self.h, self.place:parsed_loop_rewrite_index(input),
+      self.value:parsed_loop_rewrite_index(input))
+  end
+  function Tr.StmtLet:parsed_loop_rewrite_index(input)
+    return Tr.StmtLet(self.h, self.binding, self.init:parsed_loop_rewrite_index(input))
+  end
+  function Tr.StmtVar:parsed_loop_rewrite_index(input)
+    return Tr.StmtVar(self.h, self.binding, self.init:parsed_loop_rewrite_index(input))
+  end
+  function Tr.StmtIf:parsed_loop_rewrite_index(input)
+    return Tr.StmtIf(self.h, self.cond:parsed_loop_rewrite_index(input),
+      rewrite_stmts(self.then_body, input), rewrite_stmts(self.else_body, input))
+  end
+  function Tr.StmtAssert:parsed_loop_rewrite_index(input)
+    return Tr.StmtAssert(self.h, self.cond:parsed_loop_rewrite_index(input))
+  end
+  function Tr.StmtReturnValue:parsed_loop_rewrite_index(input)
+    return Tr.StmtReturnValue(self.h, self.value:parsed_loop_rewrite_index(input))
+  end
+  function Tr.StmtExpr:parsed_loop_rewrite_index(input)
+    return Tr.StmtExpr(self.h, self.expr:parsed_loop_rewrite_index(input))
   end
 
-  local function axis_from_spec(spec)
-    spec = ast_table(spec)
-    if type(spec) ~= "table" then error("parsed range_nd axes expect { start, stop } ranges", 2) end
-    local start = spec.start or spec[1] or 0
-    local stop = spec.stop or spec[2]
-    if stop == nil then error("parsed range_nd axis expects a stop bound", 2) end
-    local step = spec.step or spec[3] or 1
-    if type(step) ~= "number" or step == 0 then error("parsed range_nd axis step must be a non-zero numeric literal", 2) end
-    return {
-      ty = step < 0 and Ty.TScalar(C.ScalarI32) or idx_ty,
-      start = start,
-      stop = stop,
-      step = math.abs(step),
-      order = step < 0 and "backward" or "forward",
-    }
-  end
-
-  local function domain_from_parsed(parsed)
-    local spec = ast_table((parsed.args or {})[1])
-    if type(spec) ~= "table" then error("parsed " .. tostring(parsed.producer) .. " expects a record/table argument", 2) end
-    local axes_src = ast_table(spec.axes or spec)
+  local function control_axes(input, domain)
     local axes = {}
-    if type(axes_src) == "table" and axes_src.tag == "Record" then axes_src = ast_table(axes_src) end
-    for i = 1, #axes_src do axes[i] = axis_from_spec(axes_src[i]) end
-    if #axes == 0 then error("parsed " .. tostring(parsed.producer) .. " expects at least one axis", 2) end
-    if parsed.producer == "range_nd" then
-      return { kind = "range_nd", axes = axes }
-    elseif parsed.producer == "tiled_nd" then
-      local tiles = ast_table(spec.tiles or spec.tile_sizes or spec.tile)
-      if type(tiles) ~= "table" or #tiles ~= #axes then error("parsed tiled_nd expects one tile size per axis", 2) end
-      local out = {}
-      for i = 1, #tiles do
-        local n = tonumber(tiles[i])
-        if n == nil or math.floor(n) ~= n or n <= 0 then error("parsed tiled_nd tile sizes must be positive integer literals", 2) end
-        out[i] = n
-      end
-      return { kind = "tiled_nd", axes = axes, tile_sizes = out }
-    elseif parsed.producer == "window_nd" then
-      local windows_src = ast_table(spec.windows or spec.window)
-      if type(windows_src) ~= "table" or #windows_src ~= #axes then error("parsed window_nd expects one window per axis", 2) end
-      local windows = {}
-      for i = 1, #windows_src do
-        local w = ast_table(windows_src[i])
-        if type(w) ~= "table" then error("parsed window_nd windows expect records", 2) end
-        local before = tonumber(w.before or w[1] or 0)
-        local after = tonumber(w.after or w[2] or 0)
-        local boundary = w.boundary or "reject"
-        if boundary ~= "reject" and boundary ~= "clamp" and boundary ~= "wrap" and boundary ~= "zero" then
-          error("parsed window_nd boundary must be reject, clamp, wrap, or zero", 2)
-        end
-        windows[i] = { before = before, after = after, boundary = boundary }
-      end
-      return { kind = "window_nd", axes = axes, windows = windows }
+    for i = 1, #domain.axes do
+      axes[i] = Tr.ControlLoopAxis(input.indexes[i], domain.axes[i].index_ty,
+        1, 3, 4, domain.axes[i].step, domain.axes[i].order)
     end
+    return axes
+  end
+  function P.ParsedResolvedLoopRangeND:parsed_loop_control_domain(input, header)
+    return Tr.ControlLoopRangeND(header, control_axes(input, self))
+  end
+  function P.ParsedResolvedLoopWindowND:parsed_loop_control_domain(input, header)
+    local windows = {}
+    for i = 1, #self.windows do
+      local w = self.windows[i]
+      windows[i] = Tr.ControlWindowAxis(w.before, w.after, w.boundary)
+    end
+    return Tr.ControlLoopWindowND(header, control_axes(input, self), windows)
+  end
+  function P.ParsedResolvedLoopTiledND:parsed_loop_control_domain(input, header)
+    return Tr.ControlLoopTiledND(header, control_axes(input, self), self.tile_sizes)
   end
 
-  local function reducer_expr(by, acc, step)
-    if by == nil or by == "add" then
-      return Tr.ExprBinary(Tr.ExprSurface, C.BinAdd, acc, step)
-    elseif by == "mul" then
-      return Tr.ExprBinary(Tr.ExprSurface, C.BinMul, acc, step)
-    elseif by == "band" or by == "and" then
-      return Tr.ExprBinary(Tr.ExprSurface, C.BinBitAnd, acc, step)
-    elseif by == "bor" or by == "or" then
-      return Tr.ExprBinary(Tr.ExprSurface, C.BinBitOr, acc, step)
-    elseif by == "bxor" or by == "xor" then
-      return Tr.ExprBinary(Tr.ExprSurface, C.BinBitXor, acc, step)
-    elseif by == "min" then
-      return Tr.ExprSelect(Tr.ExprSurface, Tr.ExprCompare(Tr.ExprSurface, C.CmpLe, acc, step), acc, step)
-    elseif by == "max" then
-      return Tr.ExprSelect(Tr.ExprSurface, Tr.ExprCompare(Tr.ExprSurface, C.CmpGe, acc, step), acc, step)
+  lower_1d_no_sink = function(input, domain)
+    if #domain.axes ~= 1 or #input.indexes ~= 1 then
+      return P.ParsedLoopLowerRejected("schema-v2 parsed lowering currently supports one loop axis")
     end
-    error("parsed fold/scan reducer must be one of add, mul, band, bor, bxor, min, max", 2)
-  end
-
-  local function split_sink(body)
-    local out, sink = {}, nil
-    for _, stmt in ipairs(body or {}) do
-      if type(stmt) == "table" and (stmt.tag == "StmtFold" or stmt.tag == "StmtScan") then
-        if sink ~= nil then
-          error("parsed for loop accepts only one fold or scan sink", 2)
-        end
-        sink = stmt
-      else
-        out[#out + 1] = stmt
-      end
-    end
-    return out, sink
-  end
-
-  local function lower_nd(parsed)
-    loop_seq = loop_seq + 1
-    local tag = "parsed." .. tostring(loop_seq)
-    local domain = domain_from_parsed(parsed)
-    local indexes = parsed.indexes or { parsed.index }
-    local axis_count = #(domain.axes or {})
-    if #indexes ~= axis_count then error("parsed " .. tostring(parsed.producer) .. " expects one index name per axis", 2) end
-    for _, axis in ipairs(domain.axes or {}) do
-      if axis.order ~= "forward" then error("parsed range_nd lowering currently expects forward axes", 2) end
-      if axis.step <= 0 then error("parsed range_nd axis step must be positive", 2) end
+    local axis = domain.axes[1]
+    local start_literal = axis.start:parsed_loop_integer():parsed_loop_integer_value("loop start")
+    if start_literal ~= 0 or axis.step ~= 1 then
+      return P.ParsedLoopLowerRejected(
+        "schema-v2 parsed lowering currently requires a zero-based unit-stride loop")
     end
 
-    local body_src, sink = split_sink(parsed.body)
-    local result_ty = parsed.result_type and to_tree.parsed_type(parsed.result_type) or nil
-    if result_ty == nil and sink ~= nil and sink.tag == "StmtFold" then
-      result_ty = to_tree.parsed_type(sink.type)
-    end
-    if result_ty ~= nil and sink == nil then error("parsed ND loop result type requires a fold or scan sink", 2) end
-    if sink ~= nil and sink.tag == "StmtScan" and axis_count > 1 and sink.axis == nil then error("parsed scan over ND loop requires `over`", 2) end
-
+    local tag = input.loop_id
     local flat_name = "__lln_flat_" .. tag
-    local flat_ref = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(flat_name))
-    local function ref(name) return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(name)) end
-    local function cast_idx(v) return Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, idx_ty, expr_from_value(v)) end
-    local function bin(op, a, b) return Tr.ExprBinary(Tr.ExprSurface, op, a, b) end
-    local function axis_expr(axis, value) return Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, axis.ty, expr_from_value(value)) end
-    local function axis_param_name(axis_i, field, axis, index_name)
-      return "__lln_axis_" .. tag .. "_" .. tostring(axis_i) .. "_idx_" .. tostring(index_name) .. "_" .. field .. "_step_" .. tostring(axis.step) .. "_order_" .. axis.order
-    end
+    local start_name = "__lln_axis_start_" .. tag
+    local stop_name = "__lln_axis_stop_" .. tag
+    local trip_name = "__lln_axis_trip_" .. tag
+    local index_name = input.indexes[1]
+    local entry_label = Tr.BlockLabel("lln_entry_" .. tag)
+    local loop_label = Tr.BlockLabel("lln_loop_" .. tag)
+    local body_label = Tr.BlockLabel("lln_body_" .. tag)
+    local done_label = Tr.BlockLabel("lln_done_" .. tag)
 
-    local axis_specs = {}
-    local loop_params = { Tr.BlockParam(flat_name, idx_ty) }
-    local body_params = { Tr.BlockParam(flat_name, idx_ty) }
-    local entry_args = { Tr.JumpArg(flat_name, cast_idx(0)) }
-    for i, axis in ipairs(domain.axes) do
-      local index_name = indexes[i]
-      local start_name = axis_param_name(i, "start", axis, index_name)
-      local stop_name = axis_param_name(i, "stop", axis, index_name)
-      local trip_name = axis_param_name(i, "trip", axis, index_name)
-      local start_init = axis_expr(axis, axis.start)
-      local stop_init = axis_expr(axis, axis.stop)
-      local diff = bin(C.BinSub, stop_init, start_init)
-      local trip = diff
-      if axis.step ~= 1 then
-        trip = bin(C.BinDiv, bin(C.BinAdd, diff, axis_expr(axis, axis.step - 1)), axis_expr(axis, axis.step))
-      end
-      loop_params[#loop_params + 1] = Tr.BlockParam(start_name, axis.ty)
-      loop_params[#loop_params + 1] = Tr.BlockParam(stop_name, axis.ty)
-      loop_params[#loop_params + 1] = Tr.BlockParam(trip_name, axis.ty)
-      body_params[#body_params + 1] = Tr.BlockParam(start_name, axis.ty)
-      body_params[#body_params + 1] = Tr.BlockParam(stop_name, axis.ty)
-      body_params[#body_params + 1] = Tr.BlockParam(trip_name, axis.ty)
-      entry_args[#entry_args + 1] = Tr.JumpArg(start_name, start_init)
-      entry_args[#entry_args + 1] = Tr.JumpArg(stop_name, stop_init)
-      entry_args[#entry_args + 1] = Tr.JumpArg(trip_name, trip)
-      axis_specs[i] = { index = index_name, ty = axis.ty, start_name = start_name, stop_name = stop_name, trip_name = trip_name, step = axis.step }
+    local flat_ref = ref(flat_name)
+    local start_init, stop_init = cast_idx(axis.start), cast_idx(axis.stop)
+    local trip_init = bin(C.BinSub, stop_init, start_init)
+    local loop_params = {
+      Tr.BlockParam(flat_name, idx_ty),
+      Tr.BlockParam(start_name, idx_ty),
+      Tr.BlockParam(stop_name, idx_ty),
+      Tr.BlockParam(trip_name, idx_ty),
+    }
+    local function jump_args(flat)
+      return {
+        Tr.JumpArg(flat_name, flat),
+        Tr.JumpArg(start_name, ref(start_name)),
+        Tr.JumpArg(stop_name, ref(stop_name)),
+        Tr.JumpArg(trip_name, ref(trip_name)),
+      }
     end
-
-    local scan_axis
-    if sink ~= nil and sink.tag == "StmtScan" then
-      if sink.axis ~= nil then
-        if type(sink.axis) == "number" then scan_axis = sink.axis
-        elseif type(sink.axis) == "string" then
-          for i, spec in ipairs(axis_specs) do if spec.index == sink.axis then scan_axis = i end end
-        elseif type(sink.axis) == "table" and asdl.classof(sink.axis) == Tr.ExprLit then
-          local litcls = asdl.classof(sink.axis.value)
-          if litcls == C.LitInt then scan_axis = tonumber(sink.axis.value.raw) end
-        elseif type(sink.axis) == "table" and asdl.classof(sink.axis) == Tr.ExprRef then
-          local rcls = asdl.classof(sink.axis.ref)
-          if rcls == B.ValueRefName then
-            for i, spec in ipairs(axis_specs) do if spec.index == sink.axis.ref.name then scan_axis = i end end
-          end
-        elseif type(sink.axis) == "table" and sink.axis.tag == "Name" then
-          for i, spec in ipairs(axis_specs) do if spec.index == sink.axis.name then scan_axis = i end end
-        elseif type(sink.axis) == "table" and sink.axis.tag == "Literal" then
-          scan_axis = sink.axis.value
-        end
-      end
-      if axis_count > 1 and (scan_axis == nil or scan_axis < 1 or scan_axis > axis_count) then
-        error("parsed scan `over` must name an index or axis number in this loop", 2)
-      end
-    end
-
-    local scan_axis_suffix = scan_axis ~= nil and ("_scan_axis_" .. tostring(scan_axis)) or ""
-    local producer_suffix = ""
-    if domain.kind == "tiled_nd" then
-      producer_suffix = "_tiled_" .. table.concat(domain.tile_sizes or {}, "x")
-    elseif domain.kind == "window_nd" then
-      local parts = {}
-      for i, w in ipairs(domain.windows or {}) do parts[i] = tostring(w.boundary) .. "_" .. tostring(w.before) .. "_" .. tostring(w.after) end
-      producer_suffix = "_window_" .. table.concat(parts, "__")
-    end
-    local entry_label = Tr.BlockLabel("lln_entry_" .. tag .. scan_axis_suffix)
-    local loop_label = Tr.BlockLabel("lln_loop_nd_" .. tag .. producer_suffix .. scan_axis_suffix)
-    local body_label = Tr.BlockLabel("lln_body_nd_" .. tag .. scan_axis_suffix)
-    local done_label = Tr.BlockLabel("lln_done_nd_" .. tag .. scan_axis_suffix)
-
-    local function invariant_jump_args()
-      local out = {}
-      for _, axis in ipairs(axis_specs) do
-        out[#out + 1] = Tr.JumpArg(axis.start_name, ref(axis.start_name))
-        out[#out + 1] = Tr.JumpArg(axis.stop_name, ref(axis.stop_name))
-        out[#out + 1] = Tr.JumpArg(axis.trip_name, ref(axis.trip_name))
-      end
-      return out
-    end
-    local function loop_jump_args(flat_value, acc_name, acc_value)
-      local out = { Tr.JumpArg(flat_name, flat_value) }
-      for _, arg in ipairs(invariant_jump_args()) do out[#out + 1] = arg end
-      if acc_name ~= nil then out[#out + 1] = Tr.JumpArg(acc_name, acc_value) end
-      return out
-    end
-
-    local total = ref(axis_specs[axis_count].trip_name)
-    for i = axis_count - 1, 1, -1 do total = bin(C.BinMul, ref(axis_specs[i].trip_name), total) end
-    local cond = Tr.ExprCompare(Tr.ExprSurface, C.CmpLt, flat_ref, total)
-    local next_flat = bin(C.BinAdd, flat_ref, cast_idx(1))
-
-    local coord_stmts, stride = {}, cast_idx(1)
-    for i = axis_count, 1, -1 do
-      local axis, spec = domain.axes[i], axis_specs[i]
-      local lane = flat_ref
-      if i < axis_count then lane = bin(C.BinDiv, flat_ref, stride) end
-      lane = bin(C.BinRem, lane, ref(spec.trip_name))
-      local coord = lane
-      if axis.step ~= 1 then coord = bin(C.BinMul, coord, axis_expr(axis, axis.step)) end
-      coord = bin(C.BinAdd, ref(spec.start_name), coord)
-      coord_stmts[i] = Tr.StmtLet(Tr.StmtSurface, binding(spec.index, spec.ty), coord)
-      stride = bin(C.BinMul, stride, ref(spec.trip_name))
-    end
-
-    local function expr_ref_name(expr)
-      if asdl.classof(expr) ~= Tr.ExprRef then return nil end
-      local r = expr.ref
-      if asdl.classof(r) == B.ValueRefName then return r.name end
-      return nil
-    end
-    local function expr_lit_int(expr)
-      if asdl.classof(expr) ~= Tr.ExprLit then return nil end
-      local value = expr.value
-      if asdl.classof(value) == C.LitInt then return tostring(value.raw) end
-      return nil
-    end
-    local function expr_key(expr)
-      local cls = asdl.classof(expr)
-      if cls == Tr.ExprRef then return "ref:" .. tostring(expr_ref_name(expr)) end
-      if cls == Tr.ExprLit then return "int:" .. tostring(expr_lit_int(expr)) end
-      if cls == Tr.ExprCast then return expr_key(expr.value) end
-      if cls == Tr.ExprBinary then return "bin:" .. tostring(expr.op) .. "(" .. tostring(expr_key(expr.lhs)) .. "," .. tostring(expr_key(expr.rhs)) .. ")" end
-      return nil
-    end
-    local extent_keys = {}
-    for i = 1, axis_count do
-      local axis = domain.axes[i]
-      local stop_expr = expr_from_value(axis.stop)
-      extent_keys[i] = { [expr_key(stop_expr)] = true }
-      if not source_zero(axis.start) or axis.step ~= 1 then
-        local start_expr = expr_from_value(axis.start)
-        local diff = bin(C.BinSub, stop_expr, start_expr)
-        local trip = diff
-        if axis.step ~= 1 then trip = bin(C.BinDiv, bin(C.BinAdd, diff, expr_from_value(axis.step - 1)), expr_from_value(axis.step)) end
-        extent_keys[i][expr_key(trip)] = true
-      end
-    end
-    local function same_expr(a, b) return expr_key(a) == expr_key(b) end
-    local function is_ref(expr, name) return expr_ref_name(expr) == name end
-    local function is_extent(expr, axis_i) return extent_keys[axis_i] ~= nil and extent_keys[axis_i][expr_key(expr)] == true end
-    local function strip_axis_start(expr, axis_i)
-      local axis = domain.axes[axis_i]
-      if source_zero(axis.start) then return expr end
-      if asdl.classof(expr) ~= Tr.ExprBinary or expr.op ~= C.BinSub then return nil end
-      if not is_ref(expr.lhs, axis_specs[axis_i].index) then return nil end
-      if not same_expr(expr.rhs, expr_from_value(axis.start)) then return nil end
-      return expr.lhs
-    end
-    local function is_axis_lane(expr, axis_i)
-      local axis = domain.axes[axis_i]
-      local lane = expr
-      if axis.step ~= 1 then
-        if asdl.classof(lane) ~= Tr.ExprBinary or lane.op ~= C.BinDiv then return false end
-        if not same_expr(lane.rhs, expr_from_value(axis.step)) then return false end
-        lane = lane.lhs
-      end
-      lane = strip_axis_start(lane, axis_i)
-      return lane ~= nil and is_ref(lane, axis_specs[axis_i].index)
-    end
-    local is_row_major_prefix
-    local function is_mul_prefix_extent(expr, prefix_axis)
-      return asdl.classof(expr) == Tr.ExprBinary and expr.op == C.BinMul
-        and ((is_row_major_prefix(expr.lhs, prefix_axis) and is_extent(expr.rhs, prefix_axis + 1))
-          or (is_row_major_prefix(expr.rhs, prefix_axis) and is_extent(expr.lhs, prefix_axis + 1)))
-    end
-    is_row_major_prefix = function(expr, axis_i)
-      if axis_i == 1 then return is_axis_lane(expr, 1) end
-      return asdl.classof(expr) == Tr.ExprBinary and expr.op == C.BinAdd
-        and ((is_mul_prefix_extent(expr.lhs, axis_i - 1) and is_axis_lane(expr.rhs, axis_i))
-          or (is_mul_prefix_extent(expr.rhs, axis_i - 1) and is_axis_lane(expr.lhs, axis_i)))
-    end
-    local function is_row_major_nd(expr) return is_row_major_prefix(expr, axis_count) end
-
-    local rewrite_expr, rewrite_place, rewrite_index_base
-    rewrite_expr = function(expr)
-      local cls = asdl.classof(expr)
-      if is_row_major_nd(expr) then return flat_ref end
-      if cls == Tr.ExprBinary then return Tr.ExprBinary(expr.h, expr.op, rewrite_expr(expr.lhs), rewrite_expr(expr.rhs)) end
-      if cls == Tr.ExprCompare then return Tr.ExprCompare(expr.h, expr.op, rewrite_expr(expr.lhs), rewrite_expr(expr.rhs)) end
-      if cls == Tr.ExprLogic then return Tr.ExprLogic(expr.h, expr.op, rewrite_expr(expr.lhs), rewrite_expr(expr.rhs)) end
-      if cls == Tr.ExprUnary then return Tr.ExprUnary(expr.h, expr.op, rewrite_expr(expr.value)) end
-      if cls == Tr.ExprCast then return Tr.ExprCast(expr.h, expr.op, expr.ty, rewrite_expr(expr.value)) end
-      if cls == Tr.ExprIndex then return Tr.ExprIndex(expr.h, rewrite_index_base(expr.base), rewrite_expr(expr.index)) end
-      if cls == Tr.ExprCall then
-        local args = {}
-        for i, arg in ipairs(expr.args or {}) do args[i] = rewrite_expr(arg) end
-        return Tr.ExprCall(expr.h, rewrite_expr(expr.callee), args)
-      end
-      return expr
-    end
-    rewrite_place = function(place)
-      local cls = asdl.classof(place)
-      if cls == Tr.PlaceIndex then return Tr.PlaceIndex(place.h, rewrite_index_base(place.base), rewrite_expr(place.index)) end
-      if cls == Tr.PlaceDot then return Tr.PlaceDot(place.h, rewrite_place(place.base), place.name) end
-      return place
-    end
-    rewrite_index_base = function(base)
-      local cls = asdl.classof(base)
-      if cls == Tr.IndexBaseExpr then return Tr.IndexBaseExpr(rewrite_expr(base.base)) end
-      if cls == Tr.IndexBasePlace then return Tr.IndexBasePlace(rewrite_place(base.base), base.elem) end
-      return base
-    end
-    local function rewrite_stmt(stmt)
-      local cls = asdl.classof(stmt)
-      if cls == Tr.StmtSet then return Tr.StmtSet(stmt.h, rewrite_place(stmt.place), rewrite_expr(stmt.value)) end
-      if cls == Tr.StmtLet then return Tr.StmtLet(stmt.h, stmt.binding, rewrite_expr(stmt.init)) end
-      if cls == Tr.StmtVar then return Tr.StmtVar(stmt.h, stmt.binding, rewrite_expr(stmt.init)) end
-      if cls == Tr.StmtExpr then return Tr.StmtExpr(stmt.h, rewrite_expr(stmt.expr)) end
-      if cls == Tr.StmtIf then
-        local then_body, else_body = {}, {}
-        for i, child in ipairs(stmt.then_body or {}) do then_body[i] = rewrite_stmt(child) end
-        for i, child in ipairs(stmt.else_body or {}) do else_body[i] = rewrite_stmt(child) end
-        return Tr.StmtIf(stmt.h, rewrite_expr(stmt.cond), then_body, else_body)
-      end
-      return stmt
-    end
-
-    local body_stmts = {}
-    for i = 1, #coord_stmts do body_stmts[#body_stmts + 1] = coord_stmts[i] end
-    for _, stmt in ipairs(body_src) do body_stmts[#body_stmts + 1] = rewrite_stmt(stmt) end
-
-    if sink == nil then
-      body_stmts[#body_stmts + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label, loop_jump_args(next_flat))
-      return Tr.StmtControl(Tr.StmtSurface, Tr.ControlStmtRegion(tag, Tr.EntryControlBlock(entry_label, {}, {
+    local entry_args = {
+      Tr.JumpArg(flat_name, cast_idx(lit(0))),
+      Tr.JumpArg(start_name, start_init),
+      Tr.JumpArg(stop_name, stop_init),
+      Tr.JumpArg(trip_name, trip_init),
+    }
+    local rewrite = P.ParsedLoopIndexRewriteInput(index_name, flat_ref)
+    local body = {}
+    for i = 1, #input.body do body[i] = input.body[i]:parsed_loop_rewrite_index(rewrite) end
+    body[#body + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label,
+      jump_args(bin(C.BinAdd, flat_ref, cast_idx(lit(1)))))
+    local condition = Tr.ExprCompare(Tr.ExprSurface, C.CmpLt, flat_ref, ref(stop_name))
+    local region = Tr.ControlStmtRegion(tag,
+      Tr.EntryControlBlock(entry_label, {}, {
         Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args),
       }), {
         Tr.ControlBlock(loop_label, loop_params, {
-          Tr.StmtIf(Tr.StmtSurface, cond, { Tr.StmtJump(Tr.StmtSurface, body_label, loop_jump_args(flat_ref)) }, {}),
-          Tr.StmtJump(Tr.StmtSurface, done_label, {}),
-        }),
-        Tr.ControlBlock(body_label, body_params, body_stmts),
-        Tr.ControlBlock(done_label, {}, { Tr.StmtYieldVoid(Tr.StmtSurface) }),
-      }))
-    end
-
-    local acc, acc_ty = sink.name, to_tree.parsed_type(sink.type)
-    local acc_ref = ref(acc)
-    loop_params[#loop_params + 1] = Tr.BlockParam(acc, acc_ty)
-    body_params[#body_params + 1] = Tr.BlockParam(acc, acc_ty)
-    entry_args[#entry_args + 1] = Tr.JumpArg(acc, Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, acc_ty, to_tree.expr(sink.init)))
-    local step_name = "__lln_step_" .. tag
-    body_stmts[#body_stmts + 1] = Tr.StmtLet(Tr.StmtSurface, binding(step_name, acc_ty), rewrite_expr(to_tree.expr(sink.step)))
-    local next_acc = reducer_expr(sink.by, acc_ref, ref(step_name))
-    if sink.tag == "StmtScan" then
-      local next_name = "__lln_scan_" .. tag
-      body_stmts[#body_stmts + 1] = Tr.StmtLet(Tr.StmtSurface, binding(next_name, acc_ty), next_acc)
-      body_stmts[#body_stmts + 1] = Tr.StmtSet(Tr.StmtSurface, rewrite_place(to_tree.place(sink.into)), ref(next_name))
-      body_stmts[#body_stmts + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label, loop_jump_args(next_flat, acc, ref(next_name)))
-    else
-      body_stmts[#body_stmts + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label, loop_jump_args(next_flat, acc, next_acc))
-    end
-
-    local loop_block = Tr.ControlBlock(loop_label, loop_params, {
-      Tr.StmtIf(Tr.StmtSurface, cond, { Tr.StmtJump(Tr.StmtSurface, body_label, loop_jump_args(flat_ref, acc, acc_ref)) }, {}),
-      Tr.StmtJump(Tr.StmtSurface, done_label, { Tr.JumpArg(acc, acc_ref) }),
-    })
-    local body_block = Tr.ControlBlock(body_label, body_params, body_stmts)
-    local done_block = Tr.ControlBlock(done_label, { Tr.BlockParam(acc, acc_ty) }, {
-      result_ty ~= nil and Tr.StmtYieldValue(Tr.StmtSurface, acc_ref) or Tr.StmtYieldVoid(Tr.StmtSurface),
-    })
-    if result_ty ~= nil then
-      return Tr.StmtReturnValue(Tr.StmtSurface, Tr.ExprControl(Tr.ExprSurface, Tr.ControlExprRegion(
-        tag, result_ty, Tr.EntryControlBlock(entry_label, {}, { Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args) }), { loop_block, body_block, done_block }
-      )))
-    end
-    return Tr.StmtControl(Tr.StmtSurface, Tr.ControlStmtRegion(
-      tag, Tr.EntryControlBlock(entry_label, {}, { Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args) }), { loop_block, body_block, done_block }
-    ))
-  end
-
-  --- Lower a parsed loop over a 1D range into LalinTree ASDL.
-  function M.lower(parsed)
-    if parsed.producer ~= "range" then
-      return lower_nd(parsed)
-    end
-    loop_seq = loop_seq + 1
-    local tag = "parsed." .. tostring(loop_seq)
-    local index = parsed.index
-    local args = parsed.args or {}
-    if #args == 1 and type(args[1]) == "table" and args[1].tag == "Record" then
-      local fields = args[1].fields or {}
-      args = {}
-      for i, field in ipairs(fields) do
-        if field.key == nil then args[#args + 1] = field.value end
-      end
-    end
-    local result_ty = parsed.result_type and to_tree.parsed_type(parsed.result_type) or nil
-
-    -- Cast range arguments to index type
-    local function to_idx(v)
-      return Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, idx_ty, to_tree.expr(v))
-    end
-    local zero  = to_idx(lit(0))
-    local one   = to_idx(lit(1))
-    local start_expr = args[1] and to_idx(args[1]) or zero
-    local stop_expr  = args[2] and to_idx(args[2]) or one
-    local step_expr  = args[3] and to_idx(args[3]) or one
-
-    local body_src, sink = split_sink(parsed.body)
-    if result_ty == nil and sink ~= nil and sink.tag == "StmtFold" then
-      result_ty = to_tree.parsed_type(sink.type)
-    end
-    if result_ty ~= nil and sink == nil then
-      error("parsed for loop result type requires a fold or scan sink", 2)
-    end
-    local body_stmts = body_src
-    local index_ref = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(index))
-    local next_index = Tr.ExprBinary(Tr.ExprSurface, C.BinAdd, index_ref, step_expr)
-    local cond = Tr.ExprCompare(Tr.ExprSurface, C.CmpLt, index_ref, stop_expr)
-
-    local entry_label  = Tr.BlockLabel(tag .. ".entry")
-    local loop_label   = Tr.BlockLabel(tag .. ".loop")
-    local body_label   = Tr.BlockLabel(tag .. ".body")
-    local done_label   = Tr.BlockLabel(tag .. ".done")
-    local idx_param    = Tr.BlockParam(index, idx_ty)
-
-    if sink ~= nil then
-      local acc = sink.name
-      local acc_ty = to_tree.parsed_type(sink.type)
-      local acc_ref = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(acc))
-      local step_name = "__lln_step_" .. tag
-      local step_binding = B.Binding(C.Id("parsed." .. step_name), step_name, acc_ty, B.BindingRoleLocalValue)
-      local step_ref = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(step_name))
-      body_stmts[#body_stmts + 1] = Tr.StmtLet(Tr.StmtSurface, step_binding, to_tree.expr(sink.step))
-      local next_acc = reducer_expr(sink.by, acc_ref, step_ref)
-      local entry_args = {
-        Tr.JumpArg(index, start_expr),
-        Tr.JumpArg(acc, Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, acc_ty, to_tree.expr(sink.init))),
-      }
-      local function jump_args(i_value, acc_value)
-        return { Tr.JumpArg(index, i_value), Tr.JumpArg(acc, acc_value) }
-      end
-
-      if sink.tag == "StmtScan" then
-        local next_name = "__lln_scan_" .. tag
-        local next_binding = B.Binding(C.Id("parsed." .. next_name), next_name, acc_ty, B.BindingRoleLocalValue)
-        local next_ref = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(next_name))
-        body_stmts[#body_stmts + 1] = Tr.StmtLet(Tr.StmtSurface, next_binding, next_acc)
-        body_stmts[#body_stmts + 1] = Tr.StmtSet(Tr.StmtSurface, to_tree.place(sink.into), next_ref)
-        body_stmts[#body_stmts + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label, jump_args(next_index, next_ref))
-      else
-        body_stmts[#body_stmts + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label, jump_args(next_index, next_acc))
-      end
-
-      local loop_block = Tr.ControlBlock(loop_label, { Tr.BlockParam(index, idx_ty), Tr.BlockParam(acc, acc_ty) }, {
-        Tr.StmtIf(Tr.StmtSurface, cond, {
-          Tr.StmtJump(Tr.StmtSurface, body_label, jump_args(index_ref, acc_ref)),
-        }, {}),
-        Tr.StmtJump(Tr.StmtSurface, done_label, { Tr.JumpArg(acc, acc_ref) }),
-      })
-      local body_block = Tr.ControlBlock(body_label, { Tr.BlockParam(index, idx_ty), Tr.BlockParam(acc, acc_ty) }, body_stmts)
-      local done_block = Tr.ControlBlock(done_label, { Tr.BlockParam(acc, acc_ty) }, {
-        result_ty ~= nil and Tr.StmtYieldValue(Tr.StmtSurface, acc_ref) or Tr.StmtYieldVoid(Tr.StmtSurface),
-      })
-      if result_ty ~= nil then
-        return Tr.StmtReturnValue(Tr.StmtSurface, Tr.ExprControl(Tr.ExprSurface, Tr.ControlExprRegion(
-          tag,
-          result_ty,
-          Tr.EntryControlBlock(entry_label, {}, { Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args) }),
-          { loop_block, body_block, done_block }
-        )))
-      end
-      return Tr.StmtControl(Tr.StmtSurface, Tr.ControlStmtRegion(
-        tag,
-        Tr.EntryControlBlock(entry_label, {}, { Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args) }),
-        { loop_block, body_block, done_block }
-      ))
-    end
-
-    body_stmts[#body_stmts + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label, {
-      Tr.JumpArg(index, next_index),
-    })
-
-    return Tr.StmtControl(Tr.StmtSurface, Tr.ControlStmtRegion(
-      tag,
-      Tr.EntryControlBlock(entry_label, {}, {
-        Tr.StmtJump(Tr.StmtSurface, loop_label, {
-          Tr.JumpArg(index, start_expr),
-        }),
-      }),
-      {
-        Tr.ControlBlock(loop_label, { idx_param }, {
-          Tr.StmtIf(Tr.StmtSurface, cond, {
-            Tr.StmtJump(Tr.StmtSurface, body_label, {
-              Tr.JumpArg(index, index_ref),
-            }),
+          Tr.StmtIf(Tr.StmtSurface, condition, {
+            Tr.StmtJump(Tr.StmtSurface, body_label, jump_args(flat_ref)),
           }, {}),
           Tr.StmtJump(Tr.StmtSurface, done_label, {}),
         }),
-        Tr.ControlBlock(body_label, { idx_param }, body_stmts),
-        Tr.ControlBlock(done_label, {}, {
-          Tr.StmtYieldVoid(Tr.StmtSurface),
-        }),
-      }
-    ))
+        Tr.ControlBlock(body_label, loop_params, body),
+        Tr.ControlBlock(done_label, {}, { Tr.StmtYieldVoid(Tr.StmtSurface) }),
+      })
+    local control_domain = domain:parsed_loop_control_domain(input, loop_label)
+    return P.ParsedLoopLowered(
+      Tr.StmtDomainControl(Tr.StmtSurface, region, control_domain))
   end
 
-  return M
+  function P.ParsedResolvedLoopRangeND:lower_parsed_loop(input)
+    return input.sink:lower_parsed_loop_1d(input, self)
+  end
+  function P.ParsedResolvedLoopWindowND:lower_parsed_loop(input)
+    return input.sink:lower_parsed_loop_1d(input, self)
+  end
+  function P.ParsedResolvedLoopTiledND:lower_parsed_loop(_input)
+    return P.ParsedLoopLowerRejected("schema-v2 parsed tiled lowering is not implemented")
+  end
+  function P.ParsedLoopLowerInput:lower_parsed_loop()
+    return self.domain:resolve_parsed_loop_domain():lower_parsed_loop(self)
+  end
+  function P.ParsedLoopLowered:parsed_loop_stmt() return self.stmt end
+  function P.ParsedLoopLowerRejected:parsed_loop_stmt() error(self.reason, 2) end
+
+  return P.ParsedLoopLowerInput
 end
 
 return bind_context

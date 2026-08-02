@@ -17,11 +17,55 @@ return schema. LalinCode {
   product. CodeLocalId { interned, text [str], },
   product. CodeTypeId { interned, text [str], },
 
+  sum. CodeLoopOrder { CodeLoopForward, CodeLoopBackward, },
+  sum. CodeWindowBoundary {
+    CodeWindowReject,
+    CodeWindowClamp,
+    CodeWindowWrap,
+    CodeWindowZero,
+  },
+  product. CodeLoopAxisDeclaration {
+    interned,
+    index_name [str],
+    index_ty [LalinCode.CodeType],
+    start [LalinCode.CodeValueId],
+    stop [LalinCode.CodeValueId],
+    trip [LalinCode.CodeValueId],
+    step [number],
+    order [LalinCode.CodeLoopOrder],
+  },
+  product. CodeWindowAxisDeclaration {
+    interned,
+    before [number],
+    after [number],
+    boundary [LalinCode.CodeWindowBoundary],
+  },
+  sum. CodeLoopShapeDeclaration {
+    CodeLoopShapeRangeND,
+    CodeLoopShapeWindowND {
+      variant_unique,
+      windows [many [LalinCode.CodeWindowAxisDeclaration]],
+    },
+    CodeLoopShapeTiledND {
+      variant_unique,
+      tile_sizes [many [number]],
+    },
+  },
+  product. CodeLoopDomainDeclaration {
+    interned,
+    axes [many [LalinCode.CodeLoopAxisDeclaration]],
+    shape [LalinCode.CodeLoopShapeDeclaration],
+  },
+
   sum. CodeOrigin {
     CodeOriginUnknown,
     CodeOriginSource { variant_unique, label [str], },
     CodeOriginBinding { variant_unique, binding [LalinBind.Binding], },
     CodeOriginGenerated { variant_unique, reason [str], },
+    CodeOriginLoopDomain {
+      variant_unique,
+      declaration [LalinCode.CodeLoopDomainDeclaration],
+    },
   },
 
   -- Type system

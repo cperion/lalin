@@ -50,7 +50,7 @@ function Lower.LowerKernelCMatFound:lower_c_kernel_contribute(input)
 end
 function Lower.LowerKernelCMatRejected:lower_c_cmat_state_contribute(input)
   return Lower.LowerCRejectedFragment(input.fragment.id,
-    Lower.LowerIssueKernelRejected(input.fragment.cover, self.rejects))
+    Lower.LowerIssueStencilProjectionRejected(input.fragment.cover, self.rejects))
 end
 function Lower.LowerKernelCMatUnavailable:lower_c_cmat_state_contribute(input)
   return Lower.LowerCRejectedFragment(input.fragment.id,
@@ -154,12 +154,17 @@ end
 function Lower.LowerCEmittedFragment:lower_c_contribution_issue() return {} end
 function Lower.LowerCRejectedFragment:lower_c_contribution_issue() return { self.issue } end
 function Lower.LowerCEmittedFragment:lower_c_splice_blocks(_baseline) return {} end
+function Lower.LowerCEmittedFragment:lower_c_splice_at(_block, _baseline) return {} end
 function Lower.LowerCKernelCMatFragment:lower_c_splice_blocks(baseline)
   local cmat, entry = self.cmat, self.cmat.blocks[1]
   local blocks = { C.CBackendBlock(cmat.entry,
     baseline:lower_c_block_params(self.coverage.replacement_source), entry.stmts, entry.term) }
   for i = 2, #cmat.blocks do blocks[#blocks + 1] = cmat.blocks[i] end
   return blocks
+end
+function Lower.LowerCKernelCMatFragment:lower_c_splice_at(block, baseline)
+  if self.coverage.replacement_source.text ~= block.label.text then return {} end
+  return self:lower_c_splice_blocks(baseline)
 end
 function Lower.LowerCEmittedFragment:lower_c_splice_locals() return {} end
 function Lower.LowerCKernelCMatFragment:lower_c_splice_locals() return self.cmat.locals end
@@ -270,7 +275,7 @@ function Lower.LowerCDominanceReady:lower_c_assembly_dominance(input, graph)
     loops[#loops + 1] = Lower.LowerLoopByIdEntry(graph.loops[i].id, graph.loops[i])
   end
   local loops_projection = Lower.LowerLoopByIdProjection(loops)
-  local fragments, splice_blocks, locals, helpers = {}, {}, {}, {}
+  local fragments, locals, helpers = {}, {}, {}
   local replacements, eliminated = {}, {}
 
   for i = 1, #input.plan.fragments do
@@ -283,7 +288,6 @@ function Lower.LowerCDominanceReady:lower_c_assembly_dominance(input, graph)
       return Lower.LowerCFunctionAssemblyRejected(input.code_func.id, rejection)
     end
     fragments[#fragments + 1] = contribution
-    append(splice_blocks, contribution:lower_c_splice_blocks(input.baseline))
     append(locals, contribution:lower_c_splice_locals())
     append(helpers, contribution:lower_c_splice_helpers())
     append(replacements, contribution:lower_c_replacement_entries())
@@ -291,9 +295,12 @@ function Lower.LowerCDominanceReady:lower_c_assembly_dominance(input, graph)
   end
 
   local blocks = {}
-  append(blocks, splice_blocks)
   for i = 1, #input.baseline:lower_c_body_blocks() do
-    append(blocks, input.baseline:lower_c_body_blocks()[i]:lower_c_retained_block(replacements, eliminated))
+    local baseline_block = input.baseline:lower_c_body_blocks()[i]
+    for j = 1, #fragments do
+      append(blocks, fragments[j]:lower_c_splice_at(baseline_block, input.baseline))
+    end
+    append(blocks, baseline_block:lower_c_retained_block(replacements, eliminated))
   end
 
   local entry = input.baseline:lower_c_body_entry()

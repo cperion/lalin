@@ -5,6 +5,11 @@ return schema. LalinKernel {
   product. KernelId { interned, text [str], },
   product. KernelValueId { interned, text [str], },
   product. KernelLaneId { interned, text [str], },
+  product. KernelIndexExprProjectionInput {
+    interned,
+    values [LalinValue.ValueFactSet],
+    field. value [LalinCode.CodeValueId],
+  },
   sum. KernelSubject {
     KernelSubjectFunction { variant_unique, func [LalinCode.CodeFuncId], },
     KernelSubjectLoop { variant_unique, loop [LalinGraph.GraphLoopId], },

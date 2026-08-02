@@ -49,6 +49,11 @@ return schema. LalinLower {
     LowerIssueGap { variant_unique, func [LalinCode.CodeFuncId], uncovered_blocks [many [LalinCode.CodeBlockId]], },
     LowerIssueFallback { variant_unique, cover [LalinLower.LowerCover], fallback_kind [LalinLower.LowerFallbackKind], },
     LowerIssueKernelRejected { variant_unique, cover [LalinLower.LowerCover], rejects [many [LalinKernel.KernelReject]], },
+    LowerIssueStencilProjectionRejected {
+      variant_unique,
+      cover [LalinLower.LowerCover],
+      rejects [many [LalinStencil.StencilKernelProjectionReject]],
+    },
     LowerIssueScheduleRejected { variant_unique, cover [LalinLower.LowerCover], rejects [many [LalinSchedule.ScheduleReject]], },
     LowerIssueFragmentRejected { variant_unique, fragment [LalinLower.LowerFragmentId], reason [str], },
     LowerIssueCMatRejected {

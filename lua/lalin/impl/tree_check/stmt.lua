@@ -7,6 +7,7 @@ local Ty     = require("lalin.schema_v2.type")
 local C      = require("lalin.schema_v2.core")
 local LCheck = require("lalin.schema_v2.check")
 local Sem    = require("lalin.schema_v2.sem")
+local B      = require("lalin.schema_v2.bind")
 
 function Tr.Stmt:typecheck_tree_stmt(input) return LCheck.TypeStmtResult(input, {self}, {}) end
 
@@ -77,10 +78,53 @@ function Tr.StmtYieldVoid:typecheck_tree_stmt(input)
   return LCheck.TypeStmtResult(input, {Tr.StmtYieldVoid(Tr.StmtFlow(Sem.FlowYields))}, {})
 end
 function Tr.StmtJump:typecheck_tree_stmt(input)
-  return LCheck.TypeStmtResult(input, {Tr.StmtJump(Tr.StmtFlow(Sem.FlowJumps), self.target, self.args)}, {})
+  local args, issues = {}, {}
+  for i = 1, #self.args do
+    local result = self.args[i].value:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+    args[i] = Tr.JumpArg(self.args[i].name, result.expr)
+    for j = 1, #(result.issues or {}) do issues[#issues + 1] = result.issues[j] end
+  end
+  return LCheck.TypeStmtResult(input,
+    {Tr.StmtJump(Tr.StmtFlow(Sem.FlowJumps), self.target, args)}, issues)
 end
 function Tr.StmtControl:typecheck_tree_stmt(input)
   return LCheck.TypeStmtResult(input, {Tr.StmtControl(Tr.StmtFlow(Sem.FlowFallsThrough), self.region)}, {})
+end
+local function control_scope(input, region_id, label, params, is_entry)
+  local scope = input.scope
+  for i = 1, #(params or {}) do
+    local param = params[i]
+    local role = is_entry
+      and B.BindingRoleEntryBlockParam(region_id, label.name, i)
+      or B.BindingRoleBlockParam(region_id, label.name, i)
+    local binding = B.Binding(C.Id("control:param:" .. region_id .. "_" ..
+      label.name .. "_" .. param.name), param.name, param.ty, role)
+    scope = scope:typecheck_tree_add_value(param.name, param.ty, binding)
+  end
+  return LCheck.TypeStmtInput(scope, input.return_ty, LCheck.TypeYieldVoid)
+end
+local function typecheck_control_block(input, region_id, block)
+  local result = control_scope(input, region_id, block.label, block.params, false)
+    :typecheck_tree_stmt_body(block.body)
+  return Tr.ControlBlock(block.label, block.params, result.stmts), result.issues
+end
+function Tr.StmtDomainControl:typecheck_tree_stmt(input)
+  local issues = {}
+  local entry_input = control_scope(input, self.region.region_id,
+    self.region.entry.label, self.region.entry.params, true)
+  local entry_result = entry_input:typecheck_tree_stmt_body(self.region.entry.body)
+  for i = 1, #(entry_result.issues or {}) do issues[#issues + 1] = entry_result.issues[i] end
+  local entry = Tr.EntryControlBlock(
+    self.region.entry.label, self.region.entry.params, entry_result.stmts)
+  local blocks = {}
+  for i = 1, #self.region.blocks do
+    local block, block_issues = typecheck_control_block(input, self.region.region_id, self.region.blocks[i])
+    blocks[i] = block
+    for j = 1, #(block_issues or {}) do issues[#issues + 1] = block_issues[j] end
+  end
+  local region = Tr.ControlStmtRegion(self.region.region_id, entry, blocks)
+  return LCheck.TypeStmtResult(input, {Tr.StmtDomainControl(
+    Tr.StmtFlow(Sem.FlowFallsThrough), region, self.domain)}, issues)
 end
 function Tr.StmtTrap:typecheck_tree_stmt(input)
   return LCheck.TypeStmtResult(input, {Tr.StmtTrap(Tr.StmtFlow(Sem.FlowTerminates))}, {})

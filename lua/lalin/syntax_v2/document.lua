@@ -16,6 +16,7 @@ local Tr  = package.loaded["lalin.schema_v2.tree"]
 local C   = package.loaded["lalin.schema_v2.core"]
 local B   = package.loaded["lalin.schema_v2.bind"]
 local Ty  = package.loaded["lalin.schema_v2.type"]
+require("lalin.syntax_v2.for_to_loop")(require("lalin.schema_v2"))
 
 local Document = {}
 
@@ -313,45 +314,59 @@ local function contract_from_expr(expr)
   error("unsupported contract expression", 2)
 end
 
-local function lower_stmt(stmt, named_env)
-  if type(stmt) ~= "table" then return stmt end
-  local cls = asdl.classof(stmt)
-  if cls == P.StmtKnown then
-    return stmt.stmt  -- unwrap LalinTree.Stmt
-  elseif cls == P.StmtLetParsed then
-    local binding = B.Binding(C.Id("parsed." .. stmt.name), stmt.name,
-      resolve_type_source(stmt.ty_source, named_env), B.BindingRoleLocalValue)
-    return Tr.StmtLet(Tr.StmtSurface, binding, stmt.init)
-  elseif cls == P.StmtVarParsed then
-    local binding = B.Binding(C.Id("parsed." .. stmt.name), stmt.name,
-      resolve_type_source(stmt.ty_source, named_env), B.BindingRoleLocalValue)
-    return Tr.StmtVar(Tr.StmtSurface, binding, stmt.init)
-  elseif cls == P.StmtRequiresParsed then
-    -- Pass through for contract extraction in decl_to_item
-    return {
-      tag = "StmtRequires",
-      exprs = stmt.exprs,
-      is_requires = true,
-    }
-  end
-  -- Already resolved ASDL values pass through
-  if cls then return stmt end
-  -- Legacy raw-table intermediates
-  if stmt.tag == "StmtForRange" then
-    -- Lower loop via for_to_loop (needs T context)
-    local ftl = require("lalin.syntax_v2.for_to_loop")(require("lalin.schema_v2"))
-    return ftl.lower(stmt)
-  elseif stmt.tag == "StmtFold" or stmt.tag == "StmtScan" then
-    error("to_module: " .. stmt.tag .. " may only appear directly inside a loop", 2)
-  end
-  return stmt
+function P.StmtKnown:lower_parsed_stmt(_named_env) return self.stmt end
+function P.StmtLetParsed:lower_parsed_stmt(named_env)
+  local binding = B.Binding(C.Id("parsed." .. self.name), self.name,
+    resolve_type_source(self.ty_source, named_env), B.BindingRoleLocalValue)
+  return Tr.StmtLet(Tr.StmtSurface, binding, self.init)
+end
+function P.StmtVarParsed:lower_parsed_stmt(named_env)
+  local binding = B.Binding(C.Id("parsed." .. self.name), self.name,
+    resolve_type_source(self.ty_source, named_env), B.BindingRoleLocalValue)
+  return Tr.StmtVar(Tr.StmtSurface, binding, self.init)
+end
+function P.StmtRequiresParsed:lower_parsed_stmt(_named_env)
+  error("requires may only occur in a declaration contract prefix", 2)
+end
+function P.ParsedLoopSink:resolve_parsed_loop_sink(_named_env)
+  error("missing parsed loop sink resolution", 2)
+end
+function P.ParsedLoopNoSink:resolve_parsed_loop_sink(_named_env)
+  return P.ParsedResolvedLoopNoSink
+end
+function P.ParsedLoopFoldSink:resolve_parsed_loop_sink(named_env)
+  return P.ParsedResolvedLoopFoldSink(self.name,
+    resolve_type_source(self.ty_source, named_env), self.init, self.reducer, self.step)
+end
+function P.ParsedLoopScanSink:resolve_parsed_loop_sink(named_env)
+  return P.ParsedResolvedLoopScanSink(self.name,
+    resolve_type_source(self.ty_source, named_env), self.init, self.reducer,
+    self.axis, self.step, self.into)
 end
 
-local function lower_stmts(stmts, named_env)
+local lower_stmts
+function P.StmtLoopParsed:lower_parsed_stmt(named_env)
+  local body = lower_stmts(self.body, named_env)
+  return P.ParsedLoopLowerInput(self.loop_id, self.indexes, self.domain, body,
+    self.sink:resolve_parsed_loop_sink(named_env)):lower_parsed_loop():parsed_loop_stmt()
+end
+function P.StmtFoldParsed:lower_parsed_stmt(_named_env)
+  error("fold may only appear directly inside a loop", 2)
+end
+function P.StmtScanParsed:lower_parsed_stmt(_named_env)
+  error("scan may only appear directly inside a loop", 2)
+end
+
+local function lower_stmt(stmt, named_env)
+  return stmt:lower_parsed_stmt(named_env)
+end
+
+lower_stmts = function(stmts, named_env)
   local out = {}
   for _, s in ipairs(stmts or {}) do out[#out + 1] = lower_stmt(s, named_env) end
   return out
 end
+
 
 local function compiler_name(parsed, anon_counter)
   local nm = parsed.name

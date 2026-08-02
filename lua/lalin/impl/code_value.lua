@@ -399,7 +399,9 @@ function Flow.FlowLoopInductionRange:code_value_append_facts(out_values)
     Value.ValueExprValue(r.min.value or r.value),
     Value.ValueExprValue(r.max.value or r.value),
     not r.max_exclusive,
-    Value.AlgebraProofFlow(Flow.FlowDomainLoop(r.loop), Value.AlgebraFlowCounted(Flow.FlowTripCountUnknown("from induction range", nil)))
+    Value.AlgebraProofFlow(Flow.FlowDomainLoop(r.loop), Value.AlgebraFlowCounted(
+      Flow.FlowTripCountRejected(Flow.FlowTripCountNotMaterialized(
+        "from induction range"), nil)))
   ))
 end
 
@@ -407,7 +409,9 @@ function Flow.FlowInduction:code_value_append_facts(loop, out_values)
   out_values[#out_values + 1] = Value.ValueExprFact(
     self.value,
     Value.ValueExprAffine(Value.AffineExpr("0", { Value.AffineTerm(self.value, "1") }, self.ty, nil)),
-    Value.AlgebraProofFlow(Flow.FlowDomainLoop(loop.loop), Value.AlgebraFlowCounted(Flow.FlowTripCountUnknown("induction affine", nil)))
+    Value.AlgebraProofFlow(Flow.FlowDomainLoop(loop.loop), Value.AlgebraFlowCounted(
+      Flow.FlowTripCountRejected(Flow.FlowTripCountNotMaterialized(
+        "induction affine"), nil)))
   )
 end
 

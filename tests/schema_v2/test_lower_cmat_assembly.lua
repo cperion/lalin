@@ -276,7 +276,7 @@ assert(asdl.classof(cmat.block_alignments[1]) == CMat.CMatCBlockReplacementEntry
 assert(cmat.block_alignments[1].source == body_id)
 
 -- Spliced CMat entry block receives the exact baseline replacement params.
-local splice_entry = param_assembly.blocks[1]
+local splice_entry = param_assembly.blocks[2]
 assert(splice_entry.label == cmat.entry)
 assert(#splice_entry.params == 1)
 local baseline_body_params = baseline_param:lower_c_block_params(body_id)
@@ -285,7 +285,7 @@ assert(splice_entry.params[1] == baseline_body_params[1])
 
 -- Body block eliminated; entry and exit retained, in deterministic order.
 assert(#param_assembly.blocks == 7) -- 5 fragment blocks + entry + exit
-local entry_block = param_assembly.blocks[6]
+local entry_block = param_assembly.blocks[1]
 local exit_block_out = param_assembly.blocks[7]
 assert(entry_block.label.text == "entry")
 assert(exit_block_out.label.text == "exit")
@@ -324,12 +324,12 @@ local zero_result = assemble(func_zero, baseline_zero, kernel_plan)
 assert(asdl.classof(zero_result) == Lower.LowerCFunctionAssemblyReady)
 local zero_assembly = zero_result.assembly
 assert(#zero_assembly.blocks == 7)
-local zero_entry = zero_assembly.blocks[6]
+local zero_entry = zero_assembly.blocks[1]
 assert(zero_entry.label.text == "entry")
 assert(asdl.classof(zero_entry.term) == C.CBackendGoto)
-assert(zero_entry.term.dest == zero_assembly.blocks[1].label)
+assert(zero_entry.term.dest == zero_assembly.blocks[2].label)
 assert(#zero_entry.term.args == 0)
-assert(#zero_assembly.blocks[1].params == 0)
+assert(#zero_assembly.blocks[2].params == 0)
 
 ----------------------------------------------------------------------
 -- Case 4: kernel with no materialization rejects with a typed issue.

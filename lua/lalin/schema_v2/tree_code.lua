@@ -306,6 +306,17 @@ return schema. LalinTreeCode {
       state [LalinTreeCode.TreeCodeFuncState],
     },
   },
+  product. TreeCodeControlBlockOriginInput {
+    interned,
+    label [LalinTree.BlockLabel],
+    params [many [LalinCode.CodeParam]],
+    fallback [LalinCode.CodeOrigin],
+  },
+  product. TreeCodeDomainControlInput {
+    interned,
+    input [LalinTreeCode.TreeCodeStmtInput],
+    domain [LalinTree.ControlLoopDomain],
+  },
   product. TreeCodeContractInput {
     module_facts [LalinTreeCode.TreeCodeModuleFacts],
     sigs [LalinTreeCode.TreeCodeModuleSigState],

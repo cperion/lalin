@@ -13,11 +13,12 @@ local induction = Flow.FlowInduction(
   index, Code.CodeTyIndex, Code.CodeValueId("init"), Code.CodeValueId("step"),
   Flow.FlowPrimaryInduction, Flow.FlowRangeUnknown(index))
 local inductions = Flow.FlowInductionProjection({ induction })
+local flow = Flow.FlowFactSet(Code.CodeModuleId("m"), {}, {}, {}, {}, {}, {}, {})
 local input = Mem.MemPlaceResolveInput(
   fid, { Mem.MemValueObjectEntry(ptr, pobj) },
   { Mem.MemLocalObjectEntry(lid, lo) },
   { Mem.MemGlobalObjectEntry(gid, go) },
-  { Mem.MemDataObjectEntry(did, dobj) }, {}, inductions)
+  { Mem.MemDataObjectEntry(did, dobj) }, {}, inductions, {}, flow)
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 
 local places = {
@@ -37,7 +38,7 @@ local indexed = places[5]:resolve_memory_place(input)
 assert(asdl.isa(indexed.index, Mem.MemIndexInduction))
 assert(indexed.index.induction == induction)
 local ordinary = inductions:classify_memory_index(
-  Mem.MemIndexClassifyInput(Code.CodeValueId("ordinary"), 4, 0))
+  Mem.MemIndexClassifyInput(Code.CodeValueId("ordinary"), 4, 0, {}, flow))
 assert(asdl.isa(ordinary, Mem.MemIndexValue))
 
 local missing = Code.CodePlaceDeref(Code.CodeValueId("missing"), i32, nil):resolve_memory_place(input)

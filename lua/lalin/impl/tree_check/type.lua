@@ -36,6 +36,8 @@ function Core.ScalarI16:tree_check_is_integer() return true end
 function Core.ScalarI32:tree_check_is_integer() return true end
 function Core.ScalarI64:tree_check_is_integer() return true end
 function Core.ScalarIndex:tree_check_is_integer() return true end
+function Core.Scalar:tree_check_is_index() return false end
+function Core.ScalarIndex:tree_check_is_index() return true end
 
 -- is_unsigned
 function Core.Scalar:tree_check_is_unsigned() return false end
@@ -73,7 +75,10 @@ function Core.ScalarIndex:tree_check_bit_width() return 64 end
 -- backend scalar
 function Core.Scalar:tree_check_backend_scalar(target, backend) return scalar_api.to_backend_scalar(self, target, backend) end
 
-----------------------------------------------------------------------
+
+function Ty.Type:tree_check_is_index_type() return false end
+function Ty.TScalar:tree_check_is_index_type() return self.scalar:tree_check_is_index() end
+
 -- Type classification (from type_classify.lua)
 ----------------------------------------------------------------------
 
@@ -134,6 +139,10 @@ function Ty.Type:tree_check_abi_class(target) return scalar_api.abi_classify(sel
 function Core.BinaryOp:tree_check_result_type(lt, rt) return void_ty() end
 function Core.BinAdd:tree_check_result_type(lt, rt)
   if lt:tree_check_is_numeric() and rt:tree_check_is_numeric() then
+    if lt == rt then return lt end
+    if lt:tree_check_is_index_type() or rt:tree_check_is_index_type() then
+      return Ty.TScalar(Core.ScalarIndex)
+    end
     if lt:tree_check_is_float_type() or rt:tree_check_is_float_type() then
       return lt:tree_check_is_float_type() and lt or rt
     end

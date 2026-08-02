@@ -314,6 +314,12 @@ function Tr.Module:typecheck(input)
           scope = scope:typecheck_tree_add_value(p.name, p.ty, binding)
         end
 
+        local checked_contracts = {}
+        for j = 1, #(func.contracts or {}) do
+          checked_contracts[j] = func.contracts[j]:typecheck_tree_contract(
+            LCheck.TypeExprInput(scope))
+        end
+
         -- Typecheck body (inline loop)
         local stmt_input = LCheck.TypeStmtInput(scope, func.result, LCheck.TypeYieldNone)
         local cur_input = stmt_input
@@ -336,9 +342,9 @@ function Tr.Module:typecheck(input)
         if func_class == Tr.FuncExport then
           new_func = Tr.FuncExport(func.name, func.params, func.result, new_stmts)
         elseif func_class == Tr.FuncLocalContract then
-          new_func = Tr.FuncLocalContract(func.name, func.params, func.result, func.contracts or {}, new_stmts)
+          new_func = Tr.FuncLocalContract(func.name, func.params, func.result, checked_contracts, new_stmts)
         elseif func_class == Tr.FuncExportContract then
-          new_func = Tr.FuncExportContract(func.name, func.params, func.result, func.contracts or {}, new_stmts)
+          new_func = Tr.FuncExportContract(func.name, func.params, func.result, checked_contracts, new_stmts)
         else
           new_func = Tr.FuncLocal(func.name, func.params, func.result, new_stmts)
         end
