@@ -4,21 +4,19 @@ local T = require("lalin.schema_v2")
 local asdl = require("lalin.asdl")
 local Code, Mem = T.LalinCode, T.LalinMem
 require("lalin.impl.code_mem")
+assert(Code.CodeContractWindowFootprint == nil)
+assert(Mem.MemContractWindowFootprintEntry == nil)
+assert(Mem.MemWindowFootprintProjection == nil)
 
 local mid = Code.CodeModuleId("mem-contract")
 local fid = Code.CodeFuncId("f")
 local a, b, n = Code.CodeValueId("a"), Code.CodeValueId("b"), Code.CodeValueId("n")
-local footprint_extent = Code.CodeWindowFootprintExtent(
-  Code.CodeWindowFootprintDistance(1), Code.CodeWindowFootprintDistance(2))
 local origin = Code.CodeOriginGenerated("test")
 local place = Code.CodePlaceDeref(a, Code.CodeTyInt(32, Code.CodeSigned), nil)
 local expr = Code.CodeContractPlaceLoad(place)
 local facts = Code.CodeContractFactSet(mid, {
   Code.CodeFuncContractFact(fid, Code.CodeContractBounds(a, n), origin),
   Code.CodeFuncContractFact(fid, Code.CodeContractProjectionBounds(expr, Code.CodeContractValueRef(n)), origin),
-  Code.CodeFuncContractFact(fid, Code.CodeContractWindowFootprint(
-    a, n, b, n, Code.CodeWindowFootprintForward,
-    Code.CodeWindowFootprintStep(2), footprint_extent), origin),
   Code.CodeFuncContractFact(fid, Code.CodeContractDisjoint(a, b), origin),
   Code.CodeFuncContractFact(fid, Code.CodeContractSameLen(a, b), origin),
   Code.CodeFuncContractFact(fid, Code.CodeContractNoAlias(a), origin),
@@ -33,13 +31,6 @@ local projection = facts:project_memory_contract()
 assert(asdl.isa(projection, Mem.MemContractProjection))
 assert(#projection.bounds == 1 and projection.bounds[1].base == a)
 assert(#projection.projection_bounds == 1 and asdl.isa(projection.projection_bounds[1].base, Mem.MemContractPlaceKey))
-assert(#projection.window_footprints == 1)
-assert(projection.window_footprints[1].extent == footprint_extent)
-local footprint_lookup = projection:project_window_footprints()
-:lookup_window_footprint(
-  Mem.MemWindowFootprintLookupInput(fid, Mem.MemBaseValue(a)))
-assert(asdl.isa(footprint_lookup, Mem.MemWindowFootprintFound))
-assert(footprint_lookup.contract == projection.window_footprints[1])
 assert(#projection.disjoint == 1 and #projection.same_lengths == 1)
 assert(#projection.noalias == 1 and #projection.readonly == 1 and #projection.writeonly == 1)
 assert(#projection.projection_readonly == 1 and #projection.projection_writeonly == 1)

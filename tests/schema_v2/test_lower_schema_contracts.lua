@@ -43,7 +43,7 @@ assert(Lower.LowerCMatEnvironmentReady and Lower.LowerCMatEnvironmentRejected)
 assert(Lower.LowerCFunctionAssemblyReady and Lower.LowerCFunctionAssemblyRejected)
 assert(Lower.LowerCModuleEmitted and Lower.LowerCModuleRejected)
 assert(field_names(Lower.LowerCMatCoordinateInput) ==
-  "iteration,domain,provenance,memory,footprints")
+  "iteration,domain,provenance,memory")
 assert(field_names(Lower.LowerCMatWindowCoordinateProvenance) ==
   "offset,extent,boundary")
 assert(field_names(Lower.LowerCMatWindowRelativeCoordinate) ==
@@ -51,11 +51,8 @@ assert(field_names(Lower.LowerCMatWindowRelativeCoordinate) ==
 assert(field_names(Lower.LowerCMatWindowDynamicCoordinate) ==
   "basis,provenance,const_offset_bytes")
 assert(Lower.LowerCMatCoordinateWindowBoundaryUnsupported)
-assert(Lower.LowerCMatWindowFootprintAbsent and
-  Lower.LowerCMatWindowFootprintProven and
-  Lower.LowerCMatWindowFootprintRejected)
-assert(Lower.LowerCMatCoordinateWindowFootprintAmbiguous)
-assert(Lower.LowerCMatCoordinateWindowFootprintDisagreement)
+assert(Lower.LowerCMatWindowFootprintValidation == nil)
+assert(Lower.LowerCMatCoordinateWindowFootprintAmbiguous == nil)
 assert(field_names(Lower.LowerCMatAccessFact) ==
   "binding,provenance,mem_access,alignment,bounds,trap,movement,elem_size,stride")
 assert(Lower.LowerCMatAccessContractAdmitted and

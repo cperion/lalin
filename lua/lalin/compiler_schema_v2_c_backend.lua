@@ -35,9 +35,7 @@ function M.code_result_to_c(request)
     local schedules = kernels:plan_schedules(module, flow, values, mem, effects)
     local semantics = flow:compute_semantic_flow(module, graph)
     local prepared = Lower.LowerKernelCMatPreparationInput(
-      module, graph, kernels, schedules, semantics,
-      code_result.contracts:project_memory_contract():project_window_footprints(),
-      request.compiler)
+      module, graph, kernels, schedules, semantics, request.compiler)
 :lower_prepare_cmat()
     local lower_plan = module:plan_lowering(
       graph, kernels, schedules, Lower.LowerTargetC)

@@ -103,16 +103,13 @@ CMat access admission is now the exact conjunction of preserved backend facts:
 No pointer-shape inference, aggregate option bag, or fallback legality protocol is
 introduced. Unsupported combinations reject through typed LOWER/CMat results.
 
-Aggregate window footprints now require the distinct
-`CodeContractWindowFootprint`; ordinary `window_bounds` and per-access `MemBounds`
-do not satisfy this gate. The contract names the exact base and base length,
-iteration start and trip identities, producer order, element step, and before/after
-extent. Its memory projection is joined to each window use by exact function/base
-identity. Missing evidence preserves dynamic clamp/wrap/zero realization and keeps
-reject-boundary displacement rejected; ambiguous or disagreeing declared evidence
-rejects the whole coordinate projection. A matching declaration permits signed
-relative cursor displacement. No pointer-shape, mask, or numeric-range inference is
-used.
+Window footprint authorship is part of the window language, not a separate compiler
+contract. The window producer supplies range, order, step, extent, and boundary; each
+memory use supplies its displacement; `bounds(base)(len)` supplies the logical memory
+extent. `CodeContractWindowFootprint` and its LOWER projection are retired. Clamp,
+wrap, and zero preserve dynamic realization when coverage is not derived, while
+nonzero reject-boundary uses remain typed rejections until narrow affine coverage can
+establish that the authored iteration domain is interior to the declared bounds.
 
 Fusion has one boundary: successful Stencil-to-CMat materialization. The resulting
 `CMatMaterializedFused`/`CMatMaterializedKernelFragment` is the typed admission

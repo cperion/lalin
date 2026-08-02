@@ -64,9 +64,6 @@ local memory_projection = Mem.MemAccessProjection({
   Mem.MemAccessByIdEntry(memory),
   Mem.MemAccessByIdEntry(absolute_memory),
 }, {}, {}, {})
-local contracts = Code.CodeContractFactSet(
-  Code.CodeModuleId("module:coordinates"), {}):project_memory_contract()
-:project_window_footprints()
 
 local xs = Stencil.StencilAccess(
   "xs", Stencil.StencilAccessRead, i32,
@@ -128,7 +125,7 @@ local spine = CMat.CMatMemoryUseSpine({
 })
 
 local input = Lower.LowerCMatCoordinateInput(
-  iteration, window_domain, provenance, memory_projection, contracts)
+  iteration, window_domain, provenance, memory_projection)
 local projected = spine:lower_coordinates(input)
 assert(asdl.classof(projected) == Lower.LowerCMatCoordinatesProjected)
 local facet = projected.facet
@@ -155,29 +152,6 @@ assert(window.const_offset_bytes == 8)
 assert(window.provenance.offset == offset)
 assert(window.provenance.extent == window_extent)
 assert(window.provenance.boundary == Stencil.StencilWindowBoundaryClamp)
-do
-  local footprint_contracts = Code.CodeContractFactSet(
-    Code.CodeModuleId("module:coordinate-footprint"), {
-      Code.CodeFuncContractFact(func, Code.CodeContractWindowFootprint(
-        ptr, Code.CodeValueId("ptr_len"), start,
-        iteration.trip.trip_count.count, Code.CodeWindowFootprintForward,
-        Code.CodeWindowFootprintStep(2), Code.CodeWindowFootprintExtent(
-          Code.CodeWindowFootprintDistance(1),
-          Code.CodeWindowFootprintDistance(1))),
-        Code.CodeOriginGenerated("coordinate footprint fixture")),
-    }):project_memory_contract():project_window_footprints()
-  local footprint_projection = spine:lower_coordinates(
-    Lower.LowerCMatCoordinateInput(
-      iteration, window_domain, provenance, memory_projection,
-      footprint_contracts))
-  assert(asdl.classof(footprint_projection) ==
-    Lower.LowerCMatCoordinatesProjected)
-  local footprint_window = footprint_projection.facet
-    :lookup(window_id).entry.coordinate
-  assert(asdl.classof(footprint_window) ==
-    Lower.LowerCMatWindowRelativeCoordinate)
-  assert(footprint_window.use_offset_bytes == 4)
-end
 assert(store.use_offset_bytes == 8)
 assert(asdl.classof(absolute) == Lower.LowerCMatAbsoluteCoordinate)
 assert(absolute.root == absolute_root)
@@ -281,7 +255,7 @@ local reject_domain = Stencil.StencilKernelCountedWindow1D(
     window_extent, Stencil.StencilWindowBoundaryReject))
 local reject_window = CMat.CMatMemoryUseSpine({ spine.uses[2] }):lower_coordinates(
   Lower.LowerCMatCoordinateInput(
-    iteration, reject_domain, provenance, memory_projection, contracts))
+    iteration, reject_domain, provenance, memory_projection))
 assert(asdl.classof(reject_window) == Lower.LowerCMatCoordinatesRejected)
 assert(asdl.classof(reject_window.issues[1]) ==
   Lower.LowerCMatCoordinateWindowBoundaryUnsupported)
@@ -309,7 +283,7 @@ assert(asdl.classof(fraction.issues[1]) ==
 local missing_domain = CMat.CMatMemoryUseSpine({ spine.uses[2] }):lower_coordinates(
   Lower.LowerCMatCoordinateInput(
     iteration, Stencil.StencilKernelCountedDomain1D(window_source),
-    provenance, memory_projection, contracts))
+    provenance, memory_projection))
 assert(asdl.classof(missing_domain.issues[1]) ==
   Lower.LowerCMatCoordinateWindowDomainMissing)
 
@@ -331,7 +305,7 @@ local no_induction = CMat.CMatMemoryUseSpine({ spine.uses[1] })
   iteration, window_domain, provenance, Mem.MemAccessProjection({
     Mem.MemAccessByIdEntry(dynamic_memory),
     Mem.MemAccessByIdEntry(absolute_memory),
-  }, {}, {}, {}), contracts))
+  }, {}, {}, {})))
 assert(asdl.classof(no_induction) == Lower.LowerCMatCoordinatesRejected)
 assert(asdl.classof(no_induction.issues[1]) ==
   Lower.LowerCMatCoordinateInductionMissing)
@@ -342,7 +316,7 @@ local wrong_start_iteration = Stencil.StencilKernelIteration(
   iteration.trip)
 local disagreement = CMat.CMatMemoryUseSpine({ spine.uses[1] })
 :lower_coordinates(Lower.LowerCMatCoordinateInput(
-  wrong_start_iteration, window_domain, provenance, memory_projection, contracts))
+  wrong_start_iteration, window_domain, provenance, memory_projection))
 assert(asdl.classof(disagreement) ==
   Lower.LowerCMatCoordinatesRejected)
 assert(asdl.classof(disagreement.issues[1]) ==
@@ -354,7 +328,7 @@ local duplicate_provenance = Stencil.StencilAccessByKernelLaneProjection({
 })
 local ambiguous_access = CMat.CMatMemoryUseSpine({ spine.uses[1] })
 :lower_coordinates(Lower.LowerCMatCoordinateInput(
-  iteration, window_domain, duplicate_provenance, memory_projection, contracts))
+  iteration, window_domain, duplicate_provenance, memory_projection))
 assert(asdl.classof(ambiguous_access.issues[1]) ==
   Lower.LowerCMatCoordinateAccessAmbiguous)
 
@@ -365,7 +339,7 @@ local ambiguous_memory = CMat.CMatMemoryUseSpine({ spine.uses[1] })
 :lower_coordinates(Lower.LowerCMatCoordinateInput(
   iteration, window_domain, Stencil.StencilAccessByKernelLaneProjection({
     provenance.entries[1],
-  }), duplicate_memory, contracts))
+  }), duplicate_memory))
 assert(asdl.classof(ambiguous_memory.issues[1]) ==
   Lower.LowerCMatCoordinateMemoryFactAmbiguous)
 
@@ -376,7 +350,7 @@ local root_disagreement = CMat.CMatMemoryUseSpine({ spine.uses[1] })
 :lower_coordinates(Lower.LowerCMatCoordinateInput(
   iteration, window_domain, Stencil.StencilAccessByKernelLaneProjection({
     Stencil.StencilAccessByKernelLaneEntry(mismatched_lane, xs),
-  }), memory_projection, contracts))
+  }), memory_projection))
 assert(asdl.classof(root_disagreement.issues[1]) ==
   Lower.LowerCMatCoordinateRootDisagreement)
 

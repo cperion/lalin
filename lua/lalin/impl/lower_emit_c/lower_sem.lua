@@ -37,7 +37,7 @@ function CMat.CMatMaterializedKernelFragment:lower_cmat_state(input)
   local spine = self.kernel:cmat_memory_use_spine()
   local coordinates = spine:lower_coordinates(Lower.LowerCMatCoordinateInput(
     self.provenance.iteration, self.provenance.domain,
-    self.provenance.accesses, input.memory, input.footprints))
+    self.provenance.accesses, input.memory))
   return Lower.LowerKernelCMatReady(
     input.projection, self, coordinates)
 end
@@ -51,7 +51,7 @@ function Stencil.StencilKernelProjected:lower_cmat_state(input)
   return self.projection:cmat_materialize_kernel(
     CMat.CMatKernelMaterializationInput(CMat.CMatKernelId(input.kernel.text)))
 :lower_cmat_state(Lower.LowerKernelCMatMaterializationInput(
-  self.projection, input.memory, input.footprints))
+  self.projection, input.memory))
 end
 
 function Stencil.StencilKernelProjectionRejected:lower_cmat_state(_input)
@@ -63,7 +63,7 @@ function Stencil.StencilKernelModuleProjectedEntry:lower_cmat_entries(input)
     Lower.LowerKernelCMatEntry(
       self.kernel, self.result:lower_cmat_state(
         Lower.LowerKernelCMatStateInput(
-          self.kernel, input.kernels.mem:project_accesses(), input.footprints))) })
+          self.kernel, input.kernels.mem:project_accesses()))) })
 end
 function Stencil.StencilKernelModuleRejectedEntry:lower_cmat_entries(_input)
   return Lower.LowerKernelCMatProjection({})

@@ -1237,6 +1237,29 @@ loop i in window(0 .. n, before = 1, after = 1, boundary = clamp) do
 end
 ```
 
+A window is a language domain, not a backend contract. The producer declaration owns
+the iteration range, order, step, neighborhood extent, and boundary policy. Each
+indexed expression contributes its exact displacement, and ordinary function
+contracts provide the logical memory extent:
+
+```lln
+fn previous(dst [ptr [i32]], xs [ptr [i32]], n [index]) [void] do
+  requires bounds(dst)(n), writeonly(dst)
+  requires bounds(xs)(n), readonly(xs), disjoint(dst)(xs)
+  loop i in window(0 .. n, before = 1, after = 1, boundary = clamp) do
+    dst[i] = xs[i - 1]
+  end
+end
+```
+
+Do not repeat this information in a `window_footprint` assertion; that contract does
+not exist. `clamp`, `wrap`, and `zero` are total boundary operations. The compiler
+preserves a dynamic boundary realization whenever it cannot establish an interior
+access. `reject` requires compiler-derived coverage for every displaced use. The
+current implementation accepts centered reject-boundary uses; a nonzero displacement
+is a compile-time rejection until the narrow affine coverage recognizer can establish
+an interior domain. It is never emitted as an unchecked load.
+
 ND scans must specify `over`; the value may be an axis number or axis name.
 
 Allowed loop body forms are intentionally narrow:
@@ -1823,18 +1846,12 @@ Typical meanings:
 | `preserve(store)` | call preserves leases associated with this store/domain access |
 | `invalidate(store)` | call may move, free, compact, clear, or reuse storage for this store/domain |
 
-These contracts feed:
-
-- `MemBackendAccessInfo`
-- non-trapping memory proofs
-- lane selection facts
-- copy/map/reduce skeleton recognition
-- MC/BC stencil artifact selection
-
-If a source loop has missing memory proofs, the kernel planner may reject
-stencil selection. Internal generated control can still be represented as
-ordinary block code, but source `loop` is the domain/stencil-facing construct.
-
+These contracts feed typed memory, effect, and C-lowering facts. Missing optimization
+capabilities select conservative code rather than disabling fusion: absent noalias
+evidence disables `restrict`, while unknown alignment or non-unit stride leaves the
+scalar path intact. Window safety is derived from the window domain, exact memory
+uses, and ordinary bounds contracts; there is no generic proof token or authored
+aggregate footprint certificate.
 ---
 
 ## Borrow Checking, Handles, And Ownership

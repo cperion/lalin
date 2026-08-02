@@ -5,7 +5,6 @@ require("lalin.impl.code_mem")
 
 local Flow = require("lalin.schema_v2.flow")
 local Mem = require("lalin.schema_v2.mem")
-local Code = require("lalin.schema_v2.code")
 local Stencil = require("lalin.schema_v2.stencil")
 local CMat = require("lalin.schema_v2.c_materialize")
 local Lower = require("lalin.schema_v2.lower")
@@ -36,7 +35,7 @@ function CMat.CMatMemoryUse:lower_cmat_coordinate(input)
   end
   return found[1]:lower_cmat_coordinate_memory(
     Lower.LowerCMatLaneCoordinateInput(
-      self, input.iteration, input.domain, input.memory, input.footprints))
+      self, input.iteration, input.domain, input.memory))
 end
 
 function Stencil.StencilAccessByKernelLaneEntry:lower_cmat_coordinate_memory(input)
@@ -66,7 +65,7 @@ function Stencil.StencilAccessByKernelLaneEntry:lower_cmat_coordinate_memory(inp
         input.use.id, access_id, #found))
   end
   return Lower.LowerCMatUseMemoryFact(
-    input.use, input.iteration, input.domain, self, found[1], input.footprints)
+    input.use, input.iteration, input.domain, self, found[1])
 :lower_cmat_coordinate_fact()
 end
 
@@ -78,8 +77,7 @@ function Lower.LowerCMatUseMemoryFact:lower_cmat_coordinate_fact()
   end
   return self.memory.index:lower_cmat_index_coordinate(
     Lower.LowerCMatIndexCoordinateInput(
-      self.use, self.iteration, self.domain, self.memory, self.memory.index,
-      self.footprints))
+      self.use, self.iteration, self.domain, self.memory, self.memory.index))
 end
 
 function Mem.MemIndexNone:lower_cmat_index_coordinate(input)
@@ -123,8 +121,7 @@ end
 function CMat.CMatMemoryWindowOffset:lower_cmat_induction_coordinate(input)
   return input.domain:lower_cmat_window_coordinate(
     Lower.LowerCMatWindowCoordinateInput(
-      input.use, input.memory.base, input.memory.func, input.iteration,
-      input.index, self.offset, input.footprints))
+      input.use, input.memory.base, input.iteration, input.index, self.offset))
 end
 function CMat.CMatMemorySelectedIndex:lower_cmat_induction_coordinate(input)
   return self.selection:lower_cmat_induction_coordinate(input)
@@ -181,74 +178,6 @@ function Stencil.StencilKernelCountedDomain1D:lower_cmat_window_coordinate(input
     Lower.LowerCMatCoordinateWindowDomainMissing(input.use.id, self))
 end
 
-local function footprint_disagreement(input, axis)
-  return Lower.LowerCMatWindowFootprintRejected(
-    Lower.LowerCMatCoordinateWindowFootprintDisagreement(
-      input.use, input.contract, input.iteration, input.extent, axis))
-end
-
-function Mem.MemWindowFootprintMissing:lower_cmat_validate_window_footprint(_input)
-  return Lower.LowerCMatWindowFootprintAbsent
-end
-function Mem.MemWindowFootprintAmbiguous:lower_cmat_validate_window_footprint(input)
-  return Lower.LowerCMatWindowFootprintRejected(
-    Lower.LowerCMatCoordinateWindowFootprintAmbiguous(
-      input.use, self.input.base, self.count))
-end
-function Mem.MemWindowFootprintFound:lower_cmat_validate_window_footprint(input)
-  return self.contract:lower_cmat_validate_window_footprint(
-    Lower.LowerCMatWindowFootprintMatchInput(
-      input.use, input.iteration, input.extent, self.contract))
-end
-
-function Mem.MemContractWindowFootprintEntry:lower_cmat_validate_window_footprint(input)
-  if self.start ~= input.iteration.start then
-    return footprint_disagreement(input, Lower.LowerCMatWindowFootprintStart)
-  end
-  local step = self.step.elements
-  if type(step) ~= "number" or step ~= step or step == math.huge
-      or step == -math.huge or step ~= math.floor(step) or step <= 0
-      or step ~= input.iteration.step_magnitude then
-    return footprint_disagreement(input, Lower.LowerCMatWindowFootprintStep)
-  end
-  if self.extent.before.elements ~= input.extent.before.elements
-      or self.extent.after.elements ~= input.extent.after.elements then
-    return footprint_disagreement(input, Lower.LowerCMatWindowFootprintExtent)
-  end
-  return self.order:lower_cmat_validate_window_footprint_order(input)
-end
-
-function Code.CodeWindowFootprintForward:lower_cmat_validate_window_footprint_order(input)
-  return input.iteration.order:lower_cmat_validate_forward_window_footprint(input)
-end
-function Code.CodeWindowFootprintBackward:lower_cmat_validate_window_footprint_order(input)
-  return input.iteration.order:lower_cmat_validate_backward_window_footprint(input)
-end
-function Stencil.StencilProducerForward:lower_cmat_validate_forward_window_footprint(input)
-  return input.iteration.trip:lower_cmat_validate_window_footprint_trip(input)
-end
-function Stencil.StencilProducerBackward:lower_cmat_validate_forward_window_footprint(input)
-  return footprint_disagreement(input, Lower.LowerCMatWindowFootprintOrder)
-end
-function Stencil.StencilProducerBackward:lower_cmat_validate_backward_window_footprint(input)
-  return input.iteration.trip:lower_cmat_validate_window_footprint_trip(input)
-end
-function Stencil.StencilProducerForward:lower_cmat_validate_backward_window_footprint(input)
-  return footprint_disagreement(input, Lower.LowerCMatWindowFootprintOrder)
-end
-
-local function validate_window_footprint_trip(input, count)
-  if input.contract.trip ~= count then
-    return footprint_disagreement(input, Lower.LowerCMatWindowFootprintTrip)
-  end
-  return Lower.LowerCMatWindowFootprintProven(input.contract)
-end
-function Stencil.StencilKernelTripExact:lower_cmat_validate_window_footprint_trip(input)
-  return validate_window_footprint_trip(input, self.trip_count.count)
-end
-function Stencil.StencilKernelTripNonNegative:lower_cmat_validate_window_footprint_trip(input)
-  return validate_window_footprint_trip(input, self.trip_count.count)
-end
 
 local function finite_integer(value)
   return type(value) == "number" and value == value
@@ -283,16 +212,11 @@ function Stencil.StencilKernelCountedWindow1D:lower_cmat_window_coordinate(input
       Lower.LowerCMatCoordinateWindowDistanceOutsideExtent(
         input.use.id, provenance))
   end
-  local footprint = input.footprints:lookup_window_footprint(
-    Mem.MemWindowFootprintLookupInput(input.func, input.root))
-:lower_cmat_validate_window_footprint(
-    Lower.LowerCMatWindowFootprintValidateInput(
-      input.use.id, input.iteration, self.window.extent))
   local index = input.index
   return index.induction.role:lower_cmat_align_window(
     Lower.LowerCMatWindowAlignmentInput(
       input.use, input.root, input.iteration, index.induction,
-      index.elem_size, index.const_offset, provenance, footprint))
+      index.elem_size, index.const_offset, provenance))
 end
 
 function Flow.FlowPrimaryInduction:lower_cmat_align_window(input)
@@ -310,7 +234,7 @@ function Flow.FlowPrimaryInduction:lower_cmat_align_window(input)
   end
   local basis = Lower.LowerCMatAddressBasis(
     input.root, input.induction, input.index_scale_bytes)
-  return input.footprint:lower_cmat_select_aligned_window(
+  return input.provenance.boundary:lower_cmat_aligned_window(
     Lower.LowerCMatAlignedWindowCoordinateInput(
       input.use, basis, input.const_offset_bytes, input.provenance))
 end
@@ -320,23 +244,6 @@ end
 function Flow.FlowPointerInduction:lower_cmat_align_window(input)
   return induction_disagreement(input, Lower.LowerCMatAlignmentRole)
 end
-
-function Lower.LowerCMatWindowFootprintRejected:lower_cmat_select_aligned_window(input)
-  return Lower.LowerCMatUseCoordinateRejected(self.issue)
-end
-function Lower.LowerCMatWindowFootprintProven:lower_cmat_select_aligned_window(input)
-  local distance_bytes = input.provenance.offset.distance.elements
-    * input.basis.index_scale_bytes
-  return Lower.LowerCMatUseCoordinateProduced(
-    Lower.LowerCMatUseCoordinateEntry(input.use.id,
-      Lower.LowerCMatWindowRelativeCoordinate(
-        input.basis, input.provenance,
-        input.const_offset_bytes + distance_bytes)))
-end
-function Lower.LowerCMatWindowFootprintAbsent:lower_cmat_select_aligned_window(input)
-  return input.provenance.boundary:lower_cmat_aligned_window(input)
-end
-
 local function dynamic_or_relative_window(input)
   local distance = input.provenance.offset.distance.elements
   if distance == 0 then

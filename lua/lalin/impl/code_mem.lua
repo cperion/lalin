@@ -267,14 +267,14 @@ function Code.CodeContractPlaceLoad:project_memory_contract_expr() return Mem.Me
 
 local function empty_contract_contribution()
   return Mem.MemContractContribution(
-    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 end
 
 function Code.CodeContractBounds:project_memory_contract(input)
   local s = input.source
   return Mem.MemContractContribution(
     { Mem.MemContractBoundsEntry(s.func, self.base, self.len, s) },
-    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 end
 function Code.CodeContractProjectionBounds:project_memory_contract(input)
   local s = input.source
@@ -282,41 +282,33 @@ function Code.CodeContractProjectionBounds:project_memory_contract(input)
     { Mem.MemContractProjectionBoundsEntry(
       s.func, self.base:project_memory_contract_expr(),
       self.len:project_memory_contract_expr(), s) },
-    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 end
 function Code.CodeContractWindowBounds:project_memory_contract(input)
   local s = input.source
   return Mem.MemContractContribution({}, {},
     { Mem.MemContractWindowEntry(
       s.func, self.base, self.base_len, self.start, self.len, s) },
-    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
-end
-function Code.CodeContractWindowFootprint:project_memory_contract(input)
-  local s = input.source
-  return Mem.MemContractContribution({}, {}, {},
-    { Mem.MemContractWindowFootprintEntry(
-      s.func, self.base, self.base_len, self.start, self.trip,
-      self.order, self.step, self.extent, s) },
     {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 end
 function Code.CodeContractDisjoint:project_memory_contract(input)
   local s = input.source
   return Mem.MemContractContribution(
-    {}, {}, {}, {}, {},
+    {}, {}, {}, {},
     { Mem.MemContractPairEntry(s.func, self.a, self.b, s) },
     {}, {}, {}, {}, {}, {}, {}, {}, {})
 end
 function Code.CodeContractSameLen:project_memory_contract(input)
   local s = input.source
   return Mem.MemContractContribution(
-    {}, {}, {}, {},
+    {}, {}, {},
     { Mem.MemContractPairEntry(s.func, self.a, self.b, s) },
     {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 end
 function Code.CodeContractSoAComponent:project_memory_contract(input)
   local s = input.source
   return Mem.MemContractContribution(
-    {}, {}, {}, {}, {}, {},
+    {}, {}, {}, {}, {},
     { Mem.MemContractSoAEntry(
       s.func, self.base, self.record_ty, self.field_name,
       self.component_index, s) },
@@ -324,35 +316,34 @@ function Code.CodeContractSoAComponent:project_memory_contract(input)
 end
 
 local function value_contract_contribution(slot, input, base)
-  local fields = { {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} }
+  local fields = { {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} }
   fields[slot] = { Mem.MemContractValueEntry(input.source.func, base, input.source) }
   return Mem.MemContractContribution(unpack(fields))
 end
-function Code.CodeContractNoAlias:project_memory_contract(input) return value_contract_contribution(8, input, self.base) end
-function Code.CodeContractReadonly:project_memory_contract(input) return value_contract_contribution(9, input, self.base) end
-function Code.CodeContractWriteonly:project_memory_contract(input) return value_contract_contribution(10, input, self.base) end
-function Code.CodeContractInvalidate:project_memory_contract(input) return value_contract_contribution(13, input, self.base) end
-function Code.CodeContractPreserve:project_memory_contract(input) return value_contract_contribution(14, input, self.base) end
+function Code.CodeContractNoAlias:project_memory_contract(input) return value_contract_contribution(7, input, self.base) end
+function Code.CodeContractReadonly:project_memory_contract(input) return value_contract_contribution(8, input, self.base) end
+function Code.CodeContractWriteonly:project_memory_contract(input) return value_contract_contribution(9, input, self.base) end
+function Code.CodeContractInvalidate:project_memory_contract(input) return value_contract_contribution(12, input, self.base) end
+function Code.CodeContractPreserve:project_memory_contract(input) return value_contract_contribution(13, input, self.base) end
 
 local function projection_contract_contribution(slot, input, base)
-  local fields = { {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} }
+  local fields = { {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} }
   fields[slot] = { Mem.MemContractProjectionEntry(input.source.func, base:project_memory_contract_expr(), input.source) }
   return Mem.MemContractContribution(unpack(fields))
 end
-function Code.CodeContractProjectionReadonly:project_memory_contract(input) return projection_contract_contribution(11, input, self.base) end
-function Code.CodeContractProjectionWriteonly:project_memory_contract(input) return projection_contract_contribution(12, input, self.base) end
+function Code.CodeContractProjectionReadonly:project_memory_contract(input) return projection_contract_contribution(10, input, self.base) end
+function Code.CodeContractProjectionWriteonly:project_memory_contract(input) return projection_contract_contribution(11, input, self.base) end
 function Code.CodeContractRejected:project_memory_contract(input)
   local s = input.source
   return Mem.MemContractContribution(
-    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {},
+    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {},
     { Mem.MemContractRejectedEntry(s.func, self.reason, s) })
 end
 
 local contract_fields = {
-  "bounds", "projection_bounds", "windows", "window_footprints",
-  "same_lengths", "disjoint", "soa", "noalias", "readonly", "writeonly",
-  "projection_readonly", "projection_writeonly", "invalidates", "preserves",
-  "rejected",
+  "bounds", "projection_bounds", "windows", "same_lengths", "disjoint",
+  "soa", "noalias", "readonly", "writeonly", "projection_readonly",
+  "projection_writeonly", "invalidates", "preserves", "rejected",
 }
 local function merge_contract_contribution(a, b)
   local values = {}
@@ -367,53 +358,10 @@ function Code.CodeContractFactSet:project_memory_contract()
   for _, fact in ipairs(self.facts) do result = merge_contract_contribution(result, fact:project_memory_contract()) end
   return Mem.MemContractProjection(
     result.bounds, result.projection_bounds, result.windows,
-    result.window_footprints, result.same_lengths, result.disjoint, result.soa,
-    result.noalias, result.readonly, result.writeonly,
-    result.projection_readonly, result.projection_writeonly,
-    result.invalidates, result.preserves, result.rejected)
-end
-
-function Mem.MemContractProjection:project_window_footprints()
-  return Mem.MemWindowFootprintProjection(self.window_footprints)
-end
-
-local function lookup_window_footprint_value(projection, input, value)
-  local found = {}
-  for i = 1, #projection.entries do
-    local entry = projection.entries[i]
-    if entry.func == input.func and entry.base == value then
-      found[#found + 1] = entry
-    end
-  end
-  if #found == 0 then return Mem.MemWindowFootprintMissing(input) end
-  if #found > 1 then
-    return Mem.MemWindowFootprintAmbiguous(input, #found)
-  end
-  return Mem.MemWindowFootprintFound(found[1])
-end
-function Mem.MemBaseValue:lookup_window_footprint(projection, input)
-  return lookup_window_footprint_value(projection, input, self.value)
-end
-function Mem.MemBaseArgument:lookup_window_footprint(projection, input)
-  return lookup_window_footprint_value(projection, input, self.value)
-end
-function Mem.MemBaseLocal:lookup_window_footprint(_projection, input)
-  return Mem.MemWindowFootprintMissing(input)
-end
-function Mem.MemBaseGlobal:lookup_window_footprint(_projection, input)
-  return Mem.MemWindowFootprintMissing(input)
-end
-function Mem.MemBaseData:lookup_window_footprint(_projection, input)
-  return Mem.MemWindowFootprintMissing(input)
-end
-function Mem.MemBaseProjection:lookup_window_footprint(_projection, input)
-  return Mem.MemWindowFootprintMissing(input)
-end
-function Mem.MemBaseUnknown:lookup_window_footprint(_projection, input)
-  return Mem.MemWindowFootprintMissing(input)
-end
-function Mem.MemWindowFootprintProjection:lookup_window_footprint(input)
-  return input.base:lookup_window_footprint(self, input)
+    result.same_lengths, result.disjoint, result.soa, result.noalias,
+    result.readonly, result.writeonly, result.projection_readonly,
+    result.projection_writeonly, result.invalidates, result.preserves,
+    result.rejected)
 end
 
 ----------------------------------------------------------------------

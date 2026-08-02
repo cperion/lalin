@@ -575,18 +575,6 @@ return schema. LalinMem {
   product. MemContractBoundsEntry { interned, func [LalinCode.CodeFuncId], base [LalinCode.CodeValueId], len [LalinCode.CodeValueId], source [LalinCode.CodeFuncContractFact], },
   product. MemContractProjectionBoundsEntry { interned, func [LalinCode.CodeFuncId], base [LalinMem.MemContractExprKey], len [LalinMem.MemContractExprKey], source [LalinCode.CodeFuncContractFact], },
   product. MemContractWindowEntry { interned, func [LalinCode.CodeFuncId], base [LalinCode.CodeValueId], base_len [LalinCode.CodeValueId], start [LalinCode.CodeValueId], len [LalinCode.CodeValueId], source [LalinCode.CodeFuncContractFact], },
-  product. MemContractWindowFootprintEntry {
-    interned,
-    func [LalinCode.CodeFuncId],
-    base [LalinCode.CodeValueId],
-    base_len [LalinCode.CodeValueId],
-    start [LalinCode.CodeValueId],
-    trip [LalinCode.CodeValueId],
-    order [LalinCode.CodeWindowFootprintOrder],
-    step [LalinCode.CodeWindowFootprintStep],
-    extent [LalinCode.CodeWindowFootprintExtent],
-    source [LalinCode.CodeFuncContractFact],
-  },
   product. MemContractPairEntry { interned, func [LalinCode.CodeFuncId], a [LalinCode.CodeValueId], b [LalinCode.CodeValueId], source [LalinCode.CodeFuncContractFact], },
   product. MemContractSoAEntry { interned, func [LalinCode.CodeFuncId], base [LalinCode.CodeValueId], record_ty [LalinCode.CodeType], field_name [str], component_index [number], source [LalinCode.CodeFuncContractFact], },
   product. MemContractValueEntry { interned, func [LalinCode.CodeFuncId], base [LalinCode.CodeValueId], source [LalinCode.CodeFuncContractFact], },
@@ -596,7 +584,6 @@ return schema. LalinMem {
     bounds [many [LalinMem.MemContractBoundsEntry]],
     projection_bounds [many [LalinMem.MemContractProjectionBoundsEntry]],
     windows [many [LalinMem.MemContractWindowEntry]],
-    window_footprints [many [LalinMem.MemContractWindowFootprintEntry]],
     same_lengths [many [LalinMem.MemContractPairEntry]],
     disjoint [many [LalinMem.MemContractPairEntry]],
     soa [many [LalinMem.MemContractSoAEntry]],
@@ -613,7 +600,6 @@ return schema. LalinMem {
     bounds [many [LalinMem.MemContractBoundsEntry]],
     projection_bounds [many [LalinMem.MemContractProjectionBoundsEntry]],
     windows [many [LalinMem.MemContractWindowEntry]],
-    window_footprints [many [LalinMem.MemContractWindowFootprintEntry]],
     same_lengths [many [LalinMem.MemContractPairEntry]],
     disjoint [many [LalinMem.MemContractPairEntry]],
     soa [many [LalinMem.MemContractSoAEntry]],
@@ -625,30 +611,6 @@ return schema. LalinMem {
     invalidates [many [LalinMem.MemContractValueEntry]],
     preserves [many [LalinMem.MemContractValueEntry]],
     rejected [many [LalinMem.MemContractRejectedEntry]],
-  },
-  product. MemWindowFootprintProjection {
-    interned,
-    entries [many [LalinMem.MemContractWindowFootprintEntry]],
-  },
-  product. MemWindowFootprintLookupInput {
-    interned,
-    func [LalinCode.CodeFuncId],
-    base [LalinMem.MemBase],
-  },
-  sum. MemWindowFootprintLookup {
-    MemWindowFootprintFound {
-      variant_unique,
-      contract [LalinMem.MemContractWindowFootprintEntry],
-    },
-    MemWindowFootprintMissing {
-      variant_unique,
-      input [LalinMem.MemWindowFootprintLookupInput],
-    },
-    MemWindowFootprintAmbiguous {
-      variant_unique,
-      input [LalinMem.MemWindowFootprintLookupInput],
-      count [number],
-    },
   },
 
   -- Access projection lookups never use nil as a semantic result.
