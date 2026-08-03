@@ -299,8 +299,16 @@ function Code.CodeInstSelect:code_value_expr_facts(out_values, exprs)
   add_expr_fact(out_values, exprs, self.dst, Value.ValueExprSelect(expr_for(exprs, self.cond), expr_for(exprs, self.then_value), expr_for(exprs, self.else_value)), identity("Code select expression"))
 end
 
+function Core.MachineCastOp:code_value_cast_expr(expr) return expr end
+function Core.MachineCastIdentity:code_value_cast_expr(expr)
+  if expr.from == expr.to then return expr.value end
+  return expr
+end
 function Code.CodeInstCast:code_value_expr_facts(out_values, exprs)
-  add_expr_fact(out_values, exprs, self.dst, Value.ValueExprCast(self.op, self.from, self.to, expr_for(exprs, self.value)), identity("Code cast expression"))
+  local expr = Value.ValueExprCast(
+    self.op, self.from, self.to, expr_for(exprs, self.value))
+  add_expr_fact(out_values, exprs, self.dst, self.op:code_value_cast_expr(expr),
+    identity("Code cast expression"))
 end
 
 function Code.CodeInstOp:code_value_alias_src()
@@ -676,7 +684,9 @@ local function detect_reductions(module, graph, flow, exprs_by_func)
           if rop ~= nil and contribution ~= nil then
             local canonical_contribution = canonical_value(contribution, aliases)
             local domain = Flow.FlowDomainLoop(loop_fact.loop)
-            local proof = Value.AlgebraProofFlow(domain, Value.AlgebraFlowCounted(Flow.FlowTripCountUnknown("loop-carried", nil)))
+            local proof = Value.AlgebraProofFlow(domain, Value.AlgebraFlowCounted(
+              Flow.FlowTripCountRejected(Flow.FlowTripCountNotMaterialized(
+                "loop-carried reduction"), nil)))
             local reduction = Value.ReductionFact(
               Value.AlgebraFactId("reduction:" .. sanitize(func.name) .. ":" .. sanitize(loop_fact.loop.text) .. ":" .. sanitize(param.value.text)),
               domain, param.value, rop,

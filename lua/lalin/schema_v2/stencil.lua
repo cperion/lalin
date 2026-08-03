@@ -1816,6 +1816,11 @@ return schema. LalinStencil {
     interned,
     values [many [LalinKernel.KernelValueId]],
   },
+  product. StencilKernelResultLiveInput {
+    interned,
+    live [LalinStencil.StencilKernelLiveBindingProjection],
+    bindings [LalinKernel.KernelBindingProjection],
+  },
   product. StencilKernelLiveStreamInput {
     interned,
     construction [LalinStencil.StencilKernelConstruction],

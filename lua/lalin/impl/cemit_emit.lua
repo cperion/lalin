@@ -543,8 +543,26 @@ function C.CBackendFuncBody:c_emit_body(out, indent)
   error("missing c_emit_body leaf method", 2)
 end
 
+function Cemit.CEmitBlockProjection:lookup(label)
+  for i = 1, #self.blocks do
+    if self.blocks[i].label == label then return Cemit.CEmitBlockFound(self.blocks[i]) end
+  end
+  return Cemit.CEmitBlockMissing(label)
+end
+function Cemit.CEmitBlockProjection:c_emit_param_decls(out, indent)
+  for i = 1, #self.blocks do
+    for j = 1, #self.blocks[i].params do
+      local param = self.blocks[i].params[j]
+      out[#out + 1] = indent .. param.ty:c_emit_decl(param.local_id.text) .. ";"
+    end
+  end
+end
 function C.CBackendBodyBlocks:c_emit_body(out, indent)
-  for _, block in ipairs(self.blocks or {}) do block:c_emit_block(out, indent) end
+  local projection = Cemit.CEmitBlockProjection(self.blocks)
+  projection:c_emit_param_decls(out, indent)
+  for _, block in ipairs(self.blocks or {}) do
+    block:c_emit_block(out, indent, projection)
+  end
 end
 
 function C.CBackendBodyExec:c_emit_body(out, indent)
@@ -557,30 +575,23 @@ function C.CBackendBodyMixed:c_emit_body(out, indent)
   for _, frag in ipairs(self.fragments or {}) do
     out[#out + 1] = indent .. "/* exec fragment */"
   end
-
-  for _, block in ipairs(self.blocks or {}) do block:c_emit_block(out, indent) end
+  local projection = Cemit.CEmitBlockProjection(self.blocks)
+  projection:c_emit_param_decls(out, indent)
+  for _, block in ipairs(self.blocks or {}) do
+    block:c_emit_block(out, indent, projection)
+  end
 end
 
 ----------------------------------------------------------------------
 -- C.CBackendBlock → c_emit_block
 ----------------------------------------------------------------------
 
-function C.CBackendBlock:c_emit_block(out, indent)
-  -- Label
+function C.CBackendBlock:c_emit_block(out, indent, projection)
   out[#out + 1] = indent .. self.label.text .. ":"
-
-  -- Block params: these become local declarations on entry
-  for _, bp in ipairs(self.params or {}) do
-    out[#out + 1] = indent .. "  " .. bp.ty:c_emit_decl(bp.local_id.text) .. ";"
-  end
-
-  -- Statements
   for _, stmt in ipairs(self.stmts or {}) do
     stmt:c_emit_stmt(out, indent)
   end
-
-  -- Terminator
-  self.term:c_emit_term(out, indent)
+  self.term:c_emit_term(out, indent, projection)
 end
 
 ----------------------------------------------------------------------
@@ -694,23 +705,57 @@ function C.CBackendTerminator:c_emit_term(out, indent)
   out[#out + 1] = indent .. "  /* unhandled terminator */"
 end
 
-function C.CBackendGoto:c_emit_term(out, indent)
-  out[#out + 1] = indent .. "  goto " .. self.dest.text .. ";"
+function Cemit.CEmitBlockMissing:c_emit_edge_body(_out, _indent, _args)
+  error("C emission references missing block: " .. self.label.text, 2)
 end
-
-function C.CBackendIfGoto:c_emit_term(out, indent)
+function Cemit.CEmitBlockFound:c_emit_edge_body(out, indent, args)
+  local params = self.block.params
+  if #args ~= #params then
+    error("C emission edge argument count does not match target parameters", 2)
+  end
+  for i = 1, #params do
+    local temporary = sanitize("lalin_edge_tmp_" ..
+      params[i].local_id.text .. "_" .. tostring(i))
+    out[#out + 1] = indent .. params[i].ty:c_emit_decl(temporary)
+      .. " = " .. args[i]:c_emit_atom() .. ";"
+  end
+  for i = 1, #params do
+    local temporary = sanitize("lalin_edge_tmp_" ..
+      params[i].local_id.text .. "_" .. tostring(i))
+    out[#out + 1] = indent .. params[i].local_id.text .. " = " .. temporary .. ";"
+  end
+  out[#out + 1] = indent .. "goto " .. self.block.label.text .. ";"
+end
+function C.CBackendGoto:c_emit_term(out, indent, projection)
+  out[#out + 1] = indent .. "  {"
+  projection:lookup(self.dest):c_emit_edge_body(out, indent .. "    ", self.args)
+  out[#out + 1] = indent .. "  }"
+end
+function C.CBackendIfGoto:c_emit_term(out, indent, projection)
   local cond = self.cond:c_emit_atom()
-  out[#out + 1] = indent .. "  if (" .. cond .. ") goto " .. self.then_dest.text .. ";"
-  out[#out + 1] = indent .. "  else goto " .. self.else_dest.text .. ";"
+  out[#out + 1] = indent .. "  if (" .. cond .. ") {"
+  projection:lookup(self.then_dest):c_emit_edge_body(
+    out, indent .. "    ", self.then_args)
+  out[#out + 1] = indent .. "  } else {"
+  projection:lookup(self.else_dest):c_emit_edge_body(
+    out, indent .. "    ", self.else_args)
+  out[#out + 1] = indent .. "  }"
 end
 
-function C.CBackendSwitchGoto:c_emit_term(out, indent)
+function C.CBackendSwitchGoto:c_emit_term(out, indent, projection)
   local val = self.value:c_emit_atom()
   out[#out + 1] = indent .. "  switch (" .. val .. ") {"
-  for _, c in ipairs(self.cases or {}) do
-    out[#out + 1] = indent .. "  case " .. c.literal:c_emit_literal_value() .. ": goto " .. c.dest.text .. ";"
+  for _, case in ipairs(self.cases or {}) do
+    out[#out + 1] = indent .. "  case "
+      .. case.literal:c_emit_literal_value() .. ": {"
+    projection:lookup(case.dest):c_emit_edge_body(
+      out, indent .. "    ", case.args)
+    out[#out + 1] = indent .. "  }"
   end
-  out[#out + 1] = indent .. "  default: goto " .. self.default_dest.text .. ";"
+  out[#out + 1] = indent .. "  default: {"
+  projection:lookup(self.default_dest):c_emit_edge_body(
+    out, indent .. "    ", self.default_args)
+  out[#out + 1] = indent .. "  }"
   out[#out + 1] = indent .. "  }"
 end
 

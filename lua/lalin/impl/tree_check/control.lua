@@ -11,6 +11,7 @@ function Tr.StmtReturnVoid:typecheck_tree_flow_outcome() return Sem.FlowReturns 
 function Tr.StmtYieldValue:typecheck_tree_flow_outcome() return Sem.FlowYields end
 function Tr.StmtYieldVoid:typecheck_tree_flow_outcome() return Sem.FlowYields end
 function Tr.StmtJump:typecheck_tree_flow_outcome() return Sem.FlowJumps end
+function Tr.StmtBranchJump:typecheck_tree_flow_outcome() return Sem.FlowJumps end
 function Tr.StmtTrap:typecheck_tree_flow_outcome() return Sem.FlowTerminates end
 
 function Tr.Stmt:typecheck_tree_control_facts(ctx) return {} end

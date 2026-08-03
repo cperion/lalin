@@ -777,29 +777,34 @@ function Kernel.KernelEffect:stencil_add_live_bindings(projection) return projec
 function Kernel.KernelEffectStore:stencil_add_live_bindings(projection)
   return self.value:stencil_add_live_binding(projection)
 end
-function Kernel.KernelResult:stencil_add_live_bindings(projection) return projection end
-function Kernel.KernelResultValue:stencil_add_live_bindings(projection)
-  return self.expr:stencil_add_live_binding(projection)
+function Kernel.KernelResult:stencil_add_live_bindings(input) return input.live end
+function Kernel.KernelResultValue:stencil_add_live_bindings(input)
+  return self.expr:stencil_add_live_binding(input.live)
 end
-function Kernel.KernelResultFind:stencil_add_live_bindings(projection)
-  return self.src:stencil_add_live_binding(projection)
+function Kernel.KernelResultFind:stencil_add_live_bindings(input)
+  return self.src:stencil_add_live_binding(input.live)
 end
-function Kernel.KernelResultAll:stencil_add_live_bindings(projection)
-  return self.src:stencil_add_live_binding(projection)
+function Kernel.KernelResultAll:stencil_add_live_bindings(input)
+  return self.src:stencil_add_live_binding(input.live)
 end
-function Kernel.KernelResultAny:stencil_add_live_bindings(projection)
-  return self.src:stencil_add_live_binding(projection)
+function Kernel.KernelResultAny:stencil_add_live_bindings(input)
+  return self.src:stencil_add_live_binding(input.live)
 end
-function Kernel.KernelResultAllCompare:stencil_add_live_bindings(projection)
+function Kernel.KernelResultAllCompare:stencil_add_live_bindings(input)
   return self.right:stencil_add_live_binding(
-    self.left:stencil_add_live_binding(projection))
+    self.left:stencil_add_live_binding(input.live))
+end
+function Kernel.KernelResultReduction:stencil_add_live_bindings(input)
+  return self.reduction.contribution:stencil_add_live_dependencies(
+    input.live, input.bindings)
 end
 function Kernel.KernelBody:stencil_live_bindings()
   local projection = Stencil.StencilKernelLiveBindingProjection({})
   for i = 1, #self.effects.entries do
     projection = self.effects.entries[i].effect:stencil_add_live_bindings(projection)
   end
-  projection = self.result:stencil_add_live_bindings(projection)
+  projection = self.result:stencil_add_live_bindings(
+    Stencil.StencilKernelResultLiveInput(projection, self.bindings))
   return self.bindings:stencil_complete_live_bindings(projection)
 end
 function Stencil.StencilKernelLiveBindingProjection:stencil_contribute_stream(input)

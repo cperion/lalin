@@ -317,6 +317,11 @@ return schema. LalinTreeCode {
     input [LalinTreeCode.TreeCodeStmtInput],
     domain [LalinTree.ControlLoopDomain],
   },
+  product. TreeCodeExprDomainControlInput {
+    interned,
+    input [LalinTreeCode.TreeCodeExprInput],
+    domain [LalinTree.ControlLoopDomain],
+  },
   product. TreeCodeContractInput {
     module_facts [LalinTreeCode.TreeCodeModuleFacts],
     sigs [LalinTreeCode.TreeCodeModuleSigState],

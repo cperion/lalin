@@ -534,35 +534,55 @@ function Tr.ExprSwitch:typecheck_tree_expr(input)
   return LCheck.TypeExprResult(Tr.ExprSwitch(Tr.ExprTyped(result_ty), vr.expr, arms, variant_arms, default_body.stmts, default_expr and default_expr.expr or self.default_expr), result_ty, issues)
 end
 
--- ExprControl: region-based control flow expression
+-- Expression control regions own value-yield typing and exact parameter identities.
+local function expr_control_scope(input, region_id, label, params, is_entry, result_ty)
+  local scope = input.scope
+  for i = 1, #(params or {}) do
+    local param = params[i]
+    local role = is_entry
+      and B.BindingRoleEntryBlockParam(region_id, label.name, i)
+      or B.BindingRoleBlockParam(region_id, label.name, i)
+    local binding = B.Binding(C.Id("control:param:" .. region_id .. "_" ..
+      label.name .. "_" .. param.name), param.name, param.ty, role)
+    scope = scope:typecheck_tree_add_value(param.name, param.ty, binding)
+  end
+  return LCheck.TypeStmtInput(scope, result_ty, LCheck.TypeYieldValue(result_ty))
+end
+function Tr.ControlExprRegion:typecheck_tree_expr_region(input)
+  local result_ty = self.result_ty or Ty.TScalar(C.ScalarVoid)
+  local issues = {}
+  local entry_input = expr_control_scope(input, self.region_id,
+    self.entry.label, self.entry.params, true, result_ty)
+  local entry_result = entry_input:typecheck_tree_stmt_body(self.entry.body or {})
+  for i = 1, #(entry_result.issues or {}) do issues[#issues + 1] = entry_result.issues[i] end
+  local entry = Tr.EntryControlBlock(
+    self.entry.label, self.entry.params, entry_result.stmts)
+  local blocks = {}
+  for i = 1, #(self.blocks or {}) do
+    local block = self.blocks[i]
+    local block_input = expr_control_scope(input, self.region_id,
+      block.label, block.params, false, result_ty)
+    local block_result = block_input:typecheck_tree_stmt_body(block.body or {})
+    blocks[i] = Tr.ControlBlock(block.label, block.params, block_result.stmts)
+    for j = 1, #(block_result.issues or {}) do
+      issues[#issues + 1] = block_result.issues[j]
+    end
+  end
+  return LCheck.TypeControlExprRegionResult(
+    Tr.ControlExprRegion(self.region_id, result_ty, entry, blocks), issues)
+end
 function Tr.ExprControl:typecheck_tree_expr(input)
-  if not self.region then
-    return LCheck.TypeExprResult(nil, nil, {})
-  end
-  local result_ty = self.region.result_ty or Ty.TScalar(C.ScalarVoid)
-  -- Typecheck entry block body
-  local entry = self.region.entry
-  if entry then
-    local scope = input.scope
-    for j = 1, #(entry.params or {}) do
-      local p = entry.params[j]
-      scope = scope:typecheck_tree_add_value(p.name, p.ty)
-    end
-    local stmt_input = LCheck.TypeStmtInput(scope, result_ty, LCheck.TypeYieldValue(result_ty))
-    local body = stmt_input:typecheck_tree_stmt_body(entry.body or {})
-  end
-  -- Typecheck extra blocks
-  for i = 1, #(self.region.blocks or {}) do
-    local blk = self.region.blocks[i]
-    local scope = input.scope
-    for j = 1, #(blk.params or {}) do
-      local p = blk.params[j]
-      scope = scope:typecheck_tree_add_value(p.name, p.ty)
-    end
-    local stmt_input = LCheck.TypeStmtInput(scope, result_ty, LCheck.TypeYieldValue(result_ty))
-    local body = stmt_input:typecheck_tree_stmt_body(blk.body or {})
-  end
-  return LCheck.TypeExprResult(Tr.ExprControl(Tr.ExprTyped(result_ty), self.region), result_ty, {})
+  local result = self.region:typecheck_tree_expr_region(input)
+  return LCheck.TypeExprResult(
+    Tr.ExprControl(Tr.ExprTyped(result.region.result_ty), result.region),
+    result.region.result_ty, result.issues)
+end
+function Tr.ExprDomainControl:typecheck_tree_expr(input)
+  local result = self.region:typecheck_tree_expr_region(input)
+  return LCheck.TypeExprResult(
+    Tr.ExprDomainControl(Tr.ExprTyped(result.region.result_ty),
+      result.region, self.domain),
+    result.region.result_ty, result.issues)
 end
 
 -- ExprView: view/slice construction

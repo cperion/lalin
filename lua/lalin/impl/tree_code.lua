@@ -1013,6 +1013,7 @@ function Tree.ExprSwitch:tree_code_collect_address_taken_expr(out)
   collect_address_taken_stmts(self.default_body or {}, out); collect_address_taken_expr(self.default_expr, out)
 end
 function Tree.ExprControl:tree_code_collect_address_taken_expr(out) collect_address_taken_stmts(self.region.entry.body, out); for i=1,#(self.region.blocks or {}) do collect_address_taken_stmts(self.region.blocks[i].body, out) end end
+function Tree.ExprDomainControl:tree_code_collect_address_taken_expr(out) collect_address_taken_stmts(self.region.entry.body, out); for i=1,#(self.region.blocks or {}) do collect_address_taken_stmts(self.region.blocks[i].body, out) end end
 function Tree.ExprView:tree_code_collect_address_taken_expr(out) self.view:tree_code_collect_address_taken_view(out) end
 function Tree.ExprBlock:tree_code_collect_address_taken_expr(out) collect_address_taken_stmts(self.stmts or {}, out); collect_address_taken_expr(self.result, out) end
 
@@ -1043,6 +1044,11 @@ function Tree.StmtSwitch:tree_code_collect_address_taken_stmt(out)
   collect_address_taken_stmts(self.default_body or {}, out)
 end
 function Tree.StmtJump:tree_code_collect_address_taken_stmt(out) for j=1,#(self.args or {}) do collect_address_taken_expr(self.args[j].value, out) end end
+function Tree.StmtBranchJump:tree_code_collect_address_taken_stmt(out)
+  collect_address_taken_expr(self.cond, out)
+  for j=1,#(self.then_args or {}) do collect_address_taken_expr(self.then_args[j].value, out) end
+  for j=1,#(self.else_args or {}) do collect_address_taken_expr(self.else_args[j].value, out) end
+end
 function Tree.StmtJumpCont:tree_code_collect_address_taken_stmt(out) for j=1,#(self.args or {}) do collect_address_taken_expr(self.args[j].value, out) end end
 function Tree.StmtRegionEmit:tree_code_collect_address_taken_stmt(out) for j=1,#(self.args or {}) do collect_address_taken_expr(self.args[j], out) end end
 function Tree.StmtRegionCall:tree_code_collect_address_taken_stmt(out) for j=1,#(self.args or {}) do collect_address_taken_expr(self.args[j], out) end end
@@ -1788,6 +1794,40 @@ function Tree.StmtJump:lower_tree_stmt_to_code(input)
   return TreeCode.TreeCodeStmtResult(input:tree_code_state())
 end
 
+function Tree.StmtBranchJump:lower_tree_stmt_to_code(input)
+  local region = input:tree_code_state():tree_code_current_control_region()
+  if region == nil then unsupported(self, "branch jump outside control region") end
+  local condition = self.cond:lower_tree_expr_to_code(input:tree_code_expr_input())
+  input = input:tree_code_with_result_state(condition)
+  local function lower_target(label, source)
+    local target = input:tree_code_state():tree_code_control_target(label)
+    if target == nil then unsupported(self, "missing control branch target") end
+    local args = {}
+    for i = 1, #target.params do
+      local named = nil
+      for j = 1, #source do
+        if source[j].name == target.params[i].name then
+          named = source[j]
+          break
+        end
+      end
+      if named == nil then unsupported(self,
+        "missing branch jump arg " .. target.params[i].name)
+      end
+      local result = named.value:lower_tree_expr_to_code(input:tree_code_expr_input())
+      input = input:tree_code_with_result_state(result)
+      args[#args + 1] = result.value
+    end
+    return target, args
+  end
+  local then_target, then_args = lower_target(self.then_target, self.then_args)
+  local else_target, else_args = lower_target(self.else_target, self.else_args)
+  input = input:tree_code_with_result_state(input:tree_code_terminate(
+    Code.CodeTermBranch(condition.value, then_target.id, then_args,
+      else_target.id, else_args), origin_generated("control branch jump")))
+  return TreeCode.TreeCodeStmtResult(input:tree_code_state())
+end
+
 function Tree.StmtYieldValue:lower_tree_stmt_to_code(input)
   local region = input:tree_code_state():tree_code_current_control_region()
   if region == nil then unsupported(self, "value yield outside control region") end
@@ -2071,7 +2111,16 @@ function TreeCode.TreeCodeStmtControlRegion:tree_code_yield_value_exit(input, st
 function TreeCode.TreeCodeExprControlRegion:tree_code_yield_void_exit(input, stmt) unsupported(stmt, "void yield outside stmt control region") end
 function TreeCode.TreeCodeStmtControlRegion:tree_code_yield_void_exit(input, stmt) return self.exit_id end
 
-function Tree.ControlExprRegion:tree_code_lower_expr_control_to_code(input)
+function Tree.ExprControl:lower_tree_expr_to_code(input)
+  return self.region:tree_code_lower_expr_control_to_code(input)
+end
+function Tree.ExprDomainControl:lower_tree_expr_to_code(input)
+  return self.region:tree_code_lower_expr_control_with_domain(
+    TreeCode.TreeCodeExprDomainControlInput(input, self.domain))
+end
+
+function Tree.ControlExprRegion:tree_code_lower_expr_control_with_domain(request)
+  local input, domain = request.input, request.domain
   local rty = input:tree_code_type(self.result_ty)
   local rva = input:tree_code_new_value("ctl_res"); input = input:tree_code_with_result_state(rva)
   local xp = { Code.CodeParam(rva.value, "result", rty, origin_generated("control result")) }
@@ -2115,7 +2164,11 @@ function Tree.ControlExprRegion:tree_code_lower_expr_control_to_code(input)
     local rec = records[i]
     input = input:tree_code_with_result_state(input:tree_code_restore_bindings(saved_outer))
     input = input:tree_code_with_result_state(input:tree_code_state():tree_code_use_alpha(setmetatable({},{__index=region_alpha}), alpha_s.."_b"..tostring(i)))
-    input = input:tree_code_with_result_state(input:tree_code_start_block(rec.id, rec.name, rec.params, origin_generated("control block "..rec.label.name)))
+    local fallback_origin = origin_generated("control block " .. rec.label.name)
+    local block_origin = domain:tree_code_block_origin(
+      TreeCode.TreeCodeControlBlockOriginInput(rec.label, rec.params, fallback_origin))
+    input = input:tree_code_with_result_state(input:tree_code_start_block(
+      rec.id, rec.name, rec.params, block_origin))
     for j = 1, #rec.binds do
       local b = rec.binds[j]
       input = input:tree_code_with_result_state(input:tree_code_state():tree_code_note_binding(b.binding, b.value))
@@ -2132,6 +2185,10 @@ function Tree.ControlExprRegion:tree_code_lower_expr_control_to_code(input)
   input = input:tree_code_with_result_state(input:tree_code_restore_bindings(saved_outer))
   input = input:tree_code_with_result_state(input:tree_code_start_block(exr.id, "ctl.expr.exit", xp, origin_generated("control exit")))
   return input:tree_code_expr_result(rva.value, rty)
+end
+function Tree.ControlExprRegion:tree_code_lower_expr_control_to_code(input)
+  return self:tree_code_lower_expr_control_with_domain(
+    TreeCode.TreeCodeExprDomainControlInput(input, Tree.ControlLoopNoDomain))
 end
 
 function Tree.ControlLoopOrder:tree_code_loop_order()

@@ -145,6 +145,7 @@ function Tr.ExprSwitch:closure_collect(input)
   return result:closure_collect_default(self.default_body,self.default_expr)
 end
 function Tr.ExprControl:closure_collect(input) return self.region:closure_collect(input) end
+function Tr.ExprDomainControl:closure_collect(input) return self.region:closure_collect(input) end
 function Tr.ExprBlock:closure_collect(input) local result=collect_stmts(self.stmts,input):closure_continue(self.result); return result:closure_restore_collect_scopes(input.scopes) end
 function Tr.ExprClosure:closure_collect(input) return Sem.ClosureCollectUnsupported(input, "nested ExprClosure capture collection is unsupported") end
 function Tr.ExprView:closure_collect(input) return self.view:closure_collect(input) end
@@ -225,6 +226,10 @@ function Tr.StmtSwitch:closure_collect(input)
   return result:closure_collect_isolated(self.default_body)
 end
 function Tr.StmtJump:closure_collect(input) return collect_many(self.args, input) end
+function Tr.StmtBranchJump:closure_collect(input)
+  return self.cond:closure_collect(input):closure_continue_many(self.then_args)
+    :closure_continue_many(self.else_args)
+end
 function Tr.StmtJumpCont:closure_collect(input) return collect_many(self.args, input) end
 function Tr.StmtRegionEmit:closure_collect(input) return collect_exprs(self.args, input) end
 function Tr.StmtRegionCall:closure_collect(input) return collect_exprs(self.args, input) end
@@ -445,6 +450,7 @@ local function rewrite_control_children(region,input)
   return Sem.ClosureControlChildrenRewriteResult(asdl.with(region.entry,{params=params,body=entry_body.stmts}),blocks,next_input,status)
 end
 function Tr.ExprControl:closure_rewrite(input) local r=rewrite_control_children(self.region,input); return r.status:closure_expr_result(self,asdl.with(self,{region=asdl.with(self.region,{entry=r.entry,blocks=r.blocks})}),r.input) end
+function Tr.ExprDomainControl:closure_rewrite(input) local r=rewrite_control_children(self.region,input); return r.status:closure_expr_result(self,asdl.with(self,{region=asdl.with(self.region,{entry=r.entry,blocks=r.blocks})}),r.input) end
 function Tr.ExprBlock:closure_rewrite(input) local scopes=input.scopes:closure_push(Sem.ClosureScopeFrame({})); local s=rewrite_stmts(self.stmts,rewrite_with_scopes(input,scopes)); local r=self.result:closure_rewrite(s.input); return s.status:closure_merge(r:closure_status()):closure_expr_result(self,asdl.with(self,{stmts=s.stmts,result=r:closure_value()}),rewrite_with_scopes(r.input,input.scopes)) end
 function Tr.ExprClosure:closure_rewrite(input) return self:closure_convert(input) end
 function Tr.ExprView:closure_rewrite(input) local r=self.view:closure_rewrite(input); return r:closure_status():closure_expr_result(self,asdl.with(self,{view=r:closure_value()}),r.input) end
@@ -506,6 +512,17 @@ local function rewrite_jump_args(args,input)
   return Sem.ClosureJumpArgsRewriteResult(out,next_input,status)
 end
 function Tr.StmtJump:closure_rewrite(input) local r=rewrite_jump_args(self.args,input); return r.status:closure_stmt_result(self,asdl.with(self,{args=r.args}),r.input) end
+function Tr.StmtBranchJump:closure_rewrite(input)
+  local condition = self.cond:closure_rewrite(input)
+  local then_result = rewrite_jump_args(self.then_args, condition.input)
+  local else_result = rewrite_jump_args(self.else_args, then_result.input)
+  local status = condition:closure_status():closure_merge(then_result.status)
+    :closure_merge(else_result.status)
+  return status:closure_stmt_result(self, asdl.with(self, {
+    cond = condition:closure_value(), then_args = then_result.args,
+    else_args = else_result.args,
+  }), else_result.input)
+end
 function Tr.StmtJumpCont:closure_rewrite(input) local r=rewrite_jump_args(self.args,input); return r.status:closure_stmt_result(self,asdl.with(self,{args=r.args}),r.input) end
 function Tr.StmtRegionEmit:closure_rewrite(input) local r=rewrite_exprs(self.args,input); return r.status:closure_stmt_result(self,asdl.with(self,{args=r.exprs}),r.input) end
 function Tr.StmtRegionCall:closure_rewrite(input) local r=rewrite_exprs(self.args,input); return r.status:closure_stmt_result(self,asdl.with(self,{args=r.exprs}),r.input) end

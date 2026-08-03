@@ -87,6 +87,24 @@ function Tr.StmtJump:typecheck_tree_stmt(input)
   return LCheck.TypeStmtResult(input,
     {Tr.StmtJump(Tr.StmtFlow(Sem.FlowJumps), self.target, args)}, issues)
 end
+function Tr.StmtBranchJump:typecheck_tree_stmt(input)
+  local condition = self.cond:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+  local issues = {}
+  for i = 1, #(condition.issues or {}) do issues[#issues + 1] = condition.issues[i] end
+  local function check_args(source)
+    local args = {}
+    for i = 1, #source do
+      local result = source[i].value:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+      args[i] = Tr.JumpArg(source[i].name, result.expr)
+      for j = 1, #(result.issues or {}) do issues[#issues + 1] = result.issues[j] end
+    end
+    return args
+  end
+  return LCheck.TypeStmtResult(input, { Tr.StmtBranchJump(
+    Tr.StmtFlow(Sem.FlowJumps), condition.expr,
+    self.then_target, check_args(self.then_args),
+    self.else_target, check_args(self.else_args)) }, issues)
+end
 function Tr.StmtControl:typecheck_tree_stmt(input)
   return LCheck.TypeStmtResult(input, {Tr.StmtControl(Tr.StmtFlow(Sem.FlowFallsThrough), self.region)}, {})
 end

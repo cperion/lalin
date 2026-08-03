@@ -25,6 +25,14 @@ return schema. LalinCEmit {
     helpers [many [LalinCEmit.CEmitHelperEntry]],
     helper_order [many [LalinCEmit.CEmitHelperEntry]],
   },
+  product. CEmitBlockProjection {
+    interned,
+    blocks [many [LalinC.CBackendBlock]],
+  },
+  sum. CEmitBlockLookup {
+    CEmitBlockFound { variant_unique, block [LalinC.CBackendBlock], },
+    CEmitBlockMissing { variant_unique, label [LalinC.CBackendLabel], },
+  },
   sum. CEmitIssue {
     CEmitIssueMissingSig { variant_unique, sig [LalinCode.CodeSigId], },
     CEmitIssueUnsupportedType {

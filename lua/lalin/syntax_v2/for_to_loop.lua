@@ -17,6 +17,10 @@ local function bind_context(T)
   local function bin(op, lhs, rhs)
     return Tr.ExprBinary(Tr.ExprSurface, op, lhs, rhs)
   end
+  local function local_binding(loop_id, name, ty)
+    return B.Binding(C.Id("parsed.loop." .. loop_id .. "." .. name),
+      name, ty, B.BindingRoleLocalValue)
+  end
 
   function Tr.Expr:parsed_loop_integer()
     return P.ParsedLoopIntegerRejected("loop extent must be an integer literal")
@@ -80,12 +84,31 @@ local function bind_context(T)
   end
 
   local lower_1d_no_sink
+  local lower_1d_add_fold
   function P.ParsedResolvedLoopSink:lower_parsed_loop_1d(_input, _domain)
     return P.ParsedLoopLowerRejected(
-      "fold/scan lowering is not implemented on the schema-v2 parsed path")
+      "scan lowering is not implemented on the schema-v2 parsed path")
   end
   function P.ParsedResolvedLoopNoSink:lower_parsed_loop_1d(input, domain)
     return lower_1d_no_sink(input, domain)
+  end
+  function P.ParsedResolvedLoopFoldSink:lower_parsed_loop_1d(input, domain)
+    return self.reducer:lower_parsed_loop_fold_1d(
+      P.ParsedLoopFoldLowerInput(input, domain, self))
+  end
+  function P.ParsedLoopReducer:lower_parsed_loop_fold_1d(_input)
+    return P.ParsedLoopLowerRejected(
+      "schema-v2 parsed fold currently supports only the add reducer")
+  end
+  function P.ParsedLoopAdd:lower_parsed_loop_fold_1d(input)
+    return input.domain:lower_parsed_loop_add_fold_1d(input)
+  end
+  function P.ParsedResolvedLoopDomain:lower_parsed_loop_add_fold_1d(_input)
+    return P.ParsedLoopLowerRejected(
+      "schema-v2 parsed fold currently supports only a one-dimensional range")
+  end
+  function P.ParsedResolvedLoopRangeND:lower_parsed_loop_add_fold_1d(input)
+    return lower_1d_add_fold(input)
   end
 
 
@@ -296,6 +319,92 @@ local function bind_context(T)
     local control_domain = domain:parsed_loop_control_domain(input, loop_label)
     return P.ParsedLoopLowered(
       Tr.StmtDomainControl(Tr.StmtSurface, region, control_domain))
+  end
+
+  lower_1d_add_fold = function(fold_input)
+    local input, domain, sink = fold_input.loop, fold_input.domain, fold_input.sink
+    if #domain.axes ~= 1 or #input.indexes ~= 1 then
+      return P.ParsedLoopLowerRejected(
+        "schema-v2 parsed fold currently supports one loop axis")
+    end
+    local axis = domain.axes[1]
+    local start_literal = axis.start:parsed_loop_integer():parsed_loop_integer_value("loop start")
+    if start_literal ~= 0 or axis.step ~= 1 then
+      return P.ParsedLoopLowerRejected(
+        "schema-v2 parsed fold currently requires a zero-based unit-stride loop")
+    end
+
+    local tag = input.loop_id
+    local flat_name = "__lln_flat_" .. tag
+    local start_name = "__lln_axis_start_" .. tag
+    local stop_name = "__lln_axis_stop_" .. tag
+    local trip_name = "__lln_axis_trip_" .. tag
+    local step_name = "__lln_fold_step_" .. tag
+    local index_name = input.indexes[1]
+    local entry_label = Tr.BlockLabel("lln_entry_" .. tag)
+    local loop_label = Tr.BlockLabel("lln_loop_" .. tag)
+    local body_label = Tr.BlockLabel("lln_body_" .. tag)
+    local done_label = Tr.BlockLabel("lln_done_" .. tag)
+    local flat_ref, accumulator_ref = ref(flat_name), ref(sink.name)
+    local start_init, stop_init = cast_idx(axis.start), cast_idx(axis.stop)
+    local trip_init = bin(C.BinSub, stop_init, start_init)
+
+    local loop_params = {
+      Tr.BlockParam(flat_name, idx_ty),
+      Tr.BlockParam(start_name, idx_ty),
+      Tr.BlockParam(stop_name, idx_ty),
+      Tr.BlockParam(trip_name, idx_ty),
+      Tr.BlockParam(sink.name, sink.ty),
+    }
+    local function jump_args(flat, accumulator)
+      return {
+        Tr.JumpArg(flat_name, flat),
+        Tr.JumpArg(start_name, ref(start_name)),
+        Tr.JumpArg(stop_name, ref(stop_name)),
+        Tr.JumpArg(trip_name, ref(trip_name)),
+        Tr.JumpArg(sink.name, accumulator),
+      }
+    end
+    local entry_args = {
+      Tr.JumpArg(flat_name, cast_idx(lit(0))),
+      Tr.JumpArg(start_name, start_init),
+      Tr.JumpArg(stop_name, stop_init),
+      Tr.JumpArg(trip_name, trip_init),
+      Tr.JumpArg(sink.name, Tr.ExprCast(
+        Tr.ExprSurface, C.SurfaceCast, sink.ty, sink.init)),
+    }
+
+    local rewrite = P.ParsedLoopIndexRewriteInput(index_name, flat_ref)
+    local body = {}
+    for i = 1, #input.body do
+      body[i] = input.body[i]:parsed_loop_rewrite_index(rewrite)
+    end
+    body[#body + 1] = Tr.StmtLet(Tr.StmtSurface,
+      local_binding(tag, step_name, sink.ty),
+      sink.step:parsed_loop_rewrite_index(rewrite))
+    local next_accumulator = bin(C.BinAdd, accumulator_ref, ref(step_name))
+    body[#body + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label,
+      jump_args(bin(C.BinAdd, flat_ref, cast_idx(lit(1))), next_accumulator))
+
+    local condition = Tr.ExprCompare(
+      Tr.ExprSurface, C.CmpLt, flat_ref, ref(stop_name))
+    local region = Tr.ControlExprRegion(tag, sink.ty,
+      Tr.EntryControlBlock(entry_label, {}, {
+        Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args),
+      }), {
+        Tr.ControlBlock(loop_label, loop_params, {
+          Tr.StmtBranchJump(Tr.StmtSurface, condition,
+            body_label, jump_args(flat_ref, accumulator_ref),
+            done_label, { Tr.JumpArg(sink.name, accumulator_ref) }),
+        }),
+        Tr.ControlBlock(body_label, loop_params, body),
+        Tr.ControlBlock(done_label, { Tr.BlockParam(sink.name, sink.ty) }, {
+          Tr.StmtYieldValue(Tr.StmtSurface, accumulator_ref),
+        }),
+      })
+    local control_domain = domain:parsed_loop_control_domain(input, loop_label)
+    return P.ParsedLoopLowered(Tr.StmtReturnValue(Tr.StmtSurface,
+      Tr.ExprDomainControl(Tr.ExprSurface, region, control_domain)))
   end
 
   function P.ParsedResolvedLoopRangeND:lower_parsed_loop(input)

@@ -149,6 +149,12 @@ return schema. LalinParse {
     body [many [LalinTree.Stmt]],
     sink [LalinParse.ParsedResolvedLoopSink],
   },
+  product. ParsedLoopFoldLowerInput {
+    interned,
+    loop [LalinParse.ParsedLoopLowerInput],
+    domain [LalinParse.ParsedResolvedLoopDomain],
+    sink [LalinParse.ParsedResolvedLoopFoldSink],
+  },
   product. ParsedLoopIndexRewriteInput {
     interned,
     index_name [str],

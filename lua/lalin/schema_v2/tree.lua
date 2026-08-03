@@ -709,6 +709,12 @@ return schema. LalinTree {
       h [LalinTree.ExprHeader],
       region [LalinTree.ControlExprRegion],
     },
+    ExprDomainControl {
+      variant_unique,
+      h [LalinTree.ExprHeader],
+      region [LalinTree.ControlExprRegion],
+      domain [LalinTree.ControlLoopDomain],
+    },
     ExprBlock {
       variant_unique,
       h [LalinTree.ExprHeader],
@@ -828,6 +834,15 @@ return schema. LalinTree {
       h [LalinTree.StmtHeader],
       target [LalinTree.BlockLabel],
       args [many [LalinTree.JumpArg]],
+    },
+    StmtBranchJump {
+      variant_unique,
+      h [LalinTree.StmtHeader],
+      cond [LalinTree.Expr],
+      then_target [LalinTree.BlockLabel],
+      then_args [many [LalinTree.JumpArg]],
+      else_target [LalinTree.BlockLabel],
+      else_args [many [LalinTree.JumpArg]],
     },
     StmtJumpCont {
       variant_unique,

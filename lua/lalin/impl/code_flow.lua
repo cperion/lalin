@@ -377,7 +377,7 @@ local function range_for_induction(value, init, stop, exclusive, consts)
   return Flow.FlowRangeDerived(value, min, max_val, "recognized counted loop induction range"), min, max_val, exclusive == true
 end
 
-function Code.CodeInst:flow_numeric_const(_defs, _consts, _seen) return nil end
+function Code.CodeInstOp:flow_numeric_const(_defs, _consts, _seen) return nil end
 function Code.CodeInstAlias:flow_numeric_const(defs, consts, seen)
   return numeric_const(self.src, defs, consts, seen)
 end
