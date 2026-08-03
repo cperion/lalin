@@ -179,7 +179,7 @@ local function decl_qualifier(decl)
     local q = decl.qualifier
     if q and #q > 0 then
       local parts = {}
-      for i, n in ipairs(q) do parts[i] = n.name end
+      for i, n in ipairs(q) do parts[i] = n.text end
       return parts
     end
   end
@@ -355,6 +355,70 @@ local function append_control_block(blocks, block)
   return out
 end
 
+-- ─────────────────────────────────────────────────────────────
+-- ParsedFuncBody lowering: leaf-owned, typed partition and control form.
+-- ─────────────────────────────────────────────────────────────
+-- Each ParsedStmt leaf contributes either declaration contracts or a
+-- body statement through a typed partition; the partition leaves own the
+-- fold into ParsedFuncPartitionResult; the body leaf then lowers that
+-- partition into the final ParsedFuncLowerResult.
+function P.ParsedStmt:parsed_func_partition() return P.ParsedStmtFunctionBody(self) end
+function P.StmtRequiresParsed:parsed_func_partition()
+  return P.ParsedStmtFunctionContracts(self:parsed_contract_values())
+end
+function P.ParsedStmtFunctionContracts:parsed_func_partition_fold(result)
+  local contracts = {}
+  for i = 1, #(result.contracts or {}) do contracts[i] = result.contracts[i] end
+  for i = 1, #(self.contracts or {}) do contracts[#contracts + 1] = self.contracts[i] end
+  return P.ParsedFuncPartitionResult(contracts, result.body)
+end
+function P.ParsedStmtFunctionBody:parsed_func_partition_fold(result)
+  local body = {}
+  for i = 1, #(result.body or {}) do body[i] = result.body[i] end
+  body[#body + 1] = self.stmt
+  return P.ParsedFuncPartitionResult(result.contracts, body)
+end
+
+function P.ParsedFuncBody:parsed_func_lower(_input)
+  error("missing parsed function body lowering", 2)
+end
+function P.ParsedFuncBodyLinear:parsed_func_lower(input)
+  local result = P.ParsedFuncLowerResult({}, {})
+  for i = 1, #(self.body or {}) do
+    result = self.body[i]:parsed_func_partition():parsed_func_partition_fold(result)
+  end
+  local body_stmts = lower_stmts(result.body, input.body_env):parsed_func_body(input.fname)
+  if #body_stmts == 0 then
+    body_stmts = { Tr.StmtReturnVoid(Tr.StmtSurface) }
+  end
+  return P.ParsedFuncLowerResult(result.contracts, body_stmts)
+end
+function P.ParsedFuncBodyControl:parsed_func_lower(input)
+  local entry = self.entry:parsed_func_control_entry(input)
+  local blocks = {}
+  for i = 1, #(self.blocks or {}) do
+    blocks[i] = self.blocks[i]:parsed_func_control_block(input)
+  end
+  local control = Tr.StmtControl(Tr.StmtSurface, Tr.ControlStmtRegion(self.region_id, entry, blocks))
+  return P.ParsedFuncLowerResult({}, { control })
+end
+
+-- Function control blocks reuse the typed region block shape and the
+-- parsed field/param conversions; they do not retarget continuations
+-- because functions carry no continuations.
+function P.ParsedRegionEntryBlock:parsed_func_control_entry(input)
+  local state = {}
+  for i = 1, #(self.state or {}) do state[i] = self.state[i]:parsed_entry_block_param() end
+  local body = lower_stmts(self.body or {}, input.body_env):parsed_func_body(input.fname)
+  return Tr.EntryControlBlock(Tr.BlockLabel(self.name), state, body)
+end
+function P.ParsedRegionBodyBlock:parsed_func_control_block(input)
+  local state = {}
+  for i = 1, #(self.state or {}) do state[i] = self.state[i]:parsed_block_param() end
+  local body = lower_stmts(self.body or {}, input.body_env):parsed_func_body(input.fname)
+  return Tr.ControlBlock(Tr.BlockLabel(self.name), state, body)
+end
+
 -- Each ParsedRegionBlock leaf assembles itself into the typed assembly
 -- state machine; the assembly leaves own the state transitions.
 function P.ParsedRegionBlock:parsed_region_accumulate(_assembly, _input)
@@ -408,7 +472,7 @@ function P.ParsedRegionBlockAssemblyHasEntry:parsed_region_block_assembly_finali
 function P.ParsedRegion:parsed_region_compiler_name(anon_counter)
   local parts = {}
   if self.qualifier then
-    for i, n in ipairs(self.qualifier) do parts[#parts + 1] = n.name end
+    for i, n in ipairs(self.qualifier) do parts[#parts + 1] = n.text end
   end
   local nm = self.name
   if nm == nil or nm == "" then
@@ -466,7 +530,7 @@ end
 local function qualified_compiler_name(parsed, anon_counter)
   local parts = {}
   local q = parsed.qualifier
-  if q then for i, n in ipairs(q) do parts[#parts + 1] = n.name end end
+  if q then for i, n in ipairs(q) do parts[#parts + 1] = n.text end end
   parts[#parts + 1] = compiler_name(parsed, anon_counter)
   return table.concat(parts, ".")
 end
@@ -508,24 +572,12 @@ local function decl_to_item(parsed, named_env, anon_counter)
       params[i] = Ty.Param(p.name, p.ty)
     end
     local result_ty = parsed.result_ty
-    local body_src, contracts = {}, {}
-    for _, stmt in ipairs(parsed.body or {}) do
-      local scls = asdl.classof(stmt)
-      if scls == P.StmtRequiresParsed then
-        local lowered = stmt:parsed_contract_values()
-        for j = 1, #lowered do contracts[#contracts + 1] = lowered[j] end
-      else
-        body_src[#body_src + 1] = stmt
-      end
-    end
-    local body_result = lower_stmts(body_src, named_env)
-    local body_stmts = body_result:parsed_func_body(fname)
-    if #body_stmts == 0 then
-      body_stmts = { Tr.StmtReturnVoid(Tr.StmtSurface) }
-    end
-    local func_spec = #contracts > 0
-      and Tr.FuncLocalContract(fname, params, result_ty, contracts, body_stmts)
-      or Tr.FuncLocal(fname, params, result_ty, body_stmts)
+    local result_ty = parsed.result_ty
+    local lowered = parsed.body:parsed_func_lower(
+      P.ParsedFuncLowerInput(fname, parsed_region_body_env(named_env)))
+    local func_spec = #lowered.contracts > 0
+      and Tr.FuncLocalContract(fname, params, result_ty, lowered.contracts, lowered.body)
+      or Tr.FuncLocal(fname, params, result_ty, lowered.body)
     return Tr.ItemFunc(func_spec)
   elseif cls == P.ParsedExtern then
     local ename = qualified_compiler_name(parsed, anon_counter)

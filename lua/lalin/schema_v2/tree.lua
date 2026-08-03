@@ -207,6 +207,22 @@ return schema. LalinTree {
     RegionWireBlock { variant_unique, label [LalinTree.BlockLabel], args [many [LalinTree.JumpArg]], },
     RegionWireCont { variant_unique, cont [LalinTree.RegionCont], args [many [LalinTree.JumpArg]], },
   },
+  -- Typed wire-argument forwarding.  A wire may name the invoked region's
+  -- continuation parameters as forwarding markers (e.g. `done =
+  -- finished(extra = 7, left, right)`); the projection maps the region exit
+  -- argument names to their values and the lookup leaves choose the
+  -- substituted or original jump argument.  Expression leaves classify
+  -- whether a wire argument value is a forwarding marker.
+  product. RegionWireArgEntry { interned, field. name [str], field. value [LalinTree.Expr], },
+  product. RegionWireArgProjection { interned, entries [many [LalinTree.RegionWireArgEntry]], },
+  sum. RegionWireArgLookup {
+    RegionWireArgFound { variant_unique, entry [LalinTree.RegionWireArgEntry], },
+    RegionWireArgMissing { variant_unique, field. name [str], },
+  },
+  sum. RegionWireArgMarker {
+    RegionWireArgMarkerName { variant_unique, field. name [str], },
+    RegionWireArgMarkerValue { variant_unique, },
+  },
   product. RegionContWire { interned, field. name [str], target [LalinTree.RegionWireTarget], },
   product. TypeRegionDef {
     interned,

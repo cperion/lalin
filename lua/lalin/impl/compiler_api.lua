@@ -72,14 +72,16 @@ function CodeValidation.CodeValidateFailed:compiler_compile(input)
 end
 
 local function compile_after_closure(m, c_target)
-  local check_ok, checked = pcall(function() return m:typecheck({}) end)
-  if not check_ok then return Compiler.CompilerArtifactError("typecheck: " .. tostring(checked)) end
-  local region_facts = checked:region_fact_projection()
-  local region_result = checked:region_expand(Tr.RegionModuleExpansionInput(region_facts))
+  -- Public compile boundary: shared typed phase composition (typecheck +
+  -- region facts + expansion + re-typecheck of the expanded module).  The
+  -- pcall is a boundary guard only; failures become typed artifacts, never
+  -- a fallback to an un-expanded or un-typed module.
+  local ok, region_result = pcall(function() return m:typecheck_region_expanded() end)
+  if not ok then return Compiler.CompilerArtifactError("typecheck: " .. tostring(region_result)) end
   if #(region_result:region_issues() or {}) > 0 then
     return Compiler.CompilerArtifactError("region expansion rejected: " .. tostring(#region_result:region_issues()) .. " issue(s)")
   end
-  checked = region_result:region_module()
+  local checked = region_result:region_module()
 
   local host_target = c_target:host_target_model()
   local lower_ok, lowering = pcall(function()

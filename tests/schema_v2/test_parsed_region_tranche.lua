@@ -329,7 +329,9 @@ fn f(p [ptr [i32]], q [ptr [i32]], n [index]) [void] do
   return
 end
 ]=], "@typed-contracts.lln")
-local requires = contract_doc.body[1].body[1]
+local func_body = contract_doc.body[1].body
+assert(asdl.classof(func_body) == P.ParsedFuncBodyLinear, "typed contracts require a linear function body")
+local requires = func_body.body[1]
 assert(asdl.classof(requires) == P.StmtRequiresParsed)
 assert(requires.exprs == nil, "StmtRequiresParsed must not carry raw Expr alternatives")
 assert(#requires.contracts == 5)
@@ -374,5 +376,66 @@ fn g() [void] do
   return
 end
 ]]), "unknown contract keyword must reject")
+
+-- ─────────────────────────────────────────────────────────────
+-- 9. Typed RegionWireArgProjection: named/positional forwarding
+-- ─────────────────────────────────────────────────────────────
+
+assert(Tr.RegionWireArgProjection and Tr.RegionWireArgEntry
+  and Tr.RegionWireArgFound and Tr.RegionWireArgMissing
+  and Tr.RegionWireArgMarkerName and Tr.RegionWireArgMarkerValue,
+  "typed wire-argument projection vocabulary must exist")
+
+-- Expression leaves classify forwarding markers; no hidden-field probing.
+assert(asdl.classof(ref("left"):region_wire_arg_marker()) == Tr.RegionWireArgMarkerName
+  and ref("left"):region_wire_arg_marker().name == "left")
+assert(lit(7):region_wire_arg_marker() == Tr.RegionWireArgMarkerValue,
+  "non-ref wire arguments must keep their explicit value")
+
+-- Projection lookup over the region exit arguments.
+local source_args = {
+  Tr.JumpArg("left", ref("x")),
+  Tr.JumpArg("right", ref("y")),
+}
+local entries = {}
+for i = 1, #source_args do
+  entries[i] = Tr.RegionWireArgEntry(source_args[i].name, source_args[i].value)
+end
+local wire_projection = Tr.RegionWireArgProjection(entries)
+local found_left = wire_projection:region_wire_arg_lookup("left")
+assert(asdl.classof(found_left) == Tr.RegionWireArgFound and found_left.entry.value == ref("x"))
+assert(asdl.classof(wire_projection:region_wire_arg_lookup("nope")) == Tr.RegionWireArgMissing)
+
+-- Lookup result leaves choose substituted/original jump arguments.
+local marker_arg = Tr.JumpArg("left", ref("left"))
+local substituted = found_left:region_wire_arg_result(marker_arg)
+assert(substituted.name == "left" and substituted.value == ref("x"),
+  "found lookup must substitute the region exit value")
+local original = wire_projection:region_wire_arg_lookup("nope"):region_wire_arg_result(marker_arg)
+assert(original == marker_arg, "missing lookup must keep the explicit argument")
+
+-- End-to-end wire retargeting: named `extra = 7` plus positional markers
+-- `left`, `right` forward the region exit values into the caller block.
+local wire_block = Tr.RegionWireBlock(Tr.BlockLabel("finished"), {
+  Tr.JumpArg("extra", lit(7)),
+  Tr.JumpArg("left", ref("left")),
+  Tr.JumpArg("right", ref("right")),
+})
+local jump = wire_block:region_retarget_jump(nil, source_args)
+assert(asdl.classof(jump) == Tr.StmtJump and jump.target.name == "finished")
+assert(#jump.args == 3)
+assert(jump.args[1].name == "extra" and jump.args[1].value == lit(7))
+assert(jump.args[2].name == "left" and jump.args[2].value == ref("x"))
+assert(jump.args[3].name == "right" and jump.args[3].value == ref("y"))
+
+-- A marker naming no region exit argument keeps its explicit value.
+local partial = Tr.RegionWireBlock(Tr.BlockLabel("done"), {
+  Tr.JumpArg("extra", ref("extra")),
+}):region_retarget_jump(nil, source_args).args
+assert(#partial == 1 and partial[1].value == ref("extra"), "unmatched marker must pass through")
+
+-- Empty explicit wire arguments forward the region exit arguments.
+local passthrough = Tr.RegionWireBlock(Tr.BlockLabel("done"), {}):region_retarget_jump(nil, source_args).args
+assert(#passthrough == 2 and passthrough[1].value == ref("x") and passthrough[2].value == ref("y"))
 
 print("schema-v2 ParsedRegion -> Tree.Region tranche ok")

@@ -207,9 +207,55 @@ end
 -- -------------------------------------------------------------------------
 -- Wire leaves own continuation retargeting.
 -- -------------------------------------------------------------------------
+-- Wire arguments may name the invoked region's continuation parameters as
+-- forwarding markers (e.g. `done = finished(extra = 7, left, right)` where
+-- `left`/`right` are the cont's outgoing values).  Each marker is
+-- substituted with the region exit's actual argument value; the remaining
+-- explicit arguments are evaluated at the exit site.
+-- The wire-argument projection is built from the region exit's arguments;
+-- the lookup leaves own the substituted/original decision, and expression
+-- leaves classify whether a wire argument value is a forwarding marker.
+function Tr.RegionWireArgProjection:region_wire_arg_lookup(name)
+  for i = 1, #(self.entries or {}) do
+    local entry = self.entries[i]
+    if entry.name == name then return Tr.RegionWireArgFound(entry) end
+  end
+  return Tr.RegionWireArgMissing(name)
+end
+
+function Tr.RegionWireArgFound:region_wire_arg_result(arg)
+  return Tr.JumpArg(arg.name, self.entry.value)
+end
+function Tr.RegionWireArgMissing:region_wire_arg_result(arg)
+  return arg
+end
+
+function Tr.RegionWireArgMarkerName:region_wire_arg_result(projection, arg)
+  return projection:region_wire_arg_lookup(self.name):region_wire_arg_result(arg)
+end
+function Tr.RegionWireArgMarkerValue:region_wire_arg_result(_projection, arg)
+  return arg
+end
+
+-- Forwarding-marker classification is leaf-owned on expressions.
+function Tr.Expr:region_wire_arg_marker() return Tr.RegionWireArgMarkerValue end
+function Tr.ExprRef:region_wire_arg_marker() return self.ref:region_wire_arg_marker() end
+function B.ValueRef:region_wire_arg_marker() return Tr.RegionWireArgMarkerValue end
+function B.ValueRefName:region_wire_arg_marker() return Tr.RegionWireArgMarkerName(self.name) end
+
 local function wire_args(target_args, source_args)
-  if #(target_args or {}) > 0 then return target_args end
-  return source_args or {}
+  if #(target_args or {}) == 0 then return source_args or {} end
+  local entries = {}
+  for i = 1, #(source_args or {}) do
+    entries[i] = Tr.RegionWireArgEntry(source_args[i].name, source_args[i].value)
+  end
+  local projection = Tr.RegionWireArgProjection(entries)
+  local out = {}
+  for i = 1, #(target_args or {}) do
+    local arg = target_args[i]
+    out[i] = arg.value:region_wire_arg_marker():region_wire_arg_result(projection, arg)
+  end
+  return out
 end
 function Tr.RegionWireTarget:region_retarget_jump(cont, args) return Tr.StmtTrap(Tr.StmtSurface) end
 function Tr.RegionWireBlock:region_retarget_jump(cont, args)
@@ -230,14 +276,22 @@ local function wire_for_cont(wires, cont)
   return projection:region_wire_lookup(cont.name)
 end
 
+-- A wire argument that names a continuation parameter is forwarded (not
+-- captured); the marker leaves own the decision, reusing the same
+-- leaf-owned expression classification as wire-argument substitution.
+function Tr.RegionWireArgMarkerValue:region_wire_arg_captured(_cont) return true end
+function Tr.RegionWireArgMarkerName:region_wire_arg_captured(cont)
+  for j = 1, #(cont and cont.params or {}) do
+    if cont.params[j].name == self.name then return false end
+  end
+  return true
+end
+
 local function capture_projection_for_args(args, cont, prefix)
   local entries = {}
   for i = 1, #(args or {}) do
     local arg = args[i]
-    local ref_name = arg.value.ref and name_of_ref(arg.value.ref) or nil
-    local is_cont_param = false
-    for j = 1, #(cont and cont.params or {}) do if cont.params[j].name == ref_name then is_cont_param = true end end
-    if not is_cont_param then
+    if arg.value:region_wire_arg_marker():region_wire_arg_captured(cont) then
       entries[#entries + 1] = Tr.RegionCallCaptureEntry(
         "__region_capture_" .. tostring(prefix) .. "_" .. tostring(i), expr_type(arg.value), arg.value)
     end
@@ -683,6 +737,12 @@ function Tr.ItemFunc:region_expand_item(input)
   local body = self.func:region_expand_function(input)
   return Check.TypeItemResult({ Tr.ItemFunc(self.func:region_rebuild_expanded(body.body)) }, body.issues)
 end
+function Tr.ItemRegion:region_expand_item(_input)
+  -- Regions are frontend definitions: region expansion inlines their bodies
+  -- into invoke sites.  They are not executable code items and must not
+  -- leak past the frontend into code lowering.
+  return Check.TypeItemResult({}, {})
+end
 
 function Tr.Module:region_expand(input)
   local items, issues = {}, {}
@@ -693,6 +753,25 @@ function Tr.Module:region_expand(input)
   local module = Tr.Module(self.h, items)
   if #issues == 0 then return Tr.RegionModuleExpanded(module, input.facts, issues) end
   return Tr.RegionModuleRejected(module, input.facts, issues)
+end
+
+-- Shared phase composition: typecheck the module, derive region facts,
+-- expand regions (consuming region items and splicing region bodies into
+-- caller control regions), and re-typecheck the expanded module so every
+-- reference carries bindings consistent with the expanded block structure.
+-- The result is the same typed RegionModuleExpanded/Rejected leaves as
+-- region_expand, so callers share the same result handling.
+-- Module:typecheck carries no semantic input, so the shared phase calls it
+-- without any argument bag.
+function Tr.Module:typecheck_region_expanded()
+  local checked = self:typecheck()
+  local facts = checked:region_fact_projection()
+  local expansion = checked:region_expand(Tr.RegionModuleExpansionInput(facts))
+  if #(expansion:region_issues() or {}) > 0 then
+    return expansion
+  end
+  local expanded = expansion:region_module():typecheck()
+  return Tr.RegionModuleExpanded(expanded, facts, {})
 end
 
 return true

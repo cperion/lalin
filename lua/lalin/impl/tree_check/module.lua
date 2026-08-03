@@ -222,6 +222,13 @@ function Tr.ItemStatic:tree_module_item_env_entries(input) return self.s:tree_mo
 function Tr.ItemType:tree_module_item_env_entries(input) return self.t:tree_module_type_entry(input) end
 function Tr.ItemImport:tree_module_item_env_entries(input) return {} end
 function Tr.ItemRegion:tree_module_item_env_entries(input) return {} end
+function Tr.Item:tree_module_typecheck_item(_scope) return self end
+function Tr.ItemRegion:tree_module_typecheck_item(scope)
+  local Check = require("lalin.schema_v2.check")
+  local typed_region = self.region:typecheck_tree_region_body(
+    Check.TypeStmtInput(scope, Ty.TScalar(C.ScalarVoid), Check.TypeYieldNone))
+  return Tr.ItemRegion(typed_region)
+end
 function Tr.ItemData:tree_module_item_env_entries(input) return {} end
 
 -- Module env construction
@@ -371,7 +378,8 @@ function Tr.Module:typecheck(input)
         checked_items[i] = item
       end
     else
-      checked_items[i] = item
+      -- ItemRegion owns its body typechecking through a leaf method.
+      checked_items[i] = item:tree_module_typecheck_item(module_scope)
     end
   end
 

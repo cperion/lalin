@@ -141,23 +141,38 @@ function Decl.parse_fn(lex, ctx, entry_start)
   if lex:peek().value == "[" then result_ty = Type.parse(lex, ctx) end
   optional_do(lex)
   local body
-  local has_control = false
   if lex:peek().value == "entry" or lex:peek().value == "block" then
-    has_control = true
-    body = {}
+    -- Control form: preserve the authored entry/block structure as a typed
+    -- ParsedFuncBodyControl with a deterministic source-site region id.
+    local region_id = "lln.fn." .. tostring(start.start)
+    local entry, blocks, saw_entry = nil, {}, false
     while not lex:at_eof() and lex:peek().value ~= "end" do
-      if lex:peek().value ~= "entry" and lex:peek().value ~= "block" then
+      local kind = lex:peek().value
+      if kind ~= "entry" and kind ~= "block" then
         lex:error_at(lex:peek(), "expected function entry/block or end")
       end
-      body[#body + 1] = parse_entry_block(lex, ctx).body -- flatten entry blocks
+      local blk = parse_entry_block(lex, ctx)
+      if kind == "entry" then
+        if saw_entry then
+          lex:error_at(lex.last, "function control form allows a single entry block")
+        end
+        saw_entry = true
+        entry = blk
+      else
+        blocks[#blocks + 1] = blk
+      end
     end
+    if entry == nil then
+      lex:error_at(lex.last or lex:peek(), "function control form requires an entry block")
+    end
+    body = P.ParsedFuncBodyControl(region_id, entry, blocks)
   else
-    body = Stmt.parse_block(lex, ctx, { "end" })
+    body = P.ParsedFuncBodyLinear(Stmt.parse_block(lex, ctx, { "end" }))
   end
   lex:expect("end")
   local qual_names = {}
   if qualifier then for i, q in ipairs(qualifier) do qual_names[i] = Core.Name(q) end end
-  return P.ParsedFunc(name or "", qual_names, implicit_self, params, result_ty, body, has_control)
+  return P.ParsedFunc(name or "", qual_names, implicit_self, params, result_ty, body)
 end
 
 function Decl.parse_struct(lex, ctx, entry_start)

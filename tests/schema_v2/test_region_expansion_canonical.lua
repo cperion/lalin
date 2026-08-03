@@ -65,7 +65,10 @@ local pipeline_facts = checked_pipeline:region_fact_projection()
 local pipeline_result = checked_pipeline:region_expand(Tr.RegionModuleExpansionInput(pipeline_facts))
 assert(asdl.isa(pipeline_result, Tr.RegionModuleExpanded))
 assert(#pipeline_result:region_issues() == 0)
-assert(#pipeline_result.module.items[3].func.body[1].region.blocks >= 3)
+-- Region items are frontend definitions consumed by expansion; only
+-- executable items survive into the expanded module.
+assert(#pipeline_result.module.items == 1, "region items must be consumed by expansion")
+assert(#pipeline_result.module.items[1].func.body[1].region.blocks >= 3)
 
 local inner_call = Tr.StmtRegionEmit(Tr.StmtSurface, "captured", inner_target, { lit(4) }, { captured_wire })
 local captured = inner_call:region_expand_invoke(input)

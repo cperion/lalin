@@ -702,6 +702,10 @@ function Sem.ClosureModuleRejected:closure_finish(module) return Sem.ClosureUnsu
 -- Explicit delegation for the generic frontend pipeline's next typed phase.
 function Sem.ClosureConverted:typecheck(input) return self.module:typecheck(input) end
 function Sem.ClosureUnchanged:typecheck(input) return self.module:typecheck(input) end
+-- Shared typed phase composition (typecheck + region expansion + re-typecheck)
+-- is delegated from closure results to the module, mirroring :typecheck.
+function Sem.ClosureConverted:typecheck_region_expanded() return self.module:typecheck_region_expanded() end
+function Sem.ClosureUnchanged:typecheck_region_expanded() return self.module:typecheck_region_expanded() end
 
 function Tr.ModuleSurface:closure_module_name() return "module" end
 function Tr.ModuleTyped:closure_module_name() return self.module_name end

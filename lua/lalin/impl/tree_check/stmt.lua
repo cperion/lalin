@@ -126,24 +126,65 @@ local function typecheck_control_block(input, region_id, block)
     :typecheck_tree_stmt_body(block.body)
   return Tr.ControlBlock(block.label, block.params, result.stmts), result.issues
 end
-function Tr.StmtDomainControl:typecheck_tree_stmt(input)
+
+-- A control region typechecks its entry and body blocks so the block
+-- statements (emits, calls, jumps, returns) carry typed expressions.
+function Tr.ControlStmtRegion:typecheck_tree_control_region(input)
   local issues = {}
-  local entry_input = control_scope(input, self.region.region_id,
-    self.region.entry.label, self.region.entry.params, true)
-  local entry_result = entry_input:typecheck_tree_stmt_body(self.region.entry.body)
+  local entry_input = control_scope(input, self.region_id,
+    self.entry.label, self.entry.params, true)
+  local entry_result = entry_input:typecheck_tree_stmt_body(self.entry.body)
   for i = 1, #(entry_result.issues or {}) do issues[#issues + 1] = entry_result.issues[i] end
   local entry = Tr.EntryControlBlock(
-    self.region.entry.label, self.region.entry.params, entry_result.stmts)
+    self.entry.label, self.entry.params, entry_result.stmts)
   local blocks = {}
-  for i = 1, #self.region.blocks do
-    local block, block_issues = typecheck_control_block(input, self.region.region_id, self.region.blocks[i])
+  for i = 1, #self.blocks do
+    local block, block_issues = typecheck_control_block(input, self.region_id, self.blocks[i])
     blocks[i] = block
     for j = 1, #(block_issues or {}) do issues[#issues + 1] = block_issues[j] end
   end
-  local region = Tr.ControlStmtRegion(self.region.region_id, entry, blocks)
+  return Tr.ControlStmtRegion(self.region_id, entry, blocks), issues
+end
+
+function Tr.StmtControl:typecheck_tree_stmt(input)
+  local region, issues = self.region:typecheck_tree_control_region(input)
+  return LCheck.TypeStmtResult(input, {Tr.StmtControl(Tr.StmtFlow(Sem.FlowFallsThrough), region)}, issues)
+end
+function Tr.StmtDomainControl:typecheck_tree_stmt(input)
+  local region, issues = self.region:typecheck_tree_control_region(input)
   return LCheck.TypeStmtResult(input, {Tr.StmtDomainControl(
     Tr.StmtFlow(Sem.FlowFallsThrough), region, self.domain)}, issues)
 end
+
+-- Region bodies typecheck like control regions, with the region data
+-- params bound first so emit args, cont jumps, and returns carry typed
+-- expressions when their values are later substituted into caller blocks.
+function Tr.Region:typecheck_tree_region_body(input)
+  local issues = {}
+  local scope = input.scope
+  for i = 1, #(self.params or {}) do
+    local p = self.params[i]
+    local binding = B.Binding(C.Id("region:param:" .. tostring(self.name) .. ":" .. tostring(p.name)),
+      p.name, p.ty, B.BindingRoleArg(i - 1))
+    scope = scope:typecheck_tree_add_value(p.name, p.ty, binding)
+  end
+  local region_input = LCheck.TypeStmtInput(scope, input.return_ty, input.yield)
+  local region_id = "region:" .. tostring(self.name)
+  local entry_input = control_scope(region_input, region_id,
+    self.entry.label, self.entry.params, true)
+  local entry_result = entry_input:typecheck_tree_stmt_body(self.entry.body)
+  for i = 1, #(entry_result.issues or {}) do issues[#issues + 1] = entry_result.issues[i] end
+  local entry = Tr.EntryControlBlock(
+    self.entry.label, self.entry.params, entry_result.stmts)
+  local blocks = {}
+  for i = 1, #(self.blocks or {}) do
+    local block, block_issues = typecheck_control_block(region_input, region_id, self.blocks[i])
+    blocks[i] = block
+    for j = 1, #(block_issues or {}) do issues[#issues + 1] = block_issues[j] end
+  end
+  return Tr.Region(self.name, self.params, self.conts, self.contracts, entry, blocks), issues
+end
+
 function Tr.StmtTrap:typecheck_tree_stmt(input)
   return LCheck.TypeStmtResult(input, {Tr.StmtTrap(Tr.StmtFlow(Sem.FlowTerminates))}, {})
 end

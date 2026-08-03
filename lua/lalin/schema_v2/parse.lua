@@ -415,6 +415,43 @@ return schema. LalinParse {
     },
   },
 
+  -- A parsed statement contributes either declaration contracts or a
+  -- body statement to a function; the partition leaves own the fold.
+  sum. ParsedStmtFunctionPart {
+    ParsedStmtFunctionContracts { variant_unique, contracts [many [LalinTree.FuncContract]], },
+    ParsedStmtFunctionBody { variant_unique, field. stmt [LalinParse.ParsedStmt], },
+  },
+  -- Typed function body alternatives.  The linear form is an ordinary
+  -- statement body; the control form preserves the authored entry/block
+  -- structure (an anonymous control region) with a deterministic
+  -- source-site region id instead of flattening the blocks.
+  sum. ParsedFuncBody {
+    ParsedFuncBodyLinear {
+      variant_unique,
+      body [many [LalinParse.ParsedStmt]],
+    },
+    ParsedFuncBodyControl {
+      variant_unique,
+      field. region_id [str],
+      entry [LalinParse.ParsedRegionEntryBlock],
+      blocks [many [LalinParse.ParsedRegionBodyBlock]],
+    },
+  },
+  product. ParsedFuncLowerInput {
+    interned,
+    field. fname [str],
+    body_env [LalinParse.ParsedRegionBodyEnv],
+  },
+  product. ParsedFuncPartitionResult {
+    interned,
+    contracts [many [LalinTree.FuncContract]],
+    body [many [LalinParse.ParsedStmt]],
+  },
+  product. ParsedFuncLowerResult {
+    interned,
+    contracts [many [LalinTree.FuncContract]],
+    body [many [LalinTree.Stmt]],
+  },
 
   sum. ParsedDecl {
     ParsedDeclGroup { variant_unique, field. decls [many [LalinParse.ParsedDecl]], },
@@ -425,8 +462,7 @@ return schema. LalinParse {
       field. implicit_self [bool],
       params [many [LalinParse.ParsedField]],
       field. result_ty [LalinType.Type],
-      body [many [LalinParse.ParsedStmt]],
-      field. has_control [bool],
+      body [LalinParse.ParsedFuncBody],
     },
     ParsedStruct {
       variant_unique,
