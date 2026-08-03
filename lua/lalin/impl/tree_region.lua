@@ -8,6 +8,7 @@ local B = require("lalin.schema_v2.bind")
 local Ty = require("lalin.schema_v2.type")
 local Check = require("lalin.schema_v2.check")
 local Sem = require("lalin.schema_v2.sem")
+local P = require("lalin.schema_v2.parse")
 
 local function append(out, values)
   for i = 1, #(values or {}) do out[#out + 1] = values[i] end
@@ -245,7 +246,7 @@ local function capture_projection_for_args(args, cont, prefix)
 end
 function Tr.RegionWireTarget:region_capture_projection(cont) return Tr.RegionCallCaptureProjection({}) end
 function Tr.RegionWireBlock:region_capture_projection(cont) return capture_projection_for_args(self.args, cont, self.label.name) end
-function Tr.RegionWireCont:region_capture_projection(cont) return Tr.RegionCallCaptureProjection({}) end
+function Tr.RegionWireCont:region_capture_projection(cont) return capture_projection_for_args(self.args, cont, "cont_" .. self.cont.name) end
 function Tr.RegionContWire:region_capture_projection(cont) return self.target:region_capture_projection(cont) end
 local function collect_captures(wiring, conts)
   local entries = {}
@@ -257,6 +258,149 @@ local function collect_captures(wiring, conts)
   end
   return Tr.RegionCallCaptureProjection(entries)
 end
+
+-- -------------------------------------------------------------------------
+-- Parsed continuation projection and lookup.  The projection is built
+-- from the assembled RegionCont list (assembly owns the ParsedExit ->
+-- RegionCont conversion), so retargeted jumps and wire targets share the
+-- exact interned continuation value stored on the region.
+-- -------------------------------------------------------------------------
+function P.ParsedRegion:parsed_cont_projection(conts)
+  local entries = {}
+  for i = 1, #(conts or {}) do
+    local cont = conts[i]
+    entries[i] = P.ParsedContEntry(cont.name, cont)
+  end
+  return P.ParsedContProjection(entries)
+end
+
+function P.ParsedContProjection:parsed_cont_lookup(name)
+  for i = 1, #(self.entries or {}) do
+    local entry = self.entries[i]
+    if entry.name == name then return P.ParsedContFound(entry) end
+  end
+  return P.ParsedContMissing(name)
+end
+
+-- The lookup result leaves own the retargeting decisions.
+function P.ParsedContFound:region_retarget_jump(jump)
+  return Tr.StmtJumpCont(jump.h, self.entry.cont, jump.args)
+end
+function P.ParsedContMissing:region_retarget_jump(jump) return jump end
+function P.ParsedContFound:region_retarget_wire(wire)
+  return Tr.RegionWireCont(self.entry.cont, wire.args)
+end
+function P.ParsedContMissing:region_retarget_wire(wire) return wire end
+
+-- -------------------------------------------------------------------------
+-- Assembly-time statement retargeting.  Each statement leaf that owns
+-- nested statements or a jump/wire target retargets itself; the parent
+-- default passes through.  A StmtJump whose target names a region
+-- continuation becomes a StmtJumpCont; a RegionWireBlock whose label names
+-- a continuation becomes a RegionWireCont.
+-- -------------------------------------------------------------------------
+local function retarget_region_body(stmts, retarget_input)
+  local out = {}
+  for i = 1, #(stmts or {}) do out[i] = stmts[i]:region_retarget_cont(retarget_input) end
+  return out
+end
+
+local function retarget_region_wiring(wiring, retarget_input)
+  local out = {}
+  for i = 1, #(wiring or {}) do out[i] = wiring[i]:region_retarget_cont(retarget_input) end
+  return out
+end
+
+function Tr.Stmt:region_retarget_cont(retarget_input) return self end
+function Tr.StmtJump:region_retarget_cont(retarget_input)
+  return retarget_input.cont_projection:parsed_cont_lookup(self.target.name):region_retarget_jump(self)
+end
+function Tr.StmtIf:region_retarget_cont(retarget_input)
+  return Tr.StmtIf(self.h, self.cond,
+    retarget_region_body(self.then_body, retarget_input),
+    retarget_region_body(self.else_body, retarget_input))
+end
+function Tr.StmtSwitch:region_retarget_cont(retarget_input)
+  local arms, variant_arms, default_body = {}, {}, retarget_region_body(self.default_body or {}, retarget_input)
+  for i = 1, #(self.arms or {}) do
+    arms[i] = Tr.SwitchStmtArm(self.arms[i].key, retarget_region_body(self.arms[i].body or {}, retarget_input))
+  end
+  for i = 1, #(self.variant_arms or {}) do
+    variant_arms[i] = Tr.SwitchVariantStmtArm(self.variant_arms[i].variant_name, self.variant_arms[i].binds,
+      retarget_region_body(self.variant_arms[i].body or {}, retarget_input))
+  end
+  return Tr.StmtSwitch(self.h, self.value, arms, variant_arms, default_body)
+end
+function Tr.StmtVariantSwitchSource:region_retarget_cont(retarget_input)
+  local arms, variant_arms, default_body = {}, {}, retarget_region_body(self.default_body or {}, retarget_input)
+  for i = 1, #(self.arms or {}) do
+    arms[i] = Tr.SwitchStmtArm(self.arms[i].key, retarget_region_body(self.arms[i].body or {}, retarget_input))
+  end
+  for i = 1, #(self.variant_arms or {}) do
+    variant_arms[i] = Tr.SwitchVariantSourceStmtArm(self.variant_arms[i].variant_name, self.variant_arms[i].binds,
+      retarget_region_body(self.variant_arms[i].body or {}, retarget_input))
+  end
+  return Tr.StmtVariantSwitchSource(self.h, self.value, arms, variant_arms, default_body)
+end
+function Tr.StmtRegionEmit:region_retarget_cont(retarget_input)
+  return Tr.StmtRegionEmit(self.h, self.invoke_id, self.target, self.args,
+    retarget_region_wiring(self.wiring or {}, retarget_input))
+end
+function Tr.StmtRegionCall:region_retarget_cont(retarget_input)
+  return Tr.StmtRegionCall(self.h, self.invoke_id, self.target, self.args,
+    retarget_region_wiring(self.wiring or {}, retarget_input))
+end
+function Tr.RegionContWire:region_retarget_cont(retarget_input)
+  return Tr.RegionContWire(self.name, self.target:region_retarget_cont(retarget_input))
+end
+function Tr.RegionWireTarget:region_retarget_cont(retarget_input) return self end
+function Tr.RegionWireBlock:region_retarget_cont(retarget_input)
+  return retarget_input.cont_projection:parsed_cont_lookup(self.label.name):region_retarget_wire(self)
+end
+function Tr.RegionWireCont:region_retarget_cont(retarget_input) return self end
+
+function Tr.EntryControlBlock:parsed_region_control_block_view()
+  local params = {}
+  for i = 1, #(self.params or {}) do
+    local p = self.params[i]
+    params[i] = Tr.BlockParam(p.name, p.ty)
+  end
+  return Tr.ControlBlock(self.label, params, self.body)
+end
+
+-- -------------------------------------------------------------------------
+-- Parsed region assembly conversions and contract lowering.
+-- -------------------------------------------------------------------------
+function P.ParsedField:parsed_block_param()
+  return Tr.BlockParam(self.name, self.ty)
+end
+function P.ParsedField:parsed_entry_block_param()
+  return Tr.EntryBlockParam(self.name, self.ty, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(self.name)))
+end
+function P.ParsedExit:parsed_region_cont(input)
+  local params = {}
+  for i = 1, #(self.fields or {}) do params[i] = self.fields[i]:parsed_block_param() end
+  return Tr.RegionCont(
+    Tr.RegionProtocolKey("cont:" .. tostring(input.region_name) .. ":" .. tostring(self.name) .. ":" .. tostring(input.index)),
+    self.name, params)
+end
+
+function P.StmtRequiresParsed:parsed_contract_values()
+  local contracts = {}
+  for i = 1, #(self.contracts or {}) do contracts[i] = self.contracts[i]:parsed_contract_value() end
+  return contracts
+end
+
+-- Each typed ParsedContract leaf owns the FuncContract construction; no
+-- string dispatch remains.
+function P.ParsedContractReadonly:parsed_contract_value() return Tr.ContractReadonly(self.arg) end
+function P.ParsedContractWriteonly:parsed_contract_value() return Tr.ContractWriteonly(self.arg) end
+function P.ParsedContractNoAlias:parsed_contract_value() return Tr.ContractNoAlias(self.arg) end
+function P.ParsedContractInvalidate:parsed_contract_value() return Tr.ContractInvalidate(self.arg) end
+function P.ParsedContractPreserve:parsed_contract_value() return Tr.ContractPreserve(self.arg) end
+function P.ParsedContractBounds:parsed_contract_value() return Tr.ContractBounds(self.a, self.b) end
+function P.ParsedContractDisjoint:parsed_contract_value() return Tr.ContractDisjoint(self.a, self.b) end
+function P.ParsedContractSameLen:parsed_contract_value() return Tr.ContractSameLen(self.a, self.b) end
 
 local function clone_stmt(stmt, invoke_id, wires, conts)
   return stmt:region_clone_for_invoke(invoke_id, wires, conts)
@@ -287,7 +431,51 @@ function Tr.StmtSwitch:region_clone_for_invoke(invoke_id, wires, conts)
   return Tr.StmtSwitch(self.h, self.value, arms, variants, default_body)
 end
 function Tr.StmtControl:region_clone_for_invoke(invoke_id, wires, conts) return self end
-
+function Tr.StmtJump:region_clone_for_invoke(invoke_id, wires, conts)
+  return Tr.StmtJump(self.h, prefixed_label(invoke_id, self.target), self.args)
+end
+function Tr.StmtBranchJump:region_clone_for_invoke(invoke_id, wires, conts)
+  return Tr.StmtBranchJump(self.h, self.cond,
+    prefixed_label(invoke_id, self.then_target), self.then_args,
+    prefixed_label(invoke_id, self.else_target), self.else_args)
+end
+function Tr.StmtVariantSwitchSource:region_clone_for_invoke(invoke_id, wires, conts)
+  local arms, variant_arms, default_body = {}, {}, {}
+  for i = 1, #(self.arms or {}) do
+    local body = {}; for j = 1, #(self.arms[i].body or {}) do body[j] = clone_stmt(self.arms[i].body[j], invoke_id, wires, conts) end
+    arms[i] = Tr.SwitchStmtArm(self.arms[i].key, body)
+  end
+  for i = 1, #(self.variant_arms or {}) do
+    local body = {}; for j = 1, #(self.variant_arms[i].body or {}) do body[j] = clone_stmt(self.variant_arms[i].body[j], invoke_id, wires, conts) end
+    variant_arms[i] = Tr.SwitchVariantSourceStmtArm(self.variant_arms[i].variant_name, self.variant_arms[i].binds, body)
+  end
+  for i = 1, #(self.default_body or {}) do default_body[i] = clone_stmt(self.default_body[i], invoke_id, wires, conts) end
+  return Tr.StmtVariantSwitchSource(self.h, self.value, arms, variant_arms, default_body)
+end
+local function clone_wiring(wiring, invoke_id, wires, conts)
+  local out = {}
+  for i = 1, #(wiring or {}) do out[i] = wiring[i]:region_clone_for_invoke(invoke_id, wires, conts) end
+  return out
+end
+function Tr.RegionWireBlock:region_clone_for_invoke(invoke_id, wires, conts)
+  return Tr.RegionWireBlock(prefixed_label(invoke_id, self.label), self.args)
+end
+function Tr.RegionWireFound:region_clone_cont_wire(_cont, _original) return self.entry.wire.target end
+function Tr.RegionWireMissing:region_clone_cont_wire(_cont, original) return original end
+function Tr.RegionWireCont:region_clone_for_invoke(invoke_id, wires, conts)
+  return wire_for_cont(wires, self.cont):region_clone_cont_wire(self.cont, self)
+end
+function Tr.RegionContWire:region_clone_for_invoke(invoke_id, wires, conts)
+  return Tr.RegionContWire(self.name, self.target:region_clone_for_invoke(invoke_id, wires, conts))
+end
+function Tr.StmtRegionEmit:region_clone_for_invoke(invoke_id, wires, conts)
+  return Tr.StmtRegionEmit(self.h, tostring(invoke_id) .. "." .. tostring(self.invoke_id), self.target, self.args,
+    clone_wiring(self.wiring or {}, invoke_id, wires, conts))
+end
+function Tr.StmtRegionCall:region_clone_for_invoke(invoke_id, wires, conts)
+  return Tr.StmtRegionCall(self.h, tostring(invoke_id) .. "." .. tostring(self.invoke_id), self.target, self.args,
+    clone_wiring(self.wiring or {}, invoke_id, wires, conts))
+end
 -- -------------------------------------------------------------------------
 -- Immutable statement/body/block expansion.
 -- -------------------------------------------------------------------------
@@ -427,7 +615,6 @@ function Tr.RegionDefinitionFound:region_expand_invoke(stmt, input)
     for j = 1, i - 1 do
       if stmt.wiring[j].name == stmt.wiring[i].name then return reject(Tr.RegionInvokeDuplicateWire(stmt.target, stmt.wiring[i].name)) end
     end
-function Tr.RegionWireCont:region_capture_projection(cont) return capture_projection_for_args(self.args, cont, "cont_" .. self.cont.name) end
     for j = 1, #(region.conts or {}) do if region.conts[j]:region_cont_matches_name(stmt.wiring[i].name) then found = true end end
     if not found then return reject(Tr.RegionInvokeExtraWire(stmt.target, stmt.wiring[i].name)) end
   end

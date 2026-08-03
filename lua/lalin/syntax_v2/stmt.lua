@@ -61,6 +61,67 @@ local function parse_expr_list_until_no_comma(lex, ctx)
   return items
 end
 
+-- Contract surface keywords are recognized at the parse boundary into
+-- typed ParsedContract leaves (mirroring the loop-reducer keyword pattern);
+-- the leaves own FuncContract construction.
+local unary_contract_constructors = {
+  readonly = P.ParsedContractReadonly,
+  writeonly = P.ParsedContractWriteonly,
+  noalias = P.ParsedContractNoAlias,
+  invalidate = P.ParsedContractInvalidate,
+  preserve = P.ParsedContractPreserve,
+}
+local binary_contract_constructors = {
+  bounds = P.ParsedContractBounds,
+  disjoint = P.ParsedContractDisjoint,
+  same_len = P.ParsedContractSameLen,
+}
+
+local function parse_contract_args_group(lex, ctx)
+  lex:expect("(")
+  local args = {}
+  if not lex:next_if(")") then
+    repeat
+      args[#args + 1] = Expr.parse(lex, ctx)
+    until not lex:next_if(",")
+    lex:expect(")")
+  end
+  return args
+end
+
+local function parse_contract_call(lex, ctx)
+  local name_tok = lex:expect_name("contract name")
+  local name = name_tok.value
+  local first = parse_contract_args_group(lex, ctx)
+  if lex:peek().value == "(" then
+    local second = parse_contract_args_group(lex, ctx)
+    local ctor = binary_contract_constructors[name]
+    if ctor == nil then
+      lex:error_at(name_tok, "contract `" .. name .. "` is unary and takes a single argument, not `(...)(...)`")
+    end
+    if #first ~= 1 or #second ~= 1 then
+      lex:error_at(name_tok, "binary contract `" .. name .. "` expects exactly one argument in each group, e.g. bounds(base)(len)")
+    end
+    return ctor(first[1], second[1])
+  end
+  local ctor = unary_contract_constructors[name]
+  if ctor == nil then
+    lex:error_at(name_tok, "contract `" .. name .. "` is curried and expects two argument groups, e.g. bounds(base)(len)")
+  end
+  if #first ~= 1 then
+    lex:error_at(name_tok, "unary contract `" .. name .. "` expects exactly one argument")
+  end
+  return ctor(first[1])
+end
+
+local function parse_contracts(lex, ctx)
+  local contracts = { parse_contract_call(lex, ctx) }
+  while lex:next_if(",") do
+    contracts[#contracts + 1] = parse_contract_call(lex, ctx)
+  end
+  return contracts
+end
+
 local function parse_named_payload(lex, ctx)
   local fields = {}
   lex:expect("(")
@@ -236,10 +297,10 @@ function Stmt.parse(lex, ctx)
     return P.ParsedStmtGroup(Roles.adapt(ctx, "stmts", event))
 
   elseif t.value == "requires" then
-    local start = lex:next()
-    local exprs = parse_expr_list_until_no_comma(lex, ctx)
-    -- Return intermediate; contracts are extracted by decl parser
-    return P.StmtRequiresParsed(exprs)
+    lex:next()
+    -- Contracts are recognized into typed ParsedContract leaves here; the
+    -- decl parser and region assembly consume the typed values directly.
+    return P.StmtRequiresParsed(parse_contracts(lex, ctx))
 
   elseif t.value == "return" then
     local start = lex:next()
@@ -410,10 +471,14 @@ function Stmt.parse(lex, ctx)
       end
       lex:expect(")")
     end
+    -- Deterministic source-site invoke IDs: the keyword token's source
+    -- offset is unique per parse site and stable across parses of the
+    -- same document, so expanded block label prefixes never collide.
+    local invoke_id = "lln." .. tostring(start.value) .. "." .. tostring(start.start)
     if start.value == "call" then
       return stmt_known(Tree.StmtRegionCall(
         Tree.StmtSurface,
-        "lln.call.",
+        invoke_id,
         Tree.RegionInvokeTarget(Stmt._region_path(callee_path)),
         data_args,
         Stmt._region_wiring(cont_wiring)
@@ -421,7 +486,7 @@ function Stmt.parse(lex, ctx)
     else
       return stmt_known(Tree.StmtRegionEmit(
         Tree.StmtSurface,
-        "lln.emit.",
+        invoke_id,
         Tree.RegionInvokeTarget(Stmt._region_path(callee_path)),
         data_args,
         Stmt._region_wiring(cont_wiring)

@@ -305,7 +305,10 @@ parse_entry_block = function(lex, ctx)
   local body = Stmt.parse_block(lex, ctx, { "end" })
   lex:expect("end")
   local fields = state
-  return P.ParsedEntryBlock(kind, name.value, fields, body)
+  if kind == "entry" then
+    return P.ParsedRegionEntryBlock(name.value, fields, body)
+  end
+  return P.ParsedRegionBodyBlock(name.value, fields, body)
 end
 
 -- Parse a continuation exit entry: name(fields)

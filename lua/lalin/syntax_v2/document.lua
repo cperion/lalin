@@ -18,6 +18,7 @@ local C   = package.loaded["lalin.schema_v2.core"]
 local B   = package.loaded["lalin.schema_v2.bind"]
 local Ty  = package.loaded["lalin.schema_v2.type"]
 require("lalin.syntax_v2.for_to_loop")(require("lalin.schema_v2"))
+require("lalin.impl.tree_region")
 
 local Document = {}
 
@@ -229,36 +230,8 @@ end
 -- to_module: convert ParsedDecl[] → Tree.Module
 -- ═══════════════════════════════════════════════════════════
 
-local function call_name(e)
-  local cls = asdl.classof(e)
-  if cls == Tr.ExprRef then
-    local rcls = asdl.classof(e.ref)
-    if rcls == B.ValueRefName then return e.ref.name end
-  end
-  return nil
-end
-
-local function contract_from_expr(expr)
-  if not expr or asdl.classof(expr) ~= Tr.ExprCall then
-    error("contract calls expected", 2)
-  end
-  local cname = call_name(expr.callee)
-  if cname == "readonly" then return Tr.ContractReadonly(expr.args[1])
-  elseif cname == "writeonly" then return Tr.ContractWriteonly(expr.args[1])
-  elseif cname == "noalias" then return Tr.ContractNoAlias(expr.args[1])
-  elseif cname == "invalidate" then return Tr.ContractInvalidate(expr.args[1])
-  elseif cname == "preserve" then return Tr.ContractPreserve(expr.args[1]) end
-  local callee = expr.callee
-  if callee and asdl.classof(callee) == Tr.ExprCall then
-    local inner_name = call_name(callee.callee)
-    local outer = expr.args or {}
-    local inner = callee.args or {}
-    if inner_name == "bounds" then return Tr.ContractBounds(inner[1], outer[1])
-    elseif inner_name == "disjoint" then return Tr.ContractDisjoint(inner[1], outer[1])
-    elseif inner_name == "same_len" then return Tr.ContractSameLen(inner[1], outer[1]) end
-  end
-  error("unsupported contract expression", 2)
-end
+-- Contract lowering is leaf-owned: each typed ParsedContract leaf on the
+-- requires statement produces its FuncContract via parsed_contract_value.
 
 function P.StmtKnown:lower_parsed_stmt(_named_env)
   return P.ParsedStmtBodyResolved({ self.stmt })
@@ -344,7 +317,145 @@ function P.ParsedStmtBodyRejected:parsed_func_body(fname)
   error("to_module: function `" .. fname .. "` rejected: " .. self.reason, 2)
 end
 
+function P.ParsedStmtBodyResolved:parsed_region_body(_region_name) return self.stmts end
+function P.ParsedStmtBodyRejected:parsed_region_body(region_name)
+  error("to_module: region `" .. region_name .. "` rejected: " .. self.reason, 2)
+end
 
+-- The parse boundary materializes the prepared name environment as typed
+-- entries (name -> ParsedDecl), deterministically ordered, so no loose
+-- table crosses into the ASDL assembly methods.
+local function parsed_region_body_env(named_env)
+  local names = {}
+  for name, decl in pairs(named_env or {}) do
+    if type(name) == "string" and type(decl) == "table" and asdl.isa(decl, P.ParsedDecl) then
+      names[#names + 1] = name
+    end
+  end
+  table.sort(names)
+  local entries = {}
+  for i = 1, #names do entries[i] = P.ParsedNameEntry(names[i], named_env[names[i]]) end
+  return P.ParsedRegionBodyEnv(entries)
+end
+
+local function lowered_region_body(body, input)
+  return lower_stmts(body or {}, input.body_env):parsed_region_body(input.region_name)
+end
+
+local function retarget_region_body(stmts, retarget_input)
+  local out = {}
+  for i = 1, #(stmts or {}) do out[i] = stmts[i]:region_retarget_cont(retarget_input) end
+  return out
+end
+
+local function append_control_block(blocks, block)
+  local out = {}
+  for i = 1, #(blocks or {}) do out[i] = blocks[i] end
+  out[#out + 1] = block
+  return out
+end
+
+-- Each ParsedRegionBlock leaf assembles itself into the typed assembly
+-- state machine; the assembly leaves own the state transitions.
+function P.ParsedRegionBlock:parsed_region_accumulate(_assembly, _input)
+  error("missing parsed region block accumulation", 2)
+end
+function P.ParsedRegionEntryBlock:parsed_region_accumulate(assembly, input)
+  return assembly:parsed_region_block_accept_entry(self:parsed_region_entry_block(input), input)
+end
+function P.ParsedRegionBodyBlock:parsed_region_accumulate(assembly, input)
+  return assembly:parsed_region_block_accept_body(self:parsed_region_control_block(input), input)
+end
+
+function P.ParsedRegionEntryBlock:parsed_region_entry_block(input)
+  local state = {}
+  for i = 1, #(self.state or {}) do state[i] = self.state[i]:parsed_entry_block_param() end
+  local body = lowered_region_body(self.body, input)
+  return Tr.EntryControlBlock(Tr.BlockLabel(self.name), state, retarget_region_body(body, input.retarget))
+end
+
+function P.ParsedRegionBodyBlock:parsed_region_control_block(input)
+  local state = {}
+  for i = 1, #(self.state or {}) do state[i] = self.state[i]:parsed_block_param() end
+  local body = lowered_region_body(self.body, input)
+  return Tr.ControlBlock(Tr.BlockLabel(self.name), state, retarget_region_body(body, input.retarget))
+end
+
+function P.ParsedRegionBlockAssemblyWaiting:parsed_region_block_accept_entry(entry, _input)
+  -- Body blocks seen before the entry are retained as region blocks.
+  return P.ParsedRegionBlockAssemblyHasEntry(entry, self.blocks)
+end
+function P.ParsedRegionBlockAssemblyHasEntry:parsed_region_block_accept_entry(entry, _input)
+  -- A second entry block is not the region entry; it assembles as a body
+  -- control block so the control analyzer reports any duplicate label as
+  -- a typed rejection.
+  return P.ParsedRegionBlockAssemblyHasEntry(self.entry, append_control_block(self.blocks, entry:parsed_region_control_block_view()))
+end
+function P.ParsedRegionBlockAssemblyWaiting:parsed_region_block_accept_body(block, _input)
+  return P.ParsedRegionBlockAssemblyWaiting(append_control_block(self.blocks, block))
+end
+function P.ParsedRegionBlockAssemblyHasEntry:parsed_region_block_accept_body(block, _input)
+  return P.ParsedRegionBlockAssemblyHasEntry(self.entry, append_control_block(self.blocks, block))
+end
+
+-- Typed finalize: a region with no declared entry block receives the
+-- canonical empty entry; HasEntry finalizes as itself.
+function P.ParsedRegionBlockAssemblyWaiting:parsed_region_block_assembly_finalize(_input)
+  return P.ParsedRegionBlockAssemblyHasEntry(Tr.EntryControlBlock(Tr.BlockLabel("entry"), {}, {}), self.blocks)
+end
+function P.ParsedRegionBlockAssemblyHasEntry:parsed_region_block_assembly_finalize(_input) return self end
+
+function P.ParsedRegion:parsed_region_compiler_name(anon_counter)
+  local parts = {}
+  if self.qualifier then
+    for i, n in ipairs(self.qualifier) do parts[#parts + 1] = n.name end
+  end
+  local nm = self.name
+  if nm == nil or nm == "" then
+    anon_counter[1] = anon_counter[1] + 1
+    nm = "__lln_region_" .. tostring(anon_counter[1])
+  end
+  parts[#parts + 1] = nm
+  return table.concat(parts, ".")
+end
+
+function P.ParsedRegion:region_to_item(input)
+  local rname = input.region_name
+  local params = {}
+  for i = 1, #(self.inputs or {}) do
+    local p = self.inputs[i]
+    params[i] = Ty.Param(p.name, p.ty)
+  end
+  local conts = {}
+  for i = 1, #(self.exits or {}) do
+    conts[i] = self.exits[i]:parsed_region_cont(P.ParsedRegionContInput(rname, i))
+  end
+  local retarget = P.ParsedRegionRetargetInput(self:parsed_cont_projection(conts))
+  local body_input = P.ParsedRegionBodyInput(rname, retarget, input.body_env)
+  local assembly = P.ParsedRegionBlockAssemblyWaiting({})
+  for i = 1, #(self.blocks or {}) do
+    assembly = self.blocks[i]:parsed_region_accumulate(assembly, body_input)
+  end
+  local finalized = assembly:parsed_region_block_assembly_finalize(body_input)
+  local contracts = {}
+  for i = 1, #(self.contracts or {}) do
+    local lowered = self.contracts[i]:parsed_contract_values()
+    for j = 1, #lowered do contracts[#contracts + 1] = lowered[j] end
+  end
+  return Tr.ItemRegion(Tr.Region(rname, params, conts, contracts, finalized.entry, finalized.blocks))
+end
+
+-- Leaf-owned ParsedDecl lowering.  The remaining pre-existing decl kinds
+-- are handled by the established classof chain in decl_to_item; ParsedRegion
+-- owns its item lowering through this leaf method with a typed assembly
+-- input instead of adding another dispatch branch.
+function P.ParsedDecl:parsed_decl_to_item(_named_env, _anon_counter)
+  error("to_module: unsupported ParsedDecl " .. tostring(asdl.classof(self)), 2)
+end
+function P.ParsedRegion:parsed_decl_to_item(named_env, anon_counter)
+  local rname = self:parsed_region_compiler_name(anon_counter)
+  return self:region_to_item(P.ParsedRegionAssemblyInput(rname, parsed_region_body_env(named_env)))
+end
 local function compiler_name(parsed, anon_counter)
   local nm = parsed.name
   if nm ~= nil and nm ~= "" then return nm end
@@ -401,9 +512,8 @@ local function decl_to_item(parsed, named_env, anon_counter)
     for _, stmt in ipairs(parsed.body or {}) do
       local scls = asdl.classof(stmt)
       if scls == P.StmtRequiresParsed then
-        for _, expr in ipairs(stmt.exprs or {}) do
-          contracts[#contracts + 1] = contract_from_expr(expr)
-        end
+        local lowered = stmt:parsed_contract_values()
+        for j = 1, #lowered do contracts[#contracts + 1] = lowered[j] end
       else
         body_src[#body_src + 1] = stmt
       end
@@ -456,7 +566,8 @@ local function decl_to_item(parsed, named_env, anon_counter)
       handle_invalid(parsed.invalid),
       facts))
   end
-  error("to_module: unsupported ParsedDecl " .. tostring(cls), 2)
+  -- Remaining ParsedDecl leaves own their item lowering.
+  return parsed:parsed_decl_to_item(named_env, anon_counter)
 end
 
 function Document.to_module(doc_or_decls, name)

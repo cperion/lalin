@@ -46,12 +46,69 @@ return schema. LalinParse {
     fields [many [LalinParse.ParsedField]],
   },
 
-  product. ParsedEntryBlock {
+  -- Typed continuation projection over a region's assembled continuations.
+  -- The projection is a derived phase shape: parsed exits become Tree
+  -- RegionCont values, and the lookup resolves a wire/jump target name
+  -- to the exact interned continuation.  Found/Missing leaves own the
+  -- retargeting decisions.
+  product. ParsedContEntry { interned, field. name [str], cont [LalinTree.RegionCont], },
+  product. ParsedContProjection { interned, entries [many [LalinParse.ParsedContEntry]], },
+  sum. ParsedContLookup {
+    ParsedContFound { variant_unique, entry [LalinParse.ParsedContEntry], },
+    ParsedContMissing { variant_unique, field. name [str], },
+  },
+  -- Precise typed inputs for parsed-region assembly.  The retarget input
+  -- carries the continuation projection; the body input names the region
+  -- and carries the prepared statement-lowering environment; the assembly
+  -- input seeds region_to_item from the parse boundary.
+  product. ParsedNameEntry { interned, field. name [str], decl [LalinParse.ParsedDecl], },
+  product. ParsedRegionBodyEnv { interned, entries [many [LalinParse.ParsedNameEntry]], },
+  product. ParsedRegionRetargetInput { interned, cont_projection [LalinParse.ParsedContProjection], },
+  product. ParsedRegionBodyInput {
     interned,
-    field. kind [str],
-    field. name [str],
-    state [many [LalinParse.ParsedField]],
-    body [many [LalinParse.ParsedStmt]],
+    field. region_name [str],
+    retarget [LalinParse.ParsedRegionRetargetInput],
+    body_env [LalinParse.ParsedRegionBodyEnv],
+  },
+  product. ParsedRegionAssemblyInput {
+    interned,
+    field. region_name [str],
+    body_env [LalinParse.ParsedRegionBodyEnv],
+  },
+  product. ParsedRegionContInput { interned, field. region_name [str], index [number], },
+  -- Typed region block assembly state machine.  Waiting collects body
+  -- blocks until an entry block arrives; HasEntry holds the assembled
+  -- entry and the accumulated body blocks.  The leaves own the state
+  -- transitions; finalize supplies the typed default entry when no entry
+  -- block was declared.
+  sum. ParsedRegionBlockAssembly {
+    ParsedRegionBlockAssemblyWaiting {
+      variant_unique,
+      blocks [many [LalinTree.ControlBlock]],
+    },
+    ParsedRegionBlockAssemblyHasEntry {
+      variant_unique,
+      entry [LalinTree.EntryControlBlock],
+      blocks [many [LalinTree.ControlBlock]],
+    },
+  },
+
+  -- Typed region block alternatives replace the old string-kind
+  -- ParsedEntryBlock.  The entry leaf owns entry parameter handling;
+  -- the body leaf owns ordinary control-block handling.
+  sum. ParsedRegionBlock {
+    ParsedRegionEntryBlock {
+      variant_unique,
+      field. name [str],
+      state [many [LalinParse.ParsedField]],
+      body [many [LalinParse.ParsedStmt]],
+    },
+    ParsedRegionBodyBlock {
+      variant_unique,
+      field. name [str],
+      state [many [LalinParse.ParsedField]],
+      body [many [LalinParse.ParsedStmt]],
+    },
   },
 
 
@@ -309,12 +366,27 @@ return schema. LalinParse {
     ParsedLoopBodyStmt { variant_unique, field. stmt [LalinParse.ParsedStmt], },
     ParsedLoopBodySink { variant_unique, sink [LalinParse.ParsedLoopSink], },
   },
+  -- Typed contract alternatives replace raw Expr calls.  Each leaf carries
+  -- its argument shape (unary or curried binary) and owns the FuncContract
+  -- construction; the requires parser recognizes the surface keyword at the
+  -- parse boundary, mirroring the loop-reducer keyword pattern.
+  sum. ParsedContract {
+    ParsedContractReadonly { variant_unique, field. arg [LalinTree.Expr], },
+    ParsedContractWriteonly { variant_unique, field. arg [LalinTree.Expr], },
+    ParsedContractNoAlias { variant_unique, field. arg [LalinTree.Expr], },
+    ParsedContractInvalidate { variant_unique, field. arg [LalinTree.Expr], },
+    ParsedContractPreserve { variant_unique, field. arg [LalinTree.Expr], },
+    ParsedContractBounds { variant_unique, a [LalinTree.Expr], b [LalinTree.Expr], },
+    ParsedContractDisjoint { variant_unique, a [LalinTree.Expr], b [LalinTree.Expr], },
+    ParsedContractSameLen { variant_unique, a [LalinTree.Expr], b [LalinTree.Expr], },
+  },
+
   sum. ParsedStmt {
     StmtKnown { variant_unique, field. stmt [LalinTree.Stmt], },
     ParsedStmtGroup { variant_unique, stmts [many [LalinParse.ParsedStmt]], },
     StmtLetParsed { variant_unique, field. name [str], field. ty [LalinType.Type], field. init [LalinTree.Expr], },
     StmtVarParsed { variant_unique, field. name [str], field. ty [LalinType.Type], field. init [LalinTree.Expr], },
-    StmtRequiresParsed { variant_unique, exprs [many [LalinTree.Expr]], },
+    StmtRequiresParsed { variant_unique, contracts [many [LalinParse.ParsedContract]], },
     StmtLoopParsed {
       variant_unique,
       loop_id [str],
@@ -391,7 +463,7 @@ return schema. LalinParse {
       inputs [many [LalinParse.ParsedField]],
       exits [many [LalinParse.ParsedExit]],
       contracts [many [LalinParse.ParsedStmt]],
-      blocks [many [LalinParse.ParsedEntryBlock]],
+      blocks [many [LalinParse.ParsedRegionBlock]],
     },
     ParsedExprFragment {
       variant_unique,
