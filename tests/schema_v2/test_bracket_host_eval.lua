@@ -1,8 +1,11 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local asdl = require("lalin.asdl")
+local llbl = require("llbl")
 local T = require("lalin.schema_v2")
 local Document = require("lalin.syntax_v2.document")
+local HostAst = require("lalin.syntax_v2.ast")
+local Roles = require("lalin.syntax_v2.roles")
 local C, P, Tr, Ty = T.LalinCore, T.LalinParse, T.LalinTree, T.LalinType
 
 local accesses = 0
@@ -43,10 +46,10 @@ end
   env = {
     identity = identity,
     custom = custom,
-    generated_decls = { generated_decl },
-    generated_fields = { field },
-    generated_variants = { variant },
-    generated_stmts = { generated_stmt },
+    generated_decls = llbl.fragment("decls", { generated_decl }),
+    generated_fields = llbl.fragment("product", { field }),
+    generated_variants = llbl.fragment("variants", { variant }),
+    generated_stmts = llbl.fragment("stmts", { generated_stmt }),
   },
 })
 
@@ -67,5 +70,36 @@ assert(answer.result == custom)
 assert(asdl.classof(answer.body[1]) == Tr.StmtReturnValue)
 assert(asdl.classof(module.items[5].func.body[1].value) == Tr.ExprLit)
 assert(module.items[5].func.body[1].value.value.raw == "42")
+
+assert(Roles.descriptors.type.algebra == "single")
+assert(Roles.descriptors.product.algebra == "product")
+assert(Roles.descriptors.variants.algebra == "sum")
+assert(Roles.descriptors.conts.algebra == "sum")
+assert(Roles.descriptors.type.owner == Roles.dialect,
+  "schema-v2 role projection must retain the canonical Lalin dialect identity")
+local stamped = HostAst.host_eval("i32", { "i32" },
+  { source = "@stamped-role.lln", line = 1 }, "type")
+assert(Roles.adapt({ host_env = { i32 = custom } }, "type", stamped) == custom)
+assert(llbl.is(stamped.expected_role, "RoleId"))
+assert(llbl.role_id_equal(stamped.expected_role, Roles.descriptors.type.id))
+
+local exit = P.ParsedExit("done", { field })
+local region_doc = Document.parse([=[
+region generated(; [generated_conts])
+entry begin()
+  return
+end
+end
+]=], "@bracket-cont-host-eval.lln", {
+  env = { generated_conts = llbl.fragment("conts", { exit }) },
+})
+assert(asdl.classof(region_doc.body[1]) == P.ParsedRegion)
+assert(#region_doc.body[1].exits == 1 and region_doc.body[1].exits[1] == exit)
+
+local ok, err = pcall(Document.parse, [[fn bad() ["i32"] do return end]],
+  "@bad-bracket-role.lln")
+assert(not ok and tostring(err):find("type role produced unsupported value", 1, true))
+assert(tostring(err):find("@bad-bracket-role.lln:1", 1, true),
+  "role diagnostics must retain the bracket origin")
 
 print("schema-v2 LLBL role-directed bracket HostEval ok")

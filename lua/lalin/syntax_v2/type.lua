@@ -3,7 +3,7 @@
 -- is adapted into the active schema-v2 type vocabulary before it enters Parsed ASDL.
 
 local Ast = require("lalin.syntax_v2.ast")
-local llbl = require("llbl")
+local Roles = require("lalin.syntax_v2.roles")
 
 -- Load schema_v2 parse types
 require("lalin.schema_v2")
@@ -14,11 +14,10 @@ local C = package.loaded["lalin.schema_v2.core"]
 local Type = {}
 function Type.void() return Ty.TScalar(C.ScalarVoid) end
 
-function Ty.Type:parsed_host_type_value() return self end
 
 local function type_constructor(project)
   return setmetatable({}, {
-    __index = function(_, value) return project(value:parsed_host_type_value()) end,
+    __index = function(_, value) return project(value:parsed_host_type()) end,
   })
 end
 function Type.extend_host_env(env)
@@ -48,18 +47,11 @@ function Type.extend_host_env(env)
     return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(tostring(name)) })))
   end
   env.lease = function(name, ty)
-    return Ty.TLease(ty:parsed_host_type_value(), Ty.LeaseOriginParam(tostring(name)))
+    return Ty.TLease(ty:parsed_host_type(), Ty.LeaseOriginParam(tostring(name)))
   end
   return env
 end
 
-local function adapt_host_type(value, event, lex, start)
-  if type(value) == "table" and type(value.parsed_host_type_value) == "function" then
-    return value:parsed_host_type_value()
-  end
-  lex:error_at(start, "host evaluation for type role produced unsupported value `"
-    .. tostring(value) .. "` from " .. tostring(event.source))
-end
 
 function Type.parse(lex, ctx)
   local start = lex:peek()
@@ -69,8 +61,7 @@ function Type.parse(lex, ctx)
     Ast.add_refs(ctx, refs)
     local event = Ast.host_eval(raw, refs,
       Ast.origin(lex, open, close, "parsed:host_eval"), "type")
-    return adapt_host_type(llbl.host_eval.value(event, { env = ctx.host_env }),
-      event, lex, start)
+    return Roles.adapt(ctx, "type", event)
   end
   lex:error_at(start, "type positions evaluate Lua type values with `[ ... ]`")
 end
@@ -99,7 +90,6 @@ function Type.parse_anonymous_field(lex, ctx)
   return P.ParsedField("", ty, true, false)
 end
 
-function P.ParsedField:parsed_host_product_item() return self end
 function Type.parse_product_splice(lex, ctx)
   local start = lex:peek()
   local raw, open, close = Ast.consume_balanced_from_open(lex)
@@ -107,25 +97,7 @@ function Type.parse_product_splice(lex, ctx)
   Ast.add_refs(ctx, refs)
   local event = Ast.host_eval(raw, refs,
     Ast.origin(lex, open, close, "parsed:host_eval"), "product")
-  local value = llbl.host_eval.value(event, { env = ctx.host_env })
-  local items = {}
-  if type(value) == "table" and type(value.parsed_host_product_item) == "function" then
-    items[1] = value:parsed_host_product_item()
-    return items
-  end
-  if type(value) == "table" then
-    for i = 1, #value do
-      local item = value[i]
-      if type(item) ~= "table" or type(item.parsed_host_product_item) ~= "function" then
-        lex:error_at(start, "host evaluation for product role produced unsupported item `"
-          .. tostring(item) .. "`")
-      end
-      items[i] = item:parsed_host_product_item()
-    end
-    return items
-  end
-  lex:error_at(start, "host evaluation for product role produced unsupported value `"
-    .. tostring(value) .. "`")
+  return Roles.adapt(ctx, "product", event)
 end
 
 --- Parse a parameter list `(name [type], name2 [type2], ..., [splice])`

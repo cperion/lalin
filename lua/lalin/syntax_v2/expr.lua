@@ -2,7 +2,7 @@
 -- Expression parser producing LalinTree ASDL directly.
 
 local Pratt = require("llbl.syntax.pratt")
-local llbl = require("llbl")
+local Roles = require("lalin.syntax_v2.roles")
 local Ast = require("lalin.syntax_v2.ast")
 local Type = require("lalin.syntax_v2.type")
 
@@ -198,26 +198,6 @@ local function struct_ctor(callee, fields, start, lex)
   return Tree.ExprAgg(Tree.ExprSurface, type_ref_from_constructor_expr(callee), inits)
 end
 
-function Tree.Expr:parsed_host_expr_value() return self end
-local function adapt_host_expr(value, lex, start)
-  if type(value) == "table" and type(value.parsed_host_expr_value) == "function" then
-    return value:parsed_host_expr_value()
-  end
-  if type(value) == "number" then
-    local raw = tostring(value)
-    local lit = value == math.floor(value) and Core.LitInt(raw) or Core.LitFloat(raw)
-    return Tree.ExprLit(Tree.ExprSurface, lit)
-  end
-  if type(value) == "boolean" then
-    return Tree.ExprLit(Tree.ExprSurface, Core.LitBool(value))
-  end
-  if type(value) == "string" then
-    return Tree.ExprLit(Tree.ExprSurface, Core.LitString(value))
-  end
-  if value == nil then return Tree.ExprLit(Tree.ExprSurface, Core.LitNil) end
-  lex:error_at(start, "host evaluation for expr role produced unsupported value `"
-    .. tostring(value) .. "`")
-end
 
 local function atom(lex, ctx)
   ctx.lex = lex
@@ -270,7 +250,7 @@ local function atom(lex, ctx)
     Ast.add_refs(ctx, refs)
     local event = Ast.host_eval(raw, refs,
       Ast.origin(lex, open, close, "parsed:host_eval"), "expr")
-    return adapt_host_expr(llbl.host_eval.value(event, { env = ctx.host_env }), lex, t)
+    return Roles.adapt(ctx, "expr", event)
   elseif t.value == "{" then
     local start = lex:expect("{")
     local fields = parse_record_after_open(lex, ctx, start)

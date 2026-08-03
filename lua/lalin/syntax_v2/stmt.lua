@@ -4,7 +4,7 @@
 -- in the pipeline; everything else is direct schema_v2.
 
 local Ast = require("lalin.syntax_v2.ast")
-local llbl = require("llbl")
+local Roles = require("lalin.syntax_v2.roles")
 local Expr = require("lalin.syntax_v2.expr")
 local Type = require("lalin.syntax_v2.type")
 
@@ -222,27 +222,6 @@ function Stmt.parse_block(lex, ctx, stops)
   return items
 end
 
-function P.ParsedStmt:parsed_host_stmt_value() return self end
-function Tree.Stmt:parsed_host_stmt_value() return P.StmtKnown(self) end
-local function adapt_host_stmts(value, lex, start)
-  if type(value) == "table" and type(value.parsed_host_stmt_value) == "function" then
-    return value:parsed_host_stmt_value()
-  end
-  if type(value) == "table" then
-    local stmts = {}
-    for i = 1, #value do
-      local item = value[i]
-      if type(item) ~= "table" or type(item.parsed_host_stmt_value) ~= "function" then
-        lex:error_at(start, "host evaluation for stmts role produced unsupported item `"
-          .. tostring(item) .. "`")
-      end
-      stmts[i] = item:parsed_host_stmt_value()
-    end
-    return P.ParsedStmtGroup(stmts)
-  end
-  lex:error_at(start, "host evaluation for stmts role produced unsupported value `"
-    .. tostring(value) .. "`")
-end
 
 function Stmt.parse(lex, ctx)
   ctx.lex = lex
@@ -254,7 +233,7 @@ function Stmt.parse(lex, ctx)
     Ast.add_refs(ctx, refs)
     local event = Ast.host_eval(raw, refs,
       Ast.origin(lex, open, close, "parsed:host_eval"), "stmts")
-    return adapt_host_stmts(llbl.host_eval.value(event, { env = ctx.host_env }), lex, t)
+    return P.ParsedStmtGroup(Roles.adapt(ctx, "stmts", event))
 
   elseif t.value == "requires" then
     local start = lex:next()

@@ -133,11 +133,16 @@ CMat -> LOWER
 domain recovery has been deleted. LOWER rejection now crosses the compiler backend
 as `CompilerCBackendRejected` and becomes a typed `CompilerArtifactError` only at the
 artifact boundary; it does not escape `CompilerSession:compile()` as a Lua error.
-Schema-v2 bracket positions now preserve Lalin's LLBL contract: every `[]` creates and
-evaluates a role-stamped HostEval, Lua table access constructs the value, and only the
-current role adapts it into typed Parsed ASDL. Type annotations carry `LalinType.Type`,
-not captured source strings; expression, statement, declaration, product, variant, and
-continuation splices are evaluated without silent dropping or cross-context compatibility.
+Schema-v2 bracket positions now preserve Lalin's LLBL contract: every `[]` creates a
+role-stamped HostEval, Lua table access constructs the value under the configured host
+environment, and canonical Lalin-owned `RoleDescriptor`s alone adapt it into typed Parsed
+ASDL. Type annotations carry `LalinType.Type`, not captured source strings. LLBL role
+algebra expands typed fragments for statement, declaration, product, variant, and
+continuation positions; expression values use their singular role. Parser-local adapters,
+HostEscape walkers, silent splice drops,
+cross-context compatibility, and the fake ParsedFunc region carrier have been deleted.
+Regions now retain inputs, continuations, contracts, and blocks as `ParsedRegion`; unsupported
+region lowering is visible at the ParsedDecl boundary rather than forged as an empty function.
 Nonzero `boundary = reject` displacement remains conservative until ordinary memory
 extent and authored-domain evidence can prove a narrow affine interior. Wrap realization
 is covered for distances larger than the domain extent. Integer division, remainder, and

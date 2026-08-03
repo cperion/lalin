@@ -209,7 +209,6 @@ end
 function P.ParsedDeclGroup:materialize_parsed_decl(env, decls)
   for i = 1, #self.decls do self.decls[i]:materialize_parsed_decl(env, decls) end
 end
-function P.ParsedMetaAssign:materialize_parsed_decl(_env, _decls) end
 
 function Document.materialize(doc, opts)
   opts = copy_opts(opts)

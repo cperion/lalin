@@ -3,7 +3,7 @@
 -- Type annotations are evaluated LLBL HostEval values before Parsed ASDL construction.
 
 local Ast = require("lalin.syntax_v2.ast")
-local llbl = require("llbl")
+local Roles = require("lalin.syntax_v2.roles")
 local Type = require("lalin.syntax_v2.type")
 local Stmt = require("lalin.syntax_v2.stmt")
 local Expr = require("lalin.syntax_v2.expr")
@@ -55,7 +55,7 @@ local function parse_callable_name(lex, label)
   return name, (#parts > 0 and parts or nil), false
 end
 
-local function implicit_self_field(lex, start, qualifier)
+local function implicit_self_field(lex, start, qualifier, ctx)
   if qualifier == nil or #qualifier == 0 then
     lex:error_at(start, "implicit self method declaration requires an owning struct path")
   end
@@ -71,62 +71,14 @@ function Decl.parse_host_eval(lex, ctx, role)
   return Ast.host_eval(raw, refs, Ast.origin(lex, open, close, "parsed:host_eval"), role or (ctx and ctx.expected_role) or "decls")
 end
 
-function P.ParsedDecl:parsed_host_decl_value() return self end
-local function adapt_host_decls(value, lex, start)
-  if type(value) == "table" and type(value.parsed_host_decl_value) == "function" then
-    return value:parsed_host_decl_value()
-  end
-  if type(value) == "table" then
-    local decls = {}
-    for i = 1, #value do
-      local item = value[i]
-      if type(item) ~= "table" or type(item.parsed_host_decl_value) ~= "function" then
-        lex:error_at(start, "host evaluation for decls role produced unsupported item `"
-          .. tostring(item) .. "`")
-      end
-      decls[i] = item:parsed_host_decl_value()
-    end
-    return P.ParsedDeclGroup(decls)
-  end
-  lex:error_at(start, "host evaluation for decls role produced unsupported value `"
-    .. tostring(value) .. "`")
-end
 function Decl.parse_decl_stream(lex, ctx)
-  local start = lex:peek()
   local event = Decl.parse_host_eval(lex, ctx, "decls")
-  return adapt_host_decls(llbl.host_eval.value(event, { env = ctx.host_env }), lex, start)
+  return P.ParsedDeclGroup(Roles.adapt(ctx, "decls", event))
 end
 
 function Decl.parse_meta_assign(lex, ctx, entry_start)
-  local start = entry_start or lex:peek()
-  local lhs = { lex:expect_name("meta assignment target").value }
-  while lex:next_if(".") do
-    lhs[#lhs + 1] = lex:expect_name("meta assignment target part").value
-  end
-  if #lhs < 2 then
-    lex:error_at(start, "meta assignment target must be a field path such as `Type.metamethods.__methodmissing`")
-  end
-  lex:expect("=")
-  local value_source = ""
-  local meta_ref = nil
-  if lex:peek().value == "[" then
-    local raw, open, close = Ast.consume_balanced_from_open(lex)
-    local refs = Ast.extract_refs(raw)
-    Ast.add_refs(ctx, refs)
-    value_source = raw
-  else
-    local first = lex:expect_name("meta assignment value").value
-    local path = { first }
-    while lex:next_if(".") do
-      path[#path + 1] = lex:expect_name("meta assignment value part").value
-    end
-    local names = {}
-    for i, p in ipairs(path) do names[i] = Core.Name(p) end
-    meta_ref = P.ParsedMetaRef(names)
-  end
-  local target_names = {}
-  for i, t in ipairs(lhs) do target_names[i] = Core.Name(t) end
-  return P.ParsedMetaAssign(target_names, value_source, meta_ref)
+  lex:error_at(entry_start or lex:peek(),
+    "schema-v2 does not admit top-level metadata assignment; generate a typed declaration splice instead")
 end
 
 function Decl.parse_fn(lex, ctx, entry_start)
@@ -146,7 +98,7 @@ function Decl.parse_fn(lex, ctx, entry_start)
     if first_param and first_param.name == "self" then
       lex:error_at(start, "colon method declarations inject `self`; use dot syntax for an explicit receiver type")
     end
-    table.insert(raw_params, 1, implicit_self_field(lex, start, qualifier))
+    table.insert(raw_params, 1, implicit_self_field(lex, start, qualifier, ctx))
   end
   local params = raw_params
   local result_ty = Type.void()
@@ -226,26 +178,6 @@ function Decl.parse_extern(lex, ctx, entry_start)
   return P.ParsedExtern(name, qual_names, params, result_ty, symbol or "")
 end
 
-function P.ParsedVariant:parsed_host_variant_item() return self end
-local function append_host_variants(value, variants, lex, start)
-  if type(value) == "table" and type(value.parsed_host_variant_item) == "function" then
-    variants[#variants + 1] = value:parsed_host_variant_item()
-    return
-  end
-  if type(value) == "table" then
-    for i = 1, #value do
-      local item = value[i]
-      if type(item) ~= "table" or type(item.parsed_host_variant_item) ~= "function" then
-        lex:error_at(start, "host evaluation for variants role produced unsupported item `"
-          .. tostring(item) .. "`")
-      end
-      variants[#variants + 1] = item:parsed_host_variant_item()
-    end
-    return
-  end
-  lex:error_at(start, "host evaluation for variants role produced unsupported value `"
-    .. tostring(value) .. "`")
-end
 
 function Decl.parse_union(lex, ctx, entry_start)
   local start = entry_start or ctx.entry_token
@@ -254,11 +186,9 @@ function Decl.parse_union(lex, ctx, entry_start)
   local variants = {}
   while not lex:at_eof() and lex:peek().value ~= "end" do
     if lex:peek().value == "[" then
-      local splice_start = lex:peek()
       local event = Decl.parse_host_eval(lex, ctx, "variants")
-      append_host_variants(
-        llbl.host_eval.value(event, { env = ctx.host_env }),
-        variants, lex, splice_start)
+      local spliced = Roles.adapt(ctx, "variants", event)
+      for i = 1, #spliced do variants[#variants + 1] = spliced[i] end
     else
       local vstart = lex:expect_name("variant name")
       local raw_fields = {}
@@ -357,6 +287,7 @@ local function parse_one_exit(lex, ctx)
         elseif t.value == "[" then
           local spliced = Type.parse_product_splice(lex, ctx)
           for i = 1, #spliced do raw_fields[#raw_fields + 1] = spliced[i] end
+        else
           lex:error_at(t, "expected continuation field `name [type]` or anonymous `[type]`")
         end
       until not lex:next_if(",")
@@ -367,26 +298,6 @@ local function parse_one_exit(lex, ctx)
   return P.ParsedExit(name.value, fields)
 end
 
-function P.ParsedExit:parsed_host_cont_item() return self end
-local function append_host_conts(value, exits, lex, start)
-  if type(value) == "table" and type(value.parsed_host_cont_item) == "function" then
-    exits[#exits + 1] = value:parsed_host_cont_item()
-    return
-  end
-  if type(value) == "table" then
-    for i = 1, #value do
-      local item = value[i]
-      if type(item) ~= "table" or type(item.parsed_host_cont_item) ~= "function" then
-        lex:error_at(start, "host evaluation for conts role produced unsupported item `"
-          .. tostring(item) .. "`")
-      end
-      exits[#exits + 1] = item:parsed_host_cont_item()
-    end
-    return
-  end
-  lex:error_at(start, "host evaluation for conts role produced unsupported value `"
-    .. tostring(value) .. "`")
-end
 
 function Decl.parse_region(lex, ctx, entry_start)
   local start = entry_start or ctx.entry_token
@@ -402,10 +313,9 @@ function Decl.parse_region(lex, ctx, entry_start)
     if not lex:next_if(")") then
       repeat
         if lex:peek().value == "[" then
-          local cont_start = lex:peek()
           local event = Decl.parse_host_eval(lex, ctx, "conts")
-          append_host_conts(llbl.host_eval.value(event, { env = ctx.host_env }),
-            exits, lex, cont_start)
+          local spliced = Roles.adapt(ctx, "conts", event)
+          for i = 1, #spliced do exits[#exits + 1] = spliced[i] end
         else
           exits[#exits + 1] = parse_one_exit(lex, ctx)
         end
@@ -427,10 +337,9 @@ function Decl.parse_region(lex, ctx, entry_start)
       if not lex:next_if(")") then
         repeat
           if lex:peek().value == "[" then
-            local cont_start = lex:peek()
             local event = Decl.parse_host_eval(lex, ctx, "conts")
-            append_host_conts(llbl.host_eval.value(event, { env = ctx.host_env }),
-              exits, lex, cont_start)
+            local spliced = Roles.adapt(ctx, "conts", event)
+            for i = 1, #spliced do exits[#exits + 1] = spliced[i] end
           else
             exits[#exits + 1] = parse_one_exit(lex, ctx)
           end
@@ -447,7 +356,7 @@ function Decl.parse_region(lex, ctx, entry_start)
     if first_input and first_input.name == "self" then
       lex:error_at(start, "colon region declarations inject `self`; use dot syntax for an explicit receiver type")
     end
-    table.insert(inputs, 1, implicit_self_field(lex, start, qualifier))
+    table.insert(inputs, 1, implicit_self_field(lex, start, qualifier, ctx))
   end
 
   local contracts = {}
@@ -465,9 +374,7 @@ function Decl.parse_region(lex, ctx, entry_start)
   lex:expect("end")
   local qual_names = {}
   if qualifier then for i, q in ipairs(qualifier) do qual_names[i] = Core.Name(q) end end
-  -- Region intermediate is NOT yet in Parse schema; return ParsedDecl-compatible placeholder
-  -- For now, store as ParsedFunc with empty body (region lowering not in v2 yet)
-  return P.ParsedFunc(name or "", qual_names, implicit_self, inputs, "", {}, false)
+  return P.ParsedRegion(name or "", qual_names, implicit_self, inputs, exits, contracts, blocks)
 end
 
 function Decl.parse_expr_fragment(lex, ctx)

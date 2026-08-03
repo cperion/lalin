@@ -54,10 +54,6 @@ return schema. LalinParse {
     body [many [LalinParse.ParsedStmt]],
   },
 
-  product. ParsedMetaRef {
-    interned,
-    path [many [LalinCore.Name]],
-  },
 
   sum. ParsedLoopReducer {
     ParsedLoopAdd,
@@ -387,11 +383,15 @@ return schema. LalinParse {
       field. domain_ty [optional [LalinType.Type]],
       field. target_ty [optional [LalinType.Type]],
     },
-    ParsedMetaAssign {
+    ParsedRegion {
       variant_unique,
-      target [many [LalinCore.Name]],
-      field. value_source [str],
-      meta_ref [LalinParse.ParsedMetaRef],
+      field. name [str],
+      qualifier [many [LalinCore.Name]],
+      field. implicit_self [bool],
+      inputs [many [LalinParse.ParsedField]],
+      exits [many [LalinParse.ParsedExit]],
+      contracts [many [LalinParse.ParsedStmt]],
+      blocks [many [LalinParse.ParsedEntryBlock]],
     },
     ParsedExprFragment {
       variant_unique,
