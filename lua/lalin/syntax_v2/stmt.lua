@@ -346,10 +346,28 @@ function Stmt.parse(lex, ctx)
     while not lex:at_eof() and lex:peek().value ~= "end" do
       if lex:peek().value == "case" then
         local ctok = lex:next()
-        local key = Expr.parse(lex, ctx)
-        lex:expect("then")
-        local body = unwrap_stmts(Stmt.parse_block(lex, ctx, { "case", "default", "end" }))
-        arms[#arms + 1] = Tree.SwitchStmtArm(Stmt.switch_key(key), body)
+        if lex:next_if("variant") then
+          -- Variant arm: `case variant Name(bind...) then body`
+          local variant = lex:expect_name("variant arm name")
+          local binds = {}
+          if lex:next_if("(") then
+            if not lex:next_if(")") then
+              repeat
+                binds[#binds + 1] = Tree.VariantBindSource(
+                  lex:expect_name("variant payload bind").value)
+              until not lex:next_if(",")
+              lex:expect(")")
+            end
+          end
+          lex:expect("then")
+          local body = unwrap_stmts(Stmt.parse_block(lex, ctx, { "case", "default", "end" }))
+          variant_arms[#variant_arms + 1] = Tree.SwitchVariantSourceStmtArm(variant.value, binds, body)
+        else
+          local key = Expr.parse(lex, ctx)
+          lex:expect("then")
+          local body = unwrap_stmts(Stmt.parse_block(lex, ctx, { "case", "default", "end" }))
+          arms[#arms + 1] = Tree.SwitchStmtArm(Stmt.switch_key(key), body)
+        end
       elseif lex:peek().value == "default" then
         lex:next()
         lex:expect("then")
@@ -360,7 +378,10 @@ function Stmt.parse(lex, ctx)
       lex:skip_separators()
     end
     lex:expect("end")
-    return stmt_known(Tree.StmtSwitch(Tree.StmtSurface, value, arms, variant_arms, default_body or {}))
+    if #variant_arms == 0 then
+      return stmt_known(Tree.StmtSwitch(Tree.StmtSurface, value, arms, {}, default_body or {}))
+    end
+    return stmt_known(Tree.StmtVariantSwitchSource(Tree.StmtSurface, value, arms, variant_arms, default_body or {}))
 
   elseif t.value == "for" then
     lex:error_at(t, "source loops use `loop`, not `for`")

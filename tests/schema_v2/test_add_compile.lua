@@ -88,7 +88,10 @@ local checked = mod:typecheck({})
 assert(asdl.classof(checked.h) == Tr.ModuleTyped, "module header should be ModuleTyped, got " .. tostring(asdl.classof(checked.h)))
 
 -- Verify module name
-assert(checked.h.module_name == "", "module name should be empty for ModuleSurface input")
+-- The surface module carries no authored name; typecheck projects it under
+-- the same literal module name surface_resolve uses for type refs, so type/
+-- layout/variant matching agree across phases.
+assert(checked.h.module_name == "module", "module name should be the surface-resolve module name for ModuleSurface input, got " .. tostring(checked.h.module_name))
 
 -- Verify items
 assert(#checked.items == 1, "should have 1 item, got " .. #checked.items)

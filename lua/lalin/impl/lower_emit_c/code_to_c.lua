@@ -263,7 +263,10 @@ function Code.CodeCallTarget:lower_code_call_target_to_c(c_emission)
   error("code_to_c: unsupported call target", 3)
 end
 function Code.CodeCallDirect:lower_code_call_target_to_c(c_emission)
-  return C.CBackendCallDirect(C.CBackendName(self.func.text))
+  -- Resolve the internal fn_ id to the public CodeFunc.name so the emitted
+  -- call matches the emitted definition and the dlopen symbol contract.
+  local symbol = c_emission.func_symbols:lower_c_func_symbol_lookup(self.func):lower_c_func_symbol()
+  return C.CBackendCallDirect(C.CBackendName(symbol))
 end
 
 function Code.CodeCallExtern:lower_code_call_target_to_c(c_emission)
@@ -394,6 +397,17 @@ function Lower.LowerCValueTypeProjection:lower_c_value_lookup(value)
   return Lower.LowerCValueTypeMissing(value)
 end
 function Lower.LowerCValueTypeFound:lower_c_backend_type() return self.entry.code_ty:code_to_c_backend_type() end
+
+-- CodeFuncId -> public C symbol resolution. The projection is built by the
+-- module lowering phase from CodeFunc.id/name; the leaves own the outcome.
+function Lower.LowerCFuncSymbolProjection:lower_c_func_symbol_lookup(id)
+  for i = 1, #self.entries do
+    if self.entries[i].func_id == id then return Lower.LowerCFuncSymbolFound(self.entries[i]) end
+  end
+  return Lower.LowerCFuncSymbolMissing(id)
+end
+function Lower.LowerCFuncSymbolFound:lower_c_func_symbol() return self.entry.symbol end
+function Lower.LowerCFuncSymbolMissing:lower_c_func_symbol() return self.id.text end
 function Lower.LowerCValueTypeMissing:lower_c_backend_type() error("C lowering missing validated value " .. self.value.text, 2) end
 
 local function value_entry(value, code_ty)

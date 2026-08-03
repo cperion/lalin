@@ -1106,6 +1106,23 @@ return schema. LalinLower {
     LowerCSignatureFound { variant_unique, entry [LalinLower.LowerCSignatureEntry], },
     LowerCSignatureMissing { variant_unique, sig [LalinCode.CodeSigId], },
   },
+  -- Typed CodeFuncId -> public C symbol projection. Internal func ids
+  -- retain the deterministic `fn_` CMat contract; the lowering phase maps
+  -- each id to its public CodeFunc.name so CBackend direct calls emit the
+  -- exported symbol (and session:symbol("name") resolves).
+  product. LowerCFuncSymbolEntry {
+    interned,
+    func_id [LalinCode.CodeFuncId],
+    symbol [str],
+  },
+  product. LowerCFuncSymbolProjection {
+    interned,
+    entries [many [LalinLower.LowerCFuncSymbolEntry]],
+  },
+  sum. LowerCFuncSymbolLookup {
+    LowerCFuncSymbolFound { variant_unique, entry [LalinLower.LowerCFuncSymbolEntry], },
+    LowerCFuncSymbolMissing { variant_unique, func_id [LalinCode.CodeFuncId], },
+  },
   product. LowerCValueTypeEntry {
     interned,
     field. value [LalinCode.CodeValueId],
@@ -1156,6 +1173,7 @@ return schema. LalinLower {
     interned,
     signatures [LalinLower.LowerCSignatureProjection],
     values [LalinLower.LowerCValueTypeProjection],
+    func_symbols [LalinLower.LowerCFuncSymbolProjection],
   },
   product. LowerCInstEmission {
     interned,
@@ -1172,6 +1190,7 @@ return schema. LalinLower {
     interned,
     signatures [LalinLower.LowerCSignatureProjection],
     values [LalinLower.LowerCValueTypeProjection],
+    func_symbols [LalinLower.LowerCFuncSymbolProjection],
   },
   product. LowerCBlockEmission {
     interned,
@@ -1188,6 +1207,7 @@ return schema. LalinLower {
   product. LowerCFunctionInput {
     interned,
     signatures [LalinLower.LowerCSignatureProjection],
+    func_symbols [LalinLower.LowerCFuncSymbolProjection],
   },
   product. LowerCFunctionEmission {
     interned,

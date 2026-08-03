@@ -225,6 +225,22 @@ function Tr.StmtSwitch:closure_collect(input)
   for i = 1, #self.variant_arms do result = result:closure_collect_isolated({ self.variant_arms[i] }) end
   return result:closure_collect_isolated(self.default_body)
 end
+function Tr.StmtVariantSwitchSource:closure_collect(input)
+  local result = self.value:closure_collect(input)
+  for i = 1, #self.arms do result = result:closure_collect_isolated({ self.arms[i] }) end
+  for i = 1, #self.variant_arms do result = result:closure_collect_isolated({ self.variant_arms[i] }) end
+  return result:closure_collect_isolated(self.default_body)
+end
+function Tr.SwitchVariantSourceStmtArm:closure_collect(input)
+  -- Source bind names shadow outer locals during capture analysis; types
+  -- are unknown until typecheck resolves them to typed VariantBinds.
+  local bound = input.scopes
+  for i = 1, #(self.binds or {}) do
+    local b = self.binds[i]
+    bound = bound:closure_bind(B.Binding(C.Id("closure:switch-stmt:" .. b.name .. ":" .. tostring(i)), b.name, Ty.TScalar(C.ScalarVoid), B.BindingRoleLocalValue))
+  end
+  return collect_stmts(self.body, Sem.ClosureCollectInput(bound, input.captures))
+end
 function Tr.StmtJump:closure_collect(input) return collect_many(self.args, input) end
 function Tr.StmtBranchJump:closure_collect(input)
   return self.cond:closure_collect(input):closure_continue_many(self.then_args)
@@ -503,6 +519,23 @@ function Tr.StmtSwitch:closure_rewrite(input)
   for i=1,#self.arms do local arm=self.arms[i]; local key=arm.key:closure_rewrite(next_input); local body=rewrite_isolated(arm.body,key.input,scopes); arms[i]=asdl.with(arm,{key=key.key,body=body.stmts}); next_input=body.input; status=status:closure_merge(key.status):closure_merge(body.status) end
   local variant_arms={}
   for i=1,#self.variant_arms do local arm=self.variant_arms[i]; local arm_scopes=scopes:closure_push(local_frame(arm.binds,"switch-stmt")); local body=rewrite_isolated(arm.body,next_input,arm_scopes); variant_arms[i]=asdl.with(arm,{body=body.stmts}); next_input=rewrite_with_scopes(body.input,scopes); status=status:closure_merge(body.status) end
+  local default_body=rewrite_isolated(self.default_body,next_input,scopes); status=status:closure_merge(default_body.status)
+  return status:closure_stmt_result(self,asdl.with(self,{value=value:closure_value(),arms=arms,variant_arms=variant_arms,default_body=default_body.stmts}),default_body.input)
+end
+function Tr.StmtVariantSwitchSource:closure_rewrite(input)
+  local value=self.value:closure_rewrite(input); local next_input=value.input; local scopes=next_input.scopes; local status=value:closure_status(); local arms={}
+  for i=1,#self.arms do local arm=self.arms[i]; local key=arm.key:closure_rewrite(next_input); local body=rewrite_isolated(arm.body,key.input,scopes); arms[i]=asdl.with(arm,{key=key.key,body=body.stmts}); next_input=body.input; status=status:closure_merge(key.status):closure_merge(body.status) end
+  local variant_arms={}
+  for i=1,#self.variant_arms do
+    local arm=self.variant_arms[i]
+    local source_binds={}
+    for j=1,#arm.binds do local b=arm.binds[j]; source_binds[j]=Sem.ClosureBinding(B.Binding(C.Id("closure:switch-stmt:"..b.name..":"..tostring(j)),b.name,Ty.TScalar(C.ScalarVoid),B.BindingRoleLocalValue)) end
+    local arm_scopes=scopes:closure_push(Sem.ClosureScopeFrame(source_binds))
+    local body=rewrite_isolated(arm.body,next_input,arm_scopes)
+    variant_arms[i]=asdl.with(arm,{body=body.stmts})
+    next_input=rewrite_with_scopes(body.input,scopes)
+    status=status:closure_merge(body.status)
+  end
   local default_body=rewrite_isolated(self.default_body,next_input,scopes); status=status:closure_merge(default_body.status)
   return status:closure_stmt_result(self,asdl.with(self,{value=value:closure_value(),arms=arms,variant_arms=variant_arms,default_body=default_body.stmts}),default_body.input)
 end

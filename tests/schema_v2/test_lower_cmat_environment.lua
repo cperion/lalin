@@ -71,7 +71,8 @@ local env_sig = Code.CodeSig(env_sig_id, {}, {})
 local env_baseline = env_func:lower_c_function(
   Lower.LowerCFunctionInput(Lower.LowerCSignatureProjection({
     env_sig:lower_c_signature_entry(),
-  })))
+    env_sig:lower_c_signature_entry(),
+  }), Lower.LowerCFuncSymbolProjection({})))
 local env_adapters = Lower.LowerCReplacementEntryAdapterInput(
   env_func, env_baseline, env_body, env_dominance.dominance)
 :lower_c_entry_adapters()

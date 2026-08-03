@@ -225,7 +225,10 @@ function Tr.StmtSwitch:typecheck_tree_stmt(input)
     local scope = input.scope
     for j = 1, #(va.binds or {}) do
       local bnd = va.binds[j]
-      scope = scope:typecheck_tree_add_value(bnd.name, bnd.ty)
+      -- Variant bindings carry the same id the code phase binds under, so
+      -- ValueRefBinding lookups resolve to the bound payload value.
+      scope = scope:typecheck_tree_add_value(bnd.name, bnd.ty,
+        B.Binding(C.Id("variant:stmt_switch_" .. va.variant_name .. "_" .. bnd.name), bnd.name, bnd.ty, B.BindingRoleLocalValue))
     end
     local arm_input = LCheck.TypeStmtInput(scope, input.return_ty, input.yield)
     local arm_body = arm_input:typecheck_tree_stmt_body(va.body or {})
@@ -239,6 +242,33 @@ function Tr.StmtSwitch:typecheck_tree_stmt(input)
   if default_body.issues then
     for _, iss in ipairs(default_body.issues) do issues[#issues + 1] = iss end
   end
+  return LCheck.TypeStmtResult(input, {Tr.StmtSwitch(Tr.StmtFlow(Sem.FlowFallsThrough), vr.expr, arms, variant_arms, default_body.stmts)}, issues)
+end
+function Tr.StmtVariantSwitchSource:typecheck_tree_stmt(input)
+  -- Source variant switch: the typed union lookup owns the payload bind
+  -- decision per arm; the resolved arms fold into a typed StmtSwitch.
+  local vr = self.value:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+  local issues = {}
+  if vr.issues then for _, iss in ipairs(vr.issues) do issues[#issues + 1] = iss end end
+  local arms = {}
+  for i = 1, #(self.arms or {}) do
+    local arm_body = input:typecheck_tree_stmt_body(self.arms[i].body or {})
+    arms[#arms + 1] = Tr.SwitchStmtArm(self.arms[i].key, arm_body.stmts)
+    if arm_body.issues then for _, iss in ipairs(arm_body.issues) do issues[#issues + 1] = iss end end
+  end
+  local variant_arms = {}
+  if vr.ty ~= nil and not vr.ty:tree_check_is_void_type() then
+    local variant_lookup = vr.ty:tree_check_lookup_variant(input.scope.facts)
+    for i = 1, #(self.variant_arms or {}) do
+      local source_arm = self.variant_arms[i]
+      local arm_result = variant_lookup:typecheck_tree_lookup_variant_case(source_arm.variant_name)
+        :typecheck_tree_source_variant_arm(source_arm, input)
+      variant_arms[#variant_arms + 1] = arm_result.arm
+      for _, iss in ipairs(arm_result.issues or {}) do issues[#issues + 1] = iss end
+    end
+  end
+  local default_body = input:typecheck_tree_stmt_body(self.default_body or {})
+  if default_body.issues then for _, iss in ipairs(default_body.issues) do issues[#issues + 1] = iss end end
   return LCheck.TypeStmtResult(input, {Tr.StmtSwitch(Tr.StmtFlow(Sem.FlowFallsThrough), vr.expr, arms, variant_arms, default_body.stmts)}, issues)
 end
 function Tr.StmtAtomicStore:typecheck_tree_stmt(input)

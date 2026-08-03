@@ -32,6 +32,17 @@ return schema. LalinCheck {
     TypeVariantCaseLookupFound { variant_unique, def [LalinCheck.TypeVariantDef], case [LalinCheck.TypeVariantCase], },
     TypeVariantCaseLookupMissing { variant_unique, type_name [str], variant_name [str], field. ty [LalinType.Type], },
   },
+  -- TypeRef leaf-name projection: every TypeRef projects to its last path
+  -- segment; the lookup leaves own the found/missing decision (no nil).
+  sum. TypeRefLeafLookup {
+    TypeRefLeafFound { variant_unique, field. name [str], },
+    TypeRefLeafMissing { variant_unique, field. ref [LalinType.TypeRef], },
+  },
+  -- Named-ref projection: which TypeRef a type names for layout matching.
+  sum. TypeNamedRefLookup {
+    TypeNamedRefFound { variant_unique, field. ref [LalinType.TypeRef], },
+    TypeNamedRefMissing { variant_unique, field. ty [LalinType.Type], },
+  },
   sum. TypeVariantPayloadLookup {
     TypeVariantPayloadNone,
     TypeVariantPayloadFound { variant_unique, field. ty [LalinType.Type], },

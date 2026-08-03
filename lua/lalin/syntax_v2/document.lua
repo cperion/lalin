@@ -191,11 +191,18 @@ local function bind_named_decl(env, decl)
   if name ~= nil then env[name] = decl end
   local qual = decl_qualifier(decl)
   if qual and #qual > 0 and name ~= nil then
+    -- Qualified declarations bind into plain namespace tables only. ASDL
+    -- values are immutable and cannot serve as name namespaces, so the
+    -- qualifier walk stops at any ASDL node (e.g. `fn Point.sum` where
+    -- env.Point is the ParsedStruct value).
     local target = env
     for i = 1, #qual do
       local key = qual[i]
       target = target[key]
-      if target == nil then break end
+      if target == nil or asdl.isa(target, P.ParsedDecl) then
+        target = nil
+        break
+      end
     end
     if target ~= nil and type(target) == "table" then
       target[name] = decl

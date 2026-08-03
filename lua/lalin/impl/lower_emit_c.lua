@@ -52,6 +52,13 @@ function Code.CodeModule:lower_c_signature_projection()
   for i = 1, #self.sigs do entries[i] = self.sigs[i]:lower_c_signature_entry() end
   return Lower.LowerCSignatureProjection(entries)
 end
+function Code.CodeModule:lower_c_func_symbol_projection()
+  -- Public C symbols: each internal fn_ id projects to the exported
+  -- CodeFunc.name so direct calls emit the dlopen-visible symbol.
+  local entries = {}
+  for i = 1, #self.funcs do entries[i] = Lower.LowerCFuncSymbolEntry(self.funcs[i].id, self.funcs[i].name) end
+  return Lower.LowerCFuncSymbolProjection(entries)
+end
 
 local function append_values(projection, additions)
   local entries = {}
@@ -81,7 +88,7 @@ function Code.CodeBlock:lower_c_block(input)
     params[i] = C.CBackendBlockParam(entry.c_local.id, entry.c_local.ty)
   end
   for i = 1, #self.insts do
-    local result = self.insts[i]:lower_to_c_backend(Lower.LowerCInstructionInput(input.signatures, values))
+    local result = self.insts[i]:lower_to_c_backend(Lower.LowerCInstructionInput(input.signatures, values, input.func_symbols))
     append_items(stmts, result.stmts)
     append_helpers(helpers, result.helpers)
     append_items(locals, result.locals)
@@ -131,7 +138,7 @@ function Code.CodeFunc:lower_c_function(input)
   local values = Lower.LowerCValueTypeProjection(value_entries)
   local blocks, helpers = {}, {}
   for i = 1, #self.blocks do
-    local result = self.blocks[i]:lower_c_block(Lower.LowerCBlockInput(input.signatures, values))
+    local result = self.blocks[i]:lower_c_block(Lower.LowerCBlockInput(input.signatures, values, input.func_symbols))
     blocks[#blocks + 1] = result.block
     append_helpers(helpers, result.helpers)
     append_items(locals, result.locals)
@@ -177,12 +184,13 @@ function Lower.LowerModule:lower_c_module(input)
   local spine = input.spine
   local code_module = spine.code_module
   local signatures = code_module:lower_c_signature_projection()
+  local func_symbols = code_module:lower_c_func_symbol_projection()
   local sigs = {}
   for i = 1, #signatures.entries do sigs[i] = signatures.entries[i].c_sig end
   local functions, cfuncs, helpers, issues = {}, {}, {}, {}
   for i = 1, #code_module.funcs do
     local func = code_module.funcs[i]
-    local baseline = func:lower_c_function(Lower.LowerCFunctionInput(signatures))
+    local baseline = func:lower_c_function(Lower.LowerCFunctionInput(signatures, func_symbols))
     local assembly = input.plan.funcs:lower_function_plan_lookup(func.id)
       :lower_c_function_assembly(input, func, baseline)
     for _, emission in ipairs(assembly:lower_c_module_functions()) do

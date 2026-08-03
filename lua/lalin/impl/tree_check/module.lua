@@ -7,6 +7,7 @@ local C   = require("lalin.schema_v2.core")
 local Ty  = require("lalin.schema_v2.type")
 local B   = require("lalin.schema_v2.bind")
 local Sem = require("lalin.schema_v2.sem")
+local LCheck = require("lalin.schema_v2.check")
 local Tr  = require("lalin.schema_v2.tree")
 local asdl = require("lalin.asdl")
 local TypeSizeAlign = require("lalin.type_size_align")
@@ -136,6 +137,18 @@ end
 function Tr.TypeDeclTaggedUnionSugar:tree_module_type_entry(input)
   return {B.TypeEntry(self.name, Ty.TNamed(Ty.TypeRefGlobal(input.mod_name, self.name)))}
 end
+-- Variant facts: tagged-union type decls own their TypeVariantDef projection.
+function Tr.TypeDecl:tree_module_variant_defs(input) return {} end
+function Tr.TypeDeclTaggedUnionSugar:tree_module_variant_defs(input)
+  local variants = {}
+  for i = 1, #(self.variants or {}) do
+    local v = self.variants[i]
+    variants[#variants + 1] = LCheck.TypeVariantCase(v.name, i - 1, v.payload, v.fields or {})
+  end
+  return { LCheck.TypeVariantDef(self.name, Ty.TNamed(Ty.TypeRefGlobal(input.mod_name, self.name)), variants) }
+end
+function Tr.Item:tree_module_variant_defs(input) return {} end
+function Tr.ItemType:tree_module_variant_defs(input) return self.t:tree_module_variant_defs(input) end
 function Tr.TypeDeclHandle:tree_module_type_entry(input)
   return {B.TypeEntry(self.name, Ty.THandle(Ty.TypeRefGlobal(input.mod_name, self.name), self.repr))}
 end
@@ -259,7 +272,10 @@ end
 -- and returns a new Module with ModuleTyped header containing typechecked items.
 function Tr.Module:typecheck(input)
   local LCheck = require("lalin.schema_v2.check")
-  local mod_name = self.h:tree_module_name()
+  -- surface_resolve projects type refs under the literal module name;
+  -- the typecheck scope must use the same name so type/layout/variant
+  -- matching agree across phases.
+  local mod_name = self.h and self.h.module_name or "module"
 
   -- Build module-level scope from items (funcs, externs, consts, types)
   local values, types = {}, {}
@@ -296,9 +312,25 @@ function Tr.Module:typecheck(input)
   end
 
   local region_facts = self:region_fact_projection()
-  local module_scope = LCheck.TypeValueScope(mod_name, values, types, {},
-    LCheck.TypeModuleFacts({}, {}, {}, region_facts))
-
+  local variants = {}
+  for i = 1, #self.items do
+    local item_variants = self.items[i]:tree_module_variant_defs(Sem.TreeModuleEntryInput(mod_name))
+    for j = 1, #item_variants do variants[#variants + 1] = item_variants[j] end
+  end
+  -- Layout projection feeds the module scope so field access resolves to
+  -- typed FieldByName refs during typecheck (same pass tree_code uses).
+  local pass_layouts = {}
+  for _ = 1, math.max(1, #self.items) do
+    local next_layouts = {}
+    local layout_env = Sem.LayoutEnv(pass_layouts)
+    for i = 1, #self.items do
+      local ls = self.items[i]:tree_module_item_layout(Sem.TreeModuleLayoutInput(mod_name, layout_env, nil))
+      for j = 1, #ls do next_layouts[#next_layouts + 1] = ls[j] end
+    end
+    pass_layouts = next_layouts
+  end
+  local module_scope = LCheck.TypeValueScope(mod_name, values, types, pass_layouts,
+    LCheck.TypeModuleFacts(variants, {}, {}, region_facts))
   -- Typecheck each item (inline, no helper functions)
   local checked_items = {}
   for i = 1, #self.items do

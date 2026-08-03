@@ -7,6 +7,7 @@ local Ty     = require("lalin.schema_v2.type")
 local Tr     = require("lalin.schema_v2.tree")
 local B      = require("lalin.schema_v2.bind")
 local LCheck = require("lalin.schema_v2.check")
+local Sem    = require("lalin.schema_v2.sem")
 local asdl   = require("lalin.asdl")
 
 function Tr.Expr:typecheck_tree_expr(input) end  -- parent default
@@ -116,6 +117,31 @@ function Tr.ExprDeref:typecheck_tree_expr(input)
     return LCheck.TypeExprResult(Tr.ExprDeref(Tr.ExprTyped(vr.ty.elem), vr.expr), vr.ty.elem, {})
   end
   return LCheck.TypeExprResult(nil, nil, {})
+end
+
+-- Field access: the named-ref leaves own the layout search, the layout
+-- lookup leaves own the field decision, and the field lookup leaves own
+-- the lowered ExprField result (no nil protocol).
+local function tree_check_field_layout_for(scope, ty, field_name)
+  local base = ty:tree_check_field_lookup_base()
+  return base:tree_check_named_ref_lookup():tree_check_layout_lookup(scope):tree_check_field_layout(field_name)
+end
+
+function Tr.ExprDot:typecheck_tree_expr(input)
+  local base = self.base:typecheck_tree_expr(input); if base.ty == nil then return base end
+  local field_lookup = tree_check_field_layout_for(input.scope, base.ty, self.name)
+  return field_lookup:tree_check_dot_field_expr(input, base, self)
+end
+function Sem.FieldLayoutFound:tree_check_dot_field_expr(input, base, dot)
+  local field = self.layout
+  -- Lower to a resolved field ref (offset + storage) so the code phase
+  -- can emit field access directly; FieldByName would require a
+  -- separate sem_layout_resolve pass the v2 pipeline does not run.
+  local ref = Sem.FieldByOffset(field.field_name, field.offset, field.ty, field.ty:sem_layout_storage())
+  return LCheck.TypeExprResult(Tr.ExprField(Tr.ExprTyped(field.ty), base.expr, ref), field.ty, base.issues)
+end
+function Sem.FieldLayoutMissing:tree_check_dot_field_expr(input, base, dot)
+  return LCheck.TypeExprResult(Tr.ExprDot(Tr.ExprTyped(Ty.TScalar(C.ScalarVoid)), base.expr, dot.name), Ty.TScalar(C.ScalarVoid), base.issues)
 end
 
 function Tr.ExprCall:typecheck_tree_expr(input)

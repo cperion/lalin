@@ -155,7 +155,7 @@ local dom_signatures = Lower.LowerCSignatureProjection({
   dom_sig:lower_c_signature_entry(),
 })
 local dom_baseline = dom_func:lower_c_function(
-  Lower.LowerCFunctionInput(dom_signatures))
+  Lower.LowerCFunctionInput(dom_signatures, Lower.LowerCFuncSymbolProjection({})))
 local dom_adapters = Lower.LowerCReplacementEntryAdapterInput(
   dom_func, dom_baseline, dom_body, dominance.dominance)
 :lower_c_entry_adapters()
@@ -190,7 +190,8 @@ local entry_param_sig = Code.CodeSig(entry_param_func.sig, {}, {})
 local entry_param_baseline = entry_param_func:lower_c_function(
   Lower.LowerCFunctionInput(Lower.LowerCSignatureProjection({
     entry_param_sig:lower_c_signature_entry(),
-  })))
+    entry_param_sig:lower_c_signature_entry(),
+  }), Lower.LowerCFuncSymbolProjection({})))
 local entry_param_dominance = Lower.LowerCDominanceConstructionInput(
   entry_param_func, Graph.CodeFuncGraph(
     entry_param_func.id, {}, {}, {}, {})):lower_c_dominance()
@@ -350,7 +351,8 @@ assert(asdl.classof(bt_dominance) == Lower.LowerCDominanceReady)
 local bt_baseline = bt_func:lower_c_function(
   Lower.LowerCFunctionInput(Lower.LowerCSignatureProjection({
     dom_sig:lower_c_signature_entry(),
-  })))
+    dom_sig:lower_c_signature_entry(),
+  }), Lower.LowerCFuncSymbolProjection({})))
 local bt_adapters = Lower.LowerCReplacementEntryAdapterInput(
   bt_func, bt_baseline, bt_body, bt_dominance.dominance)
 :lower_c_entry_adapters()
@@ -425,7 +427,8 @@ assert(sw_projection.entries[3].origin.term == sw_term_id)
 local sw_baseline = sw_func:lower_c_function(
   Lower.LowerCFunctionInput(Lower.LowerCSignatureProjection({
     dom_sig:lower_c_signature_entry(),
-  })))
+    dom_sig:lower_c_signature_entry(),
+  }), Lower.LowerCFuncSymbolProjection({})))
 local sw_adapters = Lower.LowerCReplacementEntryAdapterInput(
   sw_func, sw_baseline, sw_body, sw_dominance.dominance)
 :lower_c_entry_adapters()

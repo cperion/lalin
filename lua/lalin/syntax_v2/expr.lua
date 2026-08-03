@@ -238,6 +238,13 @@ local function atom(lex, ctx)
       end
       return Tree.ExprRef(Tree.ExprSurface, Bind.ValueRefName("__hole__"))
     end
+    -- Variant constructor: Type::Variant(args...)
+    if lex:next_if("::") then
+      local variant = lex:expect_name("variant constructor name")
+      lex:expect("(")
+      local args = parse_expr_list(lex, ctx, ")")
+      return Tree.ExprCtor(Tree.ExprSurface, t.value, variant.value, args)
+    end
     return name_ref(t.value)
   elseif t.value == "(" then
     local start = lex:next()

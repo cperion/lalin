@@ -6,6 +6,7 @@ require("lalin.schema_v2")
 local Core     = require("lalin.schema_v2.core")
 local Ty       = require("lalin.schema_v2.type")
 local Sem      = require("lalin.schema_v2.sem")
+local LCheck   = require("lalin.schema_v2.check")
 local asdl     = require("lalin.asdl")
 
 -- Self-initializing utilities
@@ -114,6 +115,54 @@ function Ty.TArray:tree_check_is_aggregate_type() return true end
 function Ty.TSlice:tree_check_is_aggregate_type() return true end
 function Ty.TView:tree_check_is_aggregate_type() return true end
 function Ty.TClosure:tree_check_is_aggregate_type() return true end
+-- Field access: struct layouts own field resolution during typecheck.
+function Ty.Type:tree_check_field_lookup_base() return self end
+function Ty.TPtr:tree_check_field_lookup_base() return self.elem end
+function Ty.TAccess:tree_check_field_lookup_base() return self.base:tree_check_field_lookup_base() end
+function Ty.TLease:tree_check_field_lookup_base() return self.base:tree_check_field_lookup_base() end
+function Ty.Type:tree_check_named_ref_lookup() return LCheck.TypeNamedRefMissing(self) end
+function Ty.TNamed:tree_check_named_ref_lookup() return LCheck.TypeNamedRefFound(self.ref) end
+
+-- The named-ref leaves own the layout search; the layout lookup leaves own
+-- the field decision (no nil protocol).
+function LCheck.TypeNamedRefFound:tree_check_layout_lookup(scope)
+  for i = 1, #(scope.layouts or {}) do
+    local layout = scope.layouts[i]
+    if layout:tree_check_matches_ref(self.ref) then return Sem.TypeLayoutFound(layout) end
+  end
+  return Sem.TypeLayoutMissing
+end
+function LCheck.TypeNamedRefMissing:tree_check_layout_lookup(scope)
+  return Sem.TypeLayoutMissing
+end
+function Sem.TypeLayoutFound:tree_check_field_layout(field_name)
+  return self.layout:tree_check_field_layout_lookup(field_name)
+end
+function Sem.TypeLayoutMissing:tree_check_field_layout(field_name)
+  return Sem.FieldLayoutMissing
+end
+function Sem.TypeLayout:tree_check_field_layout_lookup(field_name)
+  for i = 1, #(self.fields or {}) do
+    if self.fields[i].field_name == field_name then return Sem.FieldLayoutFound(self.fields[i]) end
+  end
+  return Sem.FieldLayoutMissing
+end
+
+function Sem.TypeLayout:tree_check_matches_ref(ref) return false end
+function Sem.LayoutNamed:tree_check_matches_ref(ref) return ref:tree_check_matches_named_layout(self) end
+function Sem.LayoutLocal:tree_check_matches_ref(ref) return ref:tree_check_matches_local_layout(self) end
+function Ty.TypeRef:tree_check_matches_named_layout(layout) return false end
+function Ty.TypeRefGlobal:tree_check_matches_named_layout(layout)
+  return layout.module_name == self.module_name and layout.type_name == self.type_name
+end
+function Ty.TypeRefPath:tree_check_matches_named_layout(layout)
+  local parts = self.path.parts or {}
+  return #parts > 0 and layout.type_name == parts[#parts].text
+end
+function Ty.TypeRef:tree_check_matches_local_layout(layout) return false end
+function Ty.TypeRefLocal:tree_check_matches_local_layout(layout) return layout.sym == self.sym end
+-- field lookup: replaced by Sem.TypeLayout:tree_check_field_layout_lookup
+-- with FieldLayoutLookup leaves (see above).
 
 function Ty.Type:tree_check_is_array_type() return false end
 function Ty.TArray:tree_check_is_array_type() return true end
