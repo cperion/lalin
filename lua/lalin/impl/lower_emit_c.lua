@@ -60,6 +60,19 @@ function Code.CodeModule:lower_c_func_symbol_projection()
   return Lower.LowerCFuncSymbolProjection(entries)
 end
 
+function Code.CodeModule:lower_c_extern_symbol_projection()
+  -- Typed CodeExternId -> declared C symbol + signature projection. Direct
+  -- extern calls and extern address references resolve the internal id to
+  -- the declared linkage symbol so emitted calls, the emitted extern
+  -- prototype, and the C backend validation keys all agree on the C name.
+  local entries = {}
+  for i = 1, #self.externs do
+    local ex = self.externs[i]
+    entries[i] = Lower.LowerCExternSymbolEntry(ex.id, ex.symbol, C.CBackendFuncSigId(ex.sig.text))
+  end
+  return Lower.LowerCExternSymbolProjection(entries)
+end
+
 local function append_values(projection, additions)
   local entries = {}
   for i = 1, #projection.entries do entries[#entries + 1] = projection.entries[i] end
@@ -88,7 +101,7 @@ function Code.CodeBlock:lower_c_block(input)
     params[i] = C.CBackendBlockParam(entry.c_local.id, entry.c_local.ty)
   end
   for i = 1, #self.insts do
-    local result = self.insts[i]:lower_to_c_backend(Lower.LowerCInstructionInput(input.signatures, values, input.func_symbols))
+    local result = self.insts[i]:lower_to_c_backend(Lower.LowerCInstructionInput(input.signatures, values, input.func_symbols, input.extern_symbols))
     append_items(stmts, result.stmts)
     append_helpers(helpers, result.helpers)
     append_items(locals, result.locals)
@@ -138,7 +151,7 @@ function Code.CodeFunc:lower_c_function(input)
   local values = Lower.LowerCValueTypeProjection(value_entries)
   local blocks, helpers = {}, {}
   for i = 1, #self.blocks do
-    local result = self.blocks[i]:lower_c_block(Lower.LowerCBlockInput(input.signatures, values, input.func_symbols))
+    local result = self.blocks[i]:lower_c_block(Lower.LowerCBlockInput(input.signatures, values, input.func_symbols, input.extern_symbols))
     blocks[#blocks + 1] = result.block
     append_helpers(helpers, result.helpers)
     append_items(locals, result.locals)
@@ -178,19 +191,20 @@ end
 function Code.CodeData:lower_c_global()
   return C.CBackendGlobal(C.CBackendGlobalId(self.id.text), C.CBackendName(self.id.text), self.linkage:lower_c_visibility(), C.CBackendDataPtr(nil), self.size, self.align, lower_inits(self.inits))
 end
-function Code.CodeExtern:lower_c_extern() return C.CBackendExtern(C.CBackendName(self.name), self.symbol, C.CBackendFuncSigId(self.sig.text), nil) end
+function Code.CodeExtern:lower_c_extern() return C.CBackendExtern(C.CBackendName(self.symbol), self.symbol, C.CBackendFuncSigId(self.sig.text), nil) end
 
 function Lower.LowerModule:lower_c_module(input)
   local spine = input.spine
   local code_module = spine.code_module
   local signatures = code_module:lower_c_signature_projection()
   local func_symbols = code_module:lower_c_func_symbol_projection()
+  local extern_symbols = code_module:lower_c_extern_symbol_projection()
   local sigs = {}
   for i = 1, #signatures.entries do sigs[i] = signatures.entries[i].c_sig end
   local functions, cfuncs, helpers, issues = {}, {}, {}, {}
   for i = 1, #code_module.funcs do
     local func = code_module.funcs[i]
-    local baseline = func:lower_c_function(Lower.LowerCFunctionInput(signatures, func_symbols))
+    local baseline = func:lower_c_function(Lower.LowerCFunctionInput(signatures, func_symbols, extern_symbols))
     local assembly = input.plan.funcs:lower_function_plan_lookup(func.id)
       :lower_c_function_assembly(input, func, baseline)
     for _, emission in ipairs(assembly:lower_c_module_functions()) do

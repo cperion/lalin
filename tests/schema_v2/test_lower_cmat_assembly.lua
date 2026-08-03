@@ -230,8 +230,8 @@ local spine = Lower.LowerBackSpine(module, Graph.CodeGraph(module.id, { graph })
 
 local signatures = Lower.LowerCSignatureProjection({
   Code.CodeSig(sig_id, { i32, i32, ptr_ty }, {}):lower_c_signature_entry() })
-local baseline_param = func_param:lower_c_function(Lower.LowerCFunctionInput(signatures, Lower.LowerCFuncSymbolProjection({})))
-local baseline_zero = func_zero:lower_c_function(Lower.LowerCFunctionInput(signatures, Lower.LowerCFuncSymbolProjection({})))
+local baseline_param = func_param:lower_c_function(Lower.LowerCFunctionInput(signatures, Lower.LowerCFuncSymbolProjection({}), Lower.LowerCExternSymbolProjection({})))
+local baseline_zero = func_zero:lower_c_function(Lower.LowerCFunctionInput(signatures, Lower.LowerCFuncSymbolProjection({}), Lower.LowerCExternSymbolProjection({})))
 
 local kernel_fragment = Lower.LowerFragment(
   Lower.LowerFragmentId("asm_kernel_frag"),

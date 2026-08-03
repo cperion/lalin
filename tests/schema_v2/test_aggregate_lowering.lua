@@ -15,7 +15,7 @@ local function entry(value, ty)
   return Lower.LowerCValueTypeEntry(value, ty, C.CBackendLocal(C.CBackendLocalId(value.text), C.CBackendName(value.text), ty:code_to_c_backend_type()))
 end
 local v1, v2, v3 = Code.CodeValueId("v1"), Code.CodeValueId("v2"), Code.CodeValueId("v3")
-local input = Lower.LowerCInstructionInput(Lower.LowerCSignatureProjection({}), Lower.LowerCValueTypeProjection({ entry(v1, i32), entry(v2, i32), entry(v3, i32) }), Lower.LowerCFuncSymbolProjection({}))
+local input = Lower.LowerCInstructionInput(Lower.LowerCSignatureProjection({}), Lower.LowerCValueTypeProjection({ entry(v1, i32), entry(v2, i32), entry(v3, i32) }), Lower.LowerCFuncSymbolProjection({}), Lower.LowerCExternSymbolProjection({}))
 local origin = Code.CodeOriginSource("aggregate-test")
 
 local struct_ty = Code.CodeTyNamed("mymod", "MyStruct", Type.TScalar(Core.ScalarI32))

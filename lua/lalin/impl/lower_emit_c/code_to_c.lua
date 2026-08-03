@@ -206,7 +206,7 @@ function Code.CodeGlobalRefFunc:lower_code_global_ref_to_c_name(c_emission)
   return C.CBackendName(self.func.text)
 end
 function Code.CodeGlobalRefExtern:lower_code_global_ref_to_c_name(c_emission)
-  return C.CBackendName(self.extern.text)
+  return C.CBackendName(c_emission.extern_symbols:lower_c_extern_symbol_lookup(self.extern):lower_c_extern_symbol())
 end
 function Code.CodeGlobalRefGlobal:lower_code_global_ref_to_c_name(c_emission)
   return C.CBackendName(self.global.text)
@@ -219,7 +219,7 @@ function Code.CodeGlobalRefFunc:lower_code_global_ref_to_c_sig(c_emission)
   return C.CBackendFuncSigId(self.func.text .. "_sig")
 end
 function Code.CodeGlobalRefExtern:lower_code_global_ref_to_c_sig(c_emission)
-  return C.CBackendFuncSigId(self.extern.text .. "_sig")
+  return c_emission.extern_symbols:lower_c_extern_symbol_lookup(self.extern):lower_c_extern_sig()
 end
 
 function Code.CodeGlobalRef:lower_code_global_ref_to_c_assign(c_emission, dst)
@@ -241,8 +241,8 @@ function Code.CodeTyDataPtr:lower_code_data_ref_assign(input)
 end
 
 function Code.CodeGlobalRefExtern:lower_code_global_ref_to_c_assign(c_emission, dst)
-  local name = self:lower_code_global_ref_to_c_name()
-  local sig_id = self:lower_code_global_ref_to_c_sig()
+  local name = self:lower_code_global_ref_to_c_name(c_emission)
+  local sig_id = self:lower_code_global_ref_to_c_sig(c_emission)
   return C.CBackendAssign(dst, C.CBackendRExternAddr(name, sig_id))
 end
 
@@ -270,7 +270,10 @@ function Code.CodeCallDirect:lower_code_call_target_to_c(c_emission)
 end
 
 function Code.CodeCallExtern:lower_code_call_target_to_c(c_emission)
-  return C.CBackendCallExtern(C.CBackendName(self.extern.text))
+  -- Resolve the internal extern_ id to the declared C symbol so the emitted
+  -- call matches the emitted extern prototype and the linkage contract.
+  local symbol = c_emission.extern_symbols:lower_c_extern_symbol_lookup(self.extern):lower_c_extern_symbol()
+  return C.CBackendCallExtern(C.CBackendName(symbol))
 end
 
 function Code.CodeCallIndirect:lower_code_call_target_to_c(c_emission)
@@ -407,7 +410,20 @@ function Lower.LowerCFuncSymbolProjection:lower_c_func_symbol_lookup(id)
   return Lower.LowerCFuncSymbolMissing(id)
 end
 function Lower.LowerCFuncSymbolFound:lower_c_func_symbol() return self.entry.symbol end
-function Lower.LowerCFuncSymbolMissing:lower_c_func_symbol() return self.id.text end
+function Lower.LowerCFuncSymbolMissing:lower_c_func_symbol()
+  error("C lowering missing validated function " .. self.id.text, 2)
+end
+
+function Lower.LowerCExternSymbolProjection:lower_c_extern_symbol_lookup(id)
+  for i = 1, #self.entries do
+    if self.entries[i].extern_id == id then return Lower.LowerCExternSymbolFound(self.entries[i]) end
+  end
+  return Lower.LowerCExternSymbolMissing(id)
+end
+function Lower.LowerCExternSymbolFound:lower_c_extern_symbol() return self.entry.symbol end
+function Lower.LowerCExternSymbolFound:lower_c_extern_sig() return self.entry.sig end
+function Lower.LowerCExternSymbolMissing:lower_c_extern_symbol() error("C lowering missing validated extern " .. self.extern_id.text, 2) end
+function Lower.LowerCExternSymbolMissing:lower_c_extern_sig() error("C lowering missing validated extern " .. self.extern_id.text, 2) end
 function Lower.LowerCValueTypeMissing:lower_c_backend_type() error("C lowering missing validated value " .. self.value.text, 2) end
 
 local function value_entry(value, code_ty)

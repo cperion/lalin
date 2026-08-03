@@ -1123,6 +1123,25 @@ return schema. LalinLower {
     LowerCFuncSymbolFound { variant_unique, entry [LalinLower.LowerCFuncSymbolEntry], },
     LowerCFuncSymbolMissing { variant_unique, func_id [LalinCode.CodeFuncId], },
   },
+  -- Typed CodeExternId -> declared C symbol projection. Internal extern
+  -- ids retain the deterministic `extern_` Code contract; the lowering
+  -- phase maps each id to its declared C linkage symbol so emitted extern
+  -- calls and the emitted extern prototype agree on the C name, and the
+  -- C backend validation keys match.
+  product. LowerCExternSymbolEntry {
+    interned,
+    extern_id [LalinCode.CodeExternId],
+    symbol [str],
+    sig [LalinC.CBackendFuncSigId],
+  },
+  product. LowerCExternSymbolProjection {
+    interned,
+    entries [many [LalinLower.LowerCExternSymbolEntry]],
+  },
+  sum. LowerCExternSymbolLookup {
+    LowerCExternSymbolFound { variant_unique, entry [LalinLower.LowerCExternSymbolEntry], },
+    LowerCExternSymbolMissing { variant_unique, extern_id [LalinCode.CodeExternId], },
+  },
   product. LowerCValueTypeEntry {
     interned,
     field. value [LalinCode.CodeValueId],
@@ -1174,6 +1193,7 @@ return schema. LalinLower {
     signatures [LalinLower.LowerCSignatureProjection],
     values [LalinLower.LowerCValueTypeProjection],
     func_symbols [LalinLower.LowerCFuncSymbolProjection],
+    extern_symbols [LalinLower.LowerCExternSymbolProjection],
   },
   product. LowerCInstEmission {
     interned,
@@ -1191,6 +1211,7 @@ return schema. LalinLower {
     signatures [LalinLower.LowerCSignatureProjection],
     values [LalinLower.LowerCValueTypeProjection],
     func_symbols [LalinLower.LowerCFuncSymbolProjection],
+    extern_symbols [LalinLower.LowerCExternSymbolProjection],
   },
   product. LowerCBlockEmission {
     interned,
@@ -1208,6 +1229,7 @@ return schema. LalinLower {
     interned,
     signatures [LalinLower.LowerCSignatureProjection],
     func_symbols [LalinLower.LowerCFuncSymbolProjection],
+    extern_symbols [LalinLower.LowerCExternSymbolProjection],
   },
   product. LowerCFunctionEmission {
     interned,

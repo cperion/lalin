@@ -164,6 +164,14 @@ function Cemit.CEmitMachine:emit_source(c_unit)
 
   -- Function bodies
   local signatures = c_unit:c_emit_sig_projection()
+  -- Extern prototypes: declared typed C symbols the module links against.
+  if c_unit.externs and #c_unit.externs > 0 then
+    lines[#lines + 1] = ''
+    lines[#lines + 1] = '/* externs */'
+    for _, ext in ipairs(c_unit.externs) do
+      ext:c_emit_extern_prototype(signatures, lines)
+    end
+  end
   if c_unit.funcs then
     for _, func in ipairs(c_unit.funcs) do
       func:c_emit_func_source(signatures, lines)
@@ -533,6 +541,16 @@ function C.CBackendFuncSigFound:c_emit_prototype(func, out)
 end
 function C.CBackendFuncSigMissing:c_emit_prototype(func, out)
   out[#out + 1] = "/* omitted prototype for " .. func.name.text .. ": missing signature */"
+end
+
+function C.CBackendExtern:c_emit_extern_prototype(signatures, out)
+  signatures:c_emit_sig_lookup(self.sig):c_emit_extern_prototype(self, out)
+end
+function C.CBackendFuncSigFound:c_emit_extern_prototype(ext, out)
+  out[#out + 1] = "extern " .. self.entry.sig:c_emit_signature(ext.name.text) .. ";"
+end
+function C.CBackendFuncSigMissing:c_emit_extern_prototype(ext, out)
+  error("emit_c: missing extern signature " .. ext.sig.text, 2)
 end
 
 ----------------------------------------------------------------------

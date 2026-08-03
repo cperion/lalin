@@ -208,7 +208,7 @@ function Decl.parse_extern(lex, ctx, entry_start)
   local raw_params = Type.parse_params(lex, ctx)
   local result_ty = Type.void()
   if lex:peek().value == "[" then result_ty = Type.parse(lex, ctx) end
-  local symbol = ""
+  local symbol = name
 
   optional_do(lex)
   lex:skip_separators()

@@ -21,7 +21,7 @@ local module = Code.CodeModule(Code.CodeModuleId("lower_results"), { sig }, {}, 
 
 local signatures = module:lower_c_signature_projection()
 assert(asdl.classof(signatures) == Lower.LowerCSignatureProjection)
-local function_result = func:lower_c_function(Lower.LowerCFunctionInput(signatures, module:lower_c_func_symbol_projection()))
+local function_result = func:lower_c_function(Lower.LowerCFunctionInput(signatures, module:lower_c_func_symbol_projection(), module:lower_c_extern_symbol_projection()))
 assert(asdl.classof(function_result) == Lower.LowerCFunctionEmission)
 assert(asdl.classof(function_result.func) == C.CBackendFunc)
 assert(asdl.classof(function_result.value_types) == Lower.LowerCValueTypeProjection)

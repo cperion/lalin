@@ -35,7 +35,7 @@ local source = Code.CodeValueId("source")
 local source_local = C.CBackendLocal(C.CBackendLocalId("source"), C.CBackendName("source"), i32:code_to_c_backend_type())
 local values = Lower.LowerCValueTypeProjection({ Lower.LowerCValueTypeEntry(source, i32, source_local) })
 local signatures = Lower.LowerCSignatureProjection({})
-local input = Lower.LowerCInstructionInput(signatures, values, Lower.LowerCFuncSymbolProjection({}))
+local input = Lower.LowerCInstructionInput(signatures, values, Lower.LowerCFuncSymbolProjection({}), Lower.LowerCExternSymbolProjection({}))
 
 local unary = Code.CodeInst(Code.CodeInstId("unary"), Code.CodeInstUnary(Code.CodeValueId("neg"), Core.UnaryNeg, i32, source), Code.CodeOriginSource("test"))
 local unary_result = unary:lower_to_c_backend(input)

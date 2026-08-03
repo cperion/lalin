@@ -218,7 +218,7 @@ assert(asdl.classof(missing) == Lower.LowerCFuncSymbolMissing,
   "unknown func ids must produce the typed Missing leaf")
 
 local call_input = Lower.LowerCInstructionInput(
-  Lower.LowerCSignatureProjection({}), Lower.LowerCValueTypeProjection({}), symbols)
+  Lower.LowerCSignatureProjection({}), Lower.LowerCValueTypeProjection({}), symbols, Lower.LowerCExternSymbolProjection({}))
 local c_call = direct_target:lower_code_call_target_to_c(call_input)
 assert(asdl.classof(c_call) == CBackend.CBackendCallDirect,
   "direct call must lower to CBackendCallDirect")

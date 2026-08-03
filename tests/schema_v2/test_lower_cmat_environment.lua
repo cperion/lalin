@@ -72,7 +72,7 @@ local env_baseline = env_func:lower_c_function(
   Lower.LowerCFunctionInput(Lower.LowerCSignatureProjection({
     env_sig:lower_c_signature_entry(),
     env_sig:lower_c_signature_entry(),
-  }), Lower.LowerCFuncSymbolProjection({})))
+  }), Lower.LowerCFuncSymbolProjection({}), Lower.LowerCExternSymbolProjection({})))
 local env_adapters = Lower.LowerCReplacementEntryAdapterInput(
   env_func, env_baseline, env_body, env_dominance.dominance)
 :lower_c_entry_adapters()
