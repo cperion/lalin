@@ -155,6 +155,11 @@ return schema. LalinParse {
     domain [LalinParse.ParsedResolvedLoopDomain],
     sink [LalinParse.ParsedResolvedLoopFoldSink],
   },
+  product. ParsedLoopReducerExprInput {
+    interned,
+    accumulator [LalinTree.Expr],
+    contribution [LalinTree.Expr],
+  },
   product. ParsedLoopIndexRewriteInput {
     interned,
     index_name [str],

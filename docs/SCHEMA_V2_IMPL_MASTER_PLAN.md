@@ -118,12 +118,13 @@ proof planes into a whole-fusion contract. Missing optimization capabilities sel
 conservative scalar C: noalias alone controls `restrict`, and generic proof
 obligations never gate CMat materialization.
 
-## P1.5 — public schema-v2 compiler convergence — typed 1D window and sum-fold gates complete
+## P1.5 — public schema-v2 compiler convergence — typed 1D window and fold gates complete
 
 The explicit public `lalin.compile_v2` path preserves parsed function bodies and
 executes scalar and one-dimensional clamp/wrap/zero windows, centered reject windows,
-window arithmetic streams, deterministic multisink stores, and one-dimensional integer
-sum folds through `.lln -> schema-v2 Tree -> Code -> Flow -> Stencil -> CMat -> LOWER
+window arithmetic streams, deterministic multisink stores, and the declared one-dimensional
+integer fold reducer matrix through `.lln -> schema-v2 Tree -> Code -> Flow -> Stencil ->
+CMat -> LOWER
 -> emitted C -> GCC -O3`. Parsed loops, axes, windows, reducers, and sinks cross the
 `ParsedStmt` boundary as ASDL values. Tree loop domains are projected through
 `CodeOriginLoopDomain`; Flow consumes that typed origin directly. Encoded block-name
@@ -137,16 +138,16 @@ shift helpers emit their declared guards and operations; unsupported helper leav
 during emission instead of silently returning the first operand. Canonical and schema-v2
 registry paths now return `CompilerCBackendOutcome`; phase execution carries that exact
 outcome, while successful schema-v2 artifacts enforce C validation before source is
-accepted. Static data and slice descriptors are covered through GCC execution. Sum folds
+accepted. Static data and slice descriptors are covered through GCC execution. Folds
 use `ExprDomainControl` and an exact `StmtBranchJump` terminator so loop-carried values
 remain typed edge arguments. The C emitter performs parallel edge transfer into block
 parameters; zero-, one-, and many-trip seeded arithmetic folds execute through CMat when
 bounds evidence is present, while missing optimization evidence retains correct scalar C.
 
-The default `lalin.compile_c_gcc` path is not switched yet. Schema-v2 intentionally
-rejects parsed scan, non-add fold reducers, tiled, multi-axis, backward, nonzero-start, and
-non-unit-step lowering until those alternatives have complete typed projections and
-execution coverage.
+The default `lalin.compile_c_gcc` path is not switched yet. Remaining active P1.5 work is
+parsed scan, tiled and multi-axis domains, backward traversal, nonzero starts, and non-unit
+steps. Each existing schema alternative must receive its complete typed projection and
+execution coverage before the default-path switch.
 No raw-loop adapter, cross-context constructor adapter, encoded-name
 fallback, or fallback to the legacy C backend is permitted.
 

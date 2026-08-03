@@ -84,31 +84,53 @@ local function bind_context(T)
   end
 
   local lower_1d_no_sink
-  local lower_1d_add_fold
+  local lower_1d_fold
   function P.ParsedResolvedLoopSink:lower_parsed_loop_1d(_input, _domain)
     return P.ParsedLoopLowerRejected(
-      "scan lowering is not implemented on the schema-v2 parsed path")
+      "scan lowering is pending on the schema-v2 parsed path")
   end
   function P.ParsedResolvedLoopNoSink:lower_parsed_loop_1d(input, domain)
     return lower_1d_no_sink(input, domain)
   end
   function P.ParsedResolvedLoopFoldSink:lower_parsed_loop_1d(input, domain)
-    return self.reducer:lower_parsed_loop_fold_1d(
+    return domain:lower_parsed_loop_fold_1d(
       P.ParsedLoopFoldLowerInput(input, domain, self))
   end
-  function P.ParsedLoopReducer:lower_parsed_loop_fold_1d(_input)
-    return P.ParsedLoopLowerRejected(
-      "schema-v2 parsed fold currently supports only the add reducer")
+  function P.ParsedResolvedLoopDomain:lower_parsed_loop_fold_1d(_input)
+    return P.ParsedLoopLowerRejected("parsed fold domain projection is pending")
   end
-  function P.ParsedLoopAdd:lower_parsed_loop_fold_1d(input)
-    return input.domain:lower_parsed_loop_add_fold_1d(input)
+  function P.ParsedResolvedLoopRangeND:lower_parsed_loop_fold_1d(input)
+    return lower_1d_fold(input)
   end
-  function P.ParsedResolvedLoopDomain:lower_parsed_loop_add_fold_1d(_input)
-    return P.ParsedLoopLowerRejected(
-      "schema-v2 parsed fold currently supports only a one-dimensional range")
+  local function reducer_binary(op, input)
+    return bin(op, input.accumulator, input.contribution)
   end
-  function P.ParsedResolvedLoopRangeND:lower_parsed_loop_add_fold_1d(input)
-    return lower_1d_add_fold(input)
+  function P.ParsedLoopAdd:parsed_loop_reducer_expr(input)
+    return reducer_binary(C.BinAdd, input)
+  end
+  function P.ParsedLoopMul:parsed_loop_reducer_expr(input)
+    return reducer_binary(C.BinMul, input)
+  end
+  function P.ParsedLoopBitAnd:parsed_loop_reducer_expr(input)
+    return reducer_binary(C.BinBitAnd, input)
+  end
+  function P.ParsedLoopBitOr:parsed_loop_reducer_expr(input)
+    return reducer_binary(C.BinBitOr, input)
+  end
+  function P.ParsedLoopBitXor:parsed_loop_reducer_expr(input)
+    return reducer_binary(C.BinBitXor, input)
+  end
+  function P.ParsedLoopMin:parsed_loop_reducer_expr(input)
+    return Tr.ExprSelect(Tr.ExprSurface,
+      Tr.ExprCompare(Tr.ExprSurface, C.CmpLe,
+        input.accumulator, input.contribution),
+      input.accumulator, input.contribution)
+  end
+  function P.ParsedLoopMax:parsed_loop_reducer_expr(input)
+    return Tr.ExprSelect(Tr.ExprSurface,
+      Tr.ExprCompare(Tr.ExprSurface, C.CmpGe,
+        input.accumulator, input.contribution),
+      input.accumulator, input.contribution)
   end
 
 
@@ -321,17 +343,17 @@ local function bind_context(T)
       Tr.StmtDomainControl(Tr.StmtSurface, region, control_domain))
   end
 
-  lower_1d_add_fold = function(fold_input)
+  lower_1d_fold = function(fold_input)
     local input, domain, sink = fold_input.loop, fold_input.domain, fold_input.sink
     if #domain.axes ~= 1 or #input.indexes ~= 1 then
       return P.ParsedLoopLowerRejected(
-        "schema-v2 parsed fold currently supports one loop axis")
+        "multi-axis parsed fold projection is pending")
     end
     local axis = domain.axes[1]
     local start_literal = axis.start:parsed_loop_integer():parsed_loop_integer_value("loop start")
     if start_literal ~= 0 or axis.step ~= 1 then
       return P.ParsedLoopLowerRejected(
-        "schema-v2 parsed fold currently requires a zero-based unit-stride loop")
+        "general parsed fold traversal projection is pending")
     end
 
     local tag = input.loop_id
@@ -382,7 +404,8 @@ local function bind_context(T)
     body[#body + 1] = Tr.StmtLet(Tr.StmtSurface,
       local_binding(tag, step_name, sink.ty),
       sink.step:parsed_loop_rewrite_index(rewrite))
-    local next_accumulator = bin(C.BinAdd, accumulator_ref, ref(step_name))
+    local next_accumulator = sink.reducer:parsed_loop_reducer_expr(
+      P.ParsedLoopReducerExprInput(accumulator_ref, ref(step_name)))
     body[#body + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label,
       jump_args(bin(C.BinAdd, flat_ref, cast_idx(lit(1))), next_accumulator))
 

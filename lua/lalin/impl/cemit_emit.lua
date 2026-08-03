@@ -866,6 +866,19 @@ function C.CBackendHelperIntBinary:c_helper_id()
   local op_suffix = self.op:c_helper_suffix()
   return C.CBackendHelperId("ml_" .. ty_suffix .. "_" .. op_suffix)
 end
+function Core.CmpOp:c_compare_select_suffix()
+  error("missing compare-select suffix", 2)
+end
+function Core.CmpEq:c_compare_select_suffix() return "eq" end
+function Core.CmpNe:c_compare_select_suffix() return "ne" end
+function Core.CmpLt:c_compare_select_suffix() return "lt" end
+function Core.CmpLe:c_compare_select_suffix() return "le" end
+function Core.CmpGt:c_compare_select_suffix() return "gt" end
+function Core.CmpGe:c_compare_select_suffix() return "ge" end
+function C.CBackendHelperCompareSelect:c_helper_id()
+  return C.CBackendHelperId("ml_" .. self.ty:c_helper_suffix()
+    .. "_select_" .. self.comparison:c_compare_select_suffix())
+end
 
 function C.CBackendHelperUnary:c_helper_id()
   return C.CBackendHelperId("ml_" .. self.ty:c_helper_suffix() .. "_" .. self.op:c_helper_suffix())
@@ -918,6 +931,9 @@ function C.CBackendHelperSpec:c_helper_signature()
 end
 function C.CBackendHelperUse:c_helper_signature() return self.spec:c_helper_signature() end
 function C.CBackendHelperIntBinary:c_helper_signature()
+  return C.CBackendHelperSignature({ self.ty, self.ty }, self.ty)
+end
+function C.CBackendHelperCompareSelect:c_helper_signature()
   return C.CBackendHelperSignature({ self.ty, self.ty }, self.ty)
 end
 function C.CBackendHelperUnary:c_helper_signature()
@@ -1096,6 +1112,10 @@ end
 
 function C.CBackendHelperIntBinary:c_emit_helper_body(lines, ret)
   lines[#lines + 1] = "    return (" .. ret .. ")(" .. self.op:c_helper_expr("a1", "a2") .. ");"
+end
+function C.CBackendHelperCompareSelect:c_emit_helper_body(lines, ret)
+  lines[#lines + 1] = "    return (" .. ret .. ")((a1 "
+    .. self.comparison:c_emit_cmp_op() .. " a2) ? a1 : a2);"
 end
 
 function C.CBackendHelperFloatBinary:c_emit_helper_body(lines, ret)

@@ -377,6 +377,7 @@ C.CBackendHelperBoolNormalize.c_validate=helper_clean
 C.CBackendHelperCast.c_validate=helper_clean
 C.CBackendHelperPtrOffset.c_validate=helper_clean
 C.CBackendHelperIntBinary.c_validate=helper_clean
+C.CBackendHelperCompareSelect.c_validate=helper_clean
 C.CBackendHelperFloatBinary.c_validate=helper_clean
 C.CBackendHelperDivRem.c_validate=helper_clean
 C.CBackendHelperShift.c_validate=helper_clean

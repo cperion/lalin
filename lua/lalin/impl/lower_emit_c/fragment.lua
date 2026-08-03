@@ -277,6 +277,23 @@ function Value.ValueExprValue:cmat_fragment_entry_expr(state)
   return state.request.values:cmat_fragment_lookup(self.value)
 :cmat_fragment_entry_value(state, self)
 end
+function Value.ValueExprUnary:cmat_fragment_entry_expr(state)
+  return self.value:cmat_fragment_entry_expr(state)
+    :cmat_fragment_apply_entry_unary(self)
+end
+function CMat.CMatCFragmentExprRejected:cmat_fragment_apply_entry_unary(_expr)
+  return self
+end
+function CMat.CMatCFragmentExprEmitted:cmat_fragment_apply_entry_unary(expr)
+  local ty = expr.ty:code_to_c_backend_type()
+  local allocation = self.state:cmat_fragment_allocate("entry_unary", ty)
+  local helper = allocation.state:cmat_fragment_add_helper(
+    C.CBackendHelperUnary(expr.op, ty))
+  local state = helper.state:cmat_fragment_add_entry(C.CBackendHelperCall(
+    allocation.c_local.id, helper.helper, { self.atom }))
+  return CMat.CMatCFragmentExprEmitted(
+    state, C.CBackendAtomLocal(allocation.c_local.id), ty)
+end
 function CMat.CMatCExternalValueBindingFound:cmat_fragment_entry_value(state, _expr)
   return CMat.CMatCFragmentExprEmitted(
     state, C.CBackendAtomLocal(self.entry.c_local.id), self.entry.c_local.ty)
@@ -371,6 +388,14 @@ function Value.ReductionXor:cmat_fragment_integer_reduction_spec(ty, _semantics)
   return CMat.CMatCBinarySelected(
     C.CBackendHelperIntBinary(Core.BinBitXor, ty, C.CBackendIntWrap))
 end
+function Value.ReductionMin:cmat_fragment_integer_reduction_spec(ty, _semantics)
+  return CMat.CMatCBinarySelected(
+    C.CBackendHelperCompareSelect(Core.CmpLe, ty))
+end
+function Value.ReductionMax:cmat_fragment_integer_reduction_spec(ty, _semantics)
+  return CMat.CMatCBinarySelected(
+    C.CBackendHelperCompareSelect(Core.CmpGe, ty))
+end
 function Value.ReductionOp:cmat_fragment_float_reduction_spec(_ty)
   return CMat.CMatCBinaryRejected("floating reduction operation is unsupported")
 end
@@ -407,8 +432,34 @@ end
 function Code.CodeFloatFastMath:cmat_fragment_float_reduction_spec(_reduction, _ty)
   return CMat.CMatCBinaryRejected("fast-math float reduction is unsupported")
 end
-function Stencil.StencilArithmeticInferred:cmat_fragment_reduction_spec(_input)
-  return CMat.CMatCBinaryRejected("reduction arithmetic mode is not explicit")
+function Value.ReductionOp:cmat_fragment_inferred_reduction_spec(_ty)
+  return CMat.CMatCBinaryRejected("inferred reduction operation is unsupported")
+end
+function Value.ReductionMin:cmat_fragment_inferred_reduction_spec(ty)
+  return CMat.CMatCBinarySelected(
+    C.CBackendHelperCompareSelect(Core.CmpLe, ty))
+end
+function Value.ReductionMax:cmat_fragment_inferred_reduction_spec(ty)
+  return CMat.CMatCBinarySelected(
+    C.CBackendHelperCompareSelect(Core.CmpGe, ty))
+end
+function Code.CodeType:cmat_fragment_inferred_reduction(_input)
+  return CMat.CMatCBinaryRejected("inferred reduction has an unsupported result type")
+end
+function Code.CodeTyInt:cmat_fragment_inferred_reduction(input)
+  return input.reduction:cmat_fragment_inferred_reduction_spec(
+    self:code_to_c_backend_type())
+end
+function Code.CodeTyIndex:cmat_fragment_inferred_reduction(input)
+  return input.reduction:cmat_fragment_inferred_reduction_spec(
+    self:code_to_c_backend_type())
+end
+function Code.CodeTyFloat:cmat_fragment_inferred_reduction(input)
+  return input.reduction:cmat_fragment_inferred_reduction_spec(
+    self:code_to_c_backend_type())
+end
+function Stencil.StencilArithmeticInferred:cmat_fragment_reduction_spec(input)
+  return input.result_ty:cmat_fragment_inferred_reduction(input)
 end
 function Stencil.StencilArithmeticInteger:cmat_fragment_reduction_spec(input)
   return input.result_ty:cmat_fragment_integer_reduction(

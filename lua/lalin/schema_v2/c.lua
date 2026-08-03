@@ -441,6 +441,11 @@ return schema. LalinC {
       field. ty [LalinC.CBackendType],
       overflow [LalinC.CBackendIntOverflow],
     },
+    CBackendHelperCompareSelect {
+      variant_unique,
+      comparison [LalinCore.CmpOp],
+      field. ty [LalinC.CBackendType],
+    },
     CBackendHelperFloatBinary {
       variant_unique,
       op [LalinCore.BinaryOp],

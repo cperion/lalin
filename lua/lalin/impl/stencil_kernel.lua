@@ -1339,8 +1339,19 @@ function Value.ReductionFact:stencil_reduction_arithmetic()
     return Stencil.StencilKernelReductionArithmeticResolved(
       Stencil.StencilArithmeticFloat(self.float_mode))
   end
+  return self.op:stencil_inferred_reduction_arithmetic(self)
+end
+function Value.ReductionOp:stencil_inferred_reduction_arithmetic(reduction)
   return Stencil.StencilKernelReductionArithmeticRejected(
-    Stencil.StencilKernelMissingReductionArithmetic(self))
+    Stencil.StencilKernelMissingReductionArithmetic(reduction))
+end
+function Value.ReductionMin:stencil_inferred_reduction_arithmetic(_reduction)
+  return Stencil.StencilKernelReductionArithmeticResolved(
+    Stencil.StencilArithmeticInferred)
+end
+function Value.ReductionMax:stencil_inferred_reduction_arithmetic(_reduction)
+  return Stencil.StencilKernelReductionArithmeticResolved(
+    Stencil.StencilArithmeticInferred)
 end
 function Stencil.StencilKernelReductionArithmeticRejected:stencil_finish_reduction(input)
   return Stencil.StencilKernelConstructionCollecting(input.state)
