@@ -839,6 +839,9 @@ function Value.ValueExprValue:stencil_index_selection(input)
   if self.value == input.iteration.counter then return Stencil.StencilIndexProducer end
   return Stencil.StencilIndexExplicit(Stencil.StencilIndexPoint(input.index))
 end
+function Value.ValueExprCast:stencil_index_selection(input)
+  return self.value:stencil_index_selection(input)
+end
 function Stencil.StencilKernelCountedDomain1D:stencil_lane_stream(input)
   local stream, access = input.stream, input.access
   local selection = stream.binding.expr.index:stencil_index_selection(

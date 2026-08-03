@@ -11,9 +11,10 @@ local function bind_context(T)
   local function ref(name)
     return Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(name))
   end
-  local function cast_idx(expr)
-    return Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, idx_ty, expr)
+  local function cast_as(ty, expr)
+    return Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, ty, expr)
   end
+  local function cast_idx(expr) return cast_as(idx_ty, expr) end
   local function bin(op, lhs, rhs)
     return Tr.ExprBinary(Tr.ExprSurface, op, lhs, rhs)
   end
@@ -31,6 +32,19 @@ local function bind_context(T)
   function Tr.ExprCast:parsed_loop_integer()
     return self.value:parsed_loop_integer()
   end
+  function Tr.ExprUnary:parsed_loop_integer()
+    return self.op:parsed_loop_integer_unary(self.value)
+  end
+  function C.UnaryOp:parsed_loop_integer_unary(_value)
+    return P.ParsedLoopIntegerRejected("loop extent unary operator is not integral")
+  end
+  function C.UnaryNeg:parsed_loop_integer_unary(value)
+    return value:parsed_loop_integer():parsed_loop_integer_negate()
+  end
+  function P.ParsedLoopInteger:parsed_loop_integer_negate()
+    return P.ParsedLoopInteger(-self.value)
+  end
+  function P.ParsedLoopIntegerRejected:parsed_loop_integer_negate() return self end
   function C.Literal:parsed_loop_integer_literal()
     return P.ParsedLoopIntegerRejected("loop extent must be an integer literal")
   end
@@ -49,9 +63,54 @@ local function bind_context(T)
   function P.ParsedLoopAxis:resolve_parsed_loop_axis()
     local step = self.step:parsed_loop_integer():parsed_loop_integer_value("loop step")
     if step == 0 then error("loop step must be nonzero", 2) end
-    if step < 0 then error("backward parsed loops are not implemented", 2) end
+    if step < 0 then
+      return P.ParsedResolvedLoopAxis(
+        self.start, self.stop, -step, Tr.ControlLoopBackward,
+        Ty.TScalar(C.ScalarI32))
+    end
     return P.ParsedResolvedLoopAxis(
       self.start, self.stop, step, Tr.ControlLoopForward, idx_ty)
+  end
+  local function axis_traversal(input, distance, valid, coordinate)
+    local axis = input.axis
+    local step = cast_as(axis.index_ty, lit(axis.step))
+    local rounded = distance
+    if axis.step ~= 1 then
+      rounded = bin(C.BinDiv,
+        bin(C.BinAdd, distance, cast_as(axis.index_ty, lit(axis.step - 1))),
+        step)
+    end
+    local trip = Tr.ExprSelect(Tr.ExprSurface, valid,
+      cast_as(axis.index_ty, rounded), cast_as(axis.index_ty, lit(0)))
+    return P.ParsedLoopAxisTraversal(
+      cast_as(axis.index_ty, axis.start),
+      cast_as(axis.index_ty, axis.stop), trip, coordinate)
+  end
+  function Tr.ControlLoopForward:parsed_loop_axis_traversal(input)
+    local axis = input.axis
+    local start_init = cast_as(axis.index_ty, axis.start)
+    local stop_init = cast_as(axis.index_ty, axis.stop)
+    local lane = cast_as(axis.index_ty, input.lane)
+    local step = cast_as(axis.index_ty, lit(axis.step))
+    local coordinate = bin(C.BinAdd, input.start_ref,
+      axis.step == 1 and lane or bin(C.BinMul, lane, step))
+    return axis_traversal(input,
+      bin(C.BinSub, stop_init, start_init),
+      Tr.ExprCompare(Tr.ExprSurface, C.CmpLt, start_init, stop_init),
+      coordinate)
+  end
+  function Tr.ControlLoopBackward:parsed_loop_axis_traversal(input)
+    local axis = input.axis
+    local start_init = cast_as(axis.index_ty, axis.start)
+    local stop_init = cast_as(axis.index_ty, axis.stop)
+    local lane = cast_as(axis.index_ty, input.lane)
+    local step = cast_as(axis.index_ty, lit(axis.step))
+    local coordinate = bin(C.BinSub, input.start_ref,
+      axis.step == 1 and lane or bin(C.BinMul, lane, step))
+    return axis_traversal(input,
+      bin(C.BinSub, start_init, stop_init),
+      Tr.ExprCompare(Tr.ExprSurface, C.CmpGt, start_init, stop_init),
+      coordinate)
   end
   function P.ParsedWindowAxis:resolve_parsed_window_axis()
     local before = self.before:parsed_loop_integer():parsed_loop_integer_value("window before")
@@ -86,6 +145,7 @@ local function bind_context(T)
   local lower_1d_no_sink
   local lower_1d_fold
   local lower_1d_scan
+  local lower_nd_scan
   function P.ParsedResolvedLoopSink:lower_parsed_loop_1d(_input, _domain)
     return P.ParsedLoopLowerRejected("parsed sink projection is missing")
   end
@@ -106,26 +166,40 @@ local function bind_context(T)
   function P.ParsedResolvedLoopRangeND:lower_parsed_loop_scan_1d(input)
     return input.sink.axis:lower_parsed_loop_scan_axis(input)
   end
+  function P.ParsedResolvedLoopWindowND:lower_parsed_loop_scan_1d(input)
+    return input.sink.axis:lower_parsed_loop_scan_axis(input)
+  end
+  function P.ParsedResolvedLoopTiledND:lower_parsed_loop_scan_1d(input)
+    return input.sink.axis:lower_parsed_loop_scan_axis(input)
+  end
   local function lower_scan_into(input)
-    return input.sink.into:parsed_loop_scan_place():lower_parsed_loop_scan(input)
+    return input.scan.sink.into:parsed_loop_scan_place()
+      :lower_parsed_loop_scan(input)
   end
   function P.ParsedLoopScanAxisDefault:lower_parsed_loop_scan_axis(input)
-    return lower_scan_into(input)
+    if #input.loop.indexes ~= 1 then
+      return P.ParsedLoopLowerRejected(
+        "multi-axis scan requires an explicit `over` axis")
+    end
+    return lower_scan_into(P.ParsedLoopScanExecutionInput(input, 1))
   end
   function P.ParsedLoopScanAxisName:lower_parsed_loop_scan_axis(input)
-    if #input.loop.indexes ~= 1 or self.name ~= input.loop.indexes[1] then
-      return P.ParsedLoopLowerRejected("scan axis does not name the one-dimensional loop axis")
+    for i = 1, #input.loop.indexes do
+      if self.name == input.loop.indexes[i] then
+        return lower_scan_into(P.ParsedLoopScanExecutionInput(input, i))
+      end
     end
-    return lower_scan_into(input)
+    return P.ParsedLoopLowerRejected("scan axis does not name a loop index")
   end
   function P.ParsedLoopScanAxisExpr:lower_parsed_loop_scan_axis(input)
     return self.expr:parsed_loop_integer():lower_parsed_loop_scan_axis(input)
   end
   function P.ParsedLoopInteger:lower_parsed_loop_scan_axis(input)
-    if self.value ~= 1 then
-      return P.ParsedLoopLowerRejected("one-dimensional scan axis must be axis 1")
+    if self.value < 1 or self.value > #input.loop.indexes then
+      return P.ParsedLoopLowerRejected("scan axis ordinal is outside the loop axes")
     end
-    return lower_scan_into(input)
+    return lower_scan_into(
+      P.ParsedLoopScanExecutionInput(input, self.value))
   end
   function P.ParsedLoopIntegerRejected:lower_parsed_loop_scan_axis(_input)
     return P.ParsedLoopLowerRejected(self.reason)
@@ -134,6 +208,12 @@ local function bind_context(T)
     return P.ParsedLoopLowerRejected("parsed fold domain projection is pending")
   end
   function P.ParsedResolvedLoopRangeND:lower_parsed_loop_fold_1d(input)
+    return lower_1d_fold(input)
+  end
+  function P.ParsedResolvedLoopWindowND:lower_parsed_loop_fold_1d(input)
+    return lower_1d_fold(input)
+  end
+  function P.ParsedResolvedLoopTiledND:lower_parsed_loop_fold_1d(input)
     return lower_1d_fold(input)
   end
   local function reducer_binary(op, input)
@@ -319,8 +399,10 @@ local function bind_context(T)
   local function control_axes(input, domain)
     local axes = {}
     for i = 1, #domain.axes do
+      local start_ordinal = #domain.axes == 1 and 1 or 2 + (i - 1) * 3
       axes[i] = Tr.ControlLoopAxis(input.indexes[i], domain.axes[i].index_ty,
-        1, 3, 4, domain.axes[i].step, domain.axes[i].order)
+        start_ordinal, 3 + (i - 1) * 3, 4 + (i - 1) * 3,
+        domain.axes[i].step, domain.axes[i].order)
     end
     return axes
   end
@@ -339,143 +421,183 @@ local function bind_context(T)
     return Tr.ControlLoopTiledND(header, control_axes(input, self), self.tile_sizes)
   end
 
-  lower_1d_no_sink = function(input, domain)
-    if #domain.axes ~= 1 or #input.indexes ~= 1 then
-      return P.ParsedLoopLowerRejected("schema-v2 parsed lowering currently supports one loop axis")
+  local function parsed_loop_runtime_order(input, domain, flat_ref, order)
+    local axes = {}
+    local suffix = cast_idx(lit(1))
+    for position = #order, 1, -1 do
+      local i = order[position]
+      local axis = domain.axes[i]
+      local start_name = "__lln_axis_" .. tostring(i) .. "_start_" .. input.loop_id
+      local stop_name = "__lln_axis_" .. tostring(i) .. "_stop_" .. input.loop_id
+      local trip_name = "__lln_axis_" .. tostring(i) .. "_trip_" .. input.loop_id
+      local lane = flat_ref
+      if #domain.axes > 1 then
+        if position < #order then lane = bin(C.BinDiv, flat_ref, suffix) end
+        lane = bin(C.BinRem, lane, cast_idx(ref(trip_name)))
+      end
+      local traversal = axis.order:parsed_loop_axis_traversal(
+        P.ParsedLoopAxisTraversalInput(
+          axis, lane, ref(start_name), ref(stop_name)))
+      axes[i] = P.ParsedLoopAxisRuntime(
+        axis, input.indexes[i], start_name, stop_name, trip_name, traversal)
+      if position == #order then
+        suffix = cast_idx(ref(trip_name))
+      else
+        suffix = bin(C.BinMul, suffix, cast_idx(ref(trip_name)))
+      end
     end
-    local axis = domain.axes[1]
-    local start_literal = axis.start:parsed_loop_integer():parsed_loop_integer_value("loop start")
-    if start_literal ~= 0 or axis.step ~= 1 then
-      return P.ParsedLoopLowerRejected(
-        "schema-v2 parsed lowering currently requires a zero-based unit-stride loop")
+    return P.ParsedLoopRuntime(axes, suffix)
+  end
+  local function parsed_loop_runtime(input, domain, flat_ref)
+    local order = {}
+    for i = 1, #domain.axes do order[i] = i end
+    return parsed_loop_runtime_order(input, domain, flat_ref, order)
+  end
+  function Tr.ControlLoopForward:parsed_loop_order_control(input)
+    local step = cast_as(input.axis.index_ty, lit(input.axis.step))
+    return P.ParsedLoopOrderControl(
+      bin(C.BinAdd, input.counter, step),
+      Tr.ExprCompare(Tr.ExprSurface, C.CmpLt, input.counter, input.stop_ref))
+  end
+  function Tr.ControlLoopBackward:parsed_loop_order_control(input)
+    local step = cast_as(input.axis.index_ty, lit(input.axis.step))
+    return P.ParsedLoopOrderControl(
+      bin(C.BinSub, input.counter, step),
+      Tr.ExprCompare(Tr.ExprSurface, C.CmpGt, input.counter, input.stop_ref))
+  end
+  local function parsed_loop_control(input, domain, flat_ref)
+    local runtime = parsed_loop_runtime(input, domain, flat_ref)
+    if #runtime.axes == 1 then
+      local item = runtime.axes[1]
+      local traversal = P.ParsedLoopAxisTraversal(
+        item.traversal.start_init, item.traversal.stop_init,
+        item.traversal.trip_init, flat_ref)
+      local exact_runtime = P.ParsedLoopRuntime({
+        P.ParsedLoopAxisRuntime(item.axis, item.index_name, item.start_name,
+          item.stop_name, item.trip_name, traversal),
+      }, ref(item.trip_name))
+      local order = item.axis.order:parsed_loop_order_control(
+        P.ParsedLoopOrderControlInput(item.axis, flat_ref, ref(item.stop_name)))
+      return P.ParsedLoopControl(exact_runtime, item.axis.index_ty,
+        item.traversal.start_init, order.next_counter, order.condition)
     end
+    return P.ParsedLoopControl(runtime, idx_ty, cast_idx(lit(0)),
+      bin(C.BinAdd, flat_ref, cast_idx(lit(1))),
+      Tr.ExprCompare(Tr.ExprSurface, C.CmpLt, flat_ref, runtime.total))
+  end
+  local function append_runtime_params(params, runtime)
+    for i = 1, #runtime.axes do
+      local item = runtime.axes[i]
+      params[#params + 1] = Tr.BlockParam(item.start_name, item.axis.index_ty)
+      params[#params + 1] = Tr.BlockParam(item.stop_name, item.axis.index_ty)
+      params[#params + 1] = Tr.BlockParam(item.trip_name, item.axis.index_ty)
+    end
+    return params
+  end
+  local function append_runtime_args(args, runtime, entry)
+    for i = 1, #runtime.axes do
+      local item = runtime.axes[i]
+      args[#args + 1] = Tr.JumpArg(item.start_name,
+        entry and item.traversal.start_init or ref(item.start_name))
+      args[#args + 1] = Tr.JumpArg(item.stop_name,
+        entry and item.traversal.stop_init or ref(item.stop_name))
+      args[#args + 1] = Tr.JumpArg(item.trip_name,
+        entry and item.traversal.trip_init or ref(item.trip_name))
+    end
+    return args
+  end
+  local function rewrite_runtime(value, runtime)
+    local rewritten = value
+    for i = 1, #runtime.axes do
+      rewritten = rewritten:parsed_loop_rewrite_index(
+        P.ParsedLoopIndexRewriteInput(
+          runtime.axes[i].index_name, runtime.axes[i].traversal.coordinate))
+    end
+    return rewritten
+  end
 
+  lower_1d_no_sink = function(input, domain)
+    if #domain.axes == 0 or #domain.axes ~= #input.indexes then
+      return P.ParsedLoopLowerRejected("loop index/domain arity mismatch")
+    end
     local tag = input.loop_id
     local flat_name = "__lln_flat_" .. tag
-    local start_name = "__lln_axis_start_" .. tag
-    local stop_name = "__lln_axis_stop_" .. tag
-    local trip_name = "__lln_axis_trip_" .. tag
-    local index_name = input.indexes[1]
     local entry_label = Tr.BlockLabel("lln_entry_" .. tag)
     local loop_label = Tr.BlockLabel("lln_loop_" .. tag)
     local body_label = Tr.BlockLabel("lln_body_" .. tag)
     local done_label = Tr.BlockLabel("lln_done_" .. tag)
-
     local flat_ref = ref(flat_name)
-    local start_init, stop_init = cast_idx(axis.start), cast_idx(axis.stop)
-    local trip_init = bin(C.BinSub, stop_init, start_init)
-    local loop_params = {
-      Tr.BlockParam(flat_name, idx_ty),
-      Tr.BlockParam(start_name, idx_ty),
-      Tr.BlockParam(stop_name, idx_ty),
-      Tr.BlockParam(trip_name, idx_ty),
-    }
+    local control = parsed_loop_control(input, domain, flat_ref)
+    local runtime = control.runtime
+    local loop_params = append_runtime_params({
+      Tr.BlockParam(flat_name, control.counter_ty),
+    }, runtime)
     local function jump_args(flat)
-      return {
-        Tr.JumpArg(flat_name, flat),
-        Tr.JumpArg(start_name, ref(start_name)),
-        Tr.JumpArg(stop_name, ref(stop_name)),
-        Tr.JumpArg(trip_name, ref(trip_name)),
-      }
+      return append_runtime_args({ Tr.JumpArg(flat_name, flat) }, runtime, false)
     end
-    local entry_args = {
-      Tr.JumpArg(flat_name, cast_idx(lit(0))),
-      Tr.JumpArg(start_name, start_init),
-      Tr.JumpArg(stop_name, stop_init),
-      Tr.JumpArg(trip_name, trip_init),
-    }
-    local rewrite = P.ParsedLoopIndexRewriteInput(index_name, flat_ref)
+    local entry_args = append_runtime_args({
+      Tr.JumpArg(flat_name, control.initial_counter),
+    }, runtime, true)
     local body = {}
-    for i = 1, #input.body do body[i] = input.body[i]:parsed_loop_rewrite_index(rewrite) end
+    for i = 1, #input.body do
+      body[i] = rewrite_runtime(input.body[i], runtime)
+    end
     body[#body + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label,
-      jump_args(bin(C.BinAdd, flat_ref, cast_idx(lit(1)))))
-    local condition = Tr.ExprCompare(Tr.ExprSurface, C.CmpLt, flat_ref, ref(stop_name))
+      jump_args(control.next_counter))
+    local condition = control.condition
     local region = Tr.ControlStmtRegion(tag,
       Tr.EntryControlBlock(entry_label, {}, {
         Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args),
       }), {
         Tr.ControlBlock(loop_label, loop_params, {
-          Tr.StmtIf(Tr.StmtSurface, condition, {
-            Tr.StmtJump(Tr.StmtSurface, body_label, jump_args(flat_ref)),
-          }, {}),
-          Tr.StmtJump(Tr.StmtSurface, done_label, {}),
+          Tr.StmtBranchJump(Tr.StmtSurface, condition,
+            body_label, jump_args(flat_ref), done_label, {}),
         }),
         Tr.ControlBlock(body_label, loop_params, body),
         Tr.ControlBlock(done_label, {}, { Tr.StmtYieldVoid(Tr.StmtSurface) }),
       })
-    local control_domain = domain:parsed_loop_control_domain(input, loop_label)
-    return P.ParsedLoopLowered(
-      Tr.StmtDomainControl(Tr.StmtSurface, region, control_domain))
+    return P.ParsedLoopLowered(Tr.StmtDomainControl(
+      Tr.StmtSurface, region, domain:parsed_loop_control_domain(input, loop_label)))
   end
 
   lower_1d_fold = function(fold_input)
     local input, domain, sink = fold_input.loop, fold_input.domain, fold_input.sink
-    if #domain.axes ~= 1 or #input.indexes ~= 1 then
-      return P.ParsedLoopLowerRejected(
-        "multi-axis parsed fold projection is pending")
+    if #domain.axes == 0 or #domain.axes ~= #input.indexes then
+      return P.ParsedLoopLowerRejected("fold index/domain arity mismatch")
     end
-    local axis = domain.axes[1]
-    local start_literal = axis.start:parsed_loop_integer():parsed_loop_integer_value("loop start")
-    if start_literal ~= 0 or axis.step ~= 1 then
-      return P.ParsedLoopLowerRejected(
-        "general parsed fold traversal projection is pending")
-    end
-
     local tag = input.loop_id
     local flat_name = "__lln_flat_" .. tag
-    local start_name = "__lln_axis_start_" .. tag
-    local stop_name = "__lln_axis_stop_" .. tag
-    local trip_name = "__lln_axis_trip_" .. tag
     local step_name = "__lln_fold_step_" .. tag
-    local index_name = input.indexes[1]
     local entry_label = Tr.BlockLabel("lln_entry_" .. tag)
     local loop_label = Tr.BlockLabel("lln_loop_" .. tag)
     local body_label = Tr.BlockLabel("lln_body_" .. tag)
     local done_label = Tr.BlockLabel("lln_done_" .. tag)
     local flat_ref, accumulator_ref = ref(flat_name), ref(sink.name)
-    local start_init, stop_init = cast_idx(axis.start), cast_idx(axis.stop)
-    local trip_init = bin(C.BinSub, stop_init, start_init)
-
-    local loop_params = {
-      Tr.BlockParam(flat_name, idx_ty),
-      Tr.BlockParam(start_name, idx_ty),
-      Tr.BlockParam(stop_name, idx_ty),
-      Tr.BlockParam(trip_name, idx_ty),
-      Tr.BlockParam(sink.name, sink.ty),
-    }
+    local control = parsed_loop_control(input, domain, flat_ref)
+    local runtime = control.runtime
+    local loop_params = append_runtime_params({
+      Tr.BlockParam(flat_name, control.counter_ty),
+    }, runtime)
+    loop_params[#loop_params + 1] = Tr.BlockParam(sink.name, sink.ty)
     local function jump_args(flat, accumulator)
-      return {
-        Tr.JumpArg(flat_name, flat),
-        Tr.JumpArg(start_name, ref(start_name)),
-        Tr.JumpArg(stop_name, ref(stop_name)),
-        Tr.JumpArg(trip_name, ref(trip_name)),
-        Tr.JumpArg(sink.name, accumulator),
-      }
+      local args = append_runtime_args({ Tr.JumpArg(flat_name, flat) }, runtime, false)
+      args[#args + 1] = Tr.JumpArg(sink.name, accumulator)
+      return args
     end
-    local entry_args = {
-      Tr.JumpArg(flat_name, cast_idx(lit(0))),
-      Tr.JumpArg(start_name, start_init),
-      Tr.JumpArg(stop_name, stop_init),
-      Tr.JumpArg(trip_name, trip_init),
-      Tr.JumpArg(sink.name, Tr.ExprCast(
-        Tr.ExprSurface, C.SurfaceCast, sink.ty, sink.init)),
-    }
-
-    local rewrite = P.ParsedLoopIndexRewriteInput(index_name, flat_ref)
+    local entry_args = append_runtime_args({
+      Tr.JumpArg(flat_name, control.initial_counter),
+    }, runtime, true)
+    entry_args[#entry_args + 1] = Tr.JumpArg(sink.name, Tr.ExprCast(
+      Tr.ExprSurface, C.SurfaceCast, sink.ty, sink.init))
     local body = {}
-    for i = 1, #input.body do
-      body[i] = input.body[i]:parsed_loop_rewrite_index(rewrite)
-    end
+    for i = 1, #input.body do body[i] = rewrite_runtime(input.body[i], runtime) end
     body[#body + 1] = Tr.StmtLet(Tr.StmtSurface,
-      local_binding(tag, step_name, sink.ty),
-      sink.step:parsed_loop_rewrite_index(rewrite))
+      local_binding(tag, step_name, sink.ty), rewrite_runtime(sink.step, runtime))
     local next_accumulator = sink.reducer:parsed_loop_reducer_expr(
       P.ParsedLoopReducerExprInput(accumulator_ref, ref(step_name)))
     body[#body + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label,
-      jump_args(bin(C.BinAdd, flat_ref, cast_idx(lit(1))), next_accumulator))
-
-    local condition = Tr.ExprCompare(
-      Tr.ExprSurface, C.CmpLt, flat_ref, ref(stop_name))
+      jump_args(control.next_counter, next_accumulator))
+    local condition = control.condition
     local region = Tr.ControlExprRegion(tag, sink.ty,
       Tr.EntryControlBlock(entry_label, {}, {
         Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args),
@@ -490,23 +612,82 @@ local function bind_context(T)
           Tr.StmtYieldValue(Tr.StmtSurface, accumulator_ref),
         }),
       })
-    local control_domain = domain:parsed_loop_control_domain(input, loop_label)
     return P.ParsedLoopLowered(Tr.StmtReturnValue(Tr.StmtSurface,
-      Tr.ExprDomainControl(Tr.ExprSurface, region, control_domain)))
+      Tr.ExprDomainControl(Tr.ExprSurface, region,
+        domain:parsed_loop_control_domain(input, loop_label))))
   end
 
-  lower_1d_scan = function(scan_input, destination)
-    local input, domain, sink = scan_input.loop, scan_input.domain, scan_input.sink
-    if #domain.axes ~= 1 or #input.indexes ~= 1 then
-      return P.ParsedLoopLowerRejected(
-        "multi-axis parsed scan projection is pending")
+  lower_nd_scan = function(execution, destination)
+    local scan = execution.scan
+    local input, domain, sink = scan.loop, scan.domain, scan.sink
+    local tag = input.loop_id
+    local flat_name = "__lln_flat_" .. tag
+    local step_name = "__lln_scan_step_" .. tag
+    local next_name = "__lln_scan_next_" .. tag
+    local entry_label = Tr.BlockLabel("lln_entry_" .. tag)
+    local loop_label = Tr.BlockLabel("lln_loop_" .. tag)
+    local body_label = Tr.BlockLabel("lln_body_" .. tag)
+    local done_label = Tr.BlockLabel("lln_done_" .. tag)
+    local flat_ref, accumulator_ref = ref(flat_name), ref(sink.name)
+    local order = {}
+    for i = 1, #domain.axes do
+      if i ~= execution.axis then order[#order + 1] = i end
     end
+    order[#order + 1] = execution.axis
+    local runtime = parsed_loop_runtime_order(input, domain, flat_ref, order)
+    local loop_params = append_runtime_params({
+      Tr.BlockParam(flat_name, idx_ty),
+    }, runtime)
+    loop_params[#loop_params + 1] = Tr.BlockParam(sink.name, sink.ty)
+    local function jump_args(flat, accumulator)
+      local args = append_runtime_args({ Tr.JumpArg(flat_name, flat) }, runtime, false)
+      args[#args + 1] = Tr.JumpArg(sink.name, accumulator)
+      return args
+    end
+    local entry_args = append_runtime_args({
+      Tr.JumpArg(flat_name, cast_idx(lit(0))),
+    }, runtime, true)
+    local init = Tr.ExprCast(Tr.ExprSurface, C.SurfaceCast, sink.ty, sink.init)
+    entry_args[#entry_args + 1] = Tr.JumpArg(sink.name, init)
+    local selected = runtime.axes[execution.axis]
+    local line_start = Tr.ExprCompare(Tr.ExprSurface, C.CmpEq,
+      bin(C.BinRem, flat_ref, cast_idx(ref(selected.trip_name))), cast_idx(lit(0)))
+    local line_accumulator = Tr.ExprSelect(
+      Tr.ExprSurface, line_start, init, accumulator_ref)
+    local body = {}
+    for i = 1, #input.body do body[i] = rewrite_runtime(input.body[i], runtime) end
+    body[#body + 1] = Tr.StmtLet(Tr.StmtSurface,
+      local_binding(tag, step_name, sink.ty), rewrite_runtime(sink.step, runtime))
+    local next_accumulator = sink.reducer:parsed_loop_reducer_expr(
+      P.ParsedLoopReducerExprInput(line_accumulator, ref(step_name)))
+    body[#body + 1] = Tr.StmtLet(Tr.StmtSurface,
+      local_binding(tag, next_name, sink.ty), next_accumulator)
+    body[#body + 1] = Tr.StmtSet(Tr.StmtSurface,
+      rewrite_runtime(destination, runtime), ref(next_name))
+    body[#body + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label,
+      jump_args(bin(C.BinAdd, flat_ref, cast_idx(lit(1))), ref(next_name)))
+    local condition = Tr.ExprCompare(
+      Tr.ExprSurface, C.CmpLt, flat_ref, runtime.total)
+    local region = Tr.ControlStmtRegion(tag,
+      Tr.EntryControlBlock(entry_label, {}, {
+        Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args),
+      }), {
+        Tr.ControlBlock(loop_label, loop_params, {
+          Tr.StmtBranchJump(Tr.StmtSurface, condition,
+            body_label, jump_args(flat_ref, accumulator_ref), done_label, {}),
+        }),
+        Tr.ControlBlock(body_label, loop_params, body),
+        Tr.ControlBlock(done_label, {}, { Tr.StmtYieldVoid(Tr.StmtSurface) }),
+      })
+    return P.ParsedLoopLowered(Tr.StmtDomainControl(
+      Tr.StmtSurface, region, domain:parsed_loop_control_domain(input, loop_label)))
+  end
+
+  lower_1d_scan = function(execution, destination)
+    local scan = execution.scan
+    local input, domain, sink = scan.loop, scan.domain, scan.sink
+    if #domain.axes > 1 then return lower_nd_scan(execution, destination) end
     local axis = domain.axes[1]
-    local start_literal = axis.start:parsed_loop_integer():parsed_loop_integer_value("loop start")
-    if start_literal ~= 0 or axis.step ~= 1 then
-      return P.ParsedLoopLowerRejected(
-        "general parsed scan traversal projection is pending")
-    end
 
     local tag = input.loop_id
     local flat_name = "__lln_flat_" .. tag
@@ -521,14 +702,17 @@ local function bind_context(T)
     local body_label = Tr.BlockLabel("lln_body_" .. tag)
     local done_label = Tr.BlockLabel("lln_done_" .. tag)
     local flat_ref, accumulator_ref = ref(flat_name), ref(sink.name)
-    local start_init, stop_init = cast_idx(axis.start), cast_idx(axis.stop)
-    local trip_init = bin(C.BinSub, stop_init, start_init)
+    local traversal = axis.order:parsed_loop_axis_traversal(
+      P.ParsedLoopAxisTraversalInput(
+        axis, flat_ref, ref(start_name), ref(stop_name)))
+    local order = axis.order:parsed_loop_order_control(
+      P.ParsedLoopOrderControlInput(axis, flat_ref, ref(stop_name)))
 
     local loop_params = {
-      Tr.BlockParam(flat_name, idx_ty),
-      Tr.BlockParam(start_name, idx_ty),
-      Tr.BlockParam(stop_name, idx_ty),
-      Tr.BlockParam(trip_name, idx_ty),
+      Tr.BlockParam(flat_name, axis.index_ty),
+      Tr.BlockParam(start_name, axis.index_ty),
+      Tr.BlockParam(stop_name, axis.index_ty),
+      Tr.BlockParam(trip_name, axis.index_ty),
       Tr.BlockParam(sink.name, sink.ty),
     }
     local function jump_args(flat, accumulator)
@@ -541,10 +725,10 @@ local function bind_context(T)
       }
     end
     local entry_args = {
-      Tr.JumpArg(flat_name, cast_idx(lit(0))),
-      Tr.JumpArg(start_name, start_init),
-      Tr.JumpArg(stop_name, stop_init),
-      Tr.JumpArg(trip_name, trip_init),
+      Tr.JumpArg(flat_name, traversal.start_init),
+      Tr.JumpArg(start_name, traversal.start_init),
+      Tr.JumpArg(stop_name, traversal.stop_init),
+      Tr.JumpArg(trip_name, traversal.trip_init),
       Tr.JumpArg(sink.name, Tr.ExprCast(
         Tr.ExprSurface, C.SurfaceCast, sink.ty, sink.init)),
     }
@@ -564,10 +748,9 @@ local function bind_context(T)
     body[#body + 1] = Tr.StmtSet(Tr.StmtSurface,
       destination:parsed_loop_rewrite_index(rewrite), ref(next_name))
     body[#body + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label,
-      jump_args(bin(C.BinAdd, flat_ref, cast_idx(lit(1))), ref(next_name)))
+      jump_args(order.next_counter, ref(next_name)))
 
-    local condition = Tr.ExprCompare(
-      Tr.ExprSurface, C.CmpLt, flat_ref, ref(stop_name))
+    local condition = order.condition
     local region = Tr.ControlStmtRegion(tag,
       Tr.EntryControlBlock(entry_label, {}, {
         Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args),
@@ -591,8 +774,8 @@ local function bind_context(T)
   function P.ParsedResolvedLoopWindowND:lower_parsed_loop(input)
     return input.sink:lower_parsed_loop_1d(input, self)
   end
-  function P.ParsedResolvedLoopTiledND:lower_parsed_loop(_input)
-    return P.ParsedLoopLowerRejected("schema-v2 parsed tiled lowering is not implemented")
+  function P.ParsedResolvedLoopTiledND:lower_parsed_loop(input)
+    return input.sink:lower_parsed_loop_1d(input, self)
   end
   function P.ParsedLoopLowerInput:lower_parsed_loop()
     return self.domain:resolve_parsed_loop_domain():lower_parsed_loop(self)

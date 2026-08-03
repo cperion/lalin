@@ -240,14 +240,22 @@ function Kernel.KernelCounter:kernel_scan_index_selection(input)
   })
 end
 function Kernel.KernelCounterValue:kernel_scan_index_selection(input)
-  if input.entry.effect.index ~= Value.ValueExprValue(self.value) then
-    return Kernel.KernelSkeletonNoSelection({
-      Kernel.KernelRejectUnsupportedSubject(
-        Kernel.KernelSubjectDomain(input.reduction.domain),
-        "stored recurrence update index is not the primary scan axis"),
-    })
-  end
-  return scan_selected(input)
+  return input.entry.effect.index:kernel_scan_index_selection(
+    Kernel.KernelScanIndexInput(input, self.value))
+end
+function Value.ValueExpr:kernel_scan_index_selection(input)
+  return Kernel.KernelSkeletonNoSelection({
+    Kernel.KernelRejectUnsupportedSubject(
+      Kernel.KernelSubjectDomain(input.selection.reduction.domain),
+      "stored recurrence update index is not the primary scan axis"),
+  })
+end
+function Value.ValueExprValue:kernel_scan_index_selection(input)
+  if self.value == input.counter then return scan_selected(input.selection) end
+  return Value.ValueExpr.kernel_scan_index_selection(self, input)
+end
+function Value.ValueExprCast:kernel_scan_index_selection(input)
+  return self.value:kernel_scan_index_selection(input)
 end
 function Kernel.KernelExpr:kernel_scan_selection(_input)
   return Kernel.KernelSkeletonNoSelection({})
@@ -666,7 +674,55 @@ function Graph.CodeGraph:kernel_analyze_loop(input)
   end
   return analysis
 end
-function Kernel.KernelLoopAnalysisInput:analyze_kernel_loop() return self.graph:kernel_analyze_loop(self) end
+function Kernel.KernelDomainAnalysis:kernel_consider_domain_shape(_shape, _input)
+  return self
+end
+function Kernel.KernelDomainAnalysisAllowed:kernel_consider_domain_shape(shape, input)
+  return shape:kernel_domain_analysis(input)
+end
+function Flow.FlowDomainShape:kernel_domain_analysis(_input)
+  return Kernel.KernelDomainAnalysisAllowed
+end
+local function scalar_domain(input, reason)
+  return Kernel.KernelDomainAnalysisScalar(
+    Kernel.KernelRejectUnsupportedSubject(
+      Kernel.KernelSubjectDomain(input.fact.domain), reason))
+end
+function Flow.FlowDomainShapeRangeND:kernel_domain_analysis(input)
+  if #self.axes == 1 then return Kernel.KernelDomainAnalysisAllowed end
+  return scalar_domain(input,
+    "multi-axis range retains canonical scalar lowering")
+end
+function Flow.FlowDomainShapeTiledND:kernel_domain_analysis(input)
+  return scalar_domain(input,
+    "tiled domain retains canonical scalar lowering")
+end
+function Flow.FlowDomainShapeWindowND:kernel_domain_analysis(input)
+  if #self.axes == 1 and #self.windows == 1 then
+    return Kernel.KernelDomainAnalysisAllowed
+  end
+  return scalar_domain(input,
+    "multi-axis window retains canonical scalar lowering")
+end
+function Flow.FlowFactSet:kernel_domain_analysis(input)
+  local analysis = Kernel.KernelDomainAnalysisAllowed
+  for i = 1, #self.domain_shapes do
+    local fact = self.domain_shapes[i]
+    if fact.domain == input.fact.domain then
+      analysis = analysis:kernel_consider_domain_shape(fact.shape, input)
+    end
+  end
+  return analysis
+end
+function Kernel.KernelDomainAnalysisAllowed:kernel_analyze_domain(input)
+  return input.graph:kernel_analyze_loop(input)
+end
+function Kernel.KernelDomainAnalysisScalar:kernel_analyze_domain(input)
+  return Kernel.KernelLoopAnalysisRejected(input.fact, { self.reject })
+end
+function Kernel.KernelLoopAnalysisInput:analyze_kernel_loop()
+  return self.flow:kernel_domain_analysis(self):kernel_analyze_domain(self)
+end
 
 function Kernel.KernelModulePlanRequest:plan_kernels()
   local projection = self.flow:project_kernel_loop_facts(self.values, self.trips)

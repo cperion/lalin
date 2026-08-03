@@ -14,11 +14,23 @@ fn shifted_sum(xs [ptr [i32]], n [index]) [i32] do
 end
 ]=]
 local shifted_session = Compiler.CompilerSession(
-  shifted_source, "v2_fold_shifted_reject")
+  shifted_source, "v2_fold_shifted")
 local shifted_ok, shifted = pcall(function() return shifted_session:compile() end)
-assert(shifted_ok, "pending fold traversal must remain a typed artifact")
-assert(asdl.classof(shifted) == Compiler.CompilerArtifactError)
-assert(shifted.message:match("general parsed fold traversal projection is pending"),
-  "rejection must preserve the exact pending traversal gap")
+assert(shifted_ok, "nonzero-start fold must compile through CompilerSession")
+assert(asdl.classof(shifted) == Compiler.CompilerArtifactC,
+  "nonzero-start fold is part of the implemented traversal surface")
 
-print("public schema-v2 pending fold traversal is a typed compiler artifact")
+local zero_step = Compiler.CompilerSession([=[
+fn invalid(xs [ptr [i32]], n [index]) [i32] do
+  loop i in 0 .. n .. 0 do
+    fold acc [i32] = 0 by add step xs[i]
+  end
+end
+]=], "v2_fold_zero_step")
+local invalid_ok, invalid = pcall(function() return zero_step:compile() end)
+assert(invalid_ok, "invalid loop steps must remain compiler artifacts")
+assert(asdl.classof(invalid) == Compiler.CompilerArtifactError)
+assert(invalid.message:match("loop step must be nonzero"),
+  "zero step must preserve its exact diagnostic")
+
+print("public schema-v2 fold traversal and invalid-step diagnostics ok")

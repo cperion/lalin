@@ -364,10 +364,11 @@ local function compare_stop(cond, induction_value, defs)
   local lhs = rawget(k, "lhs")
   local rhs = rawget(k, "rhs")
   if lhs == nil or rhs == nil then return nil, nil end
+  local exclusive = cmp_op == Core.CmpLt or cmp_op == Core.CmpGt
   if lhs == induction_value then
-    return rhs, (cmp_op == Core.CmpLt or cmp_op == Core.CmpGe)
+    return rhs, exclusive
   elseif rhs == induction_value then
-    return lhs, (cmp_op == Core.CmpGt or cmp_op == Core.CmpLe)
+    return lhs, exclusive
   end
   return nil, nil
 end
@@ -578,8 +579,13 @@ end
 
 function Flow.FlowStopExclusive:flow_trip_expression(counted, diff_expr, step_is_one, idx_ty)
   if step_is_one then return diff_expr end
+  local one = Value.ValueExprConst(
+    Code.CodeConstLiteral(idx_ty, Core.LitInt("1")))
+  local adjustment = Value.ValueExprBinary(
+    Core.BinSub, Value.ValueExprValue(counted.step), one, idx_ty)
+  local rounded = Value.ValueExprBinary(Core.BinAdd, diff_expr, adjustment, idx_ty)
   return Value.ValueExprBinary(
-    Core.BinDiv, diff_expr, Value.ValueExprValue(counted.step), idx_ty)
+    Core.BinDiv, rounded, Value.ValueExprValue(counted.step), idx_ty)
 end
 
 function Flow.FlowStopInclusive:flow_trip_expression(counted, diff_expr, step_is_one, idx_ty)
@@ -592,12 +598,22 @@ end
 local function compute_trip_expr(counted, consts)
   if counted == nil or counted.start == nil or counted.stop == nil then return nil end
   local idx_ty = Code.CodeTyIndex
-  local diff_expr = Value.ValueExprBinary(Core.BinSub,
-    Value.ValueExprValue(counted.stop),
-    Value.ValueExprValue(counted.start),
-    idx_ty)
+  local diff_expr = counted.direction:flow_trip_difference(counted, idx_ty)
   local step_is_one = counted.step and consts[counted.step.text] == 1
-  return counted.stop_convention:flow_trip_expression(counted, diff_expr, step_is_one, idx_ty)
+  return counted.stop_convention:flow_trip_expression(
+    counted, diff_expr, step_is_one, idx_ty)
+end
+function Flow.FlowLoopDirection:flow_trip_difference(counted, idx_ty)
+  return Value.ValueExprBinary(Core.BinSub,
+    Value.ValueExprValue(counted.stop), Value.ValueExprValue(counted.start), idx_ty)
+end
+function Flow.FlowLoopIncreasing:flow_trip_difference(counted, idx_ty)
+  return Value.ValueExprBinary(Core.BinSub,
+    Value.ValueExprValue(counted.stop), Value.ValueExprValue(counted.start), idx_ty)
+end
+function Flow.FlowLoopDecreasing:flow_trip_difference(counted, idx_ty)
+  return Value.ValueExprBinary(Core.BinSub,
+    Value.ValueExprValue(counted.start), Value.ValueExprValue(counted.stop), idx_ty)
 end
 
 function Flow.FlowStopConvention:flow_materialize_trip(counted, _defs, _consts, trip_expr, _trip_entry)
@@ -610,12 +626,17 @@ function Flow.FlowStopExclusive:flow_materialize_trip(counted, defs, consts, tri
   local step = numeric_const(counted.step, defs, consts)
   if start == 0 and step == 1 then
     local value = trip_entry:flow_trip_value(counted.stop)
-    return Flow.FlowTripCountExact(
-      value, Value.ValueExprValue(value), nil)
+    return Flow.FlowTripCountExact(value, Value.ValueExprValue(value), nil)
   end
+  return trip_entry:flow_materialize_exclusive_trip(counted, trip_expr)
+end
+function Flow.FlowTripEntryFound:flow_materialize_exclusive_trip(_counted, trip_expr)
+  return Flow.FlowTripCountExact(self.value, trip_expr, nil)
+end
+function Flow.FlowTripEntryFallback:flow_materialize_exclusive_trip(_counted, trip_expr)
   return Flow.FlowTripCountRejected(
     Flow.FlowTripCountNotMaterialized(
-      "only zero-based unit-stride trips are directly materialized"), trip_expr)
+      "exclusive trip has no exact parsed-domain value"), trip_expr)
 end
 
 function Graph.CodeGraph:flow_graph_loop_projection()
@@ -636,20 +657,22 @@ end
 function Flow.FlowGraphLoopMissing:flow_trip_entry(_input)
   return Flow.FlowTripEntryFallback
 end
+function Code.CodeOrigin:flow_trip_entry(_input)
+  return Flow.FlowTripEntryFallback
+end
+function Code.CodeOriginLoopDomain:flow_trip_entry(_input)
+  if #self.declaration.axes == 1 then
+    return Flow.FlowTripEntryFound(self.declaration.axes[1].trip)
+  end
+  return Flow.FlowTripEntryFallback
+end
 function Flow.FlowGraphLoopFound:flow_trip_entry(input)
   local graph_loop = self.entry.loop
   for i = 1, #input.module.funcs do
     for j = 1, #input.module.funcs[i].blocks do
       local header = input.module.funcs[i].blocks[j]
       if header.id == graph_loop.header.block then
-        local param = code_param_by_value(header, input.counted.stop)
-        if param == nil then return Flow.FlowTripEntryFallback end
-        local latch = graph_loop.latches and graph_loop.latches[1] or nil
-        local skip = latch and latch.from and latch.from.block or nil
-        local value = incoming_arg_for(
-          input.edges, graph_loop.header.block, param, skip)
-        if value ~= nil then return Flow.FlowTripEntryFound(value) end
-        return Flow.FlowTripEntryFallback
+        return header.origin:flow_trip_entry(input)
       end
     end
   end

@@ -729,6 +729,11 @@ return schema. LalinCMat {
     op [LalinCore.BinaryOp],
     result_ty [LalinCode.CodeType],
   },
+  product. CMatCFragmentLoadRequest {
+    interned,
+    stream [LalinStencil.StencilStreamByKernelValueEntry],
+    access [LalinStencil.StencilAccessRef],
+  },
   product. CMatCFragmentLoadInput {
     interned,
     index [LalinCMat.CMatCFragmentExprEmitted],

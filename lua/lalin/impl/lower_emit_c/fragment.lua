@@ -264,6 +264,25 @@ end
 function Value.ValueExprValue:cmat_fragment_expr(state)
   return state.values:cmat_fragment_lookup(self.value):cmat_fragment_expr_value(state, self)
 end
+function Value.ValueExprCast:cmat_fragment_expr(state)
+  return self.value:cmat_fragment_expr(state):cmat_fragment_apply_cast(self)
+end
+function CMat.CMatCFragmentExprRejected:cmat_fragment_apply_cast(_expr) return self end
+function CMat.CMatCFragmentExprEmitted:cmat_fragment_apply_cast(expr)
+  local from, to = expr.from:code_to_c_backend_type(), expr.to:code_to_c_backend_type()
+  if self.ty ~= from then
+    return CMat.CMatCFragmentExprRejected({
+      CMat.CMatCEmissionTypeMismatch("cast operand", from, self.ty)
+    })
+  end
+  local allocation = self.state:cmat_fragment_allocate("cast", to)
+  local helper = allocation.state:cmat_fragment_add_helper(
+    C.CBackendHelperCast(expr.op, from, to))
+  local state = helper.state:cmat_fragment_add_body(C.CBackendHelperCall(
+    allocation.c_local.id, helper.helper, { self.atom }))
+  return CMat.CMatCFragmentExprEmitted(
+    state, C.CBackendAtomLocal(allocation.c_local.id), to)
+end
 function Value.ValueExpr:cmat_fragment_entry_expr(_state)
   return CMat.CMatCFragmentExprRejected({
     CMat.CMatCEmissionUnsupportedValue(
@@ -1030,8 +1049,15 @@ function CMat.CMatCFragmentStreamFound:cmat_fragment_index_stream(state)
 end
 function Stencil.StencilStreamAccess:cmat_fragment_emit_stream(state, entry)
   local index = self.index:cmat_fragment_index(state, entry.definition)
-  return index:cmat_fragment_load_access(
-    CMat.CMatCFragmentLoadInput(index, entry, self.access))
+  return index:cmat_fragment_load_request(
+    CMat.CMatCFragmentLoadRequest(entry, self.access))
+end
+function CMat.CMatCFragmentExprRejected:cmat_fragment_load_request(_request)
+  return CMat.CMatCFragmentStateRejected(self.issues)
+end
+function CMat.CMatCFragmentExprEmitted:cmat_fragment_load_request(request)
+  return self:cmat_fragment_load_access(
+    CMat.CMatCFragmentLoadInput(self, request.stream, request.access))
 end
 function CMat.CMatCFragmentExprRejected:cmat_fragment_load_access(_input)
   return CMat.CMatCFragmentStateRejected(self.issues)

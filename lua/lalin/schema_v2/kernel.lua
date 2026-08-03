@@ -234,6 +234,11 @@ return schema. LalinKernel {
     build [LalinKernel.KernelLoopPlanBuild],
     entry [LalinKernel.KernelEffectByInstructionEntry],
   },
+  product. KernelScanIndexInput {
+    interned,
+    selection [LalinKernel.KernelScanSelectionInput],
+    counter [LalinCode.CodeValueId],
+  },
   product. KernelScanMaterializationInput {
     interned,
     request [LalinKernel.KernelLoopPlanRequest],
@@ -310,6 +315,10 @@ return schema. LalinKernel {
   sum. KernelClosedFormLookup {
     KernelClosedFormFound { variant_unique, entries [many [LalinKernel.KernelClosedFormByLoopEntry]], },
     KernelClosedFormMissing { variant_unique, loop [LalinGraph.GraphLoopId], },
+  },
+  sum. KernelDomainAnalysis {
+    KernelDomainAnalysisAllowed,
+    KernelDomainAnalysisScalar { variant_unique, reject [LalinKernel.KernelReject], },
   },
   product. KernelLoopAnalysisInput {
     interned,

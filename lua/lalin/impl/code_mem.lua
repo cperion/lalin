@@ -484,8 +484,31 @@ function Mem.MemConstantKnown:transfer_cast_constant(op, input)
   return Mem.MemTransferUpdated(replace_constants(input.facet,
     append_one(input.facet.constants, Mem.MemConstantEntry(op.dst, self.number_value))))
 end
+local function record_cast_index_alias(result, op)
+  return Mem.MemTransferUpdated(replace_index_offsets(result.facet,
+    append_one(result.facet.index_offsets,
+      Mem.MemIndexOffsetEntry(op.dst, op.value, 0))))
+end
+function Mem.MemTransferUpdated:record_cast_index_alias(op)
+  return record_cast_index_alias(self, op)
+end
+function Mem.MemTransferUnchanged:record_cast_index_alias(op)
+  return record_cast_index_alias(self, op)
+end
+function Core.MachineCastOp:record_memory_index_cast(result, _op) return result end
+function Core.MachineCastIdentity:record_memory_index_cast(result, op)
+  return result:record_cast_index_alias(op)
+end
+function Core.MachineCastSextend:record_memory_index_cast(result, op)
+  return result:record_cast_index_alias(op)
+end
+function Core.MachineCastUextend:record_memory_index_cast(result, op)
+  return result:record_cast_index_alias(op)
+end
 function Mem.MemConstantUnavailable:transfer_cast_constant(op, input)
-  return find_transfer_object(input.facet, op.value):bind_transfer_object(input, op.dst)
+  local result = find_transfer_object(input.facet, op.value)
+    :bind_transfer_object(input, op.dst)
+  return op.op:record_memory_index_cast(result, op)
 end
 function Code.CodeInstCast:transfer_memory(input)
   return find_constant(input.facet, self.value):transfer_cast_constant(self, input)
