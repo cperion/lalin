@@ -296,7 +296,7 @@ luajit tests/run.lua schema
 Useful focused checks:
 
 ```sh
-luajit tests/code_ir/test_luajit_backend_bc.lua
+luajit tests/code_ir/test_residual_bc.lua
 luajit tests/c_backend/test_cmat_counted_fragment_gcc.lua
 luajit tests/c_backend/test_stencil_c_gcc.lua
 luajit tests/compiler_process/test_compiler_driver.lua

@@ -87,12 +87,6 @@ local function bind_context(T)
         return false
     end
 
-    function SM.StencilMachineSkeletonInput:select_stencil_machine_skeleton()
-        for _, candidate in ipairs(self.candidates or {}) do
-            return candidate:select_stencil_machine_skeleton_candidate()
-        end
-        return SM.StencilMachineSkeletonNoPlan(self.reject_reason)
-    end
 
     function SM.StencilMachineSkeletonCandidate:select_stencil_machine_skeleton_candidate()
         return SM.StencilMachineSkeletonNoPlan("unsupported stencil skeleton candidate")
@@ -1774,25 +1768,8 @@ local function bind_context(T)
         ), nil
     end
 
-    local function stencil_skeleton_plan(ctx, func, plan, graph_loop, loop_fact)
-        if asdl.classof(plan) ~= Kernel.KernelPlanned then return nil, "kernel is not planned" end
-        if loop_fact == nil or loop_fact.counted == nil then return nil, "stencil skeleton requires counted loop" end
-        local step_num = const_int_value(ctx, loop_fact.counted.step)
-        if step_num == nil or step_num == 0 then return nil, "stencil skeleton requires a non-zero constant step" end
-        local scan, scan_reason = skeleton_scan_plan(ctx, func, plan, graph_loop, loop_fact)
-        local find, find_reason = skeleton_find_plan(ctx, func, plan, graph_loop, loop_fact)
-        local partition, partition_reason = skeleton_partition_plan(ctx, func, plan, graph_loop, loop_fact)
-        local copy, copy_reason = skeleton_copy_plan(ctx, func, plan, graph_loop, loop_fact)
-        local scatter_reduce, scatter_reduce_reason = skeleton_scatter_reduce_plan(ctx, func, plan, graph_loop, loop_fact)
-        local reject_reason = scan_reason or find_reason or partition_reason or copy_reason or scatter_reduce_reason or "no stencil skeleton selected"
-        local candidates = {}
-        if scan ~= nil then candidates[#candidates + 1] = SM.StencilMachineSkeletonScanCandidate(scan) end
-        if find ~= nil then candidates[#candidates + 1] = SM.StencilMachineSkeletonFindCandidate(find) end
-        if partition ~= nil then candidates[#candidates + 1] = SM.StencilMachineSkeletonPartitionCandidate(partition) end
-        if copy ~= nil then candidates[#candidates + 1] = SM.StencilMachineSkeletonCopyCandidate(copy) end
-        if scatter_reduce ~= nil then candidates[#candidates + 1] = SM.StencilMachineSkeletonScatterReduceCandidate(scatter_reduce) end
-        local selection = SM.StencilMachineSkeletonInput(candidates, reject_reason):select_stencil_machine_skeleton()
-        return selection:planned_stencil_machine_skeleton()
+    local function stencil_skeleton_plan(_ctx, _func, _plan, _graph_loop, _loop_fact)
+        return nil, "LuaJIT stencil-machine artifacts were retired with StencilMachineSkeletonInput"
     end
 
     local function lower_kernel_stencil_skeleton(ctx, func, plan, graph_loop, loop_fact, opts)
