@@ -2,6 +2,7 @@
 -- Expression parser producing LalinTree ASDL directly.
 
 local Pratt = require("llbl.syntax.pratt")
+local llbl = require("llbl")
 local Ast = require("lalin.syntax_v2.ast")
 local Type = require("lalin.syntax_v2.type")
 
@@ -13,38 +14,6 @@ local Bind = package.loaded["lalin.schema_v2.bind"]
 local Ty = package.loaded["lalin.schema_v2.type"]
 
 local Expr = {}
-
--- Simple type resolver for cast/sizeof/alignof.
--- Uses lazy construction because ASDL scalars are not ready at module load.
-local function resolve_type_source(source)
-  if source == nil or source == "" then return Ty.TScalar(Core.ScalarVoid) end
-  source = source:match("^%s*(.-)%s*$")
-  local ptr_inner = source:match("^ptr %[(.+)%]$")
-  if ptr_inner then return Ty.TPtr(resolve_type_source(ptr_inner)) end
-  local view_inner = source:match("^view %[(.+)%]$")
-  if view_inner then return Ty.TView(resolve_type_source(view_inner)) end
-  local slice_inner = source:match("^slice %[(.+)%]$")
-  if slice_inner then return Ty.TSlice(resolve_type_source(slice_inner)) end
-  local owned_inner = source:match("^owned %[(.+)%]$")
-  if owned_inner then return Ty.TOwned(resolve_type_source(owned_inner)) end
-  -- Scalar lookup (lazy — constructors work at call time)
-  local scalar = {
-    i8 = Core.ScalarI8, i16 = Core.ScalarI16, i32 = Core.ScalarI32, i64 = Core.ScalarI64,
-    u8 = Core.ScalarU8, u16 = Core.ScalarU16, u32 = Core.ScalarU32, u64 = Core.ScalarU64,
-    f32 = Core.ScalarF32, f64 = Core.ScalarF64, bool = Core.ScalarBool,
-    void = Core.ScalarVoid, rawptr = Core.ScalarRawPtr, index = Core.ScalarIndex,
-  }
-  if scalar[source] then return Ty.TScalar(scalar[source]) end
-  -- Named/qualified type: use TNamed with path
-  if source:find("%.") then
-    local parts = {}
-    for part in source:gmatch("[^.]+") do
-      parts[#parts + 1] = Core.Name(part)
-    end
-    return Ty.TNamed(Ty.TypeRefPath(Core.Path(parts)))
-  end
-  return Ty.TNamed(Ty.TypeRefPath(Core.Path({ Core.Name(source) })))
-end
 
 local parser
 
@@ -229,6 +198,27 @@ local function struct_ctor(callee, fields, start, lex)
   return Tree.ExprAgg(Tree.ExprSurface, type_ref_from_constructor_expr(callee), inits)
 end
 
+function Tree.Expr:parsed_host_expr_value() return self end
+local function adapt_host_expr(value, lex, start)
+  if type(value) == "table" and type(value.parsed_host_expr_value) == "function" then
+    return value:parsed_host_expr_value()
+  end
+  if type(value) == "number" then
+    local raw = tostring(value)
+    local lit = value == math.floor(value) and Core.LitInt(raw) or Core.LitFloat(raw)
+    return Tree.ExprLit(Tree.ExprSurface, lit)
+  end
+  if type(value) == "boolean" then
+    return Tree.ExprLit(Tree.ExprSurface, Core.LitBool(value))
+  end
+  if type(value) == "string" then
+    return Tree.ExprLit(Tree.ExprSurface, Core.LitString(value))
+  end
+  if value == nil then return Tree.ExprLit(Tree.ExprSurface, Core.LitNil) end
+  lex:error_at(start, "host evaluation for expr role produced unsupported value `"
+    .. tostring(value) .. "`")
+end
+
 local function atom(lex, ctx)
   ctx.lex = lex
   local t = lex:peek()
@@ -248,19 +238,16 @@ local function atom(lex, ctx)
       return Tree.ExprLit(Tree.ExprSurface, Core.LitNil)
     elseif t.value == "as" then
       -- as [type] (expr)  — type conversion
-      local ty_source = Type.parse(lex, ctx)
-      local ty_ty = resolve_type_source(ty_source)
+      local ty = Type.parse(lex, ctx)
       lex:expect("(")
       local value = Expr.parse(lex, ctx)
       lex:expect(")")
-      return Tree.ExprCast(Tree.ExprSurface, Core.SurfaceCast, ty_ty, value)
+      return Tree.ExprCast(Tree.ExprSurface, Core.SurfaceCast, ty, value)
     elseif t.value == "sizeof" then
       -- sizeof [type]  — type size query
-      local ty_source = Type.parse(lex, ctx)
-      return Tree.ExprSizeOf(Tree.ExprSurface, resolve_type_source(ty_source))
+      return Tree.ExprSizeOf(Tree.ExprSurface, Type.parse(lex, ctx))
     elseif t.value == "alignof" then
-      local ty_source = Type.parse(lex, ctx)
-      return Tree.ExprAlignOf(Tree.ExprSurface, resolve_type_source(ty_source))
+      return Tree.ExprAlignOf(Tree.ExprSurface, Type.parse(lex, ctx))
     elseif t.value == "_" then
       -- LLBL-owned sentinel.
       if lex:peek().value == "(" then
@@ -281,7 +268,9 @@ local function atom(lex, ctx)
     local raw, open, close = Ast.consume_balanced_from_open(lex)
     local refs = Ast.extract_refs(raw)
     Ast.add_refs(ctx, refs)
-    return Ast.host_eval(raw, refs, Ast.origin(lex, open, close, "parsed:host_eval"), "expr")
+    local event = Ast.host_eval(raw, refs,
+      Ast.origin(lex, open, close, "parsed:host_eval"), "expr")
+    return adapt_host_expr(llbl.host_eval.value(event, { env = ctx.host_env }), lex, t)
   elseif t.value == "{" then
     local start = lex:expect("{")
     local fields = parse_record_after_open(lex, ctx, start)

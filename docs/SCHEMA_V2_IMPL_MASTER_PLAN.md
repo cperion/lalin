@@ -32,7 +32,7 @@ The active tree includes:
 Current validation baseline:
 
 ```text
-schema_v2: 60 passed
+schema_v2: 61 passed
 c_backend: 39 passed
 embedded binary: passing
 ```
@@ -133,6 +133,11 @@ CMat -> LOWER
 domain recovery has been deleted. LOWER rejection now crosses the compiler backend
 as `CompilerCBackendRejected` and becomes a typed `CompilerArtifactError` only at the
 artifact boundary; it does not escape `CompilerSession:compile()` as a Lua error.
+Schema-v2 bracket positions now preserve Lalin's LLBL contract: every `[]` creates and
+evaluates a role-stamped HostEval, Lua table access constructs the value, and only the
+current role adapts it into typed Parsed ASDL. Type annotations carry `LalinType.Type`,
+not captured source strings; expression, statement, declaration, product, variant, and
+continuation splices are evaluated without silent dropping or cross-context compatibility.
 Nonzero `boundary = reject` displacement remains conservative until ordinary memory
 extent and authored-domain evidence can prove a narrow affine interior. Wrap realization
 is covered for distances larger than the domain extent. Integer division, remainder, and

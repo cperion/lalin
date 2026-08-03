@@ -4,6 +4,7 @@
 -- in the pipeline; everything else is direct schema_v2.
 
 local Ast = require("lalin.syntax_v2.ast")
+local llbl = require("llbl")
 local Expr = require("lalin.syntax_v2.expr")
 local Type = require("lalin.syntax_v2.type")
 
@@ -189,11 +190,11 @@ function P.ParsedStmt:parsed_loop_body_contribution()
 end
 function P.StmtFoldParsed:parsed_loop_body_contribution()
   return P.ParsedLoopBodySink(P.ParsedLoopFoldSink(
-    self.name, self.ty_source, self.init, self.reducer, self.step))
+    self.name, self.ty, self.init, self.reducer, self.step))
 end
 function P.StmtScanParsed:parsed_loop_body_contribution()
   return P.ParsedLoopBodySink(P.ParsedLoopScanSink(
-    self.name, self.ty_source, self.init, self.reducer, self.axis, self.step, self.into))
+    self.name, self.ty, self.init, self.reducer, self.axis, self.step, self.into))
 end
 
 function P.ParsedLoopBodyStmt:parsed_loop_collect(body, sink)
@@ -221,6 +222,28 @@ function Stmt.parse_block(lex, ctx, stops)
   return items
 end
 
+function P.ParsedStmt:parsed_host_stmt_value() return self end
+function Tree.Stmt:parsed_host_stmt_value() return P.StmtKnown(self) end
+local function adapt_host_stmts(value, lex, start)
+  if type(value) == "table" and type(value.parsed_host_stmt_value) == "function" then
+    return value:parsed_host_stmt_value()
+  end
+  if type(value) == "table" then
+    local stmts = {}
+    for i = 1, #value do
+      local item = value[i]
+      if type(item) ~= "table" or type(item.parsed_host_stmt_value) ~= "function" then
+        lex:error_at(start, "host evaluation for stmts role produced unsupported item `"
+          .. tostring(item) .. "`")
+      end
+      stmts[i] = item:parsed_host_stmt_value()
+    end
+    return P.ParsedStmtGroup(stmts)
+  end
+  lex:error_at(start, "host evaluation for stmts role produced unsupported value `"
+    .. tostring(value) .. "`")
+end
+
 function Stmt.parse(lex, ctx)
   ctx.lex = lex
   local t = lex:peek()
@@ -229,7 +252,9 @@ function Stmt.parse(lex, ctx)
     local raw, open, close = Ast.consume_balanced_from_open(lex)
     local refs = Ast.extract_refs(raw)
     Ast.add_refs(ctx, refs)
-    return Ast.host_eval(raw, refs, Ast.origin(lex, open, close, "parsed:host_eval"), "stmts")
+    local event = Ast.host_eval(raw, refs,
+      Ast.origin(lex, open, close, "parsed:host_eval"), "stmts")
+    return adapt_host_stmts(llbl.host_eval.value(event, { env = ctx.host_env }), lex, t)
 
   elseif t.value == "requires" then
     local start = lex:next()
@@ -322,18 +347,18 @@ function Stmt.parse(lex, ctx)
   elseif t.value == "fold" then
     lex:next()
     local name = lex:expect_name("fold accumulator").value
-    local ty_source = Type.parse(lex, ctx)
+    local ty = Type.parse(lex, ctx)
     lex:expect("=")
     local init = Expr.parse(lex, ctx)
     lex:expect("by")
     local reducer = parse_reducer(lex)
     lex:expect("step")
-    return P.StmtFoldParsed(name, ty_source, init, reducer, Expr.parse(lex, ctx))
+    return P.StmtFoldParsed(name, ty, init, reducer, Expr.parse(lex, ctx))
 
   elseif t.value == "scan" then
     lex:next()
     local name = lex:expect_name("scan accumulator").value
-    local ty_source = Type.parse(lex, ctx)
+    local ty = Type.parse(lex, ctx)
     lex:expect("=")
     local init = Expr.parse(lex, ctx)
     lex:expect("by")
@@ -352,7 +377,7 @@ function Stmt.parse(lex, ctx)
     lex:expect("step")
     local step = Expr.parse(lex, ctx)
     lex:expect("into")
-    return P.StmtScanParsed(name, ty_source, init, reducer, axis, step, Expr.parse(lex, ctx))
+    return P.StmtScanParsed(name, ty, init, reducer, axis, step, Expr.parse(lex, ctx))
   elseif t.value == "let" or t.value == "var" then
     local start = lex:next()
     local mutable = start.value == "var"

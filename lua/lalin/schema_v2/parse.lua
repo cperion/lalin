@@ -24,13 +24,12 @@ return schema. LalinParse {
     },
   },
 
-  -- Parsed intermediate types: carry unresolved type-annotation source text.
-  -- to_module evaluates ty_source fields in the dsl env to produce Ty.Type.
+  -- Parsed type positions carry the evaluated, role-adapted Lalin type value.
 
   product. ParsedField {
     interned,
     field. name [str],
-    field. ty_source [str],
+    field. ty [LalinType.Type],
     field. anonymous [bool],
     field. implicit [bool],
   },
@@ -104,7 +103,7 @@ return schema. LalinParse {
     ParsedLoopFoldSink {
       variant_unique,
       field. name [str],
-      field. ty_source [str],
+      field. ty [LalinType.Type],
       init [LalinTree.Expr],
       reducer [LalinParse.ParsedLoopReducer],
       step [LalinTree.Expr],
@@ -112,7 +111,7 @@ return schema. LalinParse {
     ParsedLoopScanSink {
       variant_unique,
       field. name [str],
-      field. ty_source [str],
+      field. ty [LalinType.Type],
       init [LalinTree.Expr],
       reducer [LalinParse.ParsedLoopReducer],
       axis [LalinParse.ParsedLoopScanAxis],
@@ -316,8 +315,9 @@ return schema. LalinParse {
   },
   sum. ParsedStmt {
     StmtKnown { variant_unique, field. stmt [LalinTree.Stmt], },
-    StmtLetParsed { variant_unique, field. name [str], field. ty_source [str], field. init [LalinTree.Expr], },
-    StmtVarParsed { variant_unique, field. name [str], field. ty_source [str], field. init [LalinTree.Expr], },
+    ParsedStmtGroup { variant_unique, stmts [many [LalinParse.ParsedStmt]], },
+    StmtLetParsed { variant_unique, field. name [str], field. ty [LalinType.Type], field. init [LalinTree.Expr], },
+    StmtVarParsed { variant_unique, field. name [str], field. ty [LalinType.Type], field. init [LalinTree.Expr], },
     StmtRequiresParsed { variant_unique, exprs [many [LalinTree.Expr]], },
     StmtLoopParsed {
       variant_unique,
@@ -330,7 +330,7 @@ return schema. LalinParse {
     StmtFoldParsed {
       variant_unique,
       field. name [str],
-      field. ty_source [str],
+      field. ty [LalinType.Type],
       init [LalinTree.Expr],
       reducer [LalinParse.ParsedLoopReducer],
       step [LalinTree.Expr],
@@ -338,7 +338,7 @@ return schema. LalinParse {
     StmtScanParsed {
       variant_unique,
       field. name [str],
-      field. ty_source [str],
+      field. ty [LalinType.Type],
       init [LalinTree.Expr],
       reducer [LalinParse.ParsedLoopReducer],
       axis [LalinParse.ParsedLoopScanAxis],
@@ -349,13 +349,14 @@ return schema. LalinParse {
 
 
   sum. ParsedDecl {
+    ParsedDeclGroup { variant_unique, field. decls [many [LalinParse.ParsedDecl]], },
     ParsedFunc {
       variant_unique,
       field. name [str],
       qualifier [many [LalinCore.Name]],
       field. implicit_self [bool],
       params [many [LalinParse.ParsedField]],
-      field. result_source [str],
+      field. result_ty [LalinType.Type],
       body [many [LalinParse.ParsedStmt]],
       field. has_control [bool],
     },
@@ -369,7 +370,7 @@ return schema. LalinParse {
       field. name [str],
       qualifier [many [LalinCore.Name]],
       params [many [LalinParse.ParsedField]],
-      field. result_source [str],
+      field. result_ty [LalinType.Type],
       field. symbol [str],
     },
     ParsedUnion {
@@ -381,10 +382,10 @@ return schema. LalinParse {
       variant_unique,
       field. name [str],
       qualifier [many [LalinCore.Name]],
-      field. repr_source [str],
+      field. repr_ty [optional [LalinType.Type]],
       field. invalid [str],
-      field. domain_source [str],
-      field. target_source [str],
+      field. domain_ty [optional [LalinType.Type]],
+      field. target_ty [optional [LalinType.Type]],
     },
     ParsedMetaAssign {
       variant_unique,

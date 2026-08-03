@@ -1,7 +1,6 @@
 -- lalin.syntax_v2
--- Direct schema_v2 frontend for Lalin.  Parsers produce LalinParse.ParsedDecl
--- intermediate types; Document.to_module resolves type source strings and
--- lowers to Tree.Module ready for surface_resolve().
+-- Direct schema-v2 frontend for Lalin. Brackets become LLBL HostEval events;
+-- role-adapted values enter Parsed ASDL and lower to Tree.Module.
 
 local llbl_syntax = require("llbl.syntax")
 local Constructor = require("llbl.syntax.constructor")

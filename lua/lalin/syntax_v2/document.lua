@@ -7,6 +7,7 @@ local llbl = require("llbl")
 local Lexer = require("llbl.syntax.lexer")
 local Ast = require("lalin.syntax_v2.ast")
 local Decl = require("lalin.syntax_v2.decl")
+local TypeSyntax = require("lalin.syntax_v2.type")
 
 -- Load schema_v2
 require("lalin.schema_v2")
@@ -36,77 +37,6 @@ local rejected_lua_roots = {
 }
 
 -- ═══════════════════════════════════════════════════════════
--- Type lookup table: maps type-source strings to Ty.Type
--- ═══════════════════════════════════════════════════════════
-
-local scalar_lookup = {
-  i8       = Ty.TScalar(C.ScalarI8),
-  i16      = Ty.TScalar(C.ScalarI16),
-  i32      = Ty.TScalar(C.ScalarI32),
-  i64      = Ty.TScalar(C.ScalarI64),
-  u8       = Ty.TScalar(C.ScalarU8),
-  u16      = Ty.TScalar(C.ScalarU16),
-  u32      = Ty.TScalar(C.ScalarU32),
-  u64      = Ty.TScalar(C.ScalarU64),
-  f32      = Ty.TScalar(C.ScalarF32),
-  f64      = Ty.TScalar(C.ScalarF64),
-  bool     = Ty.TScalar(C.ScalarBool),
-  void     = Ty.TScalar(C.ScalarVoid),
-  rawptr   = Ty.TScalar(C.ScalarRawPtr),
-  index    = Ty.TScalar(C.ScalarIndex),
-}
-
-local function resolve_type_source(source, named_env)
-  if source == nil or source == "" then
-    return Ty.TScalar(C.ScalarVoid)
-  end
-  -- Strip whitespace
-  source = source:match("^%s*(.-)%s*$")
-  -- ptr [inner]
-  local ptr_inner = source:match("^ptr %[(.+)%]$")
-  if ptr_inner then
-    return Ty.TPtr(resolve_type_source(ptr_inner, named_env))
-  end
-  -- view [inner]
-  local view_inner = source:match("^view %[(.+)%]$")
-  if view_inner then
-    return Ty.TView(resolve_type_source(view_inner, named_env))
-  end
-  -- slice [inner]
-  local slice_inner = source:match("^slice %[(.+)%]$")
-  if slice_inner then
-    return Ty.TSlice(resolve_type_source(slice_inner, named_env))
-  end
-  -- owned [inner]
-  local owned_inner = source:match("^owned %[(.+)%]$")
-  if owned_inner then
-    return Ty.TOwned(resolve_type_source(owned_inner, named_env))
-  end
-  -- Scalar lookup
-  if scalar_lookup[source] then
-    return scalar_lookup[source]
-  end
-  -- Named type: look up in materialized env
-  if named_env and named_env[source] then
-    local decl = named_env[source]
-    local cls = asdl.classof(decl)
-    if cls == P.ParsedStruct or cls == P.ParsedUnion or cls == P.ParsedHandle then
-      return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(source) })))
-    end
-  end
-  -- Fallback: try as qualified name A.B.C
-  if source:find("%.") then
-    local parts = {}
-    for part in source:gmatch("[^.]+") do
-      parts[#parts + 1] = C.Name(part)
-    end
-    return Ty.TNamed(Ty.TypeRefPath(C.Path(parts)))
-  end
-  -- Assume it's a named type
-  return Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(source) })))
-end
-
--- ═══════════════════════════════════════════════════════════
 -- Parse
 -- ═══════════════════════════════════════════════════════════
 
@@ -114,6 +44,15 @@ local function copy_opts(opts)
   local out = {}
   if opts then for k, v in pairs(opts) do out[k] = v end end
   return out
+end
+local function parsed_host_env(user_env)
+  local base = {}
+  TypeSyntax.extend_host_env(base)
+  if user_env == nil then return base end
+  local env = {}
+  for k, v in pairs(base) do env[k] = v end
+  for k, v in pairs(user_env) do env[k] = v end
+  return env
 end
 
 local function make_ctx(lex, opts)
@@ -125,6 +64,7 @@ local function make_ctx(lex, opts)
     root_role = opts.root_role or ROOT_ROLE,
     role_display = ROOT_ROLE_DISPLAY,
     document = true,
+    host_env = parsed_host_env(opts.env),
   }
   function ctx:add_ref(name)
     name = tostring(name or "")
@@ -174,6 +114,17 @@ local function parse_root_item(lex, ctx)
   lex:error_at(tok, ".lln documents are rooted at " .. ROOT_ROLE_DISPLAY .. "; expected root declaration (`fn`, `struct`, `union`, `handle`, `region`), meta assignment (`Type.metamethods.__name = hook`), or top-level `[generated]` declaration splice")
 end
 
+function P.ParsedDecl:bind_parsed_host_name(_env) end
+local function bind_parsed_host_type(decl, env)
+  env[decl.name] = env.named(decl.name)
+end
+function P.ParsedStruct:bind_parsed_host_name(env) bind_parsed_host_type(self, env) end
+function P.ParsedUnion:bind_parsed_host_name(env) bind_parsed_host_type(self, env) end
+function P.ParsedHandle:bind_parsed_host_name(env) bind_parsed_host_type(self, env) end
+function P.ParsedDeclGroup:bind_parsed_host_name(env)
+  for i = 1, #self.decls do self.decls[i]:bind_parsed_host_name(env) end
+end
+
 function Document.parse(source, chunkname, opts)
   opts = opts or {}
   local lex = Lexer.new(source or "", chunkname or "=(lalin .lln)", opts)
@@ -181,7 +132,9 @@ function Document.parse(source, chunkname, opts)
   local body = {}
   lex:skip_separators()
   while not lex:at_eof() do
-    body[#body + 1] = parse_root_item(lex, ctx)
+    local item = parse_root_item(lex, ctx)
+    body[#body + 1] = item
+    item:bind_parsed_host_name(ctx.host_env)
     lex:skip_separators()
   end
   return P.ParsedDocument(body, source or "", chunkname or "=(lalin .lln)")
@@ -249,6 +202,15 @@ local function bind_named_decl(env, decl)
   end
 end
 
+function P.ParsedDecl:materialize_parsed_decl(env, decls)
+  bind_named_decl(env, self)
+  decls[#decls + 1] = self
+end
+function P.ParsedDeclGroup:materialize_parsed_decl(env, decls)
+  for i = 1, #self.decls do self.decls[i]:materialize_parsed_decl(env, decls) end
+end
+function P.ParsedMetaAssign:materialize_parsed_decl(_env, _decls) end
+
 function Document.materialize(doc, opts)
   opts = copy_opts(opts)
   if type(doc) == "string" then doc = Document.parse(doc, opts.chunkname, opts) end
@@ -259,22 +221,7 @@ function Document.materialize(doc, opts)
   local env = merge_env(opts.env)
   local decls = {}
   for _, item in ipairs(doc.body or {}) do
-    if llbl.is(item, "HostEval") then
-      item:evaluate(env)
-      local produced = item.value
-      if type(produced) == "table" then
-        if asdl.classof(produced) then
-          decls[#decls + 1] = produced
-        elseif produced[1] then
-          for _, d in ipairs(produced) do decls[#decls + 1] = d end
-        end
-      end
-    elseif asdl.classof(item) == P.ParsedMetaAssign then
-      -- skip for now
-    else
-      bind_named_decl(env, item)
-      decls[#decls + 1] = item
-    end
+    item:materialize_parsed_decl(env, decls)
   end
   return decls, env
 end
@@ -319,12 +266,12 @@ function P.StmtKnown:lower_parsed_stmt(_named_env)
 end
 function P.StmtLetParsed:lower_parsed_stmt(named_env)
   local binding = B.Binding(C.Id("parsed." .. self.name), self.name,
-    resolve_type_source(self.ty_source, named_env), B.BindingRoleLocalValue)
+    self.ty, B.BindingRoleLocalValue)
   return P.ParsedStmtBodyResolved({ Tr.StmtLet(Tr.StmtSurface, binding, self.init) })
 end
 function P.StmtVarParsed:lower_parsed_stmt(named_env)
   local binding = B.Binding(C.Id("parsed." .. self.name), self.name,
-    resolve_type_source(self.ty_source, named_env), B.BindingRoleLocalValue)
+    self.ty, B.BindingRoleLocalValue)
   return P.ParsedStmtBodyResolved({ Tr.StmtVar(Tr.StmtSurface, binding, self.init) })
 end
 function P.StmtRequiresParsed:lower_parsed_stmt(_named_env)
@@ -338,15 +285,18 @@ function P.ParsedLoopNoSink:resolve_parsed_loop_sink(_named_env)
 end
 function P.ParsedLoopFoldSink:resolve_parsed_loop_sink(named_env)
   return P.ParsedResolvedLoopFoldSink(self.name,
-    resolve_type_source(self.ty_source, named_env), self.init, self.reducer, self.step)
+    self.ty, self.init, self.reducer, self.step)
 end
 function P.ParsedLoopScanSink:resolve_parsed_loop_sink(named_env)
   return P.ParsedResolvedLoopScanSink(self.name,
-    resolve_type_source(self.ty_source, named_env), self.init, self.reducer,
+    self.ty, self.init, self.reducer,
     self.axis, self.step, self.into)
 end
 
 local lower_stmts
+function P.ParsedStmtGroup:lower_parsed_stmt(named_env)
+  return lower_stmts(self.stmts, named_env)
+end
 function P.StmtLoopParsed:lower_parsed_stmt(named_env)
   return lower_stmts(self.body, named_env):parsed_loop_body_input(
     P.ParsedLoopLowerInput(self.loop_id, self.indexes, self.domain, {},
@@ -411,23 +361,26 @@ local function qualified_compiler_name(parsed, anon_counter)
   return table.concat(parts, ".")
 end
 
-local function handle_repr(source, named_env)
-  if source == nil or source == "" then return Ty.HandleReprScalar(C.ScalarU32) end
-  local ty = resolve_type_source(source, named_env)
-  if asdl.classof(ty) ~= Ty.TScalar then
-    error("handle repr must be a scalar type such as `[u32]`", 2)
-  end
-  return Ty.HandleReprScalar(ty.scalar)
+function Ty.Type:parsed_handle_repr()
+  error("handle repr must be a scalar type such as `[u32]`", 2)
+end
+function Ty.TScalar:parsed_handle_repr() return Ty.HandleReprScalar(self.scalar) end
+local function handle_repr(ty)
+  if ty == nil then return Ty.HandleReprScalar(C.ScalarU32) end
+  return ty:parsed_handle_repr()
 end
 
-local function handle_type_ref(source, site, named_env)
-  if source == nil or source == "" then
-    error("handle " .. (site or "fact") .. " requires a named type such as `[Store]`", 2)
-  end
-  local ty = resolve_type_source(source, named_env)
-  local cls = asdl.classof(ty)
-  if cls == Ty.TNamed or cls == Ty.THandle then return ty.ref end
+function Ty.Type:parsed_handle_type_ref(site)
   error("handle " .. (site or "fact") .. " must be a named type", 2)
+end
+function Ty.TNamed:parsed_handle_type_ref(_site) return self.ref end
+function Ty.THandle:parsed_handle_type_ref(_site) return self.ref end
+local function handle_type_ref(ty, site)
+  if ty == nil then
+    error("handle " .. (site or "fact")
+      .. " requires a named type such as `[Store]`", 2)
+  end
+  return ty:parsed_handle_type_ref(site)
 end
 
 local function handle_invalid(raw)
@@ -442,9 +395,9 @@ local function decl_to_item(parsed, named_env, anon_counter)
     local fname = compiler_name(parsed, anon_counter)
     local params = {}
     for i, p in ipairs(parsed.params or {}) do
-      params[i] = Ty.Param(p.name, resolve_type_source(p.ty_source, named_env))
+      params[i] = Ty.Param(p.name, p.ty)
     end
-    local result_ty = resolve_type_source(parsed.result_source, named_env)
+    local result_ty = parsed.result_ty
     local body_src, contracts = {}, {}
     for _, stmt in ipairs(parsed.body or {}) do
       local scls = asdl.classof(stmt)
@@ -469,13 +422,13 @@ local function decl_to_item(parsed, named_env, anon_counter)
     local ename = qualified_compiler_name(parsed, anon_counter)
     local params = {}
     for i, p in ipairs(parsed.params or {}) do
-      params[i] = Ty.Param(p.name, resolve_type_source(p.ty_source, named_env))
+      params[i] = Ty.Param(p.name, p.ty)
     end
-    return Tr.ItemExtern(Tr.ExternFunc(ename, parsed.symbol or ename, params, resolve_type_source(parsed.result_source, named_env)))
+    return Tr.ItemExtern(Tr.ExternFunc(ename, parsed.symbol or ename, params, parsed.result_ty))
   elseif cls == P.ParsedStruct then
     local fields = {}
     for i, f in ipairs(parsed.fields or {}) do
-      fields[i] = Ty.FieldDecl(f.name, resolve_type_source(f.ty_source, named_env))
+      fields[i] = Ty.FieldDecl(f.name, f.ty)
     end
     return Tr.ItemType(Tr.TypeDeclStruct(parsed.name, fields))
   elseif cls == P.ParsedUnion then
@@ -483,22 +436,24 @@ local function decl_to_item(parsed, named_env, anon_counter)
     for _, v in ipairs(parsed.variants or {}) do
       local vfields = {}
       for i, f in ipairs(v.fields or {}) do
-        vfields[i] = Ty.FieldDecl(f.name, resolve_type_source(f.ty_source, named_env))
+        vfields[i] = Ty.FieldDecl(f.name, f.ty)
       end
       variants[#variants + 1] = Ty.VariantDecl(v.name, Ty.TScalar(C.ScalarVoid), vfields)
     end
     return Tr.ItemType(Tr.TypeDeclTaggedUnionSugar(parsed.name, variants))
   elseif cls == P.ParsedHandle then
     local facts = {}
-    if parsed.domain_source ~= "" then
-      facts[#facts + 1] = Ty.HandleDomain(handle_type_ref(parsed.domain_source, "handle domain", named_env))
+    if parsed.domain_ty ~= nil then
+      facts[#facts + 1] = Ty.HandleDomain(
+        handle_type_ref(parsed.domain_ty, "handle domain"))
     end
-    if parsed.target_source ~= "" then
-      facts[#facts + 1] = Ty.HandleTarget(handle_type_ref(parsed.target_source, "handle target", named_env))
+    if parsed.target_ty ~= nil then
+      facts[#facts + 1] = Ty.HandleTarget(
+        handle_type_ref(parsed.target_ty, "handle target"))
     end
     return Tr.ItemType(Tr.TypeDeclHandle(
       qualified_compiler_name(parsed, anon_counter),
-      handle_repr(parsed.repr_source, named_env),
+      handle_repr(parsed.repr_ty),
       handle_invalid(parsed.invalid),
       facts))
   end
