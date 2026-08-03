@@ -296,6 +296,9 @@ function Ty.TPtr:tree_code_index_elem_type() return self.elem end
 function Ty.TArray:tree_code_index_elem_type() return self.elem end
 function Ty.TSlice:tree_code_index_elem_type() return self.elem end
 function Ty.TView:tree_code_index_elem_type() return self.elem end
+function Ty.TLease:tree_code_index_elem_type() return self.base:tree_code_index_elem_type() end
+function Ty.TAccess:tree_code_index_elem_type() return self.base:tree_code_index_elem_type() end
+function Ty.TOwned:tree_code_index_elem_type() return self.base:tree_code_index_elem_type() end
 
 ----------------------------------------------------------------------
 -- known_layout

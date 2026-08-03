@@ -117,7 +117,30 @@ end
 
 function P.ParsedDecl:bind_parsed_host_name(_env) end
 local function bind_parsed_host_type(decl, env)
-  env[decl.name] = TypeSyntax.named_symbol(decl.name)
+  local symbol = TypeSyntax.named_symbol(decl.name)
+  env[decl.name] = symbol
+  -- Qualified type declarations (`handle Store.Ref`) also install the
+  -- canonical HostTypeSymbol at the qualified path, so a bracket reference
+  -- `[Store.Ref]` adapts through the same type role as a plain name.
+  local qualifier = decl.qualifier
+  if qualifier and #qualifier > 0 then
+    local parts = {}
+    local target = env
+    local complete = true
+    for i = 1, #qualifier do
+      parts[i] = qualifier[i].text
+      local next_target = target[parts[i]]
+      if next_target == nil then
+        complete = false
+        break
+      end
+      target = next_target
+    end
+    if complete and type(target) == "table" then
+      parts[#parts + 1] = decl.name
+      rawset(target, decl.name, TypeSyntax.named_symbol_path(parts))
+    end
+  end
 end
 function P.ParsedStruct:bind_parsed_host_name(env) bind_parsed_host_type(self, env) end
 function P.ParsedUnion:bind_parsed_host_name(env) bind_parsed_host_type(self, env) end

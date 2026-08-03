@@ -868,7 +868,10 @@ function llbl.host_eval.lua(value, channel, origin, spec)
 end
 
 function llbl.host_eval.is(value) return is_tag(value, "HostEval") end
-function llbl.host_eval.evaluate(value, env) return is_tag(value, "HostEval") and value:evaluate(env) or value end
+function llbl.host_eval.evaluate(value, env)
+  if is_tag(value, "HostEval") then return value:evaluate(env) end
+  return value
+end
 function llbl.host_eval.resolve(value, env) return llbl.host_eval.evaluate(value, env) end
 function llbl.host_eval.value(value, ctx)
   local env = ctx

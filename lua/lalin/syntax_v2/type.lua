@@ -18,12 +18,18 @@ local HostTypeSymbol = {}
 HostTypeSymbol.__index = HostTypeSymbol
 function HostTypeSymbol:parsed_host_type() return self.ty end
 
-function Type.named_symbol(name)
+function Type.named_symbol_path(parts)
+  local names = {}
+  for i, part in ipairs(parts) do names[i] = C.Name(tostring(part)) end
   return setmetatable({
-    name = tostring(name),
-    ty = Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(tostring(name)) }))),
+    name = table.concat(parts, "."),
+    ty = Ty.TNamed(Ty.TypeRefPath(C.Path(names))),
     metamethods = {},
   }, HostTypeSymbol)
+end
+
+function Type.named_symbol(name)
+  return Type.named_symbol_path({ tostring(name) })
 end
 
 local function type_constructor(project)

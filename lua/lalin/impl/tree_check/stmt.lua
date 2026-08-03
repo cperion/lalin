@@ -62,7 +62,7 @@ function Tr.StmtAssert:typecheck_tree_stmt(input)
   return LCheck.TypeStmtResult(input, {Tr.StmtAssert(Tr.StmtFlow(Sem.FlowFallsThrough), cr.expr)}, {})
 end
 function Tr.StmtReturnValue:typecheck_tree_stmt(input)
-  local vr = self.value:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+  local vr = self.value:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, input.return_ty))
   if is_error_result(vr) then return LCheck.TypeStmtResult(input, {self}, vr.issues) end
   return LCheck.TypeStmtResult(input, {Tr.StmtReturnValue(Tr.StmtFlow(Sem.FlowReturns), vr.expr)}, {})
 end

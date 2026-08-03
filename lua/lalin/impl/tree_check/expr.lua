@@ -17,11 +17,22 @@ function Tr.ExprLit:typecheck_tree_expr(input)
   return LCheck.TypeExprResult(Tr.ExprLit(Tr.ExprTyped(lit_ty), self.value), lit_ty, {})
 end
 
+function Tr.ExprLit:typecheck_tree_expr_expected(input)
+  local lit_ty = self.value:typecheck_tree_literal_expected(input.expected)
+  return LCheck.TypeExprResult(Tr.ExprLit(Tr.ExprTyped(lit_ty), self.value), lit_ty, {})
+end
+
 function C.Literal:typecheck_tree_literal_ty() return Ty.TScalar(C.ScalarVoid) end
 function C.LitInt:typecheck_tree_literal_ty() return Ty.TScalar(C.ScalarI32) end
 function C.LitFloat:typecheck_tree_literal_ty() return Ty.TScalar(C.ScalarF64) end
 function C.LitBool:typecheck_tree_literal_ty() return Ty.TScalar(C.ScalarBool) end
 function C.LitString:typecheck_tree_literal_ty() return Ty.TSlice(Ty.TScalar(C.ScalarU8)) end
+
+function C.Literal:typecheck_tree_literal_expected(_expected) return self:typecheck_tree_literal_ty() end
+function C.LitInt:typecheck_tree_literal_expected(expected)
+  if expected ~= nil and expected:tree_check_is_integer_type() then return expected end
+  return self:typecheck_tree_literal_ty()
+end
 
 function LCheck.TypeValueLookupFound:typecheck_tree_expr_ref(ref)
   local binding_ref = B.ValueRefBinding(self.binding)
@@ -198,6 +209,12 @@ end
 function Tr.IndexBaseExpr:typecheck_tree_index_base(input)
   local result = self.base:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
   local elem = result.ty:tree_code_index_elem_type()
+  if elem == nil then
+    local issues = {}
+    for i = 1, #(result.issues or {}) do issues[i] = result.issues[i] end
+    issues[#issues + 1] = LCheck.TypeIssueNotIndexable(result.ty)
+    return LCheck.TypeIndexBaseResult(Tr.IndexBaseExpr(result.expr), Ty.TScalar(C.ScalarVoid), issues)
+  end
   return LCheck.TypeIndexBaseResult(Tr.IndexBaseExpr(result.expr), elem, result.issues or {})
 end
 function Tr.IndexBasePlace:typecheck_tree_index_base(input)
