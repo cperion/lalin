@@ -116,7 +116,7 @@ end
 
 function P.ParsedDecl:bind_parsed_host_name(_env) end
 local function bind_parsed_host_type(decl, env)
-  env[decl.name] = env.named(decl.name)
+  env[decl.name] = TypeSyntax.named_symbol(decl.name)
 end
 function P.ParsedStruct:bind_parsed_host_name(env) bind_parsed_host_type(self, env) end
 function P.ParsedUnion:bind_parsed_host_name(env) bind_parsed_host_type(self, env) end

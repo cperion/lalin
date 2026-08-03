@@ -88,6 +88,7 @@ local Owner = require("lalin.dsl.init").language
 local specs = {
   type = { kind = "type", adapter = one("type", "parsed_host_type"), nil_policy = "reject" },
   expr = { kind = "value", adapter = expr_adapter, nil_policy = "value" },
+  value = { kind = "value", adapter = function(_, value) return value end, nil_policy = "value" },
   stmt = { kind = "value", adapter = one("stmt", "parsed_host_stmt"), nil_policy = "reject" },
   decl = { kind = "value", adapter = one("decl", "parsed_host_decl"), nil_policy = "reject" },
   product = { kind = "product", algebra = "product", adapter = many("product", "parsed_host_product"), nil_policy = "reject" },

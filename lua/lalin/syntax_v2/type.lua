@@ -14,6 +14,17 @@ local C = package.loaded["lalin.schema_v2.core"]
 local Type = {}
 function Type.void() return Ty.TScalar(C.ScalarVoid) end
 
+local HostTypeSymbol = {}
+HostTypeSymbol.__index = HostTypeSymbol
+function HostTypeSymbol:parsed_host_type() return self.ty end
+
+function Type.named_symbol(name)
+  return setmetatable({
+    name = tostring(name),
+    ty = Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(tostring(name)) }))),
+    metamethods = {},
+  }, HostTypeSymbol)
+end
 
 local function type_constructor(project)
   return setmetatable({}, {

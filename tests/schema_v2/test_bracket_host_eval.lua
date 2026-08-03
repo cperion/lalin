@@ -96,6 +96,22 @@ end
 assert(asdl.classof(region_doc.body[1]) == P.ParsedRegion)
 assert(#region_doc.body[1].exits == 1 and region_doc.body[1].exits[1] == exit)
 
+local meta_doc = Document.parse([=[
+struct MetaType
+end
+MetaType.metamethods.answer = [answer_hook]
+fn meta_answer() [i32] do
+  return [MetaType.metamethods.answer()]
+end
+]=], "@bracket-meta-host-eval.lln", {
+  env = { answer_hook = function() return 37 end },
+})
+assert(asdl.classof(meta_doc.body[2]) == P.ParsedDeclGroup)
+assert(#meta_doc.body[2].decls == 0, "metadata assignment is a host effect, not a fake declaration")
+local meta_module = Document.to_module(meta_doc, "bracket_meta_host_eval")
+assert(#meta_module.items == 2)
+assert(meta_module.items[2].func.body[1].value.value.raw == "37")
+
 local ok, err = pcall(Document.parse, [[fn bad() ["i32"] do return end]],
   "@bad-bracket-role.lln")
 assert(not ok and tostring(err):find("type role produced unsupported value", 1, true))

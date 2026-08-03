@@ -76,9 +76,45 @@ function Decl.parse_decl_stream(lex, ctx)
   return P.ParsedDeclGroup(Roles.adapt(ctx, "decls", event))
 end
 
+local function host_path_value(path, ctx, lex, start)
+  local value = ctx.host_env[path[1]]
+  if value == nil then lex:error_at(start, "unknown host binding `" .. path[1] .. "`") end
+  for i = 2, #path do
+    if type(value) ~= "table" then
+      lex:error_at(start, "host metadata path `" .. table.concat(path, ".", 1, i - 1)
+        .. "` is not indexable")
+    end
+    value = value[path[i]]
+    if value == nil then
+      lex:error_at(start, "unknown host metadata path `" .. table.concat(path, ".", 1, i) .. "`")
+    end
+  end
+  return value
+end
+
 function Decl.parse_meta_assign(lex, ctx, entry_start)
-  lex:error_at(entry_start or lex:peek(),
-    "schema-v2 does not admit top-level metadata assignment; generate a typed declaration splice instead")
+  local start = entry_start or lex:peek()
+  local path = { lex:expect_name("metadata assignment target").value }
+  while lex:next_if(".") do
+    path[#path + 1] = lex:expect_name("metadata assignment target part").value
+  end
+  if #path < 2 then lex:error_at(start, "metadata assignment requires a qualified host path") end
+  lex:expect("=")
+  local value
+  if lex:peek().value == "[" then
+    value = Roles.adapt(ctx, "value", Decl.parse_host_eval(lex, ctx, "value"))
+  else
+    local rhs = { lex:expect_name("metadata assignment value").value }
+    while lex:next_if(".") do
+      rhs[#rhs + 1] = lex:expect_name("metadata assignment value part").value
+    end
+    value = host_path_value(rhs, ctx, lex, start)
+  end
+  local owner_path = {}
+  for i = 1, #path - 1 do owner_path[i] = path[i] end
+  local owner = host_path_value(owner_path, ctx, lex, start)
+  owner[path[#path]] = value
+  return P.ParsedDeclGroup({})
 end
 
 function Decl.parse_fn(lex, ctx, entry_start)

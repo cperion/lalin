@@ -139,8 +139,10 @@ environment, and canonical Lalin-owned `RoleDescriptor`s alone adapt it into typ
 ASDL. Type annotations carry `LalinType.Type`, not captured source strings. LLBL role
 algebra expands typed fragments for statement, declaration, product, variant, and
 continuation positions; expression values use their singular role. Parser-local adapters,
-HostEscape walkers, silent splice drops,
-cross-context compatibility, and the fake ParsedFunc region carrier have been deleted.
+HostEscape walkers, silent splice drops, cross-context compatibility, and the fake
+ParsedFunc region carrier have been deleted. Top-level metadata assignment now mutates the
+LLBL-owned host type symbol and contributes an explicit empty declaration group; it is no
+longer captured as an inert source string or silently discarded.
 Regions now retain inputs, continuations, contracts, and blocks as `ParsedRegion`; unsupported
 region lowering is visible at the ParsedDecl boundary rather than forged as an empty function.
 Nonzero `boundary = reject` displacement remains conservative until ordinary memory
