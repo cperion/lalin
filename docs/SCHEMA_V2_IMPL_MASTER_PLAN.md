@@ -147,7 +147,7 @@ The default `lalin.compile_c_gcc` path is not switched yet. Schema-v2 intentiona
 rejects parsed scan, non-add fold reducers, tiled, multi-axis, backward, nonzero-start, and
 non-unit-step lowering until those alternatives have complete typed projections and
 execution coverage.
-coverage. No raw-loop adapter, cross-context constructor adapter, encoded-name
+No raw-loop adapter, cross-context constructor adapter, encoded-name
 fallback, or fallback to the legacy C backend is permitted.
 
 ## P2 — schema ownership cutover
