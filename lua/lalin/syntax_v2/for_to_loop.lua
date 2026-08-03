@@ -55,21 +55,23 @@ local function bind_context(T)
     end
     return P.ParsedLoopInteger(value)
   end
-  function P.ParsedLoopInteger:parsed_loop_integer_value(_site) return self.value end
-  function P.ParsedLoopIntegerRejected:parsed_loop_integer_value(site)
-    error(tostring(site) .. ": " .. self.reason, 2)
-  end
-
   function P.ParsedLoopAxis:resolve_parsed_loop_axis()
-    local step = self.step:parsed_loop_integer():parsed_loop_integer_value("loop step")
-    if step == 0 then error("loop step must be nonzero", 2) end
-    if step < 0 then
-      return P.ParsedResolvedLoopAxis(
-        self.start, self.stop, -step, Tr.ControlLoopBackward,
-        Ty.TScalar(C.ScalarI32))
+    return self.step:parsed_loop_integer():parsed_loop_axis_step(self)
+  end
+  function P.ParsedLoopInteger:parsed_loop_axis_step(axis)
+    if self.value == 0 then
+      return P.ParsedLoopAxisRejected("loop step must be nonzero")
     end
-    return P.ParsedResolvedLoopAxis(
-      self.start, self.stop, step, Tr.ControlLoopForward, idx_ty)
+    if self.value < 0 then
+      return P.ParsedLoopAxisResolved(P.ParsedResolvedLoopAxis(
+        axis.start, axis.stop, -self.value, Tr.ControlLoopBackward,
+        Ty.TScalar(C.ScalarI32)))
+    end
+    return P.ParsedLoopAxisResolved(P.ParsedResolvedLoopAxis(
+      axis.start, axis.stop, self.value, Tr.ControlLoopForward, idx_ty))
+  end
+  function P.ParsedLoopIntegerRejected:parsed_loop_axis_step(_axis)
+    return P.ParsedLoopAxisRejected(self.reason)
   end
   local function axis_traversal(input, distance, valid, coordinate)
     local axis = input.axis
@@ -113,33 +115,103 @@ local function bind_context(T)
       coordinate)
   end
   function P.ParsedWindowAxis:resolve_parsed_window_axis()
-    local before = self.before:parsed_loop_integer():parsed_loop_integer_value("window before")
-    local after = self.after:parsed_loop_integer():parsed_loop_integer_value("window after")
-    if before < 0 or after < 0 then error("window extents must be nonnegative", 2) end
-    return P.ParsedResolvedWindowAxis(before, after, self.boundary)
+    return self.before:parsed_loop_integer():parsed_loop_window_before(self)
+  end
+  function P.ParsedLoopInteger:parsed_loop_window_before(axis)
+    if self.value < 0 then
+      return P.ParsedWindowAxisRejected("window extents must be nonnegative")
+    end
+    return axis.after:parsed_loop_integer():parsed_loop_window_after(
+      P.ParsedWindowAxisResolveInput(axis, self.value))
+  end
+  function P.ParsedLoopIntegerRejected:parsed_loop_window_before(_axis)
+    return P.ParsedWindowAxisRejected(self.reason)
+  end
+  function P.ParsedLoopInteger:parsed_loop_window_after(input)
+    if self.value < 0 then
+      return P.ParsedWindowAxisRejected("window extents must be nonnegative")
+    end
+    return P.ParsedWindowAxisResolved(
+      P.ParsedResolvedWindowAxis(input.before, self.value, input.axis.boundary))
+  end
+  function P.ParsedLoopIntegerRejected:parsed_loop_window_after(_input)
+    return P.ParsedWindowAxisRejected(self.reason)
   end
 
-  local function resolve_axes(axes)
-    local out = {}
-    for i = 1, #axes do out[i] = axes[i]:resolve_parsed_loop_axis() end
-    return out
+  function P.ParsedLoopDomain:resolve_parsed_loop_domain()
+    return P.ParsedLoopDomainRejected("parsed domain resolution is pending")
+  end
+  function P.ParsedLoopDomain:resolve_parsed_loop_axes(input)
+    if input.index > #self.axes then return self:parsed_loop_resolve_complete(input) end
+    return self.axes[input.index]:resolve_parsed_loop_axis():parsed_loop_axis_fold_continue(input)
   end
   function P.ParsedLoopRangeND:resolve_parsed_loop_domain()
-    return P.ParsedResolvedLoopRangeND(resolve_axes(self.axes))
+    return self:resolve_parsed_loop_axes(P.ParsedLoopAxisResolveInput(self, 1, {}, {}, {}))
+  end
+  function P.ParsedLoopRangeND:parsed_loop_resolve_complete(input)
+    return P.ParsedLoopDomainResolved(P.ParsedResolvedLoopRangeND(input.axes))
+  end
+  function P.ParsedLoopAxisResolved:parsed_loop_axis_fold_continue(input)
+    local axes = {}
+    for i = 1, #input.axes do axes[i] = input.axes[i] end
+    axes[#axes + 1] = self.axis
+    return input.domain:resolve_parsed_loop_axes(
+      P.ParsedLoopAxisResolveInput(input.domain, input.index + 1, axes, input.windows, input.tile_sizes))
+  end
+  function P.ParsedLoopAxisRejected:parsed_loop_axis_fold_continue(_input)
+    return P.ParsedLoopDomainRejected(self.reason)
   end
   function P.ParsedLoopWindowND:resolve_parsed_loop_domain()
-    if #self.axes ~= #self.windows then error("window domain axis/window arity mismatch", 2) end
-    local windows = {}
-    for i = 1, #self.windows do windows[i] = self.windows[i]:resolve_parsed_window_axis() end
-    return P.ParsedResolvedLoopWindowND(resolve_axes(self.axes), windows)
+    if #self.axes ~= #self.windows then
+      return P.ParsedLoopDomainRejected("window domain axis/window arity mismatch")
+    end
+    return self:resolve_parsed_loop_windows(P.ParsedLoopWindowResolveInput(self, 1, {}))
+  end
+  function P.ParsedLoopWindowND:resolve_parsed_loop_windows(input)
+    if input.index > #self.windows then
+      return self:resolve_parsed_loop_axes(
+        P.ParsedLoopAxisResolveInput(self, 1, {}, input.resolved, {}))
+    end
+    return self.windows[input.index]:resolve_parsed_window_axis():parsed_loop_window_fold_continue(input)
+  end
+  function P.ParsedWindowAxisResolved:parsed_loop_window_fold_continue(input)
+    local resolved = {}
+    for i = 1, #input.resolved do resolved[i] = input.resolved[i] end
+    resolved[#resolved + 1] = self.axis
+    return input.domain:resolve_parsed_loop_windows(
+      P.ParsedLoopWindowResolveInput(input.domain, input.index + 1, resolved))
+  end
+  function P.ParsedWindowAxisRejected:parsed_loop_window_fold_continue(_input)
+    return P.ParsedLoopDomainRejected(self.reason)
+  end
+  function P.ParsedLoopWindowND:parsed_loop_resolve_complete(input)
+    return P.ParsedLoopDomainResolved(P.ParsedResolvedLoopWindowND(input.axes, input.windows))
   end
   function P.ParsedLoopTiledND:resolve_parsed_loop_domain()
-    local tiles = {}
-    for i = 1, #self.tile_sizes do
-      tiles[i] = self.tile_sizes[i]:parsed_loop_integer():parsed_loop_integer_value("tile size")
-      if tiles[i] <= 0 then error("tile sizes must be positive", 2) end
+    return self:resolve_parsed_loop_tiles(P.ParsedLoopTileResolveInput(self, 1, {}))
+  end
+  function P.ParsedLoopTiledND:resolve_parsed_loop_tiles(input)
+    if input.index > #self.tile_sizes then
+      return self:resolve_parsed_loop_axes(
+        P.ParsedLoopAxisResolveInput(self, 1, {}, {}, input.resolved))
     end
-    return P.ParsedResolvedLoopTiledND(resolve_axes(self.axes), tiles)
+    return self.tile_sizes[input.index]:parsed_loop_integer():parsed_loop_tile_fold_continue(input)
+  end
+  function P.ParsedLoopInteger:parsed_loop_tile_fold_continue(input)
+    if self.value <= 0 then
+      return P.ParsedLoopDomainRejected("tile sizes must be positive")
+    end
+    local resolved = {}
+    for i = 1, #input.resolved do resolved[i] = input.resolved[i] end
+    resolved[#resolved + 1] = self.value
+    return input.domain:resolve_parsed_loop_tiles(
+      P.ParsedLoopTileResolveInput(input.domain, input.index + 1, resolved))
+  end
+  function P.ParsedLoopIntegerRejected:parsed_loop_tile_fold_continue(_input)
+    return P.ParsedLoopDomainRejected(self.reason)
+  end
+  function P.ParsedLoopTiledND:parsed_loop_resolve_complete(input)
+    return P.ParsedLoopDomainResolved(P.ParsedResolvedLoopTiledND(input.axes, input.tile_sizes))
   end
 
   local lower_1d_no_sink
@@ -780,8 +852,14 @@ local function bind_context(T)
   function P.ParsedLoopLowerInput:lower_parsed_loop()
     return self.domain:resolve_parsed_loop_domain():lower_parsed_loop(self)
   end
-  function P.ParsedLoopLowered:parsed_loop_stmt() return self.stmt end
-  function P.ParsedLoopLowerRejected:parsed_loop_stmt() error(self.reason, 2) end
+  function P.ParsedLoopDomainResolved:lower_parsed_loop(input)
+    return self.domain:lower_parsed_loop(input)
+  end
+  function P.ParsedLoopDomainRejected:lower_parsed_loop(_input)
+    return P.ParsedLoopLowerRejected(self.reason)
+  end
+  function P.ParsedLoopLowered:parsed_loop_stmt() return P.ParsedLoopStmtResolved(self.stmt) end
+  function P.ParsedLoopLowerRejected:parsed_loop_stmt() return P.ParsedLoopStmtRejected(self.reason) end
 
   return P.ParsedLoopLowerInput
 end

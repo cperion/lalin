@@ -91,9 +91,10 @@ fn soac_zip(dst [ptr [i32]], lhs [ptr [i32]], rhs [ptr [i32]], n [index]) [void]
 end
 ]=]
 
-local decls = assert(lalin.loadstring(source, "@test_lalin_parsed_loops_gcc.lln"))
-local session = lalin.compile_c_gcc("parsed_loops_gcc", decls, {
-    gcc_opts = { opt = 3, out_dir = "target/test_lalin_parsed_loops_gcc", stem = "parsed_loops_gcc" },
+local session = lalin.compile_v2("parsed_loops_gcc", source, {
+    gcc = true,
+    opt = 3,
+    out_dir = "target/test_lalin_parsed_loops_gcc",
 })
 
 local function symbol(name, ctype) return assert(session:symbol(name, ctype)) end

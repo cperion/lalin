@@ -184,6 +184,43 @@ return schema. LalinParse {
     ParsedLoopInteger { variant_unique, field. value [number], },
     ParsedLoopIntegerRejected { variant_unique, reason [str], },
   },
+  sum. ParsedLoopAxisResult {
+    ParsedLoopAxisResolved   { variant_unique, axis [LalinParse.ParsedResolvedLoopAxis], },
+    ParsedLoopAxisRejected   { variant_unique, reason [str], },
+  },
+  sum. ParsedWindowAxisResult {
+    ParsedWindowAxisResolved { variant_unique, axis [LalinParse.ParsedResolvedWindowAxis], },
+    ParsedWindowAxisRejected { variant_unique, reason [str], },
+  },
+  sum. ParsedLoopDomainResult {
+    ParsedLoopDomainResolved { variant_unique, domain [LalinParse.ParsedResolvedLoopDomain], },
+    ParsedLoopDomainRejected { variant_unique, reason [str], },
+  },
+  product. ParsedWindowAxisResolveInput {
+    interned,
+    axis [LalinParse.ParsedWindowAxis],
+    before [number],
+  },
+  product. ParsedLoopWindowResolveInput {
+    interned,
+    domain [LalinParse.ParsedLoopWindowND],
+    index [number],
+    resolved [many [LalinParse.ParsedResolvedWindowAxis]],
+  },
+  product. ParsedLoopTileResolveInput {
+    interned,
+    domain [LalinParse.ParsedLoopTiledND],
+    index [number],
+    resolved [many [number]],
+  },
+  product. ParsedLoopAxisResolveInput {
+    interned,
+    domain [LalinParse.ParsedLoopDomain],
+    index [number],
+    axes [many [LalinParse.ParsedResolvedLoopAxis]],
+    windows [many [LalinParse.ParsedResolvedWindowAxis]],
+    tile_sizes [many [number]],
+  },
   product. ParsedResolvedLoopAxis {
     interned,
     start [LalinTree.Expr],
@@ -214,6 +251,14 @@ return schema. LalinParse {
     stop_name [str],
     trip_name [str],
     traversal [LalinParse.ParsedLoopAxisTraversal],
+  },
+  sum. ParsedLoopStmtResult {
+    ParsedLoopStmtResolved { variant_unique, stmt [LalinTree.Stmt], },
+    ParsedLoopStmtRejected { variant_unique, reason [str], },
+  },
+  sum. ParsedStmtBodyResult {
+    ParsedStmtBodyResolved { variant_unique, stmts [many [LalinTree.Stmt]], },
+    ParsedStmtBodyRejected { variant_unique, reason [str], },
   },
   product. ParsedLoopRuntime {
     interned,

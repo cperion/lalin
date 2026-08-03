@@ -314,19 +314,21 @@ local function contract_from_expr(expr)
   error("unsupported contract expression", 2)
 end
 
-function P.StmtKnown:lower_parsed_stmt(_named_env) return self.stmt end
+function P.StmtKnown:lower_parsed_stmt(_named_env)
+  return P.ParsedStmtBodyResolved({ self.stmt })
+end
 function P.StmtLetParsed:lower_parsed_stmt(named_env)
   local binding = B.Binding(C.Id("parsed." .. self.name), self.name,
     resolve_type_source(self.ty_source, named_env), B.BindingRoleLocalValue)
-  return Tr.StmtLet(Tr.StmtSurface, binding, self.init)
+  return P.ParsedStmtBodyResolved({ Tr.StmtLet(Tr.StmtSurface, binding, self.init) })
 end
 function P.StmtVarParsed:lower_parsed_stmt(named_env)
   local binding = B.Binding(C.Id("parsed." .. self.name), self.name,
     resolve_type_source(self.ty_source, named_env), B.BindingRoleLocalValue)
-  return Tr.StmtVar(Tr.StmtSurface, binding, self.init)
+  return P.ParsedStmtBodyResolved({ Tr.StmtVar(Tr.StmtSurface, binding, self.init) })
 end
 function P.StmtRequiresParsed:lower_parsed_stmt(_named_env)
-  error("requires may only occur in a declaration contract prefix", 2)
+  return P.ParsedStmtBodyRejected("requires may only occur in a declaration contract prefix")
 end
 function P.ParsedLoopSink:resolve_parsed_loop_sink(_named_env)
   error("missing parsed loop sink resolution", 2)
@@ -346,25 +348,51 @@ end
 
 local lower_stmts
 function P.StmtLoopParsed:lower_parsed_stmt(named_env)
-  local body = lower_stmts(self.body, named_env)
-  return P.ParsedLoopLowerInput(self.loop_id, self.indexes, self.domain, body,
-    self.sink:resolve_parsed_loop_sink(named_env)):lower_parsed_loop():parsed_loop_stmt()
+  return lower_stmts(self.body, named_env):parsed_loop_body_input(
+    P.ParsedLoopLowerInput(self.loop_id, self.indexes, self.domain, {},
+      self.sink:resolve_parsed_loop_sink(named_env)))
+end
+function P.ParsedStmtBodyResolved:parsed_loop_body_input(input)
+  return P.ParsedLoopLowerInput(input.loop_id, input.indexes, input.domain, self.stmts, input.sink)
+    :lower_parsed_loop():parsed_loop_stmt():parsed_loop_stmt_body()
+end
+function P.ParsedStmtBodyRejected:parsed_loop_body_input(_input)
+  return self
+end
+function P.ParsedLoopStmtResolved:parsed_loop_stmt_body()
+  return P.ParsedStmtBodyResolved({ self.stmt })
+end
+function P.ParsedLoopStmtRejected:parsed_loop_stmt_body()
+  return P.ParsedStmtBodyRejected(self.reason)
 end
 function P.StmtFoldParsed:lower_parsed_stmt(_named_env)
-  error("fold may only appear directly inside a loop", 2)
+  return P.ParsedStmtBodyRejected("fold may only appear directly inside a loop")
 end
 function P.StmtScanParsed:lower_parsed_stmt(_named_env)
-  error("scan may only appear directly inside a loop", 2)
-end
-
-local function lower_stmt(stmt, named_env)
-  return stmt:lower_parsed_stmt(named_env)
+  return P.ParsedStmtBodyRejected("scan may only appear directly inside a loop")
 end
 
 lower_stmts = function(stmts, named_env)
-  local out = {}
-  for _, s in ipairs(stmts or {}) do out[#out + 1] = lower_stmt(s, named_env) end
-  return out
+  local accumulated = P.ParsedStmtBodyResolved({})
+  for _, s in ipairs(stmts or {}) do
+    accumulated = s:lower_parsed_stmt(named_env):parsed_loop_body_continue(accumulated)
+  end
+  return accumulated
+end
+function P.ParsedStmtBodyResolved:parsed_loop_body_continue(accumulated)
+  local stmts = {}
+  for i = 1, #accumulated.stmts do stmts[i] = accumulated.stmts[i] end
+  for i = 1, #self.stmts do stmts[#stmts + 1] = self.stmts[i] end
+  return P.ParsedStmtBodyResolved(stmts)
+end
+function P.ParsedStmtBodyRejected:parsed_loop_body_continue(_accumulated)
+  return self
+end
+function P.ParsedStmtBodyResolved:parsed_func_body(_fname)
+  return self.stmts
+end
+function P.ParsedStmtBodyRejected:parsed_func_body(fname)
+  error("to_module: function `" .. fname .. "` rejected: " .. self.reason, 2)
 end
 
 
@@ -428,13 +456,14 @@ local function decl_to_item(parsed, named_env, anon_counter)
         body_src[#body_src + 1] = stmt
       end
     end
-    body_src = lower_stmts(body_src, named_env)
-    if #body_src == 0 then
-      body_src = { Tr.StmtReturnVoid(Tr.StmtSurface) }
+    local body_result = lower_stmts(body_src, named_env)
+    local body_stmts = body_result:parsed_func_body(fname)
+    if #body_stmts == 0 then
+      body_stmts = { Tr.StmtReturnVoid(Tr.StmtSurface) }
     end
     local func_spec = #contracts > 0
-      and Tr.FuncLocalContract(fname, params, result_ty, contracts, body_src)
-      or Tr.FuncLocal(fname, params, result_ty, body_src)
+      and Tr.FuncLocalContract(fname, params, result_ty, contracts, body_stmts)
+      or Tr.FuncLocal(fname, params, result_ty, body_stmts)
     return Tr.ItemFunc(func_spec)
   elseif cls == P.ParsedExtern then
     local ename = qualified_compiler_name(parsed, anon_counter)
