@@ -27,7 +27,7 @@ local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local zero = Value.ValueExprConst(Code.CodeConstLiteral(i32, require("lalin.schema_v2.core").LitInt("0")))
 local trip_a = Flow.FlowTripCountExact(Code.CodeValueId("trip:a"), nil, nil)
 local trip_b = Flow.FlowTripCountNonNegative(Code.CodeValueId("trip:b"), nil, nil)
-local function reduction(id, domain, trip) return Value.ReductionFact(Value.AlgebraFactId(id), domain, Code.CodeValueId("acc:" .. id), Value.ReductionAdd, zero, zero, i32, nil, nil, Value.AlgebraProofFlow(domain, Value.AlgebraFlowCounted(trip))) end
+local function reduction(id, domain, trip) return Value.ReductionFact(Value.AlgebraFactId(id), domain, Code.CodeValueId("acc:" .. id), Code.CodeValueId("update:" .. id), Value.ReductionAdd, zero, zero, i32, nil, nil, Value.AlgebraProofFlow(domain, Value.AlgebraFlowCounted(trip))) end
 local ra, rb = reduction("red:a", da, trip_a), reduction("red:b", db, trip_b)
 local cfa = Value.ClosedFormFact(Value.AlgebraFactId("cf:a"), ra, zero, Value.AlgebraProofComposite({}, "cf:a"))
 local values = Value.ValueFactSet(module, {}, { ra, rb }, { cfa })

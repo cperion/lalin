@@ -1880,8 +1880,27 @@ return schema. LalinStencil {
     effect [LalinStencil.StencilKernelStoreEffectInput],
     definition [LalinStencil.StencilStreamDef],
   },
+  product. StencilKernelScanEffectInput {
+    interned,
+    effect [LalinStencil.StencilKernelEffectInput],
+  },
+  product. StencilKernelScanStreamInput {
+    interned,
+    scan [LalinStencil.StencilKernelScanEffectInput],
+    stream [LalinStencil.StencilStreamDef],
+  },
+  product. StencilKernelScanAccessInput {
+    interned,
+    scan [LalinStencil.StencilKernelScanStreamInput],
+    access [LalinStencil.StencilAccessByKernelLaneFound],
+  },
   sum. StencilKernelSinkPreparation {
     StencilKernelSinkPrepared { variant_unique, sinks [many [LalinStencil.StencilSinkDef]], },
+    StencilKernelScanSinkPrepared {
+      variant_unique,
+      stream [LalinStencil.StencilKernelStateStreamInput],
+      sink [LalinStencil.StencilSinkDef],
+    },
     StencilKernelSinkDeferredToResult { variant_unique, reduction [LalinValue.ReductionFact], },
     StencilKernelSinkPreparationRejected { variant_unique, reject [LalinStencil.StencilKernelProjectionReject], },
   },

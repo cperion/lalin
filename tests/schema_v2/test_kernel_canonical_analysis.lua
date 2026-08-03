@@ -70,6 +70,7 @@ local reduction = Value.ReductionFact(
   Value.AlgebraFactId("reduction"),
   domain,
   stored,
+  stored,
   Value.ReductionAdd,
   zero,
   seven,

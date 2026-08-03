@@ -367,7 +367,7 @@ local fold_binding = Kernel.KernelBinding(
   Kernel.KernelExprValue(index))
 local reduction = Value.ReductionFact(
   Value.AlgebraFactId("counted_fragment_sum"), domain,
-  Code.CodeValueId("sum_result"), Value.ReductionAdd,
+  Code.CodeValueId("sum_result"), Code.CodeValueId("sum_update"), Value.ReductionAdd,
   Value.ValueExprConst(Code.CodeConstLiteral(i32, Core.LitInt("0"))),
   Value.ValueExprValue(index), i32, nil, nil,
   Value.AlgebraProofComposite({}, "counted fragment fold"))

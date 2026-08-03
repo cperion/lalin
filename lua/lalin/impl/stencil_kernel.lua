@@ -773,9 +773,13 @@ function Kernel.KernelExprKernelValue:stencil_add_live_binding(projection)
   return Stencil.StencilKernelLiveBindingProjection(
     append_one(projection.values, self.value))
 end
-function Kernel.KernelEffect:stencil_add_live_bindings(projection) return projection end
-function Kernel.KernelEffectStore:stencil_add_live_bindings(projection)
-  return self.value:stencil_add_live_binding(projection)
+function Kernel.KernelEffect:stencil_add_live_bindings(input) return input.live end
+function Kernel.KernelEffectStore:stencil_add_live_bindings(input)
+  return self.value:stencil_add_live_binding(input.live)
+end
+function Kernel.KernelEffectScan:stencil_add_live_bindings(input)
+  return self.reduction.contribution:stencil_add_live_dependencies(
+    input.live, input.bindings)
 end
 function Kernel.KernelResult:stencil_add_live_bindings(input) return input.live end
 function Kernel.KernelResultValue:stencil_add_live_bindings(input)
@@ -801,7 +805,8 @@ end
 function Kernel.KernelBody:stencil_live_bindings()
   local projection = Stencil.StencilKernelLiveBindingProjection({})
   for i = 1, #self.effects.entries do
-    projection = self.effects.entries[i].effect:stencil_add_live_bindings(projection)
+    projection = self.effects.entries[i].effect:stencil_add_live_bindings(
+      Stencil.StencilKernelResultLiveInput(projection, self.bindings))
   end
   projection = self.result:stencil_add_live_bindings(
     Stencil.StencilKernelResultLiveInput(projection, self.bindings))
@@ -1060,6 +1065,57 @@ function Kernel.KernelExpr:stencil_store_value(store_input)
     Stencil.StencilKernelUnsupportedEffect(store_input.effect.effect,
       "store value is not a projected kernel binding"))
 end
+function Kernel.KernelEffectScan:stencil_prepare_sinks(input)
+  local suffix = sanitized(self.reduction.id.text)
+  local definition = Stencil.StencilStreamDef(
+    Stencil.StencilStreamId("kernel-stream:scan:" .. suffix),
+    self.reduction.ty,
+    Stencil.StencilStreamValueExpr(
+      self.reduction.contribution, self.reduction.ty))
+  local scan = Stencil.StencilKernelScanStreamInput(
+    Stencil.StencilKernelScanEffectInput(input), definition)
+  return input.construction.state.access_by_lane:lookup(self.dst)
+    :stencil_prepare_scan_reducer(scan)
+end
+function Stencil.StencilAccessByKernelLaneMissing:stencil_prepare_scan_reducer(input)
+  return Stencil.StencilKernelSinkPreparationRejected(
+    Stencil.StencilKernelUnsupportedEffect(
+      input.scan.effect.effect, "scan destination lane has no projected access"))
+end
+function Stencil.StencilAccessByKernelLaneFound:stencil_prepare_scan_reducer(input)
+  local exact = Stencil.StencilKernelScanAccessInput(input, self)
+  return input.scan.effect.effect.reduction:stencil_reduction_arithmetic()
+    :stencil_finish_scan(exact)
+end
+function Stencil.StencilKernelReductionArithmeticRejected:stencil_finish_scan(_input)
+  return Stencil.StencilKernelSinkPreparationRejected(self.reject)
+end
+function Kernel.KernelScanAxis:stencil_scan_axis()
+  error("missing kernel scan axis projection", 2)
+end
+function Kernel.KernelScanLinear:stencil_scan_axis()
+  return Stencil.StencilAxisRef(1)
+end
+function Kernel.KernelScanAlongAxis:stencil_scan_axis() return self.axis end
+function Stencil.StencilKernelReductionArithmeticResolved:stencil_finish_scan(input)
+  local effect = input.scan.scan.effect.effect
+  local reducer = Stencil.StencilReducer(
+    effect.reduction.op, effect.reduction.ty, effect.reduction.init, self.arithmetic)
+  local sink = Stencil.StencilSinkDef(
+    Stencil.StencilSinkId(
+      "kernel-sink:scan:" .. sanitized(effect.reduction.id.text)),
+    Stencil.StencilSinkOpScan(
+      Stencil.StencilAccessRef(input.access.entry.access.name),
+      Stencil.StencilStreamRef(input.scan.stream.id), reducer, effect.mode,
+      effect.axis:stencil_scan_axis()))
+  local suffix = sanitized(effect.reduction.id.text)
+  local binding = Kernel.KernelBinding(
+    Kernel.KernelValueId("kernel-scan-contribution:" .. suffix),
+    effect.reduction.ty, Kernel.KernelExprAlgebra(effect.reduction.contribution))
+  return Stencil.StencilKernelScanSinkPrepared(
+    Stencil.StencilKernelStateStreamInput(
+      effect.reduction.update, binding, input.scan.stream), sink)
+end
 function Kernel.KernelEffectStore:stencil_prepare_sinks(input)
   local selection = self.index:stencil_index_selection(
     Stencil.StencilKernelIndexSelectionInput(
@@ -1081,6 +1137,10 @@ end
 function Stencil.StencilKernelSinkPrepared:stencil_apply_sinks(construction)
   return Stencil.StencilKernelConstructionCollecting(
     construction.state:with_sinks(self.sinks))
+end
+function Stencil.StencilKernelScanSinkPrepared:stencil_apply_sinks(construction)
+  local state = construction.state:with_stream(self.stream):with_sinks({ self.sink })
+  return Stencil.StencilKernelConstructionCollecting(state)
 end
 function Stencil.StencilKernelSinkPreparationRejected:stencil_apply_sinks(construction)
   return construction:stencil_reject(self.reject)

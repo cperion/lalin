@@ -32,8 +32,8 @@ The active tree includes:
 Current validation baseline:
 
 ```text
-schema_v2: 57 passed
-c_backend: 31 passed
+schema_v2: 60 passed
+c_backend: 36 passed
 embedded binary: passing
 ```
 
@@ -118,12 +118,13 @@ proof planes into a whole-fusion contract. Missing optimization capabilities sel
 conservative scalar C: noalias alone controls `restrict`, and generic proof
 obligations never gate CMat materialization.
 
-## P1.5 — public schema-v2 compiler convergence — typed 1D window and fold gates complete
+## P1.5 — public schema-v2 compiler convergence — typed 1D window and recurrence gates complete
 
 The explicit public `lalin.compile_v2` path preserves parsed function bodies and
 executes scalar and one-dimensional clamp/wrap/zero windows, centered reject windows,
 window arithmetic streams, deterministic multisink stores, and the declared one-dimensional
-integer fold reducer matrix through `.lln -> schema-v2 Tree -> Code -> Flow -> Stencil ->
+integer fold and inclusive-scan reducer matrices through `.lln -> schema-v2 Tree -> Code ->
+Flow -> Stencil ->
 CMat -> LOWER
 -> emitted C -> GCC -O3`. Parsed loops, axes, windows, reducers, and sinks cross the
 `ParsedStmt` boundary as ASDL values. Tree loop domains are projected through
@@ -138,15 +139,17 @@ shift helpers emit their declared guards and operations; unsupported helper leav
 during emission instead of silently returning the first operand. Canonical and schema-v2
 registry paths now return `CompilerCBackendOutcome`; phase execution carries that exact
 outcome, while successful schema-v2 artifacts enforce C validation before source is
-accepted. Static data and slice descriptors are covered through GCC execution. Folds
-use `ExprDomainControl` and an exact `StmtBranchJump` terminator so loop-carried values
-remain typed edge arguments. The C emitter performs parallel edge transfer into block
-parameters; zero-, one-, and many-trip seeded arithmetic folds execute through CMat when
-bounds evidence is present, while missing optimization evidence retains correct scalar C.
+accepted. Static data and slice descriptors are covered through GCC execution. Folds and scans
+use exact `StmtBranchJump` terminators so loop-carried values remain typed edge arguments.
+`ReductionFact.update` preserves the exact recurrence-update identity used to recognize a scan
+store without encoded-name recovery or expression rescanning. Inclusive scans update the
+accumulator before their ordered store; zero-, one-, and many-trip seeds, arithmetic
+contributions, the complete integer reducer matrix, sibling stores, and possible aliasing are
+covered through CMat and conservative scalar C. Missing optimization evidence retains correct
+scalar C.
 
 The default `lalin.compile_c_gcc` path is not switched yet. Remaining active P1.5 work is
-parsed scan, tiled and multi-axis domains, backward traversal, nonzero starts, and non-unit
-steps. Each existing schema alternative must receive its complete typed projection and
+tiled and multi-axis domains, backward traversal, nonzero starts, and non-unit steps. Each
 execution coverage before the default-path switch.
 No raw-loop adapter, cross-context constructor adapter, encoded-name
 fallback, or fallback to the legacy C backend is permitted.

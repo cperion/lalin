@@ -99,6 +99,7 @@ local reduction = Value.ReductionFact(
   Value.AlgebraFactId("reduction"),
   domain,
   stored,
+  stored,
   Value.ReductionAdd,
   zero,
   seven,
@@ -608,7 +609,7 @@ assert(reduction_computation.sinks[1].op.reducer.arithmetic ==
   Stencil.StencilArithmeticInteger(exact_int))
 
 local other_reduction = Value.ReductionFact(
-  Value.AlgebraFactId("reduction:other"), domain, stored, Value.ReductionAdd,
+  Value.AlgebraFactId("reduction:other"), domain, stored, stored, Value.ReductionAdd,
   zero, seven, i32, exact_int, nil,
   Value.AlgebraProofFlow(domain, Value.AlgebraFlowCounted(trip)))
 local mismatch_kernel = Kernel.KernelPlanned(

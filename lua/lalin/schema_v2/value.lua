@@ -115,6 +115,7 @@ return schema. LalinValue {
     field. id [LalinValue.AlgebraFactId],
     domain [LalinFlow.FlowDomain],
     accumulator [LalinCode.CodeValueId],
+    update [LalinCode.CodeValueId],
     op [LalinValue.ReductionOp],
     init [LalinValue.ValueExpr],
     contribution [LalinValue.ValueExpr],

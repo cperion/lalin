@@ -9,6 +9,7 @@ local Value = require("lalin.schema_v2.value")
 local Mem = require("lalin.schema_v2.mem")
 local Effect = require("lalin.schema_v2.effect")
 local Kernel = require("lalin.schema_v2.kernel")
+local Stencil = require("lalin.schema_v2.stencil")
 
 local function sanitize(s)
   s = tostring(s):gsub("[^%w_]", "_")
@@ -196,8 +197,113 @@ function Kernel.KernelLoopPlanOriginalControl:materialize_kernel_build(request, 
 function Kernel.KernelLoopPlanClosedForm:materialize_kernel_build(request, build)
   return planned(request, build, Kernel.KernelResultClosedForm(self.closed_form), { Kernel.KernelProofValue(self.closed_form.proof, "closed-form fact") })
 end
+function Kernel.KernelEffectProjection:kernel_scan_selection(input)
+  local selection = Kernel.KernelSkeletonNoSelection({})
+  for i = 1, #self.entries do
+    selection = selection:kernel_consider_scan(
+      Kernel.KernelScanSelectionInput(
+        input.reduction, input.build, self.entries[i]))
+  end
+  return selection
+end
+function Kernel.KernelSkeletonSelection:kernel_consider_scan(_input) return self end
+function Kernel.KernelSkeletonNoSelection:kernel_consider_scan(input)
+  return input.entry.effect:kernel_scan_selection(input)
+end
+function Kernel.KernelEffect:kernel_scan_selection(_input)
+  return Kernel.KernelSkeletonNoSelection({})
+end
+function Kernel.KernelEffectStore:kernel_scan_selection(input)
+  return self.value:kernel_scan_selection(input)
+end
+local function scan_selected(input)
+  local store = input.entry.effect
+  local entries = {}
+  for i = 1, #input.build.effects.entries do
+    local entry = input.build.effects.entries[i]
+    if entry == input.entry then
+      entries[i] = Kernel.KernelEffectByInstructionEntry(entry.inst,
+        Kernel.KernelEffectScan(store.dst, store.index, input.reduction,
+          Stencil.StencilScanInclusive, Kernel.KernelScanLinear))
+    else
+      entries[i] = entry
+    end
+  end
+  return Kernel.KernelSkeletonScanSelected(
+    Kernel.KernelEffectProjection(entries), Kernel.KernelResultVoid)
+end
+function Kernel.KernelCounter:kernel_scan_index_selection(input)
+  return Kernel.KernelSkeletonNoSelection({
+    Kernel.KernelRejectUnsupportedSubject(
+      Kernel.KernelSubjectDomain(input.reduction.domain),
+      "stored recurrence update has no exact primary scan index"),
+  })
+end
+function Kernel.KernelCounterValue:kernel_scan_index_selection(input)
+  if input.entry.effect.index ~= Value.ValueExprValue(self.value) then
+    return Kernel.KernelSkeletonNoSelection({
+      Kernel.KernelRejectUnsupportedSubject(
+        Kernel.KernelSubjectDomain(input.reduction.domain),
+        "stored recurrence update index is not the primary scan axis"),
+    })
+  end
+  return scan_selected(input)
+end
+function Kernel.KernelExpr:kernel_scan_selection(_input)
+  return Kernel.KernelSkeletonNoSelection({})
+end
+function Kernel.KernelExprKernelValue:kernel_scan_selection(input)
+  for i = 1, #input.build.bindings.entries do
+    local entry = input.build.bindings.entries[i]
+    if entry.binding.id == self.value then
+      if entry.value == input.reduction.update then
+        return input.build.counter:kernel_scan_index_selection(input)
+      end
+      return entry.binding.expr:kernel_scan_selection(input)
+    end
+  end
+  return Kernel.KernelSkeletonNoSelection({})
+end
+function Kernel.KernelExprValue:kernel_scan_selection(input)
+  if self.value == input.reduction.update then
+    return input.build.counter:kernel_scan_index_selection(input)
+  end
+  for i = 1, #input.build.bindings.entries do
+    local entry = input.build.bindings.entries[i]
+    if entry.value == self.value then
+      return entry.binding.expr:kernel_scan_selection(input)
+    end
+  end
+  return Kernel.KernelSkeletonNoSelection({})
+end
+function Kernel.KernelSkeletonSelection:materialize_kernel_reduction(input)
+  return planned(input.request, input.build,
+    Kernel.KernelResultReduction(input.reduction), {
+      Kernel.KernelProofValue(input.reduction.proof, "reduction fact"),
+    })
+end
+function Kernel.KernelSkeletonNoSelection:materialize_kernel_reduction(input)
+  if #self.rejects ~= 0 then
+    return Kernel.KernelNoPlan(
+      Kernel.KernelSubjectDomain(input.reduction.domain), self.rejects)
+  end
+  return Kernel.KernelSkeletonSelection.materialize_kernel_reduction(self, input)
+end
+function Kernel.KernelSkeletonScanSelected:materialize_kernel_reduction(input)
+  local source = input.build
+  local build = Kernel.KernelLoopPlanBuild(
+    source.domain, source.trip, source.counter, source.lanes, source.bindings,
+    self.effects, source.proofs)
+  return planned(input.request, build, self.result, {
+    Kernel.KernelProofValue(input.reduction.proof, "reduction fact"),
+    Kernel.KernelProofFunctionEquivalence(
+      "store of the exact loop-carried update at the primary index is an inclusive scan"),
+  })
+end
 function Kernel.KernelLoopPlanReduction:materialize_kernel_build(request, build)
-  return planned(request, build, Kernel.KernelResultReduction(self.reduction), { Kernel.KernelProofValue(self.reduction.proof, "reduction fact") })
+  local input = Kernel.KernelScanMaterializationInput(request, build, self.reduction)
+  return build.effects:kernel_scan_selection(input)
+    :materialize_kernel_reduction(input)
 end
 function Kernel.KernelLoopPlanSkeleton:materialize_kernel_build(request, build)
   if #build.effects.entries == 0 then

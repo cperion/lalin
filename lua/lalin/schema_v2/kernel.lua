@@ -228,6 +228,18 @@ return schema. LalinKernel {
     KernelSkeletonAnySelected { variant_unique, effects [LalinKernel.KernelEffectProjection], result [LalinKernel.KernelResult], },
     KernelSkeletonNoSelection { variant_unique, rejects [many [LalinKernel.KernelReject]], },
   },
+  product. KernelScanSelectionInput {
+    interned,
+    reduction [LalinValue.ReductionFact],
+    build [LalinKernel.KernelLoopPlanBuild],
+    entry [LalinKernel.KernelEffectByInstructionEntry],
+  },
+  product. KernelScanMaterializationInput {
+    interned,
+    request [LalinKernel.KernelLoopPlanRequest],
+    build [LalinKernel.KernelLoopPlanBuild],
+    reduction [LalinValue.ReductionFact],
+  },
   sum. KernelFunctionSkeletonSelection {
     KernelFunctionSkeletonPartition { variant_unique, plan [LalinKernel.KernelPlanned], },
     KernelFunctionSkeletonNoSelection {

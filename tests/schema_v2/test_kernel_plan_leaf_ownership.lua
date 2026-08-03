@@ -19,7 +19,7 @@ assert(asdl.classof(unavailable) == Kernel.KernelTripUnavailable and unavailable
 
 local i32 = Code.CodeTyInt(32, Code.CodeSigned)
 local zero = Value.ValueExprConst(Code.CodeConstLiteral(i32, require("lalin.schema_v2.core").LitInt("0")))
-local reduction = Value.ReductionFact(Value.AlgebraFactId("red:a"), domain, Code.CodeValueId("acc"), Value.ReductionAdd, zero, zero, i32, nil, nil, Value.AlgebraProofComposite({}, "proof"))
+local reduction = Value.ReductionFact(Value.AlgebraFactId("red:a"), domain, Code.CodeValueId("acc"), Code.CodeValueId("update"), Value.ReductionAdd, zero, zero, i32, nil, nil, Value.AlgebraProofComposite({}, "proof"))
 local closed = Value.ClosedFormFact(Value.AlgebraFactId("cf:a"), reduction, zero, Value.AlgebraProofComposite({}, "closed"))
 local fact = Kernel.KernelLoopFactEntry(
   loop, domain,

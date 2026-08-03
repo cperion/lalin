@@ -1591,6 +1591,111 @@ function Stencil.StencilKernelResultReduction:cmat_fragment_finish_fold(input)
     })
 end
 
+function Stencil.StencilSinkOpScan:cmat_fragment_emit_sink(state, sink)
+  return state.streams:cmat_fragment_lookup(self.value):cmat_fragment_scan_stream(
+    CMat.CMatCFragmentScanRequest(state, sink, self))
+end
+function CMat.CMatCFragmentStreamMissing:cmat_fragment_scan_stream(_request)
+  return CMat.CMatCFragmentSinkRejected({
+    CMat.CMatCEmissionMissingStream(self.stream)
+  })
+end
+function CMat.CMatCFragmentStreamFound:cmat_fragment_scan_stream(request)
+  local input = CMat.CMatCFragmentScanInput(
+    request.state, request.sink, request.operation, self.entry)
+  return request.operation.reducer.identity:cmat_fragment_entry_expr(request.state)
+    :cmat_fragment_initialize_scan(input)
+end
+function CMat.CMatCFragmentExprRejected:cmat_fragment_initialize_scan(_input)
+  return CMat.CMatCFragmentSinkRejected(self.issues)
+end
+function CMat.CMatCFragmentExprEmitted:cmat_fragment_initialize_scan(input)
+  local ty = input.operation.reducer.result_ty:code_to_c_backend_type()
+  if self.ty ~= ty then
+    return CMat.CMatCFragmentSinkRejected({
+      CMat.CMatCEmissionTypeMismatch("scan identity", ty, self.ty)
+    })
+  end
+  local allocation = self.state:cmat_fragment_allocate("scan", ty)
+  local state = allocation.state:cmat_fragment_add_entry(
+    C.CBackendAssign(allocation.c_local.id, C.CBackendRAtom(self.atom)))
+  return state.request.accesses:cmat_fragment_lookup(input.operation.dst)
+    :cmat_fragment_scan_bound(CMat.CMatCFragmentScanBoundInput(
+      CMat.CMatCFragmentScanInput(
+        state, input.sink, input.operation, input.stream),
+      allocation.c_local, ty))
+end
+function CMat.CMatCFragmentAccessBindingMissing:cmat_fragment_scan_bound(input)
+  return CMat.CMatCFragmentSinkRejected({
+    CMat.CMatCEmissionMissingAccess(input.scan.operation.dst)
+  })
+end
+function CMat.CMatCFragmentAccessBindingFound:cmat_fragment_scan_bound(input)
+  local scan = input.scan
+  return self:cmat_fragment_access_place(CMat.CMatCFragmentAccessPlaceInput(
+    scan.state, CMat.CMatSinkMemoryUse(Stencil.StencilSinkRef(scan.sink.id)),
+    C.CBackendAtomLocal(scan.state.index.id), scan.state.index.ty, input.ty))
+    :cmat_fragment_finish_scan_place(input)
+end
+function CMat.CMatCFragmentPlaceRejected:cmat_fragment_finish_scan_place(_input)
+  return CMat.CMatCFragmentSinkRejected(self.issues)
+end
+function CMat.CMatCFragmentPlaceEmitted:cmat_fragment_finish_scan_place(input)
+  local scan = input.scan
+  local finish = CMat.CMatCFragmentScanFinishInput(
+    self.state, scan.sink, scan.operation, scan.stream,
+    input.accumulator, input.ty, self.place)
+  return scan.operation.reducer.arithmetic:cmat_fragment_reduction_spec(
+    CMat.CMatCFragmentReductionSpecInput(
+      scan.operation.reducer.reduction, scan.operation.reducer.result_ty))
+    :cmat_fragment_update_scan(finish)
+end
+function CMat.CMatCBinaryRejected:cmat_fragment_update_scan(input)
+  return CMat.CMatCFragmentSinkRejected({
+    CMat.CMatCEmissionUnsupportedSink(input.sink, self.reason)
+  })
+end
+function CMat.CMatCBinarySelected:cmat_fragment_update_scan(input)
+  local helper = input.state:cmat_fragment_add_helper(self.spec)
+  local finish = CMat.CMatCFragmentScanFinishInput(
+    helper.state, input.sink, input.operation, input.stream,
+    input.accumulator, input.ty, input.place)
+  return input.operation.mode:cmat_fragment_emit_scan(
+    CMat.CMatCFragmentScanEmissionInput(finish, helper.helper))
+end
+local function cmat_fragment_scan_update(input)
+  local finish = input.finish
+  return C.CBackendHelperCall(finish.accumulator.id, input.helper, {
+    C.CBackendAtomLocal(finish.accumulator.id), finish.stream.atom,
+  })
+end
+local function cmat_fragment_scan_store(input)
+  return C.CBackendPlaceStore(input.finish.place,
+    C.CBackendAtomLocal(input.finish.accumulator.id))
+end
+function Stencil.StencilScanInclusive:cmat_fragment_emit_scan(input)
+  local state = input.finish.state:cmat_fragment_add_body(
+    cmat_fragment_scan_update(input))
+  state = state:cmat_fragment_add_body(cmat_fragment_scan_store(
+    CMat.CMatCFragmentScanEmissionInput(
+      CMat.CMatCFragmentScanFinishInput(
+        state, input.finish.sink, input.finish.operation, input.finish.stream,
+        input.finish.accumulator, input.finish.ty, input.finish.place),
+      input.helper)))
+  return CMat.CMatCFragmentSinkEmitted(state, CMat.CMatCControlNone, {})
+end
+function Stencil.StencilScanExclusive:cmat_fragment_emit_scan(input)
+  local state = input.finish.state:cmat_fragment_add_body(
+    cmat_fragment_scan_store(input))
+  local next_input = CMat.CMatCFragmentScanEmissionInput(
+    CMat.CMatCFragmentScanFinishInput(
+      state, input.finish.sink, input.finish.operation, input.finish.stream,
+      input.finish.accumulator, input.finish.ty, input.finish.place),
+    input.helper)
+  state = state:cmat_fragment_add_body(cmat_fragment_scan_update(next_input))
+  return CMat.CMatCFragmentSinkEmitted(state, CMat.CMatCControlNone, {})
+end
+
 
 function Stencil.StencilStreamByKernelValueFound:cmat_fragment_bound_source(state, expr)
   return self.entry.definition.op:cmat_fragment_emit_bound(state, expr)

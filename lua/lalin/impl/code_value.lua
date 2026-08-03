@@ -689,7 +689,7 @@ local function detect_reductions(module, graph, flow, exprs_by_func)
                 "loop-carried reduction"), nil)))
             local reduction = Value.ReductionFact(
               Value.AlgebraFactId("reduction:" .. sanitize(func.name) .. ":" .. sanitize(loop_fact.loop.text) .. ":" .. sanitize(param.value.text)),
-              domain, param.value, rop,
+              domain, param.value, recurrence_op.dst, rop,
               expr_for(exprs, init),
               expr_for(exprs, canonical_contribution),
               rty, int_sem, float_mode, proof

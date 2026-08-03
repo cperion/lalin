@@ -85,9 +85,9 @@ local function bind_context(T)
 
   local lower_1d_no_sink
   local lower_1d_fold
+  local lower_1d_scan
   function P.ParsedResolvedLoopSink:lower_parsed_loop_1d(_input, _domain)
-    return P.ParsedLoopLowerRejected(
-      "scan lowering is pending on the schema-v2 parsed path")
+    return P.ParsedLoopLowerRejected("parsed sink projection is missing")
   end
   function P.ParsedResolvedLoopNoSink:lower_parsed_loop_1d(input, domain)
     return lower_1d_no_sink(input, domain)
@@ -95,6 +95,40 @@ local function bind_context(T)
   function P.ParsedResolvedLoopFoldSink:lower_parsed_loop_1d(input, domain)
     return domain:lower_parsed_loop_fold_1d(
       P.ParsedLoopFoldLowerInput(input, domain, self))
+  end
+  function P.ParsedResolvedLoopScanSink:lower_parsed_loop_1d(input, domain)
+    return domain:lower_parsed_loop_scan_1d(
+      P.ParsedLoopScanLowerInput(input, domain, self))
+  end
+  function P.ParsedResolvedLoopDomain:lower_parsed_loop_scan_1d(_input)
+    return P.ParsedLoopLowerRejected("parsed scan domain projection is pending")
+  end
+  function P.ParsedResolvedLoopRangeND:lower_parsed_loop_scan_1d(input)
+    return input.sink.axis:lower_parsed_loop_scan_axis(input)
+  end
+  local function lower_scan_into(input)
+    return input.sink.into:parsed_loop_scan_place():lower_parsed_loop_scan(input)
+  end
+  function P.ParsedLoopScanAxisDefault:lower_parsed_loop_scan_axis(input)
+    return lower_scan_into(input)
+  end
+  function P.ParsedLoopScanAxisName:lower_parsed_loop_scan_axis(input)
+    if #input.loop.indexes ~= 1 or self.name ~= input.loop.indexes[1] then
+      return P.ParsedLoopLowerRejected("scan axis does not name the one-dimensional loop axis")
+    end
+    return lower_scan_into(input)
+  end
+  function P.ParsedLoopScanAxisExpr:lower_parsed_loop_scan_axis(input)
+    return self.expr:parsed_loop_integer():lower_parsed_loop_scan_axis(input)
+  end
+  function P.ParsedLoopInteger:lower_parsed_loop_scan_axis(input)
+    if self.value ~= 1 then
+      return P.ParsedLoopLowerRejected("one-dimensional scan axis must be axis 1")
+    end
+    return lower_scan_into(input)
+  end
+  function P.ParsedLoopIntegerRejected:lower_parsed_loop_scan_axis(_input)
+    return P.ParsedLoopLowerRejected(self.reason)
   end
   function P.ParsedResolvedLoopDomain:lower_parsed_loop_fold_1d(_input)
     return P.ParsedLoopLowerRejected("parsed fold domain projection is pending")
@@ -131,6 +165,37 @@ local function bind_context(T)
       Tr.ExprCompare(Tr.ExprSurface, C.CmpGe,
         input.accumulator, input.contribution),
       input.accumulator, input.contribution)
+  end
+  function Tr.Expr:parsed_loop_scan_place()
+    return P.ParsedLoopScanPlaceRejected(
+      "scan destination expression is not an addressable place")
+  end
+  function Tr.ExprRef:parsed_loop_scan_place()
+    return P.ParsedLoopScanPlaceResolved(Tr.PlaceRef(Tr.PlaceSurface, self.ref))
+  end
+  function Tr.ExprIndex:parsed_loop_scan_place()
+    return P.ParsedLoopScanPlaceResolved(
+      Tr.PlaceIndex(Tr.PlaceSurface, self.base, self.index))
+  end
+  function Tr.ExprDeref:parsed_loop_scan_place()
+    return P.ParsedLoopScanPlaceResolved(
+      Tr.PlaceDeref(Tr.PlaceSurface, self.value))
+  end
+  function Tr.ExprDot:parsed_loop_scan_place()
+    return self.base:parsed_loop_scan_place():parsed_loop_scan_dot_place(self)
+  end
+  function P.ParsedLoopScanPlaceRejected:parsed_loop_scan_dot_place(_expr)
+    return self
+  end
+  function P.ParsedLoopScanPlaceResolved:parsed_loop_scan_dot_place(expr)
+    return P.ParsedLoopScanPlaceResolved(
+      Tr.PlaceDot(Tr.PlaceSurface, self.place, expr.name))
+  end
+  function P.ParsedLoopScanPlaceRejected:lower_parsed_loop_scan(_input)
+    return P.ParsedLoopLowerRejected(self.reason)
+  end
+  function P.ParsedLoopScanPlaceResolved:lower_parsed_loop_scan(input)
+    return lower_1d_scan(input, self.place)
   end
 
 
@@ -428,6 +493,96 @@ local function bind_context(T)
     local control_domain = domain:parsed_loop_control_domain(input, loop_label)
     return P.ParsedLoopLowered(Tr.StmtReturnValue(Tr.StmtSurface,
       Tr.ExprDomainControl(Tr.ExprSurface, region, control_domain)))
+  end
+
+  lower_1d_scan = function(scan_input, destination)
+    local input, domain, sink = scan_input.loop, scan_input.domain, scan_input.sink
+    if #domain.axes ~= 1 or #input.indexes ~= 1 then
+      return P.ParsedLoopLowerRejected(
+        "multi-axis parsed scan projection is pending")
+    end
+    local axis = domain.axes[1]
+    local start_literal = axis.start:parsed_loop_integer():parsed_loop_integer_value("loop start")
+    if start_literal ~= 0 or axis.step ~= 1 then
+      return P.ParsedLoopLowerRejected(
+        "general parsed scan traversal projection is pending")
+    end
+
+    local tag = input.loop_id
+    local flat_name = "__lln_flat_" .. tag
+    local start_name = "__lln_axis_start_" .. tag
+    local stop_name = "__lln_axis_stop_" .. tag
+    local trip_name = "__lln_axis_trip_" .. tag
+    local step_name = "__lln_scan_step_" .. tag
+    local next_name = "__lln_scan_next_" .. tag
+    local index_name = input.indexes[1]
+    local entry_label = Tr.BlockLabel("lln_entry_" .. tag)
+    local loop_label = Tr.BlockLabel("lln_loop_" .. tag)
+    local body_label = Tr.BlockLabel("lln_body_" .. tag)
+    local done_label = Tr.BlockLabel("lln_done_" .. tag)
+    local flat_ref, accumulator_ref = ref(flat_name), ref(sink.name)
+    local start_init, stop_init = cast_idx(axis.start), cast_idx(axis.stop)
+    local trip_init = bin(C.BinSub, stop_init, start_init)
+
+    local loop_params = {
+      Tr.BlockParam(flat_name, idx_ty),
+      Tr.BlockParam(start_name, idx_ty),
+      Tr.BlockParam(stop_name, idx_ty),
+      Tr.BlockParam(trip_name, idx_ty),
+      Tr.BlockParam(sink.name, sink.ty),
+    }
+    local function jump_args(flat, accumulator)
+      return {
+        Tr.JumpArg(flat_name, flat),
+        Tr.JumpArg(start_name, ref(start_name)),
+        Tr.JumpArg(stop_name, ref(stop_name)),
+        Tr.JumpArg(trip_name, ref(trip_name)),
+        Tr.JumpArg(sink.name, accumulator),
+      }
+    end
+    local entry_args = {
+      Tr.JumpArg(flat_name, cast_idx(lit(0))),
+      Tr.JumpArg(start_name, start_init),
+      Tr.JumpArg(stop_name, stop_init),
+      Tr.JumpArg(trip_name, trip_init),
+      Tr.JumpArg(sink.name, Tr.ExprCast(
+        Tr.ExprSurface, C.SurfaceCast, sink.ty, sink.init)),
+    }
+
+    local rewrite = P.ParsedLoopIndexRewriteInput(index_name, flat_ref)
+    local body = {}
+    for i = 1, #input.body do
+      body[i] = input.body[i]:parsed_loop_rewrite_index(rewrite)
+    end
+    body[#body + 1] = Tr.StmtLet(Tr.StmtSurface,
+      local_binding(tag, step_name, sink.ty),
+      sink.step:parsed_loop_rewrite_index(rewrite))
+    local next_accumulator = sink.reducer:parsed_loop_reducer_expr(
+      P.ParsedLoopReducerExprInput(accumulator_ref, ref(step_name)))
+    body[#body + 1] = Tr.StmtLet(Tr.StmtSurface,
+      local_binding(tag, next_name, sink.ty), next_accumulator)
+    body[#body + 1] = Tr.StmtSet(Tr.StmtSurface,
+      destination:parsed_loop_rewrite_index(rewrite), ref(next_name))
+    body[#body + 1] = Tr.StmtJump(Tr.StmtSurface, loop_label,
+      jump_args(bin(C.BinAdd, flat_ref, cast_idx(lit(1))), ref(next_name)))
+
+    local condition = Tr.ExprCompare(
+      Tr.ExprSurface, C.CmpLt, flat_ref, ref(stop_name))
+    local region = Tr.ControlStmtRegion(tag,
+      Tr.EntryControlBlock(entry_label, {}, {
+        Tr.StmtJump(Tr.StmtSurface, loop_label, entry_args),
+      }), {
+        Tr.ControlBlock(loop_label, loop_params, {
+          Tr.StmtBranchJump(Tr.StmtSurface, condition,
+            body_label, jump_args(flat_ref, accumulator_ref),
+            done_label, {}),
+        }),
+        Tr.ControlBlock(body_label, loop_params, body),
+        Tr.ControlBlock(done_label, {}, { Tr.StmtYieldVoid(Tr.StmtSurface) }),
+      })
+    local control_domain = domain:parsed_loop_control_domain(input, loop_label)
+    return P.ParsedLoopLowered(
+      Tr.StmtDomainControl(Tr.StmtSurface, region, control_domain))
   end
 
   function P.ParsedResolvedLoopRangeND:lower_parsed_loop(input)

@@ -155,6 +155,16 @@ return schema. LalinParse {
     domain [LalinParse.ParsedResolvedLoopDomain],
     sink [LalinParse.ParsedResolvedLoopFoldSink],
   },
+  product. ParsedLoopScanLowerInput {
+    interned,
+    loop [LalinParse.ParsedLoopLowerInput],
+    domain [LalinParse.ParsedResolvedLoopDomain],
+    sink [LalinParse.ParsedResolvedLoopScanSink],
+  },
+  sum. ParsedLoopScanPlaceResult {
+    ParsedLoopScanPlaceResolved { variant_unique, place [LalinTree.Place], },
+    ParsedLoopScanPlaceRejected { variant_unique, reason [str], },
+  },
   product. ParsedLoopReducerExprInput {
     interned,
     accumulator [LalinTree.Expr],
