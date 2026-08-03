@@ -409,7 +409,10 @@ function C.CBackendNamed:c_emit_type()
   return sanitize(self.id.module_name .. "_" .. self.id.spelling)
 end
 function C.CBackendArray:c_emit_type()
-  return self.elem:c_emit_type() .. "[" .. tostring(self.count) .. "]"
+  return self.elem:c_emit_type()
+end
+function C.CBackendArray:c_emit_decl(name)
+  return self.elem:c_emit_type() .. " " .. (name or "") .. "[" .. tostring(self.count) .. "]"
 end
 function C.CBackendSliceDescriptor:c_emit_type() return "lalin_slice_t" end
 function C.CBackendByteSpanDescriptor:c_emit_type() return "lalin_bytespan_t" end
@@ -653,15 +656,26 @@ function C.CBackendStore:c_emit_stmt(out, indent)
   out[#out + 1] = indent .. "  memcpy(" .. addr .. ", &" .. val .. ", sizeof(" .. val .. "));"
 end
 
+function C.CBackendType:c_emit_is_array() return false end
+function C.CBackendArray:c_emit_is_array() return true end
+
 function C.CBackendPlaceLoad:c_emit_stmt(out, indent)
   local place_str = self.place:c_emit_place()
-  out[#out + 1] = indent .. "  " .. self.dst.text .. " = " .. place_str .. ";"
+  if self.place.ty:c_emit_is_array() then
+    out[#out + 1] = indent .. "  memcpy(" .. self.dst.text .. ", " .. place_str .. ", sizeof(" .. self.dst.text .. "));"
+  else
+    out[#out + 1] = indent .. "  " .. self.dst.text .. " = " .. place_str .. ";"
+  end
 end
 
 function C.CBackendPlaceStore:c_emit_stmt(out, indent)
   local place_str = self.place:c_emit_place()
   local val_str = self.value:c_emit_atom()
-  out[#out + 1] = indent .. "  " .. place_str .. " = " .. val_str .. ";"
+  if self.place.ty:c_emit_is_array() then
+    out[#out + 1] = indent .. "  memcpy(" .. place_str .. ", " .. val_str .. ", sizeof(" .. place_str .. "));"
+  else
+    out[#out + 1] = indent .. "  " .. place_str .. " = " .. val_str .. ";"
+  end
 end
 
 function C.CBackendZeroInit:c_emit_stmt(out, indent)

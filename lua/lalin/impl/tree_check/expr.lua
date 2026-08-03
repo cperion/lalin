@@ -265,12 +265,33 @@ function Tr.PlaceIndex:typecheck_tree_place(input)
     Tr.PlaceIndex(Tr.PlaceTyped(base.elem), base.base, index.expr), base.elem, issues)
 end
 
+-- PlaceDot: the named-ref leaves own the layout search, the layout
+-- lookup leaves own the field decision, and the field lookup leaves own
+-- the lowered PlaceField result (no nil protocol). Mirrors ExprDot.
+function Tr.PlaceDot:typecheck_tree_place(input)
+  local base = self.base:typecheck_tree_place(LCheck.TypePlaceInput(input.scope))
+  local field_lookup = tree_check_field_layout_for(input.scope, base.ty, self.name)
+  return field_lookup:tree_check_dot_field_place(input, base, self)
+end
+function Sem.FieldLayoutFound:tree_check_dot_field_place(input, base, dot)
+  local field = self.layout
+  -- Lower to a resolved field ref (offset + storage) so the code phase
+  -- can emit field access directly; FieldByName would require a
+  -- separate sem_layout_resolve pass the v2 pipeline does not run.
+  local ref = Sem.FieldByOffset(field.field_name, field.offset, field.ty, field.ty:sem_layout_storage())
+  return LCheck.TypePlaceResult(Tr.PlaceField(Tr.PlaceTyped(field.ty), base.place, ref), field.ty, base.issues)
+end
+function Sem.FieldLayoutMissing:tree_check_dot_field_place(input, base, dot)
+  return LCheck.TypePlaceResult(dot, Ty.TScalar(C.ScalarVoid), base.issues)
+end
+
 -- ============================================================
 -- Remaining expr leaves (real implementations)
 -- ============================================================
 
 function Tr.ExprAgg:typecheck_tree_expr(input)
-  -- Struct aggregate init: canoncalize type, typecheck each field value
+  -- Struct aggregate init: canonicalize type, resolve each field's offset
+  -- from the layout, typecheck each field value.
   local ty = self.ty  -- canonicalized by caller if needed
   local fields = {}
   local issues = {}
@@ -278,13 +299,20 @@ function Tr.ExprAgg:typecheck_tree_expr(input)
     local fi = self.fields[i]
     local vr = fi.value:typecheck_tree_expr(input)
     if vr.issues then for _, iss in ipairs(vr.issues) do issues[#issues+1]=iss end end
-    if vr.ty and vr.expr then
-      fields[#fields+1] = Tr.FieldInit(fi.name, vr.expr, fi.offset)
-    else
-      fields[#fields+1] = Tr.FieldInit(fi.name, fi.value, fi.offset)
-    end
+    -- The field layout leaves own the offset decision; the aggregate init
+    -- carries the resolved offset so the code phase can emit field stores.
+    local offset_lookup = tree_check_field_layout_for(input.scope, ty, fi.name)
+    local init = offset_lookup:tree_check_agg_field_init(input, ty, fi, vr)
+    fields[#fields+1] = init.init
+    for j = 1, #init.issues do issues[#issues+1] = init.issues[j] end
   end
   return LCheck.TypeExprResult(Tr.ExprAgg(Tr.ExprTyped(ty), ty, fields), ty, issues)
+end
+function Sem.FieldLayoutFound:tree_check_agg_field_init(input, agg_ty, fi, vr)
+  return LCheck.TypeAggFieldInit(Tr.FieldInit(fi.name, vr.expr, self.layout.offset), {})
+end
+function Sem.FieldLayoutMissing:tree_check_agg_field_init(input, agg_ty, fi, vr)
+  return LCheck.TypeAggFieldInit(Tr.FieldInit(fi.name, vr.expr, fi.offset), { LCheck.TypeIssueExpected("aggregate field", agg_ty, vr.ty) })
 end
 
 -- ExprAgg:typecheck_tree_expr_expected: delegate to type if aggregate
@@ -323,7 +351,7 @@ function Tr.ExprArray:typecheck_tree_expr_expected(input)
   if input.expected and input.expected:tree_check_is_array_type() then
     local counts_match = true
     if input.expected.count and input.expected.count:tree_check_is_const() then
-      local expected_n = input.expected.count.value
+      local expected_n = input.expected.count:tree_check_const_value()
       if expected_n ~= #(self.elems or {}) then
         local issues = {LCheck.TypeIssueExpected("array length", input.expected, Ty.TArray(Ty.ArrayLenConst(#(self.elems or 0)), input.expected.elem))}
         return LCheck.TypeExprResult(self, input.expected, issues)

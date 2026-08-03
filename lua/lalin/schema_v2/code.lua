@@ -100,6 +100,12 @@ return schema. LalinCode {
     field. id [LalinCode.CodeTypeId],
     field. name [str],
     field. ty [LalinCode.CodeType],
+    -- Resolved layout facts: field offsets/types plus total size/align.
+    -- The tree phase fills these from the layout env so the C backend can
+    -- emit concrete struct declarations (no opaque decls for structs).
+    fields [many [LalinSem.FieldLayout]],
+    size [number],
+    align [number],
     origin [LalinCode.CodeOrigin],
   },
 

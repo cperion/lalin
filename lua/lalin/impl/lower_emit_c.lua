@@ -5,6 +5,49 @@ local Lower = require("lalin.schema_v2.lower")
 local Code = require("lalin.schema_v2.code")
 local C = require("lalin.schema_v2.c")
 local Core = require("lalin.schema_v2.core")
+local Ty = require("lalin.schema_v2.type")
+
+-- Source Ty.Type → CBackendType: deterministic mapping used by type-decl
+-- field emission (CodeTypeDecl carries Sem.FieldLayout with source types).
+function Ty.Type:code_to_c_backend_type()
+  error("lower_emit_c: unsupported source type for C backend: " .. tostring(self), 3)
+end
+function Ty.TScalar:code_to_c_backend_type()
+  local scalar = self.scalar
+  if scalar == Core.ScalarBool then return C.CBackendBool8 end
+  if scalar == Core.ScalarRawPtr then return C.CBackendDataPtr(nil) end
+  if scalar == Core.ScalarIndex then return C.CBackendIndex end
+  return C.CBackendScalar(scalar)
+end
+function Ty.TPtr:code_to_c_backend_type()
+  return C.CBackendDataPtr(self.elem:code_to_c_backend_type())
+end
+function Ty.TArray:code_to_c_backend_type()
+  return C.CBackendArray(self.elem:code_to_c_backend_type(), self.count:code_to_c_array_len_count())
+end
+function Ty.ArrayLen:code_to_c_array_len_count() error("lower_emit_c: dynamic array length reached C backend type conversion", 3) end
+function Ty.ArrayLenConst:code_to_c_array_len_count() return self.count end
+function Ty.TNamed:code_to_c_backend_type()
+  return C.CBackendNamed(C.CTypeId(self.ref:code_to_c_module_name(), self.ref:code_to_c_type_name()))
+end
+function Ty.TypeRef:code_to_c_module_name() error("lower_emit_c: TypeRef has no module name projection", 3) end
+function Ty.TypeRefGlobal:code_to_c_module_name() return self.module_name end
+function Ty.TypeRefPath:code_to_c_module_name() error("lower_emit_c: path TypeRef must be canonicalized before C emission", 3) end
+function Ty.TypeRefLocal:code_to_c_module_name() error("lower_emit_c: local TypeRef has no module name", 3) end
+function Ty.TypeRef:code_to_c_type_name() error("lower_emit_c: TypeRef has no type name projection", 3) end
+function Ty.TypeRefGlobal:code_to_c_type_name() return self.type_name end
+function Ty.TypeRefPath:code_to_c_type_name()
+  local parts = self.path.parts
+  if #parts == 0 then error("lower_emit_c: empty TypeRefPath for C backend type name", 3) end
+  return parts[#parts].text
+end
+function Ty.TypeRefLocal:code_to_c_type_name() error("lower_emit_c: local TypeRef has no type name", 3) end
+function Ty.TSlice:code_to_c_backend_type()
+  return C.CBackendSliceDescriptor(self.elem:code_to_c_backend_type())
+end
+function Ty.TView:code_to_c_backend_type()
+  return C.CBackendViewDescriptor(self.elem:code_to_c_backend_type())
+end
 
 require("lalin.impl.lower_emit_c.code_to_c")
 require("lalin.impl.lower_emit_c.materialize")
@@ -178,7 +221,18 @@ function Code.CodeDataReloc:lower_code_data_init_to_c() return C.CBackendDataRel
 
 function Code.CodeType:lower_c_decl_id(fallback_name) return C.CTypeId(fallback_name, fallback_name) end
 function Code.CodeTyNamed:lower_c_decl_id(fallback_name) return C.CTypeId(self.module_name, self.type_name) end
-function Code.CodeTypeDecl:lower_code_type_decl_to_c() return C.CBackendOpaqueDecl(self.ty:lower_c_decl_id(self.name)) end
+function Code.CodeTypeDecl:lower_code_type_decl_to_c()
+  local fields = self.fields
+  if #fields == 0 then return C.CBackendOpaqueDecl(self.ty:lower_c_decl_id(self.name)) end
+  local cfields = {}
+  for i = 1, #fields do
+    local f = fields[i]
+    -- Field names follow the emitted-C shape contract (__offset_N), the
+    -- same naming CodePlaceField / aggregate-init emission uses.
+    cfields[i] = C.CBackendField(C.CBackendName("__offset_" .. tostring(f.offset)), f.ty:code_to_c_backend_type(), f.offset, nil, nil)
+  end
+  return C.CBackendStructDecl(self.ty:lower_c_decl_id(self.name), cfields, self.size, self.align)
+end
 
 local function lower_inits(inits)
   local result = {}

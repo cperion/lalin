@@ -34,13 +34,15 @@ local function is_error_result(er)
 end
 
 function Tr.StmtLet:typecheck_tree_stmt(input)
-  local er = self.init:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+  -- Typecheck the init against the declared binding type so aggregate and
+  -- array literals inherit element types (e.g. `let xs [array [i32] [3]] = { ... }`).
+  local er = self.init:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, self.binding.ty))
   if is_error_result(er) then return LCheck.TypeStmtResult(input, {self}, er.issues) end
   local scope = input.scope:typecheck_tree_add_value(self.binding.name, er.ty, self.binding)
   return LCheck.TypeStmtResult(LCheck.TypeStmtInput(scope, input.return_ty, input.yield), {Tr.StmtLet(Tr.StmtFlow(Sem.FlowFallsThrough), self.binding, er.expr)}, {})
 end
 function Tr.StmtVar:typecheck_tree_stmt(input)
-  local er = self.init:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+  local er = self.init:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, self.binding.ty))
   if is_error_result(er) then return LCheck.TypeStmtResult(input, {self}, er.issues) end
   local scope = input.scope:typecheck_tree_add_value(self.binding.name, er.ty, self.binding)
   return LCheck.TypeStmtResult(LCheck.TypeStmtInput(scope, input.return_ty, input.yield), {Tr.StmtVar(Tr.StmtFlow(Sem.FlowFallsThrough), self.binding, er.expr)}, {})

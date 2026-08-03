@@ -131,6 +131,13 @@ return schema. LalinCheck {
       issues [many [LalinCheck.TypeIssue]],
     },
   },
+  -- Aggregate field init: the resolved FieldInit plus any issues raised
+  -- during field layout/offset resolution.
+  product. TypeAggFieldInit {
+    interned,
+    init [LalinTree.FieldInit],
+    issues [many [LalinCheck.TypeIssue]],
+  },
   sum. TypeStmtResult {
     TypeStmtResult {
       variant_unique,

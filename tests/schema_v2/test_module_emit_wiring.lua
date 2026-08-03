@@ -84,6 +84,7 @@ local type_decl = Code.CodeTypeDecl(
   Code.CodeTypeId("MyType"),
   "MyType",
   Code.CodeTyNamed("wired_module", "MyType", Type.TScalar(Core.ScalarI32)),
+  {}, 0, 1,
   Code.CodeOriginSource("type")
 )
 

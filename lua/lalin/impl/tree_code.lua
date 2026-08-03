@@ -2526,6 +2526,45 @@ function Tree.Func:tree_code_contract_facts()
   return Tree.ContractFactSet(self:tree_check_contract_facts(self.contracts))
 end
 
+-- Type declarations: struct decls lower to CodeTypeDecl entries carrying
+-- their resolved layout facts so the C backend can emit concrete struct
+-- declarations instead of opaque decls.
+function Tree.Item:tree_code_type_decls(module_facts, mod_name) return {} end
+function Tree.ItemType:tree_code_type_decls(module_facts, mod_name)
+  return self.t:tree_code_type_decl_to_code(module_facts, mod_name)
+end
+function Tree.TypeDecl:tree_code_type_decl_to_code(module_facts, mod_name) return {} end
+function Tree.TypeDeclStruct:tree_code_type_decl_to_code(module_facts, mod_name)
+  local lookup = module_facts.layout_env:tree_code_type_layout_lookup(mod_name, self.name)
+  return lookup:tree_code_struct_type_decl(module_facts, self.name, mod_name)
+end
+function Sem.LayoutEnv:tree_code_type_layout_lookup(mod_name, type_name)
+  for i = 1, #self.layouts do
+    local layout = self.layouts[i]
+    if layout:tree_code_matches_type_ref(mod_name, type_name) then return Sem.TypeLayoutFound(layout) end
+  end
+  return Sem.TypeLayoutMissing
+end
+function Sem.TypeLayout:tree_code_matches_type_ref(mod_name, type_name) return false end
+function Sem.LayoutNamed:tree_code_matches_type_ref(mod_name, type_name)
+  return self.module_name == mod_name and self.type_name == type_name
+end
+function Sem.TypeLayoutFound:tree_code_struct_type_decl(module_facts, type_name, mod_name)
+  local layout = self.layout
+  local decl = Code.CodeTypeDecl(
+    Code.CodeTypeId(type_name),
+    type_name,
+    Code.CodeTyNamed(mod_name, type_name, Ty.TNamed(Ty.TypeRefGlobal(mod_name, type_name))),
+    clone_array(layout.fields),
+    layout.size,
+    layout.align,
+    origin_generated("type decl " .. tostring(type_name)))
+  return { decl }
+end
+function Sem.TypeLayoutMissing:tree_code_struct_type_decl(module_facts, type_name, mod_name)
+  return {}
+end
+
 function Tree.Module:lower_tree_module_result_to_code(opts)
   opts = opts or {}
   local mod_name = self:tree_code_module_name()
@@ -2537,9 +2576,14 @@ function Tree.Module:lower_tree_module_result_to_code(opts)
     local result = self.items[i]:lower_tree_item_to_code(input)
     input = TreeCode.TreeCodeItemLowerInput(input.module_facts, result.registration, result.emission, result.accumulation, mod_name)
   end
+  local types = {}
+  for i = 1, #(self.items or {}) do
+    local tds = self.items[i]:tree_code_type_decls(input.module_facts, mod_name)
+    for j = 1, #tds do types[#types + 1] = tds[j] end
+  end
   local data = clone_array(input.accumulation.data)
   for i = 1, #input.emission.generated_data do data[#data + 1] = input.emission.generated_data[i] end
-  local code_module = Code.CodeModule(Code.CodeModuleId("module_" .. sanitize(opts.module_id or self:tree_code_module_name())), input.registration.sigs.code_sig_order, {}, data, input.accumulation.globals, input.registration.registrations.extern_order, input.accumulation.funcs, origin_generated("tree_lower module"))
+  local code_module = Code.CodeModule(Code.CodeModuleId("module_" .. sanitize(opts.module_id or self:tree_code_module_name())), input.registration.sigs.code_sig_order, types, data, input.accumulation.globals, input.registration.registrations.extern_order, input.accumulation.funcs, origin_generated("tree_lower module"))
   local contract_state = TreeCode.TreeCodeContractState(input.registration.sigs, {})
   for i = 1, #(self.items or {}) do
     local result = self.items[i]:lower_tree_item_contracts_to_code(TreeCode.TreeCodeItemContractsInput(input.module_facts, input.registration.registrations, contract_state))

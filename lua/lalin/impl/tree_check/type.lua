@@ -321,7 +321,7 @@ end
 function Ty.ArrayLen:tree_check_is_const() return false end
 function Ty.ArrayLenConst:tree_check_is_const() return true end
 function Ty.ArrayLen:tree_check_const_value() return nil end
-function Ty.ArrayLenConst:tree_check_const_value() return self.value end
+function Ty.ArrayLenConst:tree_check_const_value() return self.count end
 
 ----------------------------------------------------------------------
 -- Cast-surface validation helpers (for tree_surface.lua)
