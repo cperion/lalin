@@ -1037,7 +1037,7 @@ function C.CBackendHelperTypedMemset:c_helper_signature()
   return C.CBackendHelperSignature({ C.CBackendDataPtr(nil), C.CBackendScalar(Core.ScalarI32) }, C.CBackendVoid)
 end
 function C.CBackendHelperMemcmp:c_helper_signature()
-  return C.CBackendHelperSignature({ C.CBackendDataPtr(nil), C.CBackendDataPtr(nil), C.CBackendIndex }, C.CBackendScalar(Core.ScalarI32))
+  return C.CBackendHelperSignature({ C.CBackendQualifiedDataPtr(nil, true, false, false), C.CBackendQualifiedDataPtr(nil, true, false, false), C.CBackendIndex }, C.CBackendScalar(Core.ScalarI32))
 end
 function C.CBackendHelperLayoutAssert:c_helper_signature()
   return C.CBackendHelperSignature({}, C.CBackendVoid)
