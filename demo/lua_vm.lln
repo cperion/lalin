@@ -98,33 +98,33 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
     let instr [LuaInstr] = dispatch_proto.code[current_pc]
     -- The VM machine advances through region edges, so bytecode progression
     -- stays in one native frame. Sealed calls remain for nested object behavior.
-    if instr.op == as [u8]([LuaOP.ADD]) then
+    if instr.op == [LuaOP.ADD] then
       jump add(a = instr.a, b = instr.b, c = instr.c, next_pc = current_pc + 1)
-    elseif instr.op == as [u8]([LuaOP.RETURN]) then
+    elseif instr.op == [LuaOP.RETURN] then
       jump ret(a = instr.a)
-    elseif instr.op == as [u8]([LuaOP.JMPZ]) then
+    elseif instr.op == [LuaOP.JMPZ] then
       jump jmpz(a = instr.a, sbx = instr.sbx, next_pc = current_pc + 1)
-    elseif instr.op == as [u8]([LuaOP.JMP]) then
+    elseif instr.op == [LuaOP.JMP] then
       jump jmp(sbx = instr.sbx, next_pc = current_pc + 1)
-    elseif instr.op == as [u8]([LuaOP.LT]) then
+    elseif instr.op == [LuaOP.LT] then
       jump lt(a = instr.a, b = instr.b, c = instr.c, next_pc = current_pc + 1)
-    elseif instr.op == as [u8]([LuaOP.LOADK]) then
+    elseif instr.op == [LuaOP.LOADK] then
       jump loadk(a = instr.a, bx = instr.bx, next_pc = current_pc + 1)
-    elseif instr.op == as [u8]([LuaOP.MOVE]) then
+    elseif instr.op == [LuaOP.MOVE] then
       jump move(a = instr.a, b = instr.b, next_pc = current_pc + 1)
-    elseif instr.op == as [u8]([LuaOP.LOADS]) then
+    elseif instr.op == [LuaOP.LOADS] then
       jump loads(a = instr.a, bx = instr.bx, next_pc = current_pc + 1)
-    elseif instr.op == as [u8]([LuaOP.EQ]) then
+    elseif instr.op == [LuaOP.EQ] then
       jump eq(a = instr.a, b = instr.b, c = instr.c, next_pc = current_pc + 1)
-    elseif instr.op == as [u8]([LuaOP.NEWTABLE]) then
+    elseif instr.op == [LuaOP.NEWTABLE] then
       jump newtable(a = instr.a, bx = instr.bx, next_pc = current_pc + 1)
-    elseif instr.op == as [u8]([LuaOP.SETI]) then
+    elseif instr.op == [LuaOP.SETI] then
       jump seti(table_reg = instr.a, index_reg = instr.b, value_reg = instr.c, next_pc = current_pc + 1)
-    elseif instr.op == as [u8]([LuaOP.GETI]) then
+    elseif instr.op == [LuaOP.GETI] then
       jump geti(a = instr.a, table_reg = instr.b, index_reg = instr.c, next_pc = current_pc + 1)
-    elseif instr.op == as [u8]([LuaOP.SETS]) then
+    elseif instr.op == [LuaOP.SETS] then
       jump sets(table_reg = instr.a, key_reg = instr.b, value_reg = instr.c, next_pc = current_pc + 1)
-    elseif instr.op == as [u8]([LuaOP.GETS]) then
+    elseif instr.op == [LuaOP.GETS] then
       jump gets(a = instr.a, table_reg = instr.b, key_reg = instr.c, next_pc = current_pc + 1)
     else
       jump bad(op = instr.op, pc = current_pc)
@@ -146,12 +146,12 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
     -- String values carry an index into proto.strings for M2. Later object/GC
     -- work can replace this payload with pointer/compressed-pointer bits while
     -- keeping the one-word LuaValue register shape.
-    frame.regs[a] = LuaValue { bits = (as [u64](bx) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.STRING]) }
+    frame.regs[a] = LuaValue { bits = (as [u64](bx) << [LuaTag.SHIFT]) | [LuaTag.STRING] }
     jump dispatch(current_pc = next_pc)
   end
 
   block newtable(a [u8], bx [u32], next_pc [index])
-    frame.regs[a] = LuaValue { bits = (as [u64](bx) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.TABLE]) }
+    frame.regs[a] = LuaValue { bits = (as [u64](bx) << [LuaTag.SHIFT]) | [LuaTag.TABLE] }
     jump dispatch(current_pc = next_pc)
   end
 
@@ -163,20 +163,20 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
     let seti_table_value [LuaValue] = frame.regs[table_reg]
     let seti_index_value [LuaValue] = frame.regs[index_reg]
     let seti_value [LuaValue] = frame.regs[value_reg]
-    let seti_table_tag [u64] = seti_table_value.bits & as [u64]([LuaTag.MASK])
-    let seti_index_tag [u64] = seti_index_value.bits & as [u64]([LuaTag.MASK])
-    if seti_table_tag ~= as [u64]([LuaTag.TABLE]) then
+    let seti_table_tag [u64] = seti_table_value.bits & [LuaTag.MASK]
+    let seti_index_tag [u64] = seti_index_value.bits & [LuaTag.MASK]
+    if seti_table_tag ~= [LuaTag.TABLE] then
       jump table_error(code = [LuaErr.EXPECT_TABLE], next_pc = next_pc)
     end
-    if seti_index_tag ~= as [u64]([LuaTag.INT]) then
+    if seti_index_tag ~= [LuaTag.INT] then
       jump table_error(code = [LuaErr.EXPECT_INT_INDEX], next_pc = next_pc)
     end
-    let seti_table_index [index] = as [index](seti_table_value.bits >> as [u64]([LuaTag.SHIFT]))
-    let seti_slot_one [u64] = seti_index_value.bits >> as [u64]([LuaTag.SHIFT])
-    if seti_slot_one == as [u64](0) then
+    let seti_table_index [index] = as [index](seti_table_value.bits >> [LuaTag.SHIFT])
+    let seti_slot_one [u64] = seti_index_value.bits >> [LuaTag.SHIFT]
+    if seti_slot_one == 0 then
       jump table_error(code = [LuaErr.INDEX_OOB], next_pc = next_pc)
     end
-    let seti_slot [index] = as [index](seti_slot_one - as [u64](1))
+    let seti_slot [index] = as [index](seti_slot_one - 1)
     let seti_table [ptr [LuaTable]] = &self.tables[seti_table_index]
     if seti_slot < seti_table.array_len then
       seti_table.array[seti_slot] = seti_value
@@ -189,20 +189,20 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
   block geti(a [u8], table_reg [u8], index_reg [u8], next_pc [index])
     let geti_table_value [LuaValue] = frame.regs[table_reg]
     let geti_index_value [LuaValue] = frame.regs[index_reg]
-    let geti_table_tag [u64] = geti_table_value.bits & as [u64]([LuaTag.MASK])
-    let geti_index_tag [u64] = geti_index_value.bits & as [u64]([LuaTag.MASK])
-    if geti_table_tag ~= as [u64]([LuaTag.TABLE]) then
+    let geti_table_tag [u64] = geti_table_value.bits & [LuaTag.MASK]
+    let geti_index_tag [u64] = geti_index_value.bits & [LuaTag.MASK]
+    if geti_table_tag ~= [LuaTag.TABLE] then
       jump table_error(code = [LuaErr.EXPECT_TABLE], next_pc = next_pc)
     end
-    if geti_index_tag ~= as [u64]([LuaTag.INT]) then
+    if geti_index_tag ~= [LuaTag.INT] then
       jump table_error(code = [LuaErr.EXPECT_INT_INDEX], next_pc = next_pc)
     end
-    let geti_table_index [index] = as [index](geti_table_value.bits >> as [u64]([LuaTag.SHIFT]))
-    let geti_slot_one [u64] = geti_index_value.bits >> as [u64]([LuaTag.SHIFT])
-    if geti_slot_one == as [u64](0) then
+    let geti_table_index [index] = as [index](geti_table_value.bits >> [LuaTag.SHIFT])
+    let geti_slot_one [u64] = geti_index_value.bits >> [LuaTag.SHIFT]
+    if geti_slot_one == 0 then
       jump table_error(code = [LuaErr.INDEX_OOB], next_pc = next_pc)
     end
-    let geti_slot [index] = as [index](geti_slot_one - as [u64](1))
+    let geti_slot [index] = as [index](geti_slot_one - 1)
     let geti_table [ptr [LuaTable]] = &self.tables[geti_table_index]
     if geti_slot < geti_table.array_len then
       frame.regs[a] = geti_table.array[geti_slot]
@@ -216,16 +216,16 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
     let sets_table_value [LuaValue] = frame.regs[table_reg]
     let sets_key [LuaValue] = frame.regs[key_reg]
     let sets_value [LuaValue] = frame.regs[value_reg]
-    let sets_table_tag [u64] = sets_table_value.bits & as [u64]([LuaTag.MASK])
-    let sets_key_tag [u64] = sets_key.bits & as [u64]([LuaTag.MASK])
-    if sets_table_tag ~= as [u64]([LuaTag.TABLE]) then
+    let sets_table_tag [u64] = sets_table_value.bits & [LuaTag.MASK]
+    let sets_key_tag [u64] = sets_key.bits & [LuaTag.MASK]
+    if sets_table_tag ~= [LuaTag.TABLE] then
       jump table_error(code = [LuaErr.EXPECT_TABLE], next_pc = next_pc)
     end
-    if sets_key_tag ~= as [u64]([LuaTag.STRING]) then
+    if sets_key_tag ~= [LuaTag.STRING] then
       jump table_error(code = [LuaErr.EXPECT_STRING_KEY], next_pc = next_pc)
     end
-    let sets_table_index [index] = as [index](sets_table_value.bits >> as [u64]([LuaTag.SHIFT]))
-    let sets_key_index [index] = as [index](sets_key.bits >> as [u64]([LuaTag.SHIFT]))
+    let sets_table_index [index] = as [index](sets_table_value.bits >> [LuaTag.SHIFT])
+    let sets_key_index [index] = as [index](sets_key.bits >> [LuaTag.SHIFT])
     let sets_proto [ptr [LuaProto]] = frame.proto
     let sets_hash [u64] = sets_proto.strings[sets_key_index].hash
     let sets_table [ptr [LuaTable]] = &self.tables[sets_table_index]
@@ -237,7 +237,7 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
       jump table_error(code = [LuaErr.HASH_FULL], next_pc = next_pc)
     end
     let sets_entry [ptr [LuaHashEntry]] = &table.hash[slot]
-    if sets_entry.occupied == as [u8](0) then
+    if sets_entry.occupied == 0 then
       sets_entry.occupied = as [u8](1)
       sets_entry.hash = hash
       sets_entry.key = key
@@ -250,8 +250,8 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
         jump sets_store(entry = sets_entry, value = value, next_pc = next_pc)
       end
       let sets_proto [ptr [LuaProto]] = frame.proto
-      let sets_entry_key_index [index] = as [index](sets_entry_key.bits >> as [u64]([LuaTag.SHIFT]))
-      let sets_key_index [index] = as [index](key.bits >> as [u64]([LuaTag.SHIFT]))
+      let sets_entry_key_index [index] = as [index](sets_entry_key.bits >> [LuaTag.SHIFT])
+      let sets_key_index [index] = as [index](key.bits >> [LuaTag.SHIFT])
       call LuaString.eq(&sets_proto.strings[sets_entry_key_index], &sets_proto.strings[sets_key_index];
         yes = sets_store(entry = sets_entry, value = value, next_pc = next_pc),
         no = sets_next(table, key, hash, value, slot, next_pc)
@@ -273,16 +273,16 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
   block gets(a [u8], table_reg [u8], key_reg [u8], next_pc [index])
     let gets_table_value [LuaValue] = frame.regs[table_reg]
     let gets_key [LuaValue] = frame.regs[key_reg]
-    let gets_table_tag [u64] = gets_table_value.bits & as [u64]([LuaTag.MASK])
-    let gets_key_tag [u64] = gets_key.bits & as [u64]([LuaTag.MASK])
-    if gets_table_tag ~= as [u64]([LuaTag.TABLE]) then
+    let gets_table_tag [u64] = gets_table_value.bits & [LuaTag.MASK]
+    let gets_key_tag [u64] = gets_key.bits & [LuaTag.MASK]
+    if gets_table_tag ~= [LuaTag.TABLE] then
       jump table_error(code = [LuaErr.EXPECT_TABLE], next_pc = next_pc)
     end
-    if gets_key_tag ~= as [u64]([LuaTag.STRING]) then
+    if gets_key_tag ~= [LuaTag.STRING] then
       jump table_error(code = [LuaErr.EXPECT_STRING_KEY], next_pc = next_pc)
     end
-    let gets_table_index [index] = as [index](gets_table_value.bits >> as [u64]([LuaTag.SHIFT]))
-    let gets_key_index [index] = as [index](gets_key.bits >> as [u64]([LuaTag.SHIFT]))
+    let gets_table_index [index] = as [index](gets_table_value.bits >> [LuaTag.SHIFT])
+    let gets_key_index [index] = as [index](gets_key.bits >> [LuaTag.SHIFT])
     let gets_proto [ptr [LuaProto]] = frame.proto
     let gets_hash [u64] = gets_proto.strings[gets_key_index].hash
     let gets_table [ptr [LuaTable]] = &self.tables[gets_table_index]
@@ -294,7 +294,7 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
       jump gets_missing(a, next_pc)
     end
     let gets_entry [ptr [LuaHashEntry]] = &table.hash[slot]
-    if gets_entry.occupied == as [u8](0) then
+    if gets_entry.occupied == 0 then
       jump gets_missing(a, next_pc)
     end
     if gets_entry.hash == hash then
@@ -303,8 +303,8 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
         jump gets_found(a = a, entry = gets_entry, next_pc = next_pc)
       end
       let gets_proto [ptr [LuaProto]] = frame.proto
-      let gets_entry_key_index [index] = as [index](gets_entry_key.bits >> as [u64]([LuaTag.SHIFT]))
-      let gets_key_index [index] = as [index](key.bits >> as [u64]([LuaTag.SHIFT]))
+      let gets_entry_key_index [index] = as [index](gets_entry_key.bits >> [LuaTag.SHIFT])
+      let gets_key_index [index] = as [index](key.bits >> [LuaTag.SHIFT])
       call LuaString.eq(&gets_proto.strings[gets_entry_key_index], &gets_proto.strings[gets_key_index];
         yes = gets_found(a = a, entry = gets_entry, next_pc = next_pc),
         no = gets_next(a, table, key, hash, slot, next_pc)
@@ -320,7 +320,7 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
   end
 
   block gets_missing(a [u8], next_pc [index])
-    frame.regs[a] = LuaValue { bits = as [u64]([LuaTag.NIL]) }
+    frame.regs[a] = LuaValue { bits = [LuaTag.NIL] }
     jump dispatch(current_pc = next_pc)
   end
 
@@ -334,12 +334,12 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
     if eq_lhs.bits == eq_rhs.bits then
       jump eq_true(a, next_pc)
     end
-    let eq_lhs_tag [u64] = eq_lhs.bits & as [u64]([LuaTag.MASK])
-    let eq_rhs_tag [u64] = eq_rhs.bits & as [u64]([LuaTag.MASK])
-    if eq_lhs_tag == as [u64]([LuaTag.STRING]) and eq_rhs_tag == as [u64]([LuaTag.STRING]) then
+    let eq_lhs_tag [u64] = eq_lhs.bits & [LuaTag.MASK]
+    let eq_rhs_tag [u64] = eq_rhs.bits & [LuaTag.MASK]
+    if eq_lhs_tag == [LuaTag.STRING] and eq_rhs_tag == [LuaTag.STRING] then
       let eq_proto [ptr [LuaProto]] = frame.proto
-      let eq_lhs_idx [index] = as [index](eq_lhs.bits >> as [u64]([LuaTag.SHIFT]))
-      let eq_rhs_idx [index] = as [index](eq_rhs.bits >> as [u64]([LuaTag.SHIFT]))
+      let eq_lhs_idx [index] = as [index](eq_lhs.bits >> [LuaTag.SHIFT])
+      let eq_rhs_idx [index] = as [index](eq_rhs.bits >> [LuaTag.SHIFT])
       call LuaString.eq(&eq_proto.strings[eq_lhs_idx], &eq_proto.strings[eq_rhs_idx];
         yes = eq_true(a, next_pc),
         no = eq_false(a, next_pc)
@@ -350,7 +350,7 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
   end
 
   block eq_true(a [u8], next_pc [index])
-    frame.regs[a] = LuaValue { bits = as [u64]([LuaTag.TRUE]) }
+    frame.regs[a] = LuaValue { bits = [LuaTag.TRUE] }
     jump dispatch(current_pc = next_pc)
   end
 
@@ -361,22 +361,22 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
   block add(a [u8], b [u8], c [u8], next_pc [index])
     let add_lhs [LuaValue] = frame.regs[b]
     let add_rhs [LuaValue] = frame.regs[c]
-    let add_lhs_i [i64] = as [i64](add_lhs.bits >> as [u64]([LuaTag.SHIFT]))
-    let add_rhs_i [i64] = as [i64](add_rhs.bits >> as [u64]([LuaTag.SHIFT]))
+    let add_lhs_i [i64] = as [i64](add_lhs.bits >> [LuaTag.SHIFT])
+    let add_rhs_i [i64] = as [i64](add_rhs.bits >> [LuaTag.SHIFT])
     let add_sum [i64] = add_lhs_i + add_rhs_i
-    frame.regs[a] = LuaValue { bits = (as [u64](add_sum) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) }
+    frame.regs[a] = LuaValue { bits = (as [u64](add_sum) << [LuaTag.SHIFT]) | [LuaTag.INT] }
     jump dispatch(current_pc = next_pc)
   end
 
   block lt(a [u8], b [u8], c [u8], next_pc [index])
     let lt_lhs [LuaValue] = frame.regs[b]
     let lt_rhs [LuaValue] = frame.regs[c]
-    let lt_lhs_i [i64] = as [i64](lt_lhs.bits >> as [u64]([LuaTag.SHIFT]))
-    let lt_rhs_i [i64] = as [i64](lt_rhs.bits >> as [u64]([LuaTag.SHIFT]))
+    let lt_lhs_i [i64] = as [i64](lt_lhs.bits >> [LuaTag.SHIFT])
+    let lt_rhs_i [i64] = as [i64](lt_rhs.bits >> [LuaTag.SHIFT])
     if lt_lhs_i < lt_rhs_i then
-      frame.regs[a] = LuaValue { bits = as [u64]([LuaTag.TRUE]) }
+      frame.regs[a] = LuaValue { bits = [LuaTag.TRUE] }
     else
-      frame.regs[a] = LuaValue { bits = as [u64]([LuaTag.FALSE]) }
+      frame.regs[a] = LuaValue { bits = [LuaTag.FALSE] }
     end
     jump dispatch(current_pc = next_pc)
   end
@@ -387,7 +387,7 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
 
   block jmpz(a [u8], sbx [i32], next_pc [index])
     let cond [LuaValue] = frame.regs[a]
-    if cond.bits == as [u64]([LuaTag.NIL]) or cond.bits == as [u64]([LuaTag.FALSE]) then
+    if cond.bits == [LuaTag.NIL] or cond.bits == [LuaTag.FALSE] then
       jump dispatch(current_pc = as [index](as [i32](next_pc) + sbx))
     else
       jump dispatch(current_pc = next_pc)
@@ -420,67 +420,67 @@ end
 fn main() [i32]
   entry start()
     var code [array [LuaInstr] [22]] = {
-    LuaInstr { op = as [u8]([LuaOP.LOADS]), a = 5, b = 0, c = 0, bx = 0, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.LOADS]), a = 6, b = 0, c = 0, bx = 1, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.EQ]),    a = 7, b = 5, c = 6, bx = 0, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.JMPZ]),  a = 7, b = 0, c = 0, bx = 0, sbx = 13 },
-    LuaInstr { op = as [u8]([LuaOP.NEWTABLE]), a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.LOADK]), a = 1, b = 0, c = 0, bx = 0, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.LOADK]), a = 2, b = 0, c = 0, bx = 1, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.SETI]),  a = 0, b = 1, c = 2, bx = 0, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.LOADK]), a = 3, b = 0, c = 0, bx = 2, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.SETI]),  a = 0, b = 3, c = 1, bx = 0, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.GETI]),  a = 4, b = 0, c = 1, bx = 0, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.GETI]),  a = 5, b = 0, c = 3, bx = 0, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.ADD]),   a = 6, b = 4, c = 5, bx = 0, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.LOADS]), a = 7, b = 0, c = 0, bx = 2, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.SETS]),  a = 0, b = 7, c = 6, bx = 0, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.GETS]),  a = 0, b = 0, c = 7, bx = 0, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.RETURN]), a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.LOADK]), a = 0, b = 0, c = 0, bx = 3, sbx = 0 },
-    LuaInstr { op = as [u8]([LuaOP.RETURN]), a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+    LuaInstr { op = [LuaOP.LOADS], a = 5, b = 0, c = 0, bx = 0, sbx = 0 },
+    LuaInstr { op = [LuaOP.LOADS], a = 6, b = 0, c = 0, bx = 1, sbx = 0 },
+    LuaInstr { op = [LuaOP.EQ],    a = 7, b = 5, c = 6, bx = 0, sbx = 0 },
+    LuaInstr { op = [LuaOP.JMPZ],  a = 7, b = 0, c = 0, bx = 0, sbx = 13 },
+    LuaInstr { op = [LuaOP.NEWTABLE], a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+    LuaInstr { op = [LuaOP.LOADK], a = 1, b = 0, c = 0, bx = 0, sbx = 0 },
+    LuaInstr { op = [LuaOP.LOADK], a = 2, b = 0, c = 0, bx = 1, sbx = 0 },
+    LuaInstr { op = [LuaOP.SETI],  a = 0, b = 1, c = 2, bx = 0, sbx = 0 },
+    LuaInstr { op = [LuaOP.LOADK], a = 3, b = 0, c = 0, bx = 2, sbx = 0 },
+    LuaInstr { op = [LuaOP.SETI],  a = 0, b = 3, c = 1, bx = 0, sbx = 0 },
+    LuaInstr { op = [LuaOP.GETI],  a = 4, b = 0, c = 1, bx = 0, sbx = 0 },
+    LuaInstr { op = [LuaOP.GETI],  a = 5, b = 0, c = 3, bx = 0, sbx = 0 },
+    LuaInstr { op = [LuaOP.ADD],   a = 6, b = 4, c = 5, bx = 0, sbx = 0 },
+    LuaInstr { op = [LuaOP.LOADS], a = 7, b = 0, c = 0, bx = 2, sbx = 0 },
+    LuaInstr { op = [LuaOP.SETS],  a = 0, b = 7, c = 6, bx = 0, sbx = 0 },
+    LuaInstr { op = [LuaOP.GETS],  a = 0, b = 0, c = 7, bx = 0, sbx = 0 },
+    LuaInstr { op = [LuaOP.RETURN], a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+    LuaInstr { op = [LuaOP.LOADK], a = 0, b = 0, c = 0, bx = 3, sbx = 0 },
+    LuaInstr { op = [LuaOP.RETURN], a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
     LuaInstr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
     LuaInstr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
     LuaInstr { op = 0, a = 0, b = 0, c = 0, bx = 0, sbx = 0 }
   }
-  var hello_bytes_a [array [u8] [5]] = { as [u8](104), as [u8](101), as [u8](108), as [u8](108), as [u8](111) }
-  var hello_bytes_b [array [u8] [5]] = { as [u8](104), as [u8](101), as [u8](108), as [u8](108), as [u8](111) }
-  var answer_bytes [array [u8] [6]] = { as [u8](97), as [u8](110), as [u8](115), as [u8](119), as [u8](101), as [u8](114) }
+  var hello_bytes_a [array [u8] [5]] = { 104, 101, 108, 108, 111 }
+  var hello_bytes_b [array [u8] [5]] = { 104, 101, 108, 108, 111 }
+  var answer_bytes [array [u8] [6]] = { 97, 110, 115, 119, 101, 114 }
   var strings [array [LuaString] [3]] = {
-    LuaString { hash = as [u64](210714636441), len = as [index](5), bytes = &hello_bytes_a[0] },
-    LuaString { hash = as [u64](210714636441), len = as [index](5), bytes = &hello_bytes_b[0] },
-    LuaString { hash = as [u64](6953313585153), len = as [index](6), bytes = &answer_bytes[0] }
+    LuaString { hash = 210714636441, len = 5, bytes = &hello_bytes_a[0] },
+    LuaString { hash = 210714636441, len = 5, bytes = &hello_bytes_b[0] },
+    LuaString { hash = 6953313585153, len = 6, bytes = &answer_bytes[0] }
   }
   var consts [array [LuaValue] [4]] = {
-    LuaValue { bits = (as [u64](1) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) },
-    LuaValue { bits = (as [u64](41) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) },
-    LuaValue { bits = (as [u64](2) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) },
-    LuaValue { bits = (as [u64](999) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) }
+    LuaValue { bits = (as [u64](1) << [LuaTag.SHIFT]) | [LuaTag.INT] },
+    LuaValue { bits = (as [u64](41) << [LuaTag.SHIFT]) | [LuaTag.INT] },
+    LuaValue { bits = (as [u64](2) << [LuaTag.SHIFT]) | [LuaTag.INT] },
+    LuaValue { bits = (as [u64](999) << [LuaTag.SHIFT]) | [LuaTag.INT] }
   }
   var regs [array [LuaValue] [8]] = {
-    LuaValue { bits = as [u64]([LuaTag.NIL]) },
-    LuaValue { bits = as [u64]([LuaTag.NIL]) },
-    LuaValue { bits = as [u64]([LuaTag.NIL]) },
-    LuaValue { bits = as [u64]([LuaTag.NIL]) },
-    LuaValue { bits = as [u64]([LuaTag.NIL]) },
-    LuaValue { bits = as [u64]([LuaTag.NIL]) },
-    LuaValue { bits = as [u64]([LuaTag.NIL]) },
-    LuaValue { bits = as [u64]([LuaTag.NIL]) }
+    LuaValue { bits = [LuaTag.NIL] },
+    LuaValue { bits = [LuaTag.NIL] },
+    LuaValue { bits = [LuaTag.NIL] },
+    LuaValue { bits = [LuaTag.NIL] },
+    LuaValue { bits = [LuaTag.NIL] },
+    LuaValue { bits = [LuaTag.NIL] },
+    LuaValue { bits = [LuaTag.NIL] },
+    LuaValue { bits = [LuaTag.NIL] }
   }
     var table0_array [array [LuaValue] [4]] = {
-      LuaValue { bits = as [u64]([LuaTag.NIL]) },
-      LuaValue { bits = as [u64]([LuaTag.NIL]) },
-      LuaValue { bits = as [u64]([LuaTag.NIL]) },
-      LuaValue { bits = as [u64]([LuaTag.NIL]) }
+      LuaValue { bits = [LuaTag.NIL] },
+      LuaValue { bits = [LuaTag.NIL] },
+      LuaValue { bits = [LuaTag.NIL] },
+      LuaValue { bits = [LuaTag.NIL] }
     }
     var table0_hash [array [LuaHashEntry] [4]] = {
-      LuaHashEntry { occupied = as [u8](0), hash = as [u64](0), key = LuaValue { bits = as [u64]([LuaTag.NIL]) }, value = LuaValue { bits = as [u64]([LuaTag.NIL]) } },
-      LuaHashEntry { occupied = as [u8](0), hash = as [u64](0), key = LuaValue { bits = as [u64]([LuaTag.NIL]) }, value = LuaValue { bits = as [u64]([LuaTag.NIL]) } },
-      LuaHashEntry { occupied = as [u8](0), hash = as [u64](0), key = LuaValue { bits = as [u64]([LuaTag.NIL]) }, value = LuaValue { bits = as [u64]([LuaTag.NIL]) } },
-      LuaHashEntry { occupied = as [u8](0), hash = as [u64](0), key = LuaValue { bits = as [u64]([LuaTag.NIL]) }, value = LuaValue { bits = as [u64]([LuaTag.NIL]) } }
+      LuaHashEntry { occupied = 0, hash = 0, key = LuaValue { bits = [LuaTag.NIL] }, value = LuaValue { bits = [LuaTag.NIL] } },
+      LuaHashEntry { occupied = 0, hash = 0, key = LuaValue { bits = [LuaTag.NIL] }, value = LuaValue { bits = [LuaTag.NIL] } },
+      LuaHashEntry { occupied = 0, hash = 0, key = LuaValue { bits = [LuaTag.NIL] }, value = LuaValue { bits = [LuaTag.NIL] } },
+      LuaHashEntry { occupied = 0, hash = 0, key = LuaValue { bits = [LuaTag.NIL] }, value = LuaValue { bits = [LuaTag.NIL] } }
     }
     var tables [array [LuaTable] [1]] = {
-      LuaTable { array = &table0_array[0], array_len = as [index](4), hash = &table0_hash[0], hash_len = as [index](4) }
+      LuaTable { array = &table0_array[0], array_len = 4, hash = &table0_hash[0], hash_len = 4 }
     }
     var proto [LuaProto] = LuaProto { code = &code[0], consts = &consts[0], strings = &strings[0] }
     emit LuaProgram_run(&proto, &regs[0], &tables[0];
@@ -490,7 +490,7 @@ fn main() [i32]
   end
 
   block done(result [LuaValue])
-    return as [i32](as [i64](result.bits >> as [u64]([LuaTag.SHIFT])) - as [i64](42))
+    return as [i32](as [i64](result.bits >> [LuaTag.SHIFT]) - 42)
   end
 
   block failed(code [i32], pc [index])
@@ -506,41 +506,41 @@ end
 
 fn bench_main() [i32]
   entry start()
-    var bench_bytes_a [array [u8] [48]] = { as [u8](48), as [u8](49), as [u8](50), as [u8](51), as [u8](52), as [u8](53), as [u8](54), as [u8](55), as [u8](56), as [u8](57), as [u8](65), as [u8](66), as [u8](67), as [u8](68), as [u8](69), as [u8](70), as [u8](71), as [u8](72), as [u8](73), as [u8](74), as [u8](75), as [u8](76), as [u8](77), as [u8](78), as [u8](79), as [u8](80), as [u8](81), as [u8](82), as [u8](83), as [u8](84), as [u8](85), as [u8](86), as [u8](87), as [u8](88), as [u8](89), as [u8](90), as [u8](97), as [u8](98), as [u8](99), as [u8](100), as [u8](101), as [u8](102), as [u8](103), as [u8](104), as [u8](105), as [u8](106), as [u8](107), as [u8](108) }
-    var bench_bytes_b [array [u8] [48]] = { as [u8](48), as [u8](49), as [u8](50), as [u8](51), as [u8](52), as [u8](53), as [u8](54), as [u8](55), as [u8](56), as [u8](57), as [u8](65), as [u8](66), as [u8](67), as [u8](68), as [u8](69), as [u8](70), as [u8](71), as [u8](72), as [u8](73), as [u8](74), as [u8](75), as [u8](76), as [u8](77), as [u8](78), as [u8](79), as [u8](80), as [u8](81), as [u8](82), as [u8](83), as [u8](84), as [u8](85), as [u8](86), as [u8](87), as [u8](88), as [u8](89), as [u8](90), as [u8](97), as [u8](98), as [u8](99), as [u8](100), as [u8](101), as [u8](102), as [u8](103), as [u8](104), as [u8](105), as [u8](106), as [u8](107), as [u8](108) }
+    var bench_bytes_a [array [u8] [48]] = { 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108 }
+    var bench_bytes_b [array [u8] [48]] = { 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108 }
     var bench_strings [array [LuaString] [2]] = {
-      LuaString { hash = as [u64](210714636441), len = as [index](48), bytes = &bench_bytes_a[0] },
-      LuaString { hash = as [u64](210714636441), len = as [index](48), bytes = &bench_bytes_b[0] }
+      LuaString { hash = 210714636441, len = 48, bytes = &bench_bytes_a[0] },
+      LuaString { hash = 210714636441, len = 48, bytes = &bench_bytes_b[0] }
     }
     var bench_consts [array [LuaValue] [3]] = {
-      LuaValue { bits = (as [u64](0) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) },
-      LuaValue { bits = (as [u64](2000000) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) },
-      LuaValue { bits = (as [u64](1) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) }
+      LuaValue { bits = (as [u64](0) << [LuaTag.SHIFT]) | [LuaTag.INT] },
+      LuaValue { bits = (as [u64](2000000) << [LuaTag.SHIFT]) | [LuaTag.INT] },
+      LuaValue { bits = (as [u64](1) << [LuaTag.SHIFT]) | [LuaTag.INT] }
     }
     var bench_code [array [LuaInstr] [12]] = {
-      LuaInstr { op = as [u8]([LuaOP.LOADS]), a = 5, b = 0, c = 0, bx = 0, sbx = 0 },
-      LuaInstr { op = as [u8]([LuaOP.LOADS]), a = 6, b = 0, c = 0, bx = 1, sbx = 0 },
-      LuaInstr { op = as [u8]([LuaOP.LOADK]), a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
-      LuaInstr { op = as [u8]([LuaOP.LOADK]), a = 1, b = 0, c = 0, bx = 1, sbx = 0 },
-      LuaInstr { op = as [u8]([LuaOP.LOADK]), a = 2, b = 0, c = 0, bx = 2, sbx = 0 },
-      LuaInstr { op = as [u8]([LuaOP.EQ]),    a = 7, b = 5, c = 6, bx = 0, sbx = 0 },
-      LuaInstr { op = as [u8]([LuaOP.JMPZ]),  a = 7, b = 0, c = 0, bx = 0, sbx = 4 },
-      LuaInstr { op = as [u8]([LuaOP.ADD]),   a = 0, b = 0, c = 2, bx = 0, sbx = 0 },
-      LuaInstr { op = as [u8]([LuaOP.LT]),    a = 8, b = 0, c = 1, bx = 0, sbx = 0 },
-      LuaInstr { op = as [u8]([LuaOP.JMPZ]),  a = 8, b = 0, c = 0, bx = 0, sbx = 1 },
-      LuaInstr { op = as [u8]([LuaOP.JMP]),   a = 0, b = 0, c = 0, bx = 0, sbx = -6 },
-      LuaInstr { op = as [u8]([LuaOP.RETURN]), a = 0, b = 0, c = 0, bx = 0, sbx = 0 }
+      LuaInstr { op = [LuaOP.LOADS], a = 5, b = 0, c = 0, bx = 0, sbx = 0 },
+      LuaInstr { op = [LuaOP.LOADS], a = 6, b = 0, c = 0, bx = 1, sbx = 0 },
+      LuaInstr { op = [LuaOP.LOADK], a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      LuaInstr { op = [LuaOP.LOADK], a = 1, b = 0, c = 0, bx = 1, sbx = 0 },
+      LuaInstr { op = [LuaOP.LOADK], a = 2, b = 0, c = 0, bx = 2, sbx = 0 },
+      LuaInstr { op = [LuaOP.EQ],    a = 7, b = 5, c = 6, bx = 0, sbx = 0 },
+      LuaInstr { op = [LuaOP.JMPZ],  a = 7, b = 0, c = 0, bx = 0, sbx = 4 },
+      LuaInstr { op = [LuaOP.ADD],   a = 0, b = 0, c = 2, bx = 0, sbx = 0 },
+      LuaInstr { op = [LuaOP.LT],    a = 8, b = 0, c = 1, bx = 0, sbx = 0 },
+      LuaInstr { op = [LuaOP.JMPZ],  a = 8, b = 0, c = 0, bx = 0, sbx = 1 },
+      LuaInstr { op = [LuaOP.JMP],   a = 0, b = 0, c = 0, bx = 0, sbx = -6 },
+      LuaInstr { op = [LuaOP.RETURN], a = 0, b = 0, c = 0, bx = 0, sbx = 0 }
     }
     var bench_regs [array [LuaValue] [9]] = {
-      LuaValue { bits = as [u64]([LuaTag.NIL]) },
-      LuaValue { bits = as [u64]([LuaTag.NIL]) },
-      LuaValue { bits = as [u64]([LuaTag.NIL]) },
-      LuaValue { bits = as [u64]([LuaTag.NIL]) },
-      LuaValue { bits = as [u64]([LuaTag.NIL]) },
-      LuaValue { bits = as [u64]([LuaTag.NIL]) },
-      LuaValue { bits = as [u64]([LuaTag.NIL]) },
-      LuaValue { bits = as [u64]([LuaTag.NIL]) },
-      LuaValue { bits = as [u64]([LuaTag.NIL]) }
+      LuaValue { bits = [LuaTag.NIL] },
+      LuaValue { bits = [LuaTag.NIL] },
+      LuaValue { bits = [LuaTag.NIL] },
+      LuaValue { bits = [LuaTag.NIL] },
+      LuaValue { bits = [LuaTag.NIL] },
+      LuaValue { bits = [LuaTag.NIL] },
+      LuaValue { bits = [LuaTag.NIL] },
+      LuaValue { bits = [LuaTag.NIL] },
+      LuaValue { bits = [LuaTag.NIL] }
     }
     var bench_tables [array [LuaTable] [1]] = {
       LuaTable { array = as [ptr [LuaValue]](0), array_len = as [index](0), hash = as [ptr [LuaHashEntry]](0), hash_len = as [index](0) }
@@ -553,7 +553,7 @@ fn bench_main() [i32]
   end
 
   block done(result [LuaValue])
-    return as [i32](as [i64](result.bits >> as [u64]([LuaTag.SHIFT])) - as [i64](2000000))
+    return as [i32](as [i64](result.bits >> [LuaTag.SHIFT]) - 2000000)
   end
 
   block failed(code [i32], pc [index])
