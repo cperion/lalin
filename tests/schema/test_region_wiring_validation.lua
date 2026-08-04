@@ -183,4 +183,3 @@ entry_session:free()
 
 print(("region wiring validation: %d miswires rejected at typecheck, wiring/passthrough/entry run 82/41/42"):format(count))
 
-print(("region wiring validation: %d miswires rejected at typecheck, wiring/passthrough run to 82/41"):format(count))
