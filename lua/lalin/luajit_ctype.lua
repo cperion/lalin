@@ -22,7 +22,7 @@ local function bind_context(T)
     local Sem = T.LalinSem
     local LJ = T.LalinLuaJIT
     local CEm = T.LalinCEmit
-    local CodeType = require("lalin.code_type")(T)
+    local CodeType = require("lalin.impl.code_type")(T)
 
     local api = {}
 
@@ -351,7 +351,7 @@ local function bind_context(T)
     end
 
     local function type_to_physical(lalin_ty, ctx)
-        local CodeType = require("lalin.code_type")(T)
+        local CodeType = require("lalin.impl.code_type")(T)
         local CEm = T.LalinCEmit
         return physical_type(select(1, CodeType.type_to_code(T.LalinTreeLower.TreeLowerModuleSigState("_dummy", {}, {}), lalin_ty)), ctx)
     end

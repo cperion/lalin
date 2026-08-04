@@ -247,7 +247,7 @@ local function ensure_explainers()
     explainers.parse = function(issue, analysis) return { kind = "ParseIssue", primary = issue.message or "parse error" } end
     explainers.host = function(issue, analysis) return { kind = "HostIssue", primary = issue.message or "host error" } end
     explainers.binding = function(issue, analysis) return { kind = "BindingIssue", primary = issue.message or "binding error" } end
-    explainers.typecheck = require("lalin.tree_typecheck").explain_type_issue
+    explainers.typecheck = function(issue, analysis) return { kind = "TypecheckIssue", primary = issue.message or "typecheck error" } end
     explainers.link = require("lalin.link_plan_validate").explain_link_issue
     explainers.vec = function(issue, analysis)
         local asdl = require("lalin.asdl")

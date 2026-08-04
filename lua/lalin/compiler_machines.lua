@@ -15,15 +15,28 @@ function M.code_to_c(stage, code_result)
 end
 
 function M.install_stage_methods(T)
+    require("lalin.backend_target_model")(T)
     local P = T.LalinPhase
     function P.CompilerCStageInput:typecheck_compiler_module(module)
-        return require("lalin.frontend_pipeline")(T).typecheck_module(module, { target = self.target })
+        require("lalin.impl.tree_check")
+        require("lalin.impl.tree_region")
+        local result = module:typecheck_region_expanded()
+        return T.LalinCheck.TypeModuleResult(
+            result:region_module(), result:region_issues(), self.target:host_target_model())
     end
     function P.CompilerCStageInput:lower_checked_compiler_module(checked)
-        return require("lalin.frontend_pipeline")(T).checked_to_code_result(checked, { root = "emit_c", target = self.target })
+        require("lalin.impl.tree_code")
+        local host_target = self.target:host_target_model()
+        local lowering = checked.module:lower_tree_module_result_to_code(
+            { target = host_target })
+        return T.LalinCompiler.CodeResult(
+            lowering.code_module, lowering.contracts, T.LalinSem.LayoutEnv({}))
     end
     function P.CompilerCStageInput:lower_compiler_code_to_c(code_result)
-        return require("lalin.frontend_pipeline")(T).code_result_to_c(code_result, { target = self.target })
+        local request = T.LalinCompiler.CompilerCCodegenRequest(
+            code_result, self.target, T.LalinStencil.StencilCompilerPolicy(
+                T.LalinStencil.StencilCompilerGcc, T.LalinStencil.StencilOptO3, {}))
+        return require("lalin.compiler_schema_v2_c_backend").code_result_to_c(request)
     end
 end
 

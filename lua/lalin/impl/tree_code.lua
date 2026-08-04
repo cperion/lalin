@@ -16,7 +16,7 @@ local Host     = SchemaV2.LalinHost
 local Bind     = require("lalin.schema_v2.bind")
 local asdl     = require("lalin.asdl")
 local TypeSizeAlign = require("lalin.type_size_align")
-local CodeType = require("lalin.code_type")(require("lalin.schema_v2"))
+local CodeType = require("lalin.impl.code_type")(require("lalin.schema_v2"))
 
 ----------------------------------------------------------------------
 -- helpers

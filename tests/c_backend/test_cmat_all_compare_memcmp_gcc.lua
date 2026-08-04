@@ -284,8 +284,12 @@ local unit = C.CBackendUnit(
 local report = require("lalin.impl.lower_emit_c.validate").validate(unit)
 assert(#report.issues == 0, "all-compare memcmp C unit must validate cleanly")
 
-local source = require("lalin.emit_c_lower")(require("lalin.schema_v2"))
-  .emit_artifact(unit, {}).source
+require("lalin.impl.cemit_emit")
+local Cemit = require("lalin.schema_v2.cemit")
+local Lower = require("lalin.schema_v2.lower")
+local empty_module = Code.CodeModule(Code.CodeModuleId(tag), {}, {}, {}, {}, {}, {}, Code.CodeOriginUnknown)
+local spine = Lower.LowerBackSpine(empty_module, Graph.CodeGraph(empty_module.id, {}), target)
+local source = Cemit.CEmitMachine(spine, {}, {}, {}, {}):emit_module(unit).source
 assert(source:find("return memcmp(a1, a2, (size_t)a3);", 1, true) ~= nil,
   "emitted C must contain a memcmp( call: " .. source)
 assert(source:find("ml_memcmp") ~= nil,

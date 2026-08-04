@@ -1219,3 +1219,124 @@ function C.CBackendHelperUse:c_emit_helper_lines()
   lines[#lines + 1] = "}"
   return lines
 end
+----------------------------------------------------------------------
+-- Helper ID/suffix vocabulary absorbed from the retired v1 emitter
+-- (emit_c_lower.lua).  The schema-v2 C backend owns helper identity
+-- generation; these leaf methods complete the missing classes.
+----------------------------------------------------------------------
+
+function Core.CmpOp:c_helper_suffix() error("missing c_helper_suffix leaf method for CmpOp", 2) end
+function Core.CmpEq:c_helper_suffix() return "eq" end
+function Core.CmpNe:c_helper_suffix() return "ne" end
+function Core.CmpLt:c_helper_suffix() return "lt" end
+function Core.CmpLe:c_helper_suffix() return "le" end
+function Core.CmpGt:c_helper_suffix() return "gt" end
+function Core.CmpGe:c_helper_suffix() return "ge" end
+
+function Core.MachineCastOp:c_helper_suffix() error("missing c_helper_suffix leaf method for MachineCastOp", 2) end
+function Core.MachineCastIdentity:c_helper_suffix() return "identity" end
+function Core.MachineCastBitcast:c_helper_suffix() return "bitcast" end
+function Core.MachineCastIreduce:c_helper_suffix() return "ireduce" end
+function Core.MachineCastSextend:c_helper_suffix() return "sextend" end
+function Core.MachineCastUextend:c_helper_suffix() return "uextend" end
+function Core.MachineCastFpromote:c_helper_suffix() return "fpromote" end
+function Core.MachineCastFdemote:c_helper_suffix() return "fdemote" end
+function Core.MachineCastSToF:c_helper_suffix() return "stof" end
+function Core.MachineCastUToF:c_helper_suffix() return "utof" end
+function Core.MachineCastFToS:c_helper_suffix() return "ftos" end
+function Core.MachineCastFToU:c_helper_suffix() return "ftou" end
+
+function Core.Intrinsic:c_helper_suffix() error("missing c_helper_suffix leaf method for Intrinsic", 2) end
+function Core.IntrinsicPopcount:c_helper_suffix() return "popcount" end
+function Core.IntrinsicClz:c_helper_suffix() return "clz" end
+function Core.IntrinsicCtz:c_helper_suffix() return "ctz" end
+function Core.IntrinsicRotl:c_helper_suffix() return "rotl" end
+function Core.IntrinsicRotr:c_helper_suffix() return "rotr" end
+function Core.IntrinsicBswap:c_helper_suffix() return "bswap" end
+function Core.IntrinsicFma:c_helper_suffix() return "fma" end
+function Core.IntrinsicSqrt:c_helper_suffix() return "sqrt" end
+function Core.IntrinsicAbs:c_helper_suffix() return "abs" end
+function Core.IntrinsicFloor:c_helper_suffix() return "floor" end
+function Core.IntrinsicCeil:c_helper_suffix() return "ceil" end
+function Core.IntrinsicTruncFloat:c_helper_suffix() return "truncfloat" end
+function Core.IntrinsicRound:c_helper_suffix() return "round" end
+function Core.IntrinsicTrap:c_helper_suffix() return "trap" end
+function Core.IntrinsicAssume:c_helper_suffix() return "assume" end
+
+function Core.AtomicRmwOp:c_helper_suffix() error("missing c_helper_suffix leaf method for AtomicRmwOp", 2) end
+function Core.AtomicRmwAdd:c_helper_suffix() return "add" end
+function Core.AtomicRmwSub:c_helper_suffix() return "sub" end
+function Core.AtomicRmwAnd:c_helper_suffix() return "and" end
+function Core.AtomicRmwOr:c_helper_suffix() return "or" end
+function Core.AtomicRmwXor:c_helper_suffix() return "xor" end
+function Core.AtomicRmwXchg:c_helper_suffix() return "xchg" end
+function Core.AtomicSeqCst:c_helper_suffix() return "seqcst" end
+
+function C.CBackendIntOverflow:c_helper_suffix() error("missing c_helper_suffix leaf method for CBackendIntOverflow", 2) end
+function C.CBackendIntWrap:c_helper_suffix() return "intwrap" end
+function C.CBackendIntTrapOnOverflow:c_helper_suffix() return "inttraponoverflow" end
+function C.CBackendIntAssumeNoOverflow:c_helper_suffix() return "intassumenooverflow" end
+function C.CBackendDivPolicy:c_helper_suffix() error("missing c_helper_suffix leaf method for CBackendDivPolicy", 2) end
+function C.CBackendDivTrapOnZero:c_helper_suffix() return "divtraponzero" end
+function C.CBackendDivTrapOnZeroOrOverflow:c_helper_suffix() return "divtraponzerooroverflow" end
+function C.CBackendShiftPolicy:c_helper_suffix() error("missing c_helper_suffix leaf method for CBackendShiftPolicy", 2) end
+function C.CBackendShiftMaskCount:c_helper_suffix() return "shiftmaskcount" end
+function C.CBackendShiftTrapOutOfRange:c_helper_suffix() return "shifttrapoutofrange" end
+function C.CBackendTargetFeature:c_helper_suffix() error("missing c_helper_suffix leaf method for CBackendTargetFeature", 2) end
+function C.CBackendFeatureC11Atomics:c_helper_suffix() return "c11atomics" end
+function C.CBackendFeatureLibm:c_helper_suffix() return "libm" end
+function C.CBackendFeatureBuiltinOverflow:c_helper_suffix() return "builtinoverflow" end
+function C.CBackendFeatureBuiltinBitops:c_helper_suffix() return "builtinbitops" end
+function C.CBackendFeatureUnalignedAccess:c_helper_suffix() return "unalignedaccess" end
+function C.CBackendFeatureStaticAssert:c_helper_suffix() return "staticassert" end
+function C.CBackendFeatureHostedRuntime:c_helper_suffix() return "hostedruntime" end
+
+function C.CBackendSliceDescriptor:c_helper_suffix() return "slice_" .. self.elem:c_helper_suffix() end
+function C.CBackendByteSpanDescriptor:c_helper_suffix() return "bytespan" end
+function C.CBackendViewDescriptor:c_helper_suffix() return "view_" .. self.elem:c_helper_suffix() end
+function C.CBackendClosureDescriptor:c_helper_suffix() return "closure_" .. sanitize(self.sig.text) end
+function C.CBackendAbiHiddenOutPtr:c_helper_suffix() return "out_" .. self.result:c_helper_suffix() end
+function C.CBackendVector:c_helper_suffix() return self.elem:c_helper_suffix() .. "x" .. tostring(self.lanes) end
+
+function C.CBackendHelperBoolNormalize:c_helper_id()
+  return C.CBackendHelperId("ml_bool_normalize_" .. self.ty:c_helper_suffix())
+end
+function C.CBackendHelperAtomicLoad:c_helper_id()
+  return C.CBackendHelperId("ml_atomic_load_" .. self.access.ty:c_helper_suffix())
+end
+function C.CBackendHelperAtomicStore:c_helper_id()
+  return C.CBackendHelperId("ml_atomic_store_" .. self.access.ty:c_helper_suffix())
+end
+function C.CBackendHelperAtomicRmw:c_helper_id()
+  return C.CBackendHelperId("ml_atomic_" .. self.op:c_helper_suffix() .. "_" .. self.access.ty:c_helper_suffix())
+end
+function C.CBackendHelperAtomicCas:c_helper_id()
+  return C.CBackendHelperId("ml_atomic_cas_" .. self.access.ty:c_helper_suffix())
+end
+function C.CBackendHelperAtomicFence:c_helper_id()
+  return C.CBackendHelperId("ml_atomic_fence_" .. self.ordering:c_helper_suffix())
+end
+function C.CBackendHelperMemcpy:c_helper_id() return C.CBackendHelperId("ml_memcpy") end
+function C.CBackendHelperTypedMemcpy:c_helper_id()
+  return C.CBackendHelperId("ml_memcpy_" .. self.ty:c_helper_suffix() .. "_" .. tostring(self.size) .. "_a" .. tostring(self.align))
+end
+function C.CBackendHelperMemset:c_helper_id() return C.CBackendHelperId("ml_memset") end
+function C.CBackendHelperTypedMemset:c_helper_id()
+  return C.CBackendHelperId("ml_memset_" .. self.ty:c_helper_suffix() .. "_" .. tostring(self.size) .. "_a" .. tostring(self.align))
+end
+function C.CBackendHelperLayoutAssert:c_helper_id()
+  return C.CBackendHelperId("ml_layout_assert_" .. C.CBackendNamed(self.assertion.id):c_helper_suffix())
+end
+function C.CBackendHelperRequireFeature:c_helper_id()
+  return C.CBackendHelperId("ml_require_" .. self.feature:c_helper_suffix())
+end
+function C.CBackendHelperTrap:c_helper_id() return C.CBackendHelperId("ml_trap") end
+function C.CBackendHelperScan:c_helper_id()
+  return C.CBackendHelperId("ml_scan_" .. (self.inclusive and "inc" or "exc") .. "_" .. self.ty:c_helper_suffix() .. "_" .. self.op:c_helper_suffix() .. "_a" .. tostring(self.align))
+end
+function C.CBackendHelperFind:c_helper_id()
+  return C.CBackendHelperId("ml_find_" .. self.cmp:c_helper_suffix() .. "_" .. self.ty:c_helper_suffix() .. "_a" .. tostring(self.align))
+end
+function C.CBackendHelperReduce:c_helper_id()
+  return C.CBackendHelperId("ml_reduce_" .. self.op:c_helper_suffix() .. "_" .. self.ty:c_helper_suffix() .. "_a" .. tostring(self.align))
+end

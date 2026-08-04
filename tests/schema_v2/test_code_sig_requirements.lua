@@ -6,8 +6,8 @@ local TreeCode = T.LalinTreeCode
 local Ty = T.LalinType
 local Core = T.LalinCore
 local Code = T.LalinCode
-local CodeType = require("lalin.code_type")(T)
-local CodeValidate = require("lalin.code_validate")(T)
+local CodeType = require("lalin.impl.code_type")(T)
+local CV = T.LalinCodeValidation
 
 -- Binding smoke: both implementation and complete pipeline must bind against
 -- the schema_v2 signature vocabulary without constructor aliases.
@@ -42,8 +42,8 @@ assert(#state.code_sig_order == 1, "typed requirements must project one emitted 
 
 local origin = Code.CodeOriginUnknown
 local module = Code.CodeModule(Code.CodeModuleId("module:sig-v2"), state.code_sig_order, {}, {}, {}, {}, {}, origin)
-local report = CodeValidate.validate(module)
-assert(#report.issues == 0)
+local validation = require("lalin.impl.code_validate").validate(module)
+assert(asdl.classof(validation) == CV.CodeValidateOk, "typed module must validate cleanly")
 local lookup = module:code_sig_projection():code_sig_lookup(expected_id)
 assert(asdl.classof(lookup) == Code.CodeSigLookupFound and lookup.sig.id == expected_id)
 local missing = module:code_sig_projection():code_sig_lookup(Code.CodeSigId("codesig_missing"))

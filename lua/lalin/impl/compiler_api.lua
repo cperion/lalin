@@ -149,7 +149,7 @@ function Compiler.CompilerArtifactError:compiler_require_c_artifact()
   error("emit_c: " .. tostring(self.message), 3)
 end
 function Compiler.CompilerSession:compile(c_target)
-  local CodeType = require("lalin.code_type")(T)
+  local CodeType = require("lalin.impl.code_type")(T)
   c_target = CodeType.normalize_target(c_target)
 
   -- Parse source → LalinTree Module
@@ -167,7 +167,7 @@ function Compiler.CompilerSession:compile(c_target)
 end
 
 function Compiler.CompilerParsedSession:compile(c_target)
-  local CodeType = require("lalin.code_type")(T)
+  local CodeType = require("lalin.impl.code_type")(T)
   c_target = CodeType.normalize_target(c_target)
   local module_ok, tree_module = pcall(function()
     return self.input:compile_session_module()
@@ -185,16 +185,6 @@ local function compile_c_artifact(result, opts, source_name, source_text)
   opts = opts or {}
   local source, header = result.source, result.header
 
-  -- Attempt TCC first if preferred
-  local use_tcc = opts.use_tcc or opts.runner == "libtcc" or os.getenv("LALIN_V2_USE_TCC") == "1"
-  if use_tcc then
-    local ok_tcc, tcc_mod = pcall(require, "lalin.emit_c_tcc")
-    if ok_tcc and tcc_mod and tcc_mod.compile then
-      local session, err = tcc_mod.compile(source, opts.libtcc_opts or { libraries = { "m" } })
-      if session then return session end
-      -- TCC failed, fall through to GCC
-    end
-  end
 
   -- GCC path
   local ok, ffi = pcall(require, "ffi")
@@ -347,14 +337,14 @@ function Compiler.CompilerArtifactError:compile_gcc_artifact(opts, source_name, 
 end
 function Compiler.CompilerSession:compile_gcc(opts)
   opts = opts or {}
-  local CodeType = require("lalin.code_type")(T)
+  local CodeType = require("lalin.impl.code_type")(T)
   local target = CodeType.normalize_target(opts.c_target or opts.target or opts)
   return self:compile(target):compile_gcc_artifact(opts, self.source_name, self.source_text)
 end
 
 function Compiler.CompilerParsedSession:compile_gcc(opts)
   opts = opts or {}
-  local CodeType = require("lalin.code_type")(T)
+  local CodeType = require("lalin.impl.code_type")(T)
   local target = CodeType.normalize_target(opts.c_target or opts.target or opts)
   local source_name = self.input:compile_session_source_name()
   -- No source text: the parsed input owns its typed module; the GCC artifact

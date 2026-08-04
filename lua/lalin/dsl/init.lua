@@ -1367,8 +1367,8 @@ end
 
 function Decl:typecheck(opts)
     opts = merge_source_ctx(opts, self)
-    local Typecheck = require("lalin.tree_typecheck")(T)
-    return Typecheck.check_module(module_ast_of(self), opts)
+    require("lalin.impl.tree_check")
+    return module_ast_of(self):typecheck(opts)
 end
 
 local function retarget_cont_jumps_stmt(stmt, cont_by_name)
@@ -1648,7 +1648,13 @@ function Decl:lower(opts)
     opts = merge_source_ctx(opts, self)
     opts.site = opts.site or "lalin.dsl"
     opts.context = opts.context or T
-    return require("lalin.compiler_driver").lower_module(module_ast_of(self), opts)
+    local Compiler = require("lalin.schema_v2.compiler")
+    require("lalin.impl.compiler_api")
+    local input = module_ast_of(self):compiler_module_input(opts.name or "Unit")
+    local session = Compiler.CompilerParsedSession(input)
+    local target = require("lalin.impl.code_type")(T).normalize_target(
+        opts.c_target or opts.target or opts)
+    return session:compile(target)
 end
 
 function Decl:emit_c(opts)
