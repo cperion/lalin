@@ -49,7 +49,10 @@ function Tr.StmtVar:typecheck_tree_stmt(input)
 end
 function Tr.StmtSet:typecheck_tree_stmt(input)
   local pr = self.place:typecheck_tree_place(LCheck.TypePlaceInput(input.scope))
-  local vr = self.value:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+  local expected = pr.ty
+  local vr = expected ~= nil and self.value:typecheck_tree_expr_expected(
+    LCheck.TypeExpectedExprInput(input.scope, expected))
+    or self.value:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
   if is_error_result(vr) then return LCheck.TypeStmtResult(input, {self}, vr.issues) end
   return LCheck.TypeStmtResult(input, {Tr.StmtSet(Tr.StmtFlow(Sem.FlowFallsThrough), pr.place, vr.expr)}, {})
 end

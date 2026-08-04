@@ -238,7 +238,7 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
     end
     let sets_entry [ptr [LuaHashEntry]] = &table.hash[slot]
     if sets_entry.occupied == 0 then
-      sets_entry.occupied = as [u8](1)
+      sets_entry.occupied = 1
       sets_entry.hash = hash
       sets_entry.key = key
       sets_entry.value = value
