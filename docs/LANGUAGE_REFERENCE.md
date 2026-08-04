@@ -6,7 +6,8 @@ typed ASDL facts into the semantic `emit_c` C backend, and uses that emitted C a
 both the main GCC-backed JIT-like execution path and the AOT artifact path.
 Native C-stencil copy-patch is retired and deleted; only the stencil/CMat
 vocabulary survives as the deterministic emitted-C shape contract. LuaJIT
-bytecode remains an explicit non-main mode.
+bytecode emission is removed: the compiled artifact is always emitted C, cooked
+with GCC for local execution or handed to a user-owned AOT build.
 
 This reference treats the parsed syntax as the standard source surface. The
 Lua/LLBL DSL is documented in one chapter near the end because it is still the
@@ -35,7 +36,6 @@ The pipeline is:
   -> emit_c C output
   -> GCC shared-object cook + dlopen for JIT-like execution
      or user-owned AOT C build
-     or explicit LuaJIT bytecode when selected
 ```
 
 Important rules:
@@ -106,7 +106,9 @@ Load a document directly from Lua:
 local lalin = require("lalin")
 
 local decls, doc = assert(lalin.loadfile("demo.lln"))
-local compiled = lalin.compile("demo", decls, { luajit = true })
+local session = lalin.compile_c_gcc("demo", decls, {
+  gcc_opts = { opt = 3, out_dir = "target/demo" },
+})
 ```
 
 `lalin.loadstring` and `lalin.loadfile` return the ordered declaration array and
@@ -2196,7 +2198,7 @@ backend families.
 Facts determine whether a valid source loop becomes:
 
 - fused CMat fragments in the emitted `CBackendUnit` when the exact shape plus declared memory/noalias/bounds facts admit fusion
-- an explicit LuaJIT bytecode artifact when that non-native mode is selected
+- a typed reject
 - a typed reject
 
 The internal IR can still contain generic control regions. That is how regions,
@@ -2244,19 +2246,9 @@ The emitted C remains available for AOT builds through `emit_c` and `compile_c`.
 The user/build system owns AOT compiler flags, linker inputs, and target ABI
 choices.
 
-Explicit LuaJIT bytecode mode is selected separately:
-
-```lua
-local module = lalin.compile_luajit("demo", decls)
-
-local module2 = lalin.compile("demo", decls, {
-  bytecode = true,
-})
-```
-
-LuaJIT bytecode mode is not a recovery path for GCC C execution or AOT builds.
-It is a separately selected artifact form.
-
+Explicit LuaJIT bytecode mode is removed. The public surface exposes only the
+emitted-C path: `compile_c_gcc` cooks emitted C with GCC for local execution,
+and `emit_c` / `compile_c` produce the C artifact for AOT builds.
 ### Retired Native Template Banks
 
 Native copy-patch template banks and the patcher are deleted and are not part of
@@ -2279,8 +2271,7 @@ local artifact = lalin.emit_c(decls, {
 The C path lowers through the semantic `CBackendUnit` pipeline and emits the
 selected program as ordinary C translation units. The user then compiles that C
 with `gcc` or another C toolchain for AOT, or lets `compile_c_gcc` cook it into a
-shared object for JIT-like local execution. Explicit LuaJIT bytecode is a
-separate, non-main path.
+shared object for JIT-like local execution. There is no LuaJIT bytecode path.
 
 ---
 
@@ -2451,18 +2442,12 @@ long-form splice.
 
 ### Compiling DSL Values
 
-For quick local execution without a GCC cook, select explicit LuaJIT bytecode mode:
-bytecode mode:
+Compile DSL values through the emitted-C path:
 
 ```lua
-local module = lalin.compile("demo", { add }, { bytecode = true })
-```
-
-or:
-
-```lua
-local unit = lalin.unit("demo", { add })
-local module = lalin.compile("demo", unit, { bytecode = true })
+local session = lalin.compile_c_gcc("demo", { add }, {
+  gcc_opts = { opt = 3, out_dir = "target/demo" },
+})
 ```
 
 ---

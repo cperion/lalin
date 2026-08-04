@@ -37,6 +37,10 @@ local artifact = lalin.emit_c(decls, {
   c_path = "target/nested_projection_lowering.c",
   h_path = "target/nested_projection_lowering.h",
 })
-assert(artifact.source:match("hash"), "expected emitted nested field load source")
+-- schema-v2 C emission accesses struct fields by offset, not by field name;
+-- the nested `proto.strings[idx].hash` load must appear as an indexed deref
+-- of the projected strings pointer followed by the hash field offset.
+assert(artifact.source:find("].__offset_0", 1, true) ~= nil,
+  "expected emitted nested field load source")
 
 print("nested projection lowering ok")
