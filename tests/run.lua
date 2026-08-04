@@ -52,9 +52,7 @@ end
 
 local passed, skipped, failed = 0, 0, 0
 local run_slow = os.getenv("LALIN_RUN_SLOW") == "1" or os.getenv("LALIN_RUN_SLOW") == "true"
-local slow_tests = {
-    ["tests/code_ir/test_lalin_binary.lua"] = "builds and links the full embedded single binary",
-}
+local slow_tests = {}
 for i = 1, #tests do
     local path = tests[i]
     if slow_tests[path] ~= nil and not run_slow then

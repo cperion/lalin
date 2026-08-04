@@ -48,8 +48,9 @@ Fused emitted C compiled by GCC at `-O3` is the performance path. The same C
 artifact is the AOT path. Stencil and CMat name the deterministic fused-C shape
 contract; they are not binary templates.
 
-LuaJIT bytecode is an explicit alternative selected through `compile_luajit`,
-`opts.luajit`, or `opts.bytecode`. It is not the default performance backend.
+LuaJIT bytecode emission is removed: the compiled artifact is always emitted C,
+cooked with GCC for local JIT-like execution or handed to a user-owned AOT
+build. The public surface exposes only the `compile_c_gcc` / emit-C paths.
 
 Binary copy-patch banks, native template installers, and the former Rust /
 Cranelift route are deleted. They are not supported, historical, or planned
@@ -150,7 +151,7 @@ Primary gates are:
 ```sh
 luajit tests/run.lua schema_v2
 luajit tests/run.lua c_backend
-luajit tests/code_ir/test_lalin_binary.lua
+luajit tests/c_backend/test_compile_c_gcc_fresh_process.lua
 ```
 
 Focused tests must construct ASDL inputs and assert ASDL outputs. GCC tests prove

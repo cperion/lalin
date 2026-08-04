@@ -162,12 +162,12 @@ Grid and tiled domains preserve row-major/full-domain behavior through canonical
 typed domain shapes select `KernelNoPlan` rather than turning absent ND CMat capability into a
 module rejection. Missing optimization evidence therefore retains correct scalar C.
 
-Public parsed-loop execution parity is now present on `lalin.compile_v2`. The remaining P1.5
-cutover is mechanical but mandatory: switch `lalin.compile_c_gcc` and the implementation registry
-to `TreeCodeSchemaV2Implementation`, run fresh-process public parity, then delete the corresponding
-legacy inline lowering from `lua/lalin/lower_to_c.lua`.
-No raw-loop adapter, cross-context constructor adapter, encoded-name
-fallback, or fallback to the legacy C backend is permitted.
+Public parsed-loop execution parity is present on `lalin.compile_v2`, and
+`lalin.compile_c_gcc` routes through the typed schema-v2 pipeline. The v1
+surface is deleted: v1 parsing/lowering (`lua/lalin/syntax/`, `lower_to_c.lua`,
+`tree_lower.lua`, the v1 schema context, and the v1 test suites) is retired, and
+the LuaJIT bytecode / tcc runners are removed. No raw-loop adapter,
+cross-context constructor adapter, encoded-name
 
 ## P2 — schema ownership cutover
 
@@ -189,7 +189,9 @@ For each cutover:
 5. update `docs/SCHEMA_OWNERSHIP.md`;
 6. do not add re-export or constructor compatibility shims.
 
-The final old-tree retirement is blocked until every ownership domain is closed.
+The final old-tree retirement is complete: the v1 tests and the v1 parsing/
+lowering modules they exercised are deleted, and the surviving suites run
+against the schema-v2 pipeline only.
 
 ## Non-goals
 
@@ -206,7 +208,8 @@ The final old-tree retirement is blocked until every ownership domain is closed.
 ```sh
 luajit tests/run.lua schema_v2
 luajit tests/run.lua c_backend
-luajit tests/code_ir/test_lalin_binary.lua
+luajit tests/c_backend/test_compile_c_gcc_fresh_process.lua
+luajit tests/frontend/test_lalin_loader_fresh_process.lua
 git diff --check
 ```
 

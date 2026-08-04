@@ -9,7 +9,7 @@ The main JIT-like path cooks emitted C with GCC and exposes function pointers
 through LuaJIT FFI; the same emitted C is the AOT path. Native C-stencil
 copy-patch / binary patchers are retired and must not be reopened; only the
 stencil/CMat vocabulary survives as the deterministic emitted-C shape contract.
-LuaJIT bytecode is explicitly selected.
+The runtime path is emitted C cooked with GCC only; LuaJIT bytecode emission is retired.
 
 Before compiler/schema work, read `docs/ASDL_GUIDE.md`. Those rules are
 binding: ASDL reasoning first, leaf ASDL methods own semantics, no
@@ -190,9 +190,10 @@ memory/noalias/bounds facts, with contracts recomputed after fusion. The
 The binary copy-patch / binary-bank backend is deleted and must not be reopened.
 Only the stencil/CMat vocabulary survives as the deterministic emitted-C shape
 the stencil/CMat vocabulary survives as the deterministic emitted-C shape
-contract (`schema_v2/stencil.lua` -> CMat fragment path -> `emit_c`). LuaJIT
-bytecode is explicit via `opts.luajit`, `opts.bytecode`, or `compile_luajit`.
-The old Cranelift/Rust runtime path is not part of the current architecture.
+contract (`schema_v2/stencil.lua` -> CMat fragment path -> `emit_c`). The LuaJIT
+bytecode path (`opts.luajit`, `opts.bytecode`, `compile_luajit`) is removed: only
+emitted C cooked with GCC remains, plus the explicit LuaJIT FFI function-pointer
+boundary. The old Cranelift/Rust runtime path is not part of the current architecture.
 
 ## Build
 
@@ -273,14 +274,9 @@ local add_fn = assert(session:symbol("add", "int32_t (*)(int32_t, int32_t)"))
 print(add_fn(3, 4)) -- 7
 session:free()
 ```
-
-For an immediately callable Lua module without invoking GCC, select explicit
-LuaJIT bytecode mode:
-
-```lua
-local module = lalin.compile_luajit("demo", { add })
--- or: lalin.compile("demo", { add }, { bytecode = true })
-```
+The compiled module is always materialized as emitted C. Compile and link it
+through GCC with `compile_c_gcc` (the example above), or emit the C text for an
+AOT build. There is no LuaJIT bytecode module path.
 
 ## Test
 
@@ -289,16 +285,16 @@ Tests are standalone LuaJIT scripts:
 ```sh
 luajit tests/run.lua
 luajit tests/run.lua frontend
-luajit tests/run.lua code_ir
-luajit tests/run.lua schema
+luajit tests/run.lua schema_v2
+luajit tests/run.lua c_backend
 ```
 
 Useful focused checks:
 
 ```sh
-luajit tests/code_ir/test_residual_bc.lua
 luajit tests/c_backend/test_cmat_counted_fragment_gcc.lua
 luajit tests/c_backend/test_stencil_c_gcc.lua
+luajit tests/c_backend/test_compile_c_gcc_fresh_process.lua
 luajit tests/compiler_process/test_compiler_driver.lua
 ```
 
@@ -335,7 +331,6 @@ LalinTree ASDL
   -> emit_c output
   -> GCC shared object + dlopen for JIT-like execution
      or user-owned AOT C build
-     or explicit LuaJIT bytecode when selected
   -> loaded module / function pointers / artifact
 ```
 
@@ -349,7 +344,7 @@ lua/lalin/impl/                   compiler phase and backend methods
 lua/lalin/impl/compiler_api.lua   public compiler API implementation
 lua/lalin/impl/lower_emit_c/      CMat environment, fragment, and assembly
 lua/lalin/impl/cemit_emit.lua     CBackendUnit C emission
-lua/lalin/luajit_backend.lua      explicit LuaJIT bytecode backend facade
+lua/lalin/impl/cemit_emit.lua     CBackendUnit C emission
 ```
 
 ## Key Docs
