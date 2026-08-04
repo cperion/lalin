@@ -1648,7 +1648,7 @@ function Decl:lower(opts)
     opts = merge_source_ctx(opts, self)
     opts.site = opts.site or "lalin.dsl"
     opts.context = opts.context or T
-    local Compiler = require("lalin.schema_v2.compiler")
+    local Compiler = require("lalin.schema.compiler")
     require("lalin.impl.compiler_api")
     local input = module_ast_of(self):compiler_module_input(opts.name or "Unit")
     local session = Compiler.CompilerParsedSession(input)

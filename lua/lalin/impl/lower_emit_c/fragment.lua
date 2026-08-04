@@ -1,17 +1,17 @@
 -- Canonical kernel CMat fragment emission for exact scalar counted loops.
-require("lalin.schema_v2")
+require("lalin.schema")
 require("lalin.impl.lower_emit_c.code_to_c")
 require("lalin.impl.lower_emit_c.materialize")
 
-local Code = require("lalin.schema_v2.code")
-local Core = require("lalin.schema_v2.core")
-local Value = require("lalin.schema_v2.value")
-local Mem = require("lalin.schema_v2.mem")
-local Flow = require("lalin.schema_v2.flow")
-local Kernel = require("lalin.schema_v2.kernel")
-local Stencil = require("lalin.schema_v2.stencil")
-local CMat = require("lalin.schema_v2.c_materialize")
-local C = require("lalin.schema_v2.c")
+local Code = require("lalin.schema.code")
+local Core = require("lalin.schema.core")
+local Value = require("lalin.schema.value")
+local Mem = require("lalin.schema.mem")
+local Flow = require("lalin.schema.flow")
+local Kernel = require("lalin.schema.kernel")
+local Stencil = require("lalin.schema.stencil")
+local CMat = require("lalin.schema.c_materialize")
+local C = require("lalin.schema.c")
 
 local function copy(items)
   local out = {}
@@ -98,7 +98,7 @@ function Stencil.StencilStreamByKernelValueProjection:cmat_fragment_lookup_sourc
     end
   end
   return Stencil.StencilStreamByKernelValueMissing(
-    require("lalin.schema_v2.kernel").KernelValueId(value.text))
+    require("lalin.schema.kernel").KernelValueId(value.text))
 end
 
 function CMat.CMatCFragmentCFG:cmat_fragment_append_stmt(stmt)

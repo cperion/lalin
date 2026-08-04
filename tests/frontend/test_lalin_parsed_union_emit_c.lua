@@ -1,10 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
--- Parsed union document through the schema-v2 frontend and C emission.
+-- Parsed union document through the schema frontend and C emission.
 --
 -- The frontend portion of the old emit_c coverage: a .lln union declaration
--- document parses through the public loader, lowers through the schema-v2
--- pipeline (compile_v2, C text only), and the emitted C names the parsed union
+-- document parses through the public loader, lowers through the schema
+-- pipeline (compile_source, C text only), and the emitted C names the parsed union
 -- type.  No old emit_c path.
 
 local lalin = require("lalin")
@@ -21,9 +21,9 @@ fn main(argc [i32], argv [ptr [ptr [u8]]]) [i32]
 end
 ]=]
 
-local result = lalin.compile_v2("parsed_union", src, { gcc = false })
+local result = lalin.compile_source("parsed_union", src, { gcc = false })
 assert(type(result) == "table" and type(result.source) == "string",
-  "compile_v2 should return emitted C text")
+  "compile_source should return emitted C text")
 assert(result.source:match("PairResult"),
   "emitted C should mention the parsed union type")
 assert(result.source:match("main"),

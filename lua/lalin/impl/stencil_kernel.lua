@@ -1,16 +1,16 @@
 -- Canonical KernelPlanned -> StencilComputation projection.
-require("lalin.schema_v2")
+require("lalin.schema")
 require("lalin.impl.code_mem")
 
-local Core = require("lalin.schema_v2.core")
-local Code = require("lalin.schema_v2.code")
-local Graph = require("lalin.schema_v2.graph")
-local Flow = require("lalin.schema_v2.flow")
-local Mem = require("lalin.schema_v2.mem")
-local Value = require("lalin.schema_v2.value")
-local Kernel = require("lalin.schema_v2.kernel")
-local Schedule = require("lalin.schema_v2.schedule")
-local Stencil = require("lalin.schema_v2.stencil")
+local Core = require("lalin.schema.core")
+local Code = require("lalin.schema.code")
+local Graph = require("lalin.schema.graph")
+local Flow = require("lalin.schema.flow")
+local Mem = require("lalin.schema.mem")
+local Value = require("lalin.schema.value")
+local Kernel = require("lalin.schema.kernel")
+local Schedule = require("lalin.schema.schedule")
+local Stencil = require("lalin.schema.stencil")
 
 local function append_one(values, value)
   local result = {}
@@ -837,7 +837,7 @@ function Stencil.StencilKernelConstructionRejected:stencil_contribute_access(_in
 function Kernel.KernelExprValue:stencil_prepare_stream(input)
   return Stencil.StencilKernelStreamPrepared(input.source, input.binding, Stencil.StencilStreamDef(
     input.id, input.binding.ty, Stencil.StencilStreamValueExpr(
-      require("lalin.schema_v2.value").ValueExprValue(self.value), input.binding.ty)))
+      require("lalin.schema.value").ValueExprValue(self.value), input.binding.ty)))
 end
 function Kernel.KernelExprAlgebra:stencil_prepare_stream(input)
   return Stencil.StencilKernelStreamPrepared(input.source, input.binding, Stencil.StencilStreamDef(

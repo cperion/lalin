@@ -5,12 +5,12 @@
 -- The full plan() orchestrator (which chains graph/flow/value/mem/effect
 -- analysis) will be wired in pipeline.lua once all impl files exist.
 
-require("lalin.schema_v2")
+require("lalin.schema")
 
-local Exec    = require("lalin.schema_v2.exec")
-local Kernel  = require("lalin.schema_v2.kernel")
-local Stencil = require("lalin.schema_v2.stencil")
-local Flow    = require("lalin.schema_v2.flow")
+local Exec    = require("lalin.schema.exec")
+local Kernel  = require("lalin.schema.kernel")
+local Stencil = require("lalin.schema.stencil")
+local Flow    = require("lalin.schema.flow")
 
 ----------------------------------------------------------------------
 -- Kernel plan id helpers

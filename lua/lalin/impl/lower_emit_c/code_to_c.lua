@@ -2,14 +2,14 @@
 -- Methods on Code.*, Core.*, and C.* types for C emission.
 -- Ported from code_to_c.lua.
 
-require("lalin.schema_v2")
+require("lalin.schema")
 
-local Code    = require("lalin.schema_v2.code")
-local Core    = require("lalin.schema_v2.core")
-local C       = require("lalin.schema_v2.c")
-local Sem     = require("lalin.schema_v2.sem")
-local Mem     = require("lalin.schema_v2.mem")
-local Lower   = require("lalin.schema_v2.lower")
+local Code    = require("lalin.schema.code")
+local Core    = require("lalin.schema.core")
+local C       = require("lalin.schema.c")
+local Sem     = require("lalin.schema.sem")
+local Mem     = require("lalin.schema.mem")
+local Lower   = require("lalin.schema.lower")
 
 ----------------------------------------------------------------------
 -- CodeType → code_to_c_type_name / helper queries

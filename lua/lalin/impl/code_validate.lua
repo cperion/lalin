@@ -1,7 +1,7 @@
-require("lalin.schema_v2")
+require("lalin.schema")
 
-local Code = require("lalin.schema_v2.code")
-local CV = require("lalin.schema_v2.code_validation")
+local Code = require("lalin.schema.code")
+local CV = require("lalin.schema.code_validation")
 
 local function append_issue(step, issue)
   local issues = {}

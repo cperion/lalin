@@ -8,7 +8,7 @@
 ---Usage with an existing compiler context:
 ---```lua
 ---local asdl = require("lalin.asdl")
----local schema = require("lalin.schema_projection")
+---local T = require("lalin.schema")
 ---local ast = require("lalin.ast")
 ---local T = asdl.context(); schema(T)
 ---local m = ast.new(T).module { ... }
@@ -1109,11 +1109,11 @@ local function install(api, T)
 end
 
 ---Create a Lalin AST constructor API bound to an existing ASDL context.
----The context must already have `lalin.schema_projection` defined.
+---The context must already have the canonical schema defined (require("lalin.schema")).
 ---@param T table ASDL context containing the Lalin schema.
 ---@return table api Constructor API.
 function M.new(T)
-    assert(T and T.LalinTree and T.LalinType, "lalin.ast.new expects a context with lalin.schema_projection defined")
+    assert(T and T.LalinTree and T.LalinType, "lalin.ast.new expects a context with the canonical schema defined")
     return install({}, T)
 end
 

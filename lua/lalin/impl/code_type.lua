@@ -589,7 +589,7 @@ end
 
 local function self_init()
   if package.loaded["lalin.code_type._api"] then return package.loaded["lalin.code_type._api"] end
-  local T = require("lalin.schema_v2")
+  local T = require("lalin.schema")
   local api = bind_context(T)
   package.loaded["lalin.code_type._api"] = api
   return api

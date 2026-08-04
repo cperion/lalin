@@ -1,11 +1,9 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local asdl = require("lalin.asdl")
-local A = require("lalin.schema_projection")
 local Abi = require("lalin.func_abi_plan")
 
-local T = asdl.context()
-A(T)
+local T = require("lalin.schema")
 local L = Abi(T)
 local C = T.LalinCore
 local Ty = T.LalinType

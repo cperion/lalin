@@ -288,7 +288,7 @@ return setmetatable({}, {
     if package.loaded["lalin.type_size_align._api"] then
       return package.loaded["lalin.type_size_align._api"][k]
     end
-    local T = require("lalin.schema_v2")
+    local T = require("lalin.schema")
     local api = bind_context(T)
     package.loaded["lalin.type_size_align._api"] = api
     return api[k]

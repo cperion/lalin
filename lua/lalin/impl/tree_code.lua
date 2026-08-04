@@ -3,20 +3,20 @@
 -- Also: layout-resolution methods from layout_resolve.lua.
 -- Also: type helpers on Core.Scalar, Code.CodeType, Ty.Type leaves.
 
--- Bootstrap: ensure schema_v2 init runs first, so direct requires return instantiated types
-local SchemaV2 = require("lalin.schema_v2")
+-- Bootstrap: ensure schema init runs first, so direct requires return instantiated types
+local SchemaV2 = require("lalin.schema")
 
-local Tree     = require("lalin.schema_v2.tree")
-local Code     = require("lalin.schema_v2.code")
-local TreeCode = require("lalin.schema_v2.tree_code")
-local Core     = require("lalin.schema_v2.core")
-local Sem      = require("lalin.schema_v2.sem")
-local Ty       = require("lalin.schema_v2.type")
+local Tree     = require("lalin.schema.tree")
+local Code     = require("lalin.schema.code")
+local TreeCode = require("lalin.schema.tree_code")
+local Core     = require("lalin.schema.core")
+local Sem      = require("lalin.schema.sem")
+local Ty       = require("lalin.schema.type")
 local Host     = SchemaV2.LalinHost
-local Bind     = require("lalin.schema_v2.bind")
+local Bind     = require("lalin.schema.bind")
 local asdl     = require("lalin.asdl")
 local TypeSizeAlign = require("lalin.type_size_align")
-local CodeType = require("lalin.impl.code_type")(require("lalin.schema_v2"))
+local CodeType = require("lalin.impl.code_type")(require("lalin.schema"))
 
 ----------------------------------------------------------------------
 -- helpers

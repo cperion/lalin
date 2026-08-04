@@ -1,15 +1,15 @@
 -- impl/kernel_plan.lua — typed kernel loop-fact projection and planning.
-require("lalin.schema_v2")
+require("lalin.schema")
 require("lalin.impl.code_mem")
 require("lalin.impl.code_flow")
-local Code = require("lalin.schema_v2.code")
-local Graph = require("lalin.schema_v2.graph")
-local Flow = require("lalin.schema_v2.flow")
-local Value = require("lalin.schema_v2.value")
-local Mem = require("lalin.schema_v2.mem")
-local Effect = require("lalin.schema_v2.effect")
-local Kernel = require("lalin.schema_v2.kernel")
-local Stencil = require("lalin.schema_v2.stencil")
+local Code = require("lalin.schema.code")
+local Graph = require("lalin.schema.graph")
+local Flow = require("lalin.schema.flow")
+local Value = require("lalin.schema.value")
+local Mem = require("lalin.schema.mem")
+local Effect = require("lalin.schema.effect")
+local Kernel = require("lalin.schema.kernel")
+local Stencil = require("lalin.schema.stencil")
 
 local function sanitize(s)
   s = tostring(s):gsub("[^%w_]", "_")
@@ -726,7 +726,7 @@ function Flow.FlowFactSet:kernel_resolve_index_value(input)
   end
   return input.values:kernel_index_expr(input.value)
 end
-function Mem.MemIndexNone:kernel_index_expr(_input) return Value.ValueExprConst(Code.CodeConstLiteral(Code.CodeTyIndex, require("lalin.schema_v2.core").LitInt("0"))) end
+function Mem.MemIndexNone:kernel_index_expr(_input) return Value.ValueExprConst(Code.CodeConstLiteral(Code.CodeTyIndex, require("lalin.schema.core").LitInt("0"))) end
 function Mem.MemIndexValue:kernel_index_expr(input)
   return input.values:kernel_index_expr(self.value)
     :kernel_resolve_index_expr(input.flow, input.values)

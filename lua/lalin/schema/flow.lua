@@ -13,6 +13,7 @@ return schema. LalinFlow {
     },
     FlowDomainFunction { variant_unique, func [LalinCode.CodeFuncId], },
   },
+
   sum. FlowDomainOrder { FlowDomainForward, FlowDomainBackward, },
   product. FlowDomainAxis {
     interned,
@@ -23,6 +24,7 @@ return schema. LalinFlow {
     order [LalinFlow.FlowDomainOrder],
     index_name [optional [str]],
   },
+
   sum. FlowWindowBoundary {
     FlowWindowBoundaryReject,
     FlowWindowBoundaryClamp,
@@ -35,6 +37,7 @@ return schema. LalinFlow {
     after [number],
     boundary [LalinFlow.FlowWindowBoundary],
   },
+
   sum. FlowDomainShape {
     FlowDomainShapeRange1D {
       variant_unique,
@@ -56,12 +59,46 @@ return schema. LalinFlow {
       tile_sizes [many [number]],
     },
   },
+  product. FlowLoopDomainProjectionInput {
+    interned,
+    domain [LalinFlow.FlowDomain],
+    header [LalinCode.CodeBlock],
+    edges [many [LalinFlow.FlowEdgeFact]],
+    loop [LalinGraph.GraphLoop],
+  },
+  product. FlowLoopShapeProjectionInput {
+    interned,
+    axes [many [LalinFlow.FlowDomainAxis]],
+  },
+  sum. FlowLoopDomainProjection {
+    FlowLoopDomainAbsent,
+    FlowLoopDomainProjected {
+      variant_unique,
+      shape [LalinFlow.FlowDomainShape],
+      proof [LalinFlow.FlowProof],
+    },
+    FlowLoopDomainRejected {
+      variant_unique,
+      domain [LalinFlow.FlowDomain],
+      reason [str],
+    },
+  },
+
+  sum. FlowProofSource {
+    FlowProofAuthor,
+    FlowProofFrontendPass,
+    FlowProofBackendGuarantee,
+  },
   sum. FlowProof {
     FlowProofDomain { variant_unique, domain [LalinFlow.FlowDomain], reason [str], },
     FlowProofMemory { variant_unique, proof [LalinMem.MemProof], reason [str], },
-    FlowProofAuthorAsserted { variant_unique, reason [str], },
-    FlowProofFrontendFact { variant_unique, reason [str], },
+    FlowProofAuthoritative {
+      variant_unique,
+      source [LalinFlow.FlowProofSource],
+      reason [str],
+    },
   },
+
   sum. FlowFactOrigin {
     FlowFactCheckerDerived,
     FlowFactAuthorAsserted { variant_unique, reason [str], },
@@ -85,6 +122,18 @@ return schema. LalinFlow {
     proofs [many [LalinFlow.FlowProof]],
     origin [LalinFlow.FlowFactOrigin],
   },
+
+  sum. FlowTripCountReject {
+    FlowTripCountNotLoop { subject_description [str], },
+    FlowTripCountInductionNotMonotonic { induction_value [LalinCode.CodeValueId], },
+    FlowTripCountNonConstantStep { step_value [LalinCode.CodeValueId], },
+    FlowTripCountUnboundedRange {
+      start [LalinCode.CodeValueId],
+      stop [LalinCode.CodeValueId],
+    },
+    FlowTripCountIrregularExit { exit_block [LalinCode.CodeBlockId], },
+    FlowTripCountNotMaterialized { reason [str], },
+  },
   sum. FlowTripCount {
     FlowTripCountExact {
       variant_unique,
@@ -98,8 +147,18 @@ return schema. LalinFlow {
       trip_expr [optional [LalinValue.ValueExpr]],
       proof [optional [LalinMem.MemProof]],
     },
-    FlowTripCountUnknown { variant_unique, reason [str], trip_expr [optional [LalinValue.ValueExpr]], },
+    FlowTripCountExpression {
+      variant_unique,
+      expression [LalinValue.ValueExpr],
+      proof [optional [LalinMem.MemProof]],
+    },
+    FlowTripCountRejected {
+      variant_unique,
+      reject [LalinFlow.FlowTripCountReject],
+      trip_expr [optional [LalinValue.ValueExpr]],
+    },
   },
+
   product. FlowEdgeArg {
     interned,
     src [LalinCode.CodeValueId],
@@ -110,6 +169,7 @@ return schema. LalinFlow {
     edge [LalinGraph.GraphEdge],
     args [many [LalinFlow.FlowEdgeArg]],
   },
+
   sum. FlowReject {
     FlowRejectIrreducible { variant_unique, func [LalinCode.CodeFuncId], reason [str], },
     FlowRejectNotCounted { variant_unique, loop [LalinGraph.GraphLoopId], reason [str], },
@@ -129,13 +189,34 @@ return schema. LalinFlow {
       field. value [LalinCode.CodeValueId],
       reason [str],
     },
+    FlowRejectDomainProjection {
+      variant_unique,
+      domain [LalinFlow.FlowDomain],
+      reason [str],
+    },
+  },
+
+  sum. FlowBoundDerivationKey {
+    FlowBoundFromTripCount { domain [LalinFlow.FlowDomain], },
+    FlowBoundFromParam { param_name [str], },
+    FlowBoundFromConst { field. value [LalinCore.Literal], },
+    FlowBoundFromBinary {
+      op [LalinCore.BinaryOp],
+      left [LalinCode.CodeValueId],
+      right [LalinCode.CodeValueId],
+    },
   },
   sum. FlowBound {
     FlowBoundUnknown,
     FlowBoundConst { variant_unique, raw [str], },
     FlowBoundValue { variant_unique, field. value [LalinCode.CodeValueId], },
-    FlowBoundDerived { variant_unique, key [str], deps [many [LalinCode.CodeValueId]], },
+    FlowBoundDerived {
+      variant_unique,
+      key [LalinFlow.FlowBoundDerivationKey],
+      deps [many [LalinCode.CodeValueId]],
+    },
   },
+
   sum. FlowValueRange {
     FlowRangeUnknown { variant_unique, field. value [LalinCode.CodeValueId], },
     FlowRangeExact {
@@ -163,18 +244,25 @@ return schema. LalinFlow {
       reason [str],
     },
   },
+
+  sum. FlowStopConvention { FlowStopExclusive, FlowStopInclusive, },
+  sum. FlowLoopDirection { FlowLoopIncreasing, FlowLoopDecreasing, FlowLoopDirectionUnknown, },
   product. FlowCountedDomain {
     interned,
     start [LalinCode.CodeValueId],
     stop [LalinCode.CodeValueId],
     step [LalinCode.CodeValueId],
-    stop_exclusive [bool],
+    stop_convention [LalinFlow.FlowStopConvention],
+    direction [LalinFlow.FlowLoopDirection],
   },
-  sum. FlowLoopDirection { FlowLoopIncreasing, FlowLoopDecreasing, FlowLoopDirectionUnknown, },
   sum. FlowInductionRole {
     FlowPrimaryInduction,
     FlowDerivedInduction { variant_unique, base [LalinCode.CodeValueId], },
-    FlowPointerInduction { variant_unique, base [LalinCode.CodeValueId], elem_size [number], },
+    FlowPointerInduction {
+      variant_unique,
+      base [LalinCode.CodeValueId],
+      elem_size [number],
+    },
   },
   product. FlowInduction {
     interned,
@@ -185,6 +273,20 @@ return schema. LalinFlow {
     role [LalinFlow.FlowInductionRole],
     range [LalinFlow.FlowValueRange],
   },
+  product. FlowInductionProjection {
+    interned,
+    inductions [many [LalinFlow.FlowInduction]],
+  },
+  sum. FlowInductionLookup {
+    FlowInductionFound { variant_unique, induction [LalinFlow.FlowInduction], },
+    FlowInductionMissing { variant_unique, field. value [LalinCode.CodeValueId], },
+    FlowInductionAmbiguous {
+      variant_unique,
+      field. value [LalinCode.CodeValueId],
+      count [number],
+    },
+  },
+
   product. FlowLoopExit {
     interned,
     from [LalinGraph.GraphBlockId],
@@ -210,6 +312,30 @@ return schema. LalinFlow {
     max_exclusive [bool],
     reason [str],
   },
+
+  product. FlowGraphLoopEntry {
+    interned,
+    loop [LalinGraph.GraphLoop],
+  },
+  product. FlowGraphLoopProjection {
+    interned,
+    entries [many [LalinFlow.FlowGraphLoopEntry]],
+  },
+  sum. FlowGraphLoopLookup {
+    FlowGraphLoopFound { variant_unique, entry [LalinFlow.FlowGraphLoopEntry], },
+    FlowGraphLoopMissing { variant_unique, field. id [LalinGraph.GraphLoopId], },
+  },
+  product. FlowTripEntryInput {
+    interned,
+    field. module [LalinCode.CodeModule],
+    counted [LalinFlow.FlowCountedDomain],
+    edges [many [LalinFlow.FlowEdgeFact]],
+  },
+  sum. FlowTripEntryResult {
+    FlowTripEntryFound { variant_unique, field. value [LalinCode.CodeValueId], },
+    FlowTripEntryFallback,
+  },
+
   sum. FlowLoopSemanticFact {
     FlowLoopNormalizedCounted {
       variant_unique,
@@ -231,6 +357,7 @@ return schema. LalinFlow {
     field. module [LalinCode.CodeModuleId],
     facts [many [LalinFlow.FlowLoopSemanticFact]],
   },
+
   product. FlowFactSet {
     interned,
     field. module [LalinCode.CodeModuleId],

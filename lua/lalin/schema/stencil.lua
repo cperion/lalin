@@ -79,14 +79,86 @@ return schema. LalinStencil {
     StencilScatterReducePrivatized,
   },
   sum. StencilProducerOrder { StencilProducerForward, StencilProducerBackward, },
+  sum. StencilBound {
+    StencilBoundDynamic,
+    StencilBoundValue { variant_unique, field. value [LalinValue.ValueExpr], },
+  },
+  sum. StencilIndexName {
+    StencilIndexAnonymous,
+    StencilIndexNamed { variant_unique, field. name [str], },
+  },
+  sum. StencilProducerOrigin {
+    StencilProducerOriginNone,
+    StencilProducerOriginFlow { variant_unique, domain [LalinFlow.FlowDomain], },
+  },
+  sum. StencilScalarValue {
+    StencilScalarValueNone,
+    StencilScalarValueExpr { variant_unique, field. value [LalinValue.ValueExpr], },
+  },
+  sum. StencilOffsetValue {
+    StencilOffsetZero,
+    StencilOffsetExpr { variant_unique, field. value [LalinValue.ValueExpr], },
+  },
+  sum. StencilIndexSelection {
+    StencilIndexProducer,
+    StencilIndexExplicit { variant_unique, index [LalinStencil.StencilIndexExpr], },
+  },
+  sum. StencilArithmeticMode {
+    StencilArithmeticInferred,
+    StencilArithmeticInteger { variant_unique, semantics [LalinCode.CodeIntSemantics], },
+    StencilArithmeticFloat { variant_unique, mode [LalinCode.CodeFloatMode], },
+  },
+  sum. StencilPointResult {
+    StencilPointResultInferred,
+    StencilPointResultTyped { variant_unique, field. ty [LalinCode.CodeType], arithmetic [LalinStencil.StencilArithmeticMode], },
+  },
+  sum. StencilProofEvidence {
+    StencilProofUnproven,
+    StencilProofProvided { variant_unique, proof [LalinKernel.KernelProof], },
+  },
+  sum. StencilReadonlyFact { StencilWritableAccess, StencilReadonlyAccess, },
+  sum. StencilUnitStrideFact { StencilStrideNotUnit, StencilStrideUnit, },
+  sum. StencilReassociationFact { StencilReassociationRejected, StencilReassociationProven, },
+  sum. StencilAccessSite {
+    StencilAccessSiteNone,
+    StencilAccessSiteRef { variant_unique, access [LalinStencil.StencilAccessRef], },
+  },
+  sum. StencilScheduleRealization {
+    StencilScheduleUnrealized,
+    StencilScheduleRealized { variant_unique, schedule [LalinStencil.StencilRealizedSchedule], },
+  },
+  sum. StencilResultType {
+    StencilResultVoid,
+    StencilResultValue { variant_unique, field. ty [LalinCode.CodeType], },
+  },
+  sum. StencilArtifactStride {
+    StencilArtifactNativeStride,
+    StencilArtifactByteStride { variant_unique, bytes [number], },
+  },
+  sum. StencilScheduleCandidatePlan {
+    StencilScheduleCandidateNoPlan,
+    StencilScheduleCandidatePlanned { variant_unique, schedule [LalinStencil.StencilSchedule], },
+  },
+  sum. StencilFoldDestination {
+    StencilFoldReturnsValue,
+    StencilFoldStores {
+      variant_unique,
+      access [LalinStencil.StencilAccessRef],
+      index [LalinStencil.StencilIndexSelection],
+    },
+  },
+  sum. StencilMetastencilNodeSelection {
+    StencilMetastencilExternalNode,
+    StencilMetastencilSelectedNode { variant_unique, node [LalinStencil.StencilMetastencilNodeId], },
+  },
   product. StencilProducerAxis {
     interned,
     index_ty [LalinCode.CodeType],
-    start [optional [LalinValue.ValueExpr]],
-    stop [optional [LalinValue.ValueExpr]],
+    start [LalinStencil.StencilBound],
+    stop [LalinStencil.StencilBound],
     step [number],
     order [LalinStencil.StencilProducerOrder],
-    index_name [optional [str]],
+    index_name [LalinStencil.StencilIndexName],
   },
   product. StencilAxisRef { interned, index [number], },
   sum. StencilWindowBoundary {
@@ -95,16 +167,21 @@ return schema. LalinStencil {
     StencilWindowBoundaryWrap,
     StencilWindowBoundaryZero,
   },
+  product. StencilElementDistance { interned, elements [number], },
+  product. StencilWindowExtent {
+    interned,
+    before [LalinStencil.StencilElementDistance],
+    after [LalinStencil.StencilElementDistance],
+  },
   product. StencilWindowAxis {
     interned,
-    before [number],
-    after [number],
+    extent [LalinStencil.StencilWindowExtent],
     boundary [LalinStencil.StencilWindowBoundary],
   },
   product. StencilWindowOffset {
     interned,
     axis [LalinStencil.StencilAxisRef],
-    offset [number],
+    distance [LalinStencil.StencilElementDistance],
   },
   product. StencilAffineAxisTerm {
     interned,
@@ -115,10 +192,31 @@ return schema. LalinStencil {
     StencilProduceRange1D {
       variant_unique,
       index_ty [LalinCode.CodeType],
-      start [optional [LalinValue.ValueExpr]],
-      stop [optional [LalinValue.ValueExpr]],
+      start [LalinStencil.StencilBound],
+      stop [LalinStencil.StencilBound],
       step [number],
       order [LalinStencil.StencilProducerOrder],
+    },
+    StencilProduceCountedRange1D {
+      variant_unique,
+      index_ty [LalinCode.CodeType],
+      start [LalinStencil.StencilBound],
+      stop [LalinStencil.StencilBound],
+      step [number],
+      order [LalinStencil.StencilProducerOrder],
+      stop_convention [LalinStencil.StencilIterationStopConvention],
+      trip [LalinStencil.StencilKernelTripCount],
+    },
+    StencilProduceCountedWindow1D {
+      variant_unique,
+      index_ty [LalinCode.CodeType],
+      start [LalinStencil.StencilBound],
+      stop [LalinStencil.StencilBound],
+      step [number],
+      order [LalinStencil.StencilProducerOrder],
+      stop_convention [LalinStencil.StencilIterationStopConvention],
+      trip [LalinStencil.StencilKernelTripCount],
+      window [LalinStencil.StencilWindowAxis],
     },
     StencilProduceRangeND { variant_unique, axes [many [LalinStencil.StencilProducerAxis]], },
     StencilProduceWindowND {
@@ -134,7 +232,7 @@ return schema. LalinStencil {
   },
   product. StencilProducer {
     interned,
-    origin [optional [LalinFlow.FlowDomain]],
+    origin [LalinStencil.StencilProducerOrigin],
     shape [LalinStencil.StencilProducerShape],
   },
   sum. StencilProducerFactOrigin {
@@ -162,42 +260,52 @@ return schema. LalinStencil {
     StencilAccessReduce,
     StencilAccessControlResult,
   },
-  sum. StencilAccessLayout {
-    StencilLayoutScalar { variant_unique, field. value [optional [LalinValue.ValueExpr]], },
+
+  -- C-neutral access layout: direct and descriptor-backed states are distinct.
+  sum. StencilAccessLayoutBase {
+    StencilLayoutScalar { variant_unique, field. value [LalinStencil.StencilScalarValue], },
     StencilLayoutContiguous { variant_unique, stride [number], },
     StencilLayoutIndexed {
       variant_unique,
-      parent [LalinStencil.StencilAccessLayout],
+      parent [LalinStencil.StencilAccessLayoutBase],
       index [LalinStencil.StencilAccessRef],
       index_ty [LalinCode.CodeType],
       stride [number],
     },
     StencilLayoutAffine1D {
       variant_unique,
-      parent [LalinStencil.StencilAccessLayout],
+      parent [LalinStencil.StencilAccessLayoutBase],
       scale [number],
-      offset [optional [LalinValue.ValueExpr]],
+      offset [LalinStencil.StencilOffsetValue],
     },
     StencilLayoutAffineND {
       variant_unique,
-      parent [LalinStencil.StencilAccessLayout],
+      parent [LalinStencil.StencilAccessLayoutBase],
       terms [many [LalinStencil.StencilAffineAxisTerm]],
-      offset [optional [LalinValue.ValueExpr]],
+      offset [LalinStencil.StencilOffsetValue],
     },
     StencilLayoutFieldProjection {
       variant_unique,
-      parent [LalinStencil.StencilAccessLayout],
+      parent [LalinStencil.StencilAccessLayoutBase],
       record_ty [LalinCode.CodeType],
       field_name [str],
       field_offset [number],
     },
     StencilLayoutSoAComponent {
       variant_unique,
-      parent [LalinStencil.StencilAccessLayout],
+      parent [LalinStencil.StencilAccessLayoutBase],
       record_ty [LalinCode.CodeType],
       field_name [str],
       component_index [number],
     },
+  },
+
+  sum. StencilStrideFact {
+    StencilStrideDynamic,
+    StencilStrideKnown { variant_unique, bytes [number], },
+  },
+
+  sum. StencilAccessDescriptor {
     StencilLayoutSliceDescriptor {
       variant_unique,
       slice [LalinCode.CodeValueId],
@@ -216,9 +324,25 @@ return schema. LalinStencil {
       data [LalinCode.CodeValueId],
       len [LalinCode.CodeValueId],
       stride [LalinCode.CodeValueId],
-      stride_const [optional [number]],
+      stride_fact [LalinStencil.StencilStrideFact],
+    },
+    StencilLayoutForeignBuffer {
+      variant_unique,
+      buffer_name [str],
+      data [LalinCode.CodeValueId],
+      len [LalinCode.CodeValueId],
     },
   },
+
+  sum. StencilAccessLayout {
+    StencilAccessDirect { variant_unique, base [LalinStencil.StencilAccessLayoutBase], },
+    StencilAccessDescribed {
+      variant_unique,
+      base [LalinStencil.StencilAccessLayoutBase],
+      descriptor [LalinStencil.StencilAccessDescriptor],
+    },
+  },
+
   product. StencilAccess {
     interned,
     field. name [str],
@@ -246,7 +370,7 @@ return schema. LalinStencil {
     StencilStreamAccess {
       variant_unique,
       access [LalinStencil.StencilAccessRef],
-      index [optional [LalinStencil.StencilIndexExpr]],
+      index [LalinStencil.StencilIndexSelection],
     },
     StencilStreamWindowAccess {
       variant_unique,
@@ -258,6 +382,12 @@ return schema. LalinStencil {
       field. value [LalinValue.ValueExpr],
       ty [LalinCode.CodeType],
     },
+    StencilStreamValueExpr {
+      variant_unique,
+      field. value [LalinValue.ValueExpr],
+      ty [LalinCode.CodeType],
+    },
+    StencilStreamAlias { variant_unique, source [LalinStencil.StencilStreamRef], },
     StencilStreamMap {
       variant_unique,
       field. expr [LalinStencil.StencilPointExpr],
@@ -304,18 +434,14 @@ return schema. LalinStencil {
       variant_unique,
       op [LalinStencil.StencilUnaryOp],
       field. arg [LalinStencil.StencilPointExpr],
-      result_ty [optional [LalinCode.CodeType]],
-      int_semantics [optional [LalinCode.CodeIntSemantics]],
-      float_mode [optional [LalinCode.CodeFloatMode]],
+      result [LalinStencil.StencilPointResult],
     },
     StencilPointBinary {
       variant_unique,
       op [LalinStencil.StencilBinaryOp],
       left [LalinStencil.StencilPointExpr],
       right [LalinStencil.StencilPointExpr],
-      result_ty [optional [LalinCode.CodeType]],
-      int_semantics [optional [LalinCode.CodeIntSemantics]],
-      float_mode [optional [LalinCode.CodeFloatMode]],
+      result [LalinStencil.StencilPointResult],
     },
     StencilPointCast {
       variant_unique,
@@ -351,8 +477,7 @@ return schema. LalinStencil {
     reduction [LalinValue.ReductionOp],
     result_ty [LalinCode.CodeType],
     field. identity [LalinValue.ValueExpr],
-    int_semantics [optional [LalinCode.CodeIntSemantics]],
-    float_mode [optional [LalinCode.CodeFloatMode]],
+    arithmetic [LalinStencil.StencilArithmeticMode],
   },
   sum. StencilStoreSemantics {
     StencilStoreElementwise,
@@ -394,16 +519,10 @@ return schema. LalinStencil {
     StencilOptOs,
     StencilOptOz,
   },
-  sum. StencilMachineTarget {
-    StencilMachineNative,
-    StencilMachineBaseline,
-    StencilMachineNamed { variant_unique, field. name [str], },
-  },
   product. StencilCompilerPolicy {
     interned,
     compiler [LalinStencil.StencilCompiler],
     opt_level [LalinStencil.StencilOptLevel],
-    machine [LalinStencil.StencilMachineTarget],
     flags [many [str]],
   },
   sum. StencilAliasFact { StencilAliasUnknown, StencilAliasNoAlias, StencilAliasMayAlias, },
@@ -441,14 +560,14 @@ return schema. LalinStencil {
     interned,
     requirement [LalinStencil.StencilProofRequirement],
     origin [LalinStencil.StencilProofOrigin],
-    proof [optional [LalinKernel.KernelProof]],
+    evidence [LalinStencil.StencilProofEvidence],
   },
   product. StencilAccessVectorFact {
     interned,
     access [LalinStencil.StencilAccessRef],
     alignment [LalinStencil.StencilAlignmentFact],
-    readonly [bool],
-    unit_stride [bool],
+    readonly [LalinStencil.StencilReadonlyFact],
+    unit_stride [LalinStencil.StencilUnitStrideFact],
   },
   product. StencilAccessAliasFact {
     interned,
@@ -458,18 +577,29 @@ return schema. LalinStencil {
   },
   product. StencilArithmeticVectorFact {
     interned,
-    reduction_reassociable [bool],
-    int_semantics [optional [LalinCode.CodeIntSemantics]],
-    float_mode [optional [LalinCode.CodeFloatMode]],
+    reassociation [LalinStencil.StencilReassociationFact],
+    arithmetic [LalinStencil.StencilArithmeticMode],
   },
-  product. StencilVectorizationFacts {
+
+  -- StencilVectorizationFacts decomposed into 4 facet products
+  product. StencilAccessFacts {
     interned,
-    access_facts [many [LalinStencil.StencilAccessVectorFact]],
-    alias_facts [many [LalinStencil.StencilAccessAliasFact]],
-    trip_count [LalinStencil.StencilTripCountFact],
-    arithmetic [LalinStencil.StencilArithmeticVectorFact],
-    proof_obligations [many [LalinStencil.StencilProofObligation]],
+    facts [many [LalinStencil.StencilAccessVectorFact]],
   },
+  product. StencilAliasFacts {
+    interned,
+    facts [many [LalinStencil.StencilAccessAliasFact]],
+  },
+  product. StencilArithmeticFacts {
+    interned,
+    reassociation [LalinStencil.StencilReassociationFact],
+    arithmetic [LalinStencil.StencilArithmeticMode],
+  },
+  product. StencilTripCountFactSet {
+    interned,
+    trip_count [LalinStencil.StencilTripCountFact],
+  },
+
   sum. StencilVectorFeatureRequirement {
     StencilVectorFeatureNative,
     StencilVectorFeatureSSE2,
@@ -550,7 +680,7 @@ return schema. LalinStencil {
     },
     StencilScheduleRejectUnprovableAlignment {
       variant_unique,
-      access [optional [LalinStencil.StencilAccessRef]],
+      site [LalinStencil.StencilAccessSite],
       alignment [LalinStencil.StencilVectorAlignmentPolicy],
       reason [str],
     },
@@ -563,22 +693,29 @@ return schema. LalinStencil {
     StencilScheduleRejectRequestedRealizedMismatch {
       variant_unique,
       requested [LalinStencil.StencilSchedule],
-      realized [optional [LalinStencil.StencilRealizedSchedule]],
-      reason [str],
+      realized [LalinStencil.StencilScheduleRealization],
+      mismatch [LalinStencil.StencilScheduleMismatch],
     },
+  },
+  sum. StencilScheduleMismatch {
+    StencilScheduleMismatchUnrollFactor { requested [number], realized [number] },
+    StencilScheduleMismatchLaneCount { requested [number], realized [number] },
+    StencilScheduleMismatchFeature { requested [LalinStencil.StencilVectorFeatureRequirement], realized [LalinStencil.StencilVectorFeatureRequirement] },
+    StencilScheduleMismatchNoRealization,
+    StencilScheduleMismatchUnquantified { reason [str] },
   },
   sum. StencilSchedule {
     StencilScheduleScalar { variant_unique, compiler [LalinStencil.StencilCompilerPolicy], },
     StencilScheduleAutoVector {
       variant_unique,
       compiler [LalinStencil.StencilCompilerPolicy],
-      facts [LalinStencil.StencilVectorizationFacts],
+      facts [LalinStencil.StencilAccessFacts],
     },
     StencilScheduleUnrolled {
       variant_unique,
       factor [number],
       compiler [LalinStencil.StencilCompilerPolicy],
-      facts [LalinStencil.StencilVectorizationFacts],
+      facts [LalinStencil.StencilAccessFacts],
     },
     StencilScheduleVector {
       variant_unique,
@@ -591,7 +728,7 @@ return schema. LalinStencil {
       vector_unroll [number],
       interleave [number],
       compiler [LalinStencil.StencilCompilerPolicy],
-      facts [LalinStencil.StencilVectorizationFacts],
+      facts [LalinStencil.StencilAccessFacts],
     },
   },
   sum. StencilBody {
@@ -628,43 +765,18 @@ return schema. LalinStencil {
       result_ty [LalinCode.CodeType],
     },
   },
-  sum. StencilDescriptorScheduleSelection {
-    StencilDescriptorScheduleSelected {
-      variant_unique,
-      schedule [LalinStencil.StencilSchedule],
-    },
-    StencilDescriptorExplicitlyUnscheduled { variant_unique, reason [str], },
-    StencilDescriptorScheduleRejected {
-      variant_unique,
-      rejects [many [LalinStencil.StencilScheduleReject]],
-      reason [str],
-    },
-  },
-  product. StencilDescriptorShape {
-    interned,
-    producer [LalinStencil.StencilProducer],
-    accesses [many [LalinStencil.StencilAccess]],
-    body [LalinStencil.StencilBody],
-    sink [LalinStencil.StencilSink],
-  },
-  product. StencilScheduleResolutionInput {
-    interned,
-    descriptor [LalinStencil.StencilDescriptorShape],
-    compiler [LalinStencil.StencilCompilerPolicy],
-    facts [LalinStencil.StencilVectorizationFacts],
-  },
   product. StencilDescriptor {
     interned,
     producer [LalinStencil.StencilProducer],
     accesses [many [LalinStencil.StencilAccess]],
     body [LalinStencil.StencilBody],
     sink [LalinStencil.StencilSink],
-    schedule_selection [LalinStencil.StencilDescriptorScheduleSelection],
   },
   sum. StencilSinkOp {
     StencilSinkOpStore {
       variant_unique,
       dst [LalinStencil.StencilAccessRef],
+      index [LalinStencil.StencilIndexSelection],
       field. value [LalinStencil.StencilStreamRef],
       semantics [LalinStencil.StencilStoreSemantics],
     },
@@ -674,7 +786,7 @@ return schema. LalinStencil {
       reducer [LalinStencil.StencilReducer],
       result_ty [LalinCode.CodeType],
       init [LalinStencil.StencilReduceInitMode],
-      dst [optional [LalinStencil.StencilAccessRef]],
+      destination [LalinStencil.StencilFoldDestination],
     },
     StencilSinkOpScan {
       variant_unique,
@@ -713,6 +825,13 @@ return schema. LalinStencil {
       variant_unique,
       src [LalinStencil.StencilStreamRef],
       pred [LalinStencil.StencilPredicate],
+      not_found [LalinValue.ValueExpr],
+    },
+    StencilSinkOpAllCompare {
+      variant_unique,
+      left [LalinStencil.StencilStreamRef],
+      right [LalinStencil.StencilStreamRef],
+      cmp [LalinCore.CmpOp],
     },
   },
   product. StencilSinkDef {
@@ -737,7 +856,7 @@ return schema. LalinStencil {
   },
   product. StencilComputation {
     interned,
-    field. id [LalinStencil.StencilMetastencilId],
+    field. id [LalinStencil.StencilComputationId],
     producer [LalinStencil.StencilProducer],
     accesses [many [LalinStencil.StencilAccess]],
     streams [many [LalinStencil.StencilStreamDef]],
@@ -749,7 +868,7 @@ return schema. LalinStencil {
   product. StencilAbi {
     interned,
     params [many [LalinCode.CodeType]],
-    result [optional [LalinCode.CodeType]],
+    result [LalinStencil.StencilResultType],
   },
   product. StencilInstance {
     interned,
@@ -758,27 +877,6 @@ return schema. LalinStencil {
     schedule [LalinStencil.StencilSchedule],
     abi [LalinStencil.StencilAbi],
     proofs [many [LalinKernel.KernelProof]],
-  },
-  product. StencilInstanceBuildInput {
-    interned,
-    field. id [LalinStencil.StencilInstanceId],
-    descriptor [LalinStencil.StencilDescriptor],
-    abi [LalinStencil.StencilAbi],
-    proofs [many [LalinKernel.KernelProof]],
-  },
-  sum. StencilInstanceBuildOutcome {
-    StencilInstanceScheduled { variant_unique, instance [LalinStencil.StencilInstance], },
-    StencilInstanceExplicitlyUnscheduled {
-      variant_unique,
-      descriptor [LalinStencil.StencilDescriptor],
-      reason [str],
-    },
-    StencilInstanceScheduleRejected {
-      variant_unique,
-      descriptor [LalinStencil.StencilDescriptor],
-      rejects [many [LalinStencil.StencilScheduleReject]],
-      reason [str],
-    },
   },
   sum. StencilReject {
     StencilRejectUnsupportedVocab {
@@ -823,7 +921,7 @@ return schema. LalinStencil {
   product. StencilScheduleCandidate {
     interned,
     field. name [str],
-    schedule [optional [LalinStencil.StencilSchedule]],
+    plan [LalinStencil.StencilScheduleCandidatePlan],
     cost [number],
     status [LalinStencil.StencilScheduleCandidateStatus],
     rejects [many [LalinStencil.StencilScheduleReject]],
@@ -873,7 +971,7 @@ return schema. LalinStencil {
     symbol [LalinStencil.StencilSymbolId],
     c_signature [str],
     fingerprint [LalinStencil.StencilArtifactFingerprint],
-    realized [optional [LalinStencil.StencilRealizedSchedule]],
+    realization [LalinStencil.StencilScheduleRealization],
     diagnostics [many [LalinStencil.StencilArtifactDiagnostic]],
     schedule_rejects [many [LalinStencil.StencilScheduleReject]],
   },
@@ -934,7 +1032,7 @@ return schema. LalinStencil {
       store_mode [LalinStencil.StencilStoreSemantics],
       field. expr [LalinStencil.StencilPointExpr],
       producer [LalinStencil.StencilProducerExecution],
-      stride [optional [number]],
+      stride [LalinStencil.StencilArtifactStride],
     },
     StencilArtifactReduceN {
       variant_unique,
@@ -943,14 +1041,13 @@ return schema. LalinStencil {
       item_ty [LalinCode.CodeType],
       result_ty [LalinCode.CodeType],
       reduction [LalinValue.ReductionOp],
-      int_semantics [optional [LalinCode.CodeIntSemantics]],
-      float_mode [optional [LalinCode.CodeFloatMode]],
+      arithmetic [LalinStencil.StencilArithmeticMode],
       field. identity [LalinValue.ValueExpr],
       scope [LalinStencil.StencilReduceScope],
       reduce_scope [LalinStencil.StencilReduceExecutionScope],
       init_mode [LalinStencil.StencilReduceInitMode],
       producer [LalinStencil.StencilProducerExecution],
-      stride [optional [number]],
+      stride [LalinStencil.StencilArtifactStride],
     },
     StencilArtifactFindN {
       variant_unique,
@@ -960,7 +1057,7 @@ return schema. LalinStencil {
       pred [LalinStencil.StencilPredicate],
       not_found [LalinValue.ValueExpr],
       producer [LalinStencil.StencilProducerExecution],
-      stride [optional [number]],
+      stride [LalinStencil.StencilArtifactStride],
     },
     StencilArtifactPartitionN {
       variant_unique,
@@ -970,7 +1067,7 @@ return schema. LalinStencil {
       dst_name [str],
       mode [LalinStencil.StencilPartitionSemantics],
       producer [LalinStencil.StencilProducerExecution],
-      stride [optional [number]],
+      stride [LalinStencil.StencilArtifactStride],
     },
     StencilArtifactScanN {
       variant_unique,
@@ -978,13 +1075,12 @@ return schema. LalinStencil {
       field. expr [LalinStencil.StencilPointExpr],
       result_ty [LalinCode.CodeType],
       reduction [LalinValue.ReductionOp],
-      int_semantics [optional [LalinCode.CodeIntSemantics]],
-      float_mode [optional [LalinCode.CodeFloatMode]],
+      arithmetic [LalinStencil.StencilArithmeticMode],
       field. identity [LalinValue.ValueExpr],
       mode [LalinStencil.StencilScanMode],
       axis [LalinStencil.StencilAxisRef],
       producer [LalinStencil.StencilProducerExecution],
-      stride [optional [number]],
+      stride [LalinStencil.StencilArtifactStride],
     },
     StencilArtifactScatterReduceN {
       variant_unique,
@@ -992,16 +1088,15 @@ return schema. LalinStencil {
       field. expr [LalinStencil.StencilPointExpr],
       result_ty [LalinCode.CodeType],
       reduction [LalinValue.ReductionOp],
-      int_semantics [optional [LalinCode.CodeIntSemantics]],
-      float_mode [optional [LalinCode.CodeFloatMode]],
+      arithmetic [LalinStencil.StencilArithmeticMode],
       field. identity [LalinValue.ValueExpr],
       dst_name [str],
       conflicts [LalinStencil.StencilScatterReduceConflictSemantics],
       producer [LalinStencil.StencilProducerExecution],
-      stride [optional [number]],
+      stride [LalinStencil.StencilArtifactStride],
     },
   },
-  product. StencilMetastencilId { interned, text [str], },
+  product. StencilComputationId { interned, text [str], },
   product. StencilMetastencilNodeId { interned, text [str], },
   product. StencilMetastencilWireId { interned, text [str], },
   sum. StencilMetastencilPortFlow {
@@ -1011,7 +1106,7 @@ return schema. LalinStencil {
   },
   product. StencilMetastencilPortRef {
     interned,
-    node [optional [LalinStencil.StencilMetastencilNodeId]],
+    node [LalinStencil.StencilMetastencilNodeSelection],
     field. name [str],
   },
   product. StencilMetastencilPort {
@@ -1019,7 +1114,7 @@ return schema. LalinStencil {
     field. ref [LalinStencil.StencilMetastencilPortRef],
     flow [LalinStencil.StencilMetastencilPortFlow],
     ty [LalinCode.CodeType],
-    access [optional [LalinStencil.StencilAccessRef]],
+    access [LalinStencil.StencilAccessSite],
   },
   product. StencilMetastencilNode {
     interned,
@@ -1061,6 +1156,52 @@ return schema. LalinStencil {
     },
     StencilFusionProofObligation { variant_unique, obligation [LalinStencil.StencilProofObligation], },
   },
+  product. StencilAccessAliasPairInput {
+    interned,
+    left [LalinStencil.StencilAccessRef],
+    right [LalinStencil.StencilAccessRef],
+  },
+  sum. StencilAccessAliasPairContribution {
+    StencilAccessAliasPairMatched {
+      variant_unique,
+      relation [LalinStencil.StencilAliasFact],
+    },
+    StencilAccessAliasPairNotMatched,
+  },
+  product. StencilAccessAliasPairEvidence {
+    interned,
+    relations [many [LalinStencil.StencilAliasFact]],
+  },
+  sum. StencilAccessAliasPairLookup {
+    StencilAccessAliasPairFound {
+      variant_unique,
+      relation [LalinStencil.StencilAliasFact],
+    },
+    StencilAccessAliasPairMissing,
+    StencilAccessAliasPairAmbiguous { variant_unique, count [number], },
+  },
+  sum. StencilAccessRestrictDecision {
+    StencilAccessRestrictDerived,
+    StencilAccessRestrictMissing {
+      variant_unique,
+      other [LalinStencil.StencilAccessRef],
+    },
+    StencilAccessRestrictContradicted {
+      variant_unique,
+      other [LalinStencil.StencilAccessRef],
+      relation [LalinStencil.StencilAliasFact],
+    },
+    StencilAccessRestrictAmbiguous {
+      variant_unique,
+      other [LalinStencil.StencilAccessRef],
+      count [number],
+    },
+  },
+  product. StencilAccessRestrictStepInput {
+    interned,
+    other [LalinStencil.StencilAccessRef],
+    lookup [LalinStencil.StencilAccessAliasPairLookup],
+  },
   sum. StencilFusionReject {
     StencilFusionRejectTypeMismatch {
       variant_unique,
@@ -1090,8 +1231,8 @@ return schema. LalinStencil {
     },
     StencilFusionRejectUnsupportedComposition {
       variant_unique,
-      left [optional [LalinStencil.StencilMetastencilNodeId]],
-      right [optional [LalinStencil.StencilMetastencilNodeId]],
+      left [LalinStencil.StencilMetastencilNodeSelection],
+      right [LalinStencil.StencilMetastencilNodeSelection],
       reason [str],
     },
   },
@@ -1104,7 +1245,7 @@ return schema. LalinStencil {
   product. StencilMetastencilFingerprint { interned, text [str], },
   product. StencilMetastencilDescriptor {
     interned,
-    field. id [LalinStencil.StencilMetastencilId],
+    field. id [LalinStencil.StencilComputationId],
     external_ports [many [LalinStencil.StencilMetastencilPort]],
     nodes [many [LalinStencil.StencilMetastencilNode]],
     wires [many [LalinStencil.StencilMetastencilWire]],
@@ -1150,5 +1291,784 @@ return schema. LalinStencil {
     field. module [LalinCode.CodeModuleId],
     kernel [LalinKernel.KernelModulePlan],
     selections [many [LalinStencil.StencilPlanEntry]],
+  },
+  product. StencilProducerAnalysisInput {
+    interned,
+    producer [LalinStencil.StencilProducer],
+  },
+  sum. StencilProducerAnalysis {
+    StencilProducerAnalysisRange1D { variant_unique, execution [LalinStencil.StencilProducerExecution], },
+    StencilProducerAnalysisRangeND { variant_unique, execution [LalinStencil.StencilProducerExecution], },
+    StencilProducerAnalysisWindowND { variant_unique, execution [LalinStencil.StencilProducerExecution], },
+    StencilProducerAnalysisTiledND { variant_unique, execution [LalinStencil.StencilProducerExecution], },
+    StencilProducerAnalysisRejected { variant_unique, producer [LalinStencil.StencilProducer], reason [str], },
+  },
+
+  product. StencilAccessValidationInput { interned, access [LalinStencil.StencilAccess], },
+  sum. StencilValidationReject {
+    StencilValidationInvalidStride { variant_unique, access [LalinStencil.StencilAccessRef], stride [number], },
+    StencilValidationUnsupportedProducer { variant_unique, producer [LalinStencil.StencilProducer], reason [str], },
+    StencilValidationUnsupportedSink { variant_unique, sink [LalinStencil.StencilSink], reason [str], },
+  },
+  sum. StencilValidationContribution {
+    StencilValidationAccepted,
+    StencilValidationRejected { variant_unique, reject [LalinStencil.StencilValidationReject], },
+  },
+  product. StencilDescriptorValidationInput { interned, provider [LalinStencil.StencilProvider], },
+  sum. StencilDescriptorValidation {
+    StencilDescriptorValid { variant_unique, descriptor [LalinStencil.StencilDescriptor], },
+    StencilDescriptorInvalid {
+      variant_unique,
+      descriptor [LalinStencil.StencilDescriptor],
+      rejects [many [LalinStencil.StencilValidationReject]],
+    },
+  },
+
+  product. StencilDescriptorBuildInput {
+    interned,
+    producer [LalinStencil.StencilProducer],
+    accesses [many [LalinStencil.StencilAccess]],
+    body [LalinStencil.StencilBody],
+  },
+  sum. StencilDescriptorBuild {
+    StencilDescriptorBuilt { variant_unique, descriptor [LalinStencil.StencilDescriptor], },
+    StencilDescriptorBuildRejected { variant_unique, reject [LalinStencil.StencilValidationReject], },
+  },
+
+  sum. StencilAccessLookup {
+    StencilAccessFound { variant_unique, access [LalinStencil.StencilAccess], },
+    StencilAccessMissing { variant_unique, access [LalinStencil.StencilAccessRef], reason [str], },
+  },
+  sum. StencilDestination {
+    StencilDestinationAccess { variant_unique, access [LalinStencil.StencilAccessRef], },
+    StencilDestinationNone,
+  },
+
+  sum. StencilIterationStopConvention {
+    StencilIterationStopExclusive,
+    StencilIterationStopInclusive,
+  },
+  sum. StencilKernelTripCount {
+    StencilKernelTripExact { variant_unique, trip_count [LalinFlow.FlowTripCountExact], },
+    StencilKernelTripNonNegative { variant_unique, trip_count [LalinFlow.FlowTripCountNonNegative], },
+    StencilKernelTripExpression { variant_unique, trip_count [LalinFlow.FlowTripCountExpression], },
+  },
+  sum. StencilKernelDomainProvenance {
+    StencilKernelCountedDomain1D {
+      variant_unique,
+      source [LalinFlow.FlowDomainShapeFact],
+    },
+    StencilKernelCountedWindow1D {
+      variant_unique,
+      source [LalinFlow.FlowDomainShapeFact],
+      window [LalinStencil.StencilWindowAxis],
+    },
+  },
+  sum. StencilKernelDomainShapeLookup {
+    StencilKernelDomainShapeFound { variant_unique, fact [LalinFlow.FlowDomainShapeFact], },
+    StencilKernelDomainShapeMissing { variant_unique, domain [LalinFlow.FlowDomain], },
+    StencilKernelDomainShapeAmbiguous {
+      variant_unique,
+      domain [LalinFlow.FlowDomain],
+      facts [many [LalinFlow.FlowDomainShapeFact]],
+    },
+  },
+  product. StencilKernelDomainProjectionInput {
+    interned,
+    iteration [LalinStencil.StencilKernelIteration],
+    source [LalinFlow.FlowDomainShapeFact],
+  },
+  product. StencilKernelDomainContinuationInput {
+    interned,
+    projection [LalinStencil.StencilKernelProjectionInput],
+    iteration [LalinStencil.StencilKernelIteration],
+  },
+  sum. StencilKernelDomainResolution {
+    StencilKernelDomainResolved {
+      variant_unique,
+      domain [LalinStencil.StencilKernelDomainProvenance],
+      producer [LalinStencil.StencilProducer],
+    },
+    StencilKernelDomainRejected {
+      variant_unique,
+      reject [LalinStencil.StencilKernelProjectionReject],
+    },
+  },
+  product. StencilKernelWindowIndexInput {
+    interned,
+    iteration [LalinStencil.StencilKernelIteration],
+    window [LalinStencil.StencilWindowAxis],
+    field. index [LalinValue.ValueExpr],
+  },
+  sum. StencilKernelWindowIndexProjection {
+    StencilKernelWindowIndexCenter,
+    StencilKernelWindowIndexOffset {
+      variant_unique,
+      distance [LalinStencil.StencilElementDistance],
+    },
+    StencilKernelWindowIndexRejected {
+      variant_unique,
+      reject [LalinStencil.StencilKernelProjectionReject],
+    },
+  },
+  sum. StencilKernelWindowOffsetDirection {
+    StencilKernelWindowOffsetAdd,
+    StencilKernelWindowOffsetSubtract,
+  },
+  product. StencilKernelWindowOffsetApplyInput {
+    interned,
+    field. expr [LalinValue.ValueExpr],
+    direction [LalinStencil.StencilKernelWindowOffsetDirection],
+    window [LalinStencil.StencilKernelWindowIndexInput],
+  },
+  product. StencilKernelIteration {
+    interned,
+    loop [LalinGraph.GraphLoopId],
+    counter [LalinCode.CodeValueId],
+    index_ty [LalinCode.CodeType],
+    start [LalinCode.CodeValueId],
+    stop [LalinCode.CodeValueId],
+    step [LalinCode.CodeValueId],
+    step_magnitude [number],
+    stop_convention [LalinStencil.StencilIterationStopConvention],
+    order [LalinStencil.StencilProducerOrder],
+    trip [LalinStencil.StencilKernelTripCount],
+  },
+
+  sum. StencilKernelProjectionReject {
+    StencilKernelModuleMismatch { variant_unique, expected [LalinCode.CodeModuleId], actual [LalinCode.CodeModuleId], },
+    StencilKernelScheduleMismatch { variant_unique, expected [LalinKernel.KernelId], actual [LalinKernel.KernelId], },
+    StencilKernelUnsupportedSubject { variant_unique, subject [LalinKernel.KernelSubject], },
+    StencilKernelMissingCounter { variant_unique, kernel [LalinKernel.KernelId], },
+    StencilKernelMissingPrimaryInduction { variant_unique, loop [LalinGraph.GraphLoopId], },
+    StencilKernelAmbiguousPrimaryInduction { variant_unique, loop [LalinGraph.GraphLoopId], count [number], },
+    StencilKernelEquivalenceRejected { variant_unique, failures [many [LalinKernel.KernelEquivalenceFailure]], },
+    StencilKernelConstructionIncomplete { variant_unique, kernel [LalinKernel.KernelId], },
+    StencilKernelMissingLoopFact { variant_unique, loop [LalinGraph.GraphLoopId], },
+    StencilKernelMissingDomainShape { variant_unique, domain [LalinFlow.FlowDomain], },
+    StencilKernelAmbiguousDomainShape { variant_unique, domain [LalinFlow.FlowDomain], count [number], },
+    StencilKernelUnsupportedDomainShape { variant_unique, shape [LalinFlow.FlowDomainShape], reason [str], },
+    StencilKernelUnsupportedWindowIndex { variant_unique, field. index [LalinValue.ValueExpr], reason [str], },
+    StencilKernelAmbiguousLoopFact { variant_unique, loop [LalinGraph.GraphLoopId], count [number], },
+    StencilKernelMissingLoopOwner { variant_unique, loop [LalinGraph.GraphLoopId], },
+    StencilKernelAmbiguousLoopOwner { variant_unique, loop [LalinGraph.GraphLoopId], count [number], },
+    StencilKernelMissingSemanticIteration { variant_unique, loop [LalinGraph.GraphLoopId], },
+    StencilKernelAmbiguousSemanticIteration { variant_unique, loop [LalinGraph.GraphLoopId], count [number], },
+    StencilKernelIterationFactMismatch { variant_unique, loop [LalinGraph.GraphLoopId], reason [str], },
+    StencilKernelMissingInduction { variant_unique, counter [LalinCode.CodeValueId], },
+    StencilKernelAmbiguousInduction { variant_unique, counter [LalinCode.CodeValueId], count [number], },
+    StencilKernelRejectedTripCount { variant_unique, trip_count [LalinFlow.FlowTripCountRejected], },
+    StencilKernelUnavailableTrip { variant_unique, trip [LalinKernel.KernelTripUnavailable], },
+    StencilKernelUnsupportedDirection { variant_unique, direction [LalinFlow.FlowLoopDirection], },
+    StencilKernelMissingStepDefinition { variant_unique, step [LalinCode.CodeValueId], },
+    StencilKernelAmbiguousStepDefinition { variant_unique, step [LalinCode.CodeValueId], count [number], },
+    StencilKernelNonIntegerStep { variant_unique, step [LalinCode.CodeValueId], constant [LalinCode.CodeConst], },
+    StencilKernelZeroStep { variant_unique, step [LalinCode.CodeValueId], },
+    StencilKernelStepDirectionMismatch { variant_unique, step [LalinCode.CodeValueId], direction [LalinFlow.FlowLoopDirection], },
+    StencilKernelMissingLaneAccess { variant_unique, field. lane [LalinKernel.KernelLane], access [LalinMem.MemAccessId], },
+    StencilKernelDuplicateLane { variant_unique, field. lane [LalinKernel.KernelLane], },
+    StencilKernelDuplicateValue { variant_unique, field. value [LalinKernel.KernelValueId], },
+    StencilKernelUnresolvedValue { variant_unique, field. value [LalinKernel.KernelValueId], },
+    StencilKernelUnsupportedLane { variant_unique, field. lane [LalinKernel.KernelLane], reason [str], },
+    StencilKernelUnsupportedBinding { variant_unique, binding [LalinKernel.KernelBinding], reason [str], },
+    StencilKernelUnsupportedResultExpr { variant_unique, field. expr [LalinKernel.KernelExpr], reason [str], },
+    StencilKernelFindValueMismatch {
+      variant_unique,
+      counter [LalinCode.CodeValueId],
+      found [LalinCode.CodeValueId],
+    },
+    StencilKernelUnsupportedEffect { variant_unique, effect [LalinKernel.KernelEffect], reason [str], },
+    StencilKernelDeferredReductionMismatch {
+      variant_unique,
+      deferred [many [LalinValue.ReductionFact]],
+      result [LalinKernel.KernelResult],
+    },
+    StencilKernelMissingReductionArithmetic { variant_unique, reduction [LalinValue.ReductionFact], },
+    StencilKernelAmbiguousReductionArithmetic { variant_unique, reduction [LalinValue.ReductionFact], },
+    StencilKernelUnsupportedResult { variant_unique, result [LalinKernel.KernelResult], reason [str], },
+    StencilKernelScheduleNotPlanned { variant_unique, schedule [LalinSchedule.KernelSchedule], reason [str], },
+    StencilKernelScheduleMissing { variant_unique, kernel [LalinKernel.KernelId], },
+    StencilKernelScheduleAmbiguous { variant_unique, kernel [LalinKernel.KernelId], count [number], },
+    StencilKernelPlanningRejected { variant_unique, plan [LalinKernel.KernelNoPlan], },
+    StencilKernelUnsupportedScheduleForm { variant_unique, form [LalinSchedule.ScheduleForm], reason [str], },
+  },
+
+  sum. StencilKernelLoopFactLookup {
+    StencilKernelLoopFactFound { variant_unique, fact [LalinFlow.FlowLoopFacts], },
+    StencilKernelLoopFactMissing { variant_unique, reject [LalinStencil.StencilKernelMissingLoopFact], },
+    StencilKernelLoopFactAmbiguous { variant_unique, reject [LalinStencil.StencilKernelAmbiguousLoopFact], },
+  },
+
+  sum. StencilKernelLoopOwnerLookup {
+    StencilKernelLoopOwnerFound { variant_unique, func [LalinCode.CodeFuncId], },
+    StencilKernelLoopOwnerMissing { variant_unique, reject [LalinStencil.StencilKernelMissingLoopOwner], },
+    StencilKernelLoopOwnerAmbiguous { variant_unique, reject [LalinStencil.StencilKernelAmbiguousLoopOwner], },
+  },
+  sum. StencilKernelSemanticIterationContribution {
+    StencilKernelSemanticIterationIgnored,
+    StencilKernelSemanticIterationMatched { variant_unique, fact [LalinFlow.FlowLoopNormalizedCounted], },
+  },
+  sum. StencilKernelSemanticIterationLookup {
+    StencilKernelSemanticIterationFound { variant_unique, fact [LalinFlow.FlowLoopNormalizedCounted], },
+    StencilKernelSemanticIterationMissing { variant_unique, reject [LalinStencil.StencilKernelMissingSemanticIteration], },
+    StencilKernelSemanticIterationAmbiguous { variant_unique, reject [LalinStencil.StencilKernelAmbiguousSemanticIteration], },
+  },
+  sum. StencilKernelPrimaryInductionContribution {
+    StencilKernelPrimaryInductionIgnored,
+    StencilKernelPrimaryInductionSelected { variant_unique, induction [LalinFlow.FlowInduction], },
+  },
+  sum. StencilKernelInductionLookup {
+    StencilKernelInductionFound { variant_unique, induction [LalinFlow.FlowInduction], },
+    StencilKernelInductionMissing { variant_unique, reject [LalinStencil.StencilKernelProjectionReject], },
+    StencilKernelInductionAmbiguous { variant_unique, reject [LalinStencil.StencilKernelProjectionReject], },
+  },
+  sum. StencilKernelStepLookup {
+    StencilKernelStepDefinitionMissing { variant_unique, step [LalinCode.CodeValueId], },
+    StencilKernelStepDefinitionFound { variant_unique, func [LalinCode.CodeFuncId], step [LalinCode.CodeValueId], constant [LalinCode.CodeConst], },
+    StencilKernelStepDefinitionAlias {
+      variant_unique,
+      func [LalinCode.CodeFuncId],
+      step [LalinCode.CodeValueId],
+      source [LalinCode.CodeValueId],
+    },
+    StencilKernelStepDefinitionAmbiguous { variant_unique, step [LalinCode.CodeValueId], count [number], },
+  },
+  product. StencilKernelStepContributionInput {
+    interned,
+    lookup [LalinStencil.StencilKernelStepLookup],
+    func [LalinCode.CodeFuncId],
+    step [LalinCode.CodeValueId],
+  },
+  product. StencilKernelStepDefinitionInput {
+    interned,
+    contribution [LalinStencil.StencilKernelStepContributionInput],
+    constant [LalinCode.CodeConst],
+  },
+  product. StencilKernelLiteralStepInput {
+    interned,
+    step [LalinCode.CodeValueId],
+    constant [LalinCode.CodeConst],
+  },
+  product. StencilKernelStepConstant {
+    interned,
+    step [LalinCode.CodeValueId],
+    magnitude [number],
+  },
+  sum. StencilKernelStepResolution {
+    StencilKernelStepResolved { variant_unique, step [LalinStencil.StencilKernelStepConstant], },
+    StencilKernelStepRejected { variant_unique, reject [LalinStencil.StencilKernelProjectionReject], },
+  },
+  product. StencilKernelIterationBuildInput {
+    interned,
+    kernel [LalinKernel.KernelPlanned],
+    semantic [LalinFlow.FlowLoopNormalizedCounted],
+    induction [LalinFlow.FlowInduction],
+    step [LalinStencil.StencilKernelStepConstant],
+    trip [LalinKernel.KernelTripEvidence],
+  },
+  product. StencilKernelTripBuildInput {
+    interned,
+    iteration [LalinStencil.StencilKernelIterationBuildInput],
+    order [LalinStencil.StencilProducerOrder],
+  },
+  product. StencilKernelIterationInput {
+    interned,
+    field. module [LalinCode.CodeModule],
+    graph [LalinGraph.CodeGraph],
+    kernel [LalinKernel.KernelPlanned],
+    flow [LalinFlow.FlowFactSet],
+    semantics [LalinFlow.FlowSemanticFactSet],
+  },
+  product. StencilKernelLoopFactContinuationInput {
+    interned,
+    request [LalinStencil.StencilKernelIterationInput],
+    loop [LalinGraph.GraphLoopId],
+  },
+  product. StencilKernelSemanticContinuationInput {
+    interned,
+    request [LalinStencil.StencilKernelIterationInput],
+    loop_fact [LalinFlow.FlowLoopFacts],
+  },
+  product. StencilKernelCounterInput {
+    interned,
+    request [LalinStencil.StencilKernelIterationInput],
+    semantic [LalinStencil.StencilKernelSemanticIterationFound],
+    loop_fact [LalinFlow.FlowLoopFacts],
+  },
+  product. StencilKernelInductionContinuationInput {
+    interned,
+    request [LalinStencil.StencilKernelIterationInput],
+    semantic [LalinStencil.StencilKernelSemanticIterationFound],
+  },
+  product. StencilKernelCounterAlignmentInput {
+    interned,
+    continuation [LalinStencil.StencilKernelInductionContinuationInput],
+    induction [LalinFlow.FlowInduction],
+  },
+  product. StencilKernelIterationCursor {
+    interned,
+    request [LalinStencil.StencilKernelIterationInput],
+    semantic [LalinStencil.StencilKernelSemanticIterationFound],
+    induction [LalinFlow.FlowInduction],
+  },
+  sum. StencilKernelIterationProjection {
+    StencilKernelIterationProjected { variant_unique, iteration [LalinStencil.StencilKernelIteration], },
+    StencilKernelIterationRejected { variant_unique, reject [LalinStencil.StencilKernelProjectionReject], },
+  },
+
+  product. StencilAccessByKernelLaneEntry {
+    interned,
+    field. lane [LalinKernel.KernelLane],
+    access [LalinStencil.StencilAccess],
+  },
+  product. StencilAccessByKernelLaneProjection {
+    interned,
+    entries [many [LalinStencil.StencilAccessByKernelLaneEntry]],
+  },
+  sum. StencilAccessByKernelLaneLookup {
+    StencilAccessByKernelLaneFound { variant_unique, entry [LalinStencil.StencilAccessByKernelLaneEntry], },
+    StencilAccessByKernelLaneMissing { variant_unique, field. lane [LalinKernel.KernelLane], },
+  },
+  product. StencilStreamByKernelValueEntry {
+    interned,
+    source [LalinCode.CodeValueId],
+    binding [LalinKernel.KernelBinding],
+    definition [LalinStencil.StencilStreamDef],
+  },
+  product. StencilStreamByKernelValueProjection {
+    interned,
+    entries [many [LalinStencil.StencilStreamByKernelValueEntry]],
+  },
+  sum. StencilStreamByKernelValueLookup {
+    StencilStreamByKernelValueFound { variant_unique, entry [LalinStencil.StencilStreamByKernelValueEntry], },
+    StencilStreamByKernelValueMissing { variant_unique, field. value [LalinKernel.KernelValueId], },
+  },
+
+  product. StencilKernelConstructionState {
+    interned,
+    kernel [LalinKernel.KernelPlanned],
+    iteration [LalinStencil.StencilKernelIteration],
+    domain [LalinStencil.StencilKernelDomainProvenance],
+    producer [LalinStencil.StencilProducer],
+    access_by_lane [LalinStencil.StencilAccessByKernelLaneProjection],
+    stream_by_value [LalinStencil.StencilStreamByKernelValueProjection],
+    result_streams [many [LalinStencil.StencilStreamByKernelValueEntry]],
+    sinks [many [LalinStencil.StencilSinkDef]],
+    deferred_reductions [many [LalinValue.ReductionFact]],
+    legality [LalinStencil.StencilFusionLegality],
+    proofs [many [LalinKernel.KernelProof]],
+    next_stream_ordinal [number],
+  },
+  product. StencilKernelStateAccessInput {
+    interned,
+    field. lane [LalinKernel.KernelLane],
+    access [LalinStencil.StencilAccess],
+  },
+  product. StencilKernelStateStreamInput {
+    interned,
+    source [LalinCode.CodeValueId],
+    binding [LalinKernel.KernelBinding],
+    definition [LalinStencil.StencilStreamDef],
+  },
+  sum. StencilKernelConstruction {
+    StencilKernelConstructionCollecting { variant_unique, state [LalinStencil.StencilKernelConstructionState], },
+    StencilKernelConstructionFinalizable { variant_unique, state [LalinStencil.StencilKernelConstructionState], },
+    StencilKernelConstructionRejected { variant_unique, state [LalinStencil.StencilKernelConstructionState], rejects [many [LalinStencil.StencilKernelProjectionReject]], },
+  },
+  sum. StencilKernelReductionArithmeticResolution {
+    StencilKernelReductionArithmeticResolved {
+      variant_unique,
+      arithmetic [LalinStencil.StencilArithmeticMode],
+    },
+    StencilKernelReductionArithmeticRejected {
+      variant_unique,
+      reject [LalinStencil.StencilKernelProjectionReject],
+    },
+  },
+  product. StencilKernelReductionFinishInput {
+    interned,
+    state [LalinStencil.StencilKernelConstructionState],
+    reduction [LalinValue.ReductionFact],
+    stream [LalinStencil.StencilStreamId],
+  },
+  product. StencilKernelConstructionInitInput {
+    interned,
+    kernel [LalinKernel.KernelPlanned],
+    iteration [LalinStencil.StencilKernelIteration],
+    domain [LalinStencil.StencilKernelDomainProvenance],
+    producer [LalinStencil.StencilProducer],
+  },
+  product. StencilKernelAccessContributionInput {
+    interned,
+    field. lane [LalinKernel.KernelLane],
+    mem [LalinMem.MemSemanticFactSet],
+  },
+  product. StencilKernelMemAccessPairInput {
+    interned,
+    left [LalinMem.MemAccessId],
+    right [LalinMem.MemAccessId],
+  },
+  product. StencilKernelAliasLegalityInput {
+    interned,
+    legality [LalinStencil.StencilFusionLegality],
+    left [LalinStencil.StencilAccessRef],
+    right [LalinStencil.StencilAccessRef],
+  },
+  product. StencilKernelAliasProjectionInput {
+    interned,
+    mem [LalinMem.MemSemanticFactSet],
+  },
+  product. StencilKernelAccessResolutionInput {
+    interned,
+    construction [LalinStencil.StencilKernelConstruction],
+    contribution [LalinStencil.StencilKernelAccessContributionInput],
+  },
+  product. StencilKernelStrideInput {
+    interned,
+    layout [LalinStencil.StencilKernelAccessLayoutInput],
+    stride_elems [number],
+  },
+  product. StencilKernelAccessFactInput {
+    interned,
+    construction [LalinStencil.StencilKernelConstruction],
+    field. lane [LalinKernel.KernelLane],
+    access [LalinMem.MemAccessFact],
+  },
+  sum. StencilKernelAccessRoleProjection {
+    StencilKernelAccessRoleProjected { variant_unique, role [LalinStencil.StencilAccessRole], },
+    StencilKernelAccessRoleRejected { variant_unique, reject [LalinStencil.StencilKernelProjectionReject], },
+  },
+  product. StencilKernelAccessLayoutInput {
+    interned,
+    construction [LalinStencil.StencilKernelConstruction],
+    field. lane [LalinKernel.KernelLane],
+    access [LalinMem.MemAccessFact],
+    role [LalinStencil.StencilAccessRole],
+  },
+  sum. StencilKernelAccessPreparation {
+    StencilKernelAccessPrepared { variant_unique, field. lane [LalinKernel.KernelLane], access [LalinStencil.StencilAccess], },
+    StencilKernelAccessPreparationRejected { variant_unique, reject [LalinStencil.StencilKernelProjectionReject], },
+  },
+  product. StencilKernelResultStreamInput {
+    interned,
+    construction [LalinStencil.StencilKernelConstruction],
+    field. id [LalinStencil.StencilStreamId],
+    source [LalinCode.CodeValueId],
+  },
+  product. StencilKernelResultBindingInput {
+    interned,
+    result [LalinStencil.StencilKernelResultStreamInput],
+    field. expr [LalinKernel.KernelExprValue],
+  },
+  product. StencilKernelResultBoundExprInput {
+    interned,
+    result [LalinStencil.StencilKernelResultStreamInput],
+    binding [LalinKernel.KernelBinding],
+  },
+  product. StencilKernelResultLaneLookupInput {
+    interned,
+    result [LalinStencil.StencilKernelResultStreamInput],
+    field. expr [LalinKernel.KernelExprLaneLoad],
+  },
+  product. StencilKernelResultLaneStreamInput {
+    interned,
+    result [LalinStencil.StencilKernelResultStreamInput],
+    access [LalinStencil.StencilAccessByKernelLaneFound],
+    field. expr [LalinKernel.KernelExprLaneLoad],
+  },
+  sum. StencilKernelResultStreamPreparation {
+    StencilKernelResultStreamPrepared {
+      variant_unique,
+      entry [LalinStencil.StencilStreamByKernelValueEntry],
+    },
+    StencilKernelResultStreamRejected {
+      variant_unique,
+      reject [LalinStencil.StencilKernelProjectionReject],
+    },
+  },
+  product. StencilKernelControlStreamUse {
+    interned,
+    construction [LalinStencil.StencilKernelConstruction],
+    result [LalinKernel.KernelResult],
+    sink [LalinStencil.StencilSinkId],
+  },
+  product. StencilKernelAllCompareLeftInput {
+    interned,
+    construction [LalinStencil.StencilKernelConstruction],
+    result [LalinKernel.KernelResultAllCompare],
+    sink [LalinStencil.StencilSinkId],
+    right_id [LalinStencil.StencilStreamId],
+  },
+  product. StencilKernelAllCompareRightInput {
+    interned,
+    construction [LalinStencil.StencilKernelConstruction],
+    result [LalinKernel.KernelResultAllCompare],
+    sink [LalinStencil.StencilSinkId],
+    left [LalinStencil.StencilStreamDef],
+    right_id [LalinStencil.StencilStreamId],
+  },
+  product. StencilKernelControlFinishInput {
+    interned,
+    construction [LalinStencil.StencilKernelConstruction],
+    sink [LalinStencil.StencilSinkId],
+    stream [LalinStencil.StencilStreamDef],
+  },
+  product. StencilKernelLiveBindingProjection {
+    interned,
+    values [many [LalinKernel.KernelValueId]],
+  },
+  product. StencilKernelResultLiveInput {
+    interned,
+    live [LalinStencil.StencilKernelLiveBindingProjection],
+    bindings [LalinKernel.KernelBindingProjection],
+  },
+  product. StencilKernelLiveStreamInput {
+    interned,
+    construction [LalinStencil.StencilKernelConstruction],
+    entry [LalinKernel.KernelBindingByCodeValueEntry],
+  },
+  product. StencilKernelStreamContributionInput {
+    interned,
+    entry [LalinKernel.KernelBindingByCodeValueEntry],
+  },
+  product. StencilKernelStreamContributionCursor {
+    interned,
+    construction [LalinStencil.StencilKernelConstruction],
+    contribution [LalinStencil.StencilKernelStreamContributionInput],
+  },
+  product. StencilKernelBindingExprInput {
+    interned,
+    construction [LalinStencil.StencilKernelConstruction],
+    source [LalinCode.CodeValueId],
+    binding [LalinKernel.KernelBinding],
+    field. id [LalinStencil.StencilStreamId],
+  },
+  product. StencilKernelLaneStreamInput {
+    interned,
+    stream [LalinStencil.StencilKernelBindingExprInput],
+    access [LalinStencil.StencilAccessByKernelLaneFound],
+  },
+  sum. StencilKernelStreamPreparation {
+    StencilKernelStreamPrepared {
+      variant_unique,
+      source [LalinCode.CodeValueId],
+      binding [LalinKernel.KernelBinding],
+      definition [LalinStencil.StencilStreamDef],
+    },
+    StencilKernelStreamPreparationRejected { variant_unique, reject [LalinStencil.StencilKernelProjectionReject], },
+  },
+  product. StencilKernelSinkContributionInput {
+    interned,
+    effect [LalinKernel.KernelEffect],
+  },
+  product. StencilKernelEffectInput {
+    interned,
+    construction [LalinStencil.StencilKernelConstruction],
+    effect [LalinKernel.KernelEffect],
+  },
+  product. StencilKernelIndexSelectionInput {
+    interned,
+    iteration [LalinStencil.StencilKernelIteration],
+    field. index [LalinValue.ValueExpr],
+  },
+  product. StencilKernelStoreEffectInput {
+    interned,
+    effect [LalinStencil.StencilKernelEffectInput],
+    index [LalinStencil.StencilIndexSelection],
+  },
+  product. StencilKernelEffectStreamInput {
+    interned,
+    effect [LalinStencil.StencilKernelStoreEffectInput],
+    definition [LalinStencil.StencilStreamDef],
+  },
+  product. StencilKernelScanEffectInput {
+    interned,
+    effect [LalinStencil.StencilKernelEffectInput],
+  },
+  product. StencilKernelScanStreamInput {
+    interned,
+    scan [LalinStencil.StencilKernelScanEffectInput],
+    stream [LalinStencil.StencilStreamDef],
+  },
+  product. StencilKernelScanAccessInput {
+    interned,
+    scan [LalinStencil.StencilKernelScanStreamInput],
+    access [LalinStencil.StencilAccessByKernelLaneFound],
+  },
+  sum. StencilKernelSinkPreparation {
+    StencilKernelSinkPrepared { variant_unique, sinks [many [LalinStencil.StencilSinkDef]], },
+    StencilKernelScanSinkPrepared {
+      variant_unique,
+      stream [LalinStencil.StencilKernelStateStreamInput],
+      sink [LalinStencil.StencilSinkDef],
+    },
+    StencilKernelSinkDeferredToResult { variant_unique, reduction [LalinValue.ReductionFact], },
+    StencilKernelSinkPreparationRejected { variant_unique, reject [LalinStencil.StencilKernelProjectionReject], },
+  },
+  product. StencilKernelResultContributionInput {
+    interned,
+    construction [LalinStencil.StencilKernelConstruction],
+  },
+
+  product. StencilKernelScheduleConversionInput {
+    interned,
+    kernel [LalinKernel.KernelPlanned],
+    schedule [LalinSchedule.KernelSchedule],
+    compiler [LalinStencil.StencilCompilerPolicy],
+    target [LalinBackend.BackTargetModel],
+    accesses [LalinStencil.StencilAccessByKernelLaneProjection],
+    result [LalinKernel.KernelResult],
+  },
+  sum. StencilKernelScheduleConversion {
+    StencilKernelScheduleConverted {
+      variant_unique,
+      source [LalinSchedule.SchedulePlanned],
+      schedule [LalinStencil.StencilSchedule],
+    },
+    StencilKernelScheduleRejected { variant_unique, reject [LalinStencil.StencilKernelProjectionReject], },
+  },
+  product. StencilKernelFinalizationInput {
+    interned,
+    schedule [LalinStencil.StencilKernelScheduleConversion],
+  },
+
+  sum. StencilKernelResultProvenance {
+    StencilKernelResultVoid,
+    StencilKernelResultReduction {
+      variant_unique,
+      sink [LalinStencil.StencilSinkId],
+      reduction [LalinValue.ReductionOp],
+      accumulator [LalinCode.CodeValueId],
+      stream [LalinStencil.StencilStreamRef],
+    },
+    StencilKernelResultAll {
+      variant_unique,
+      sink [LalinStencil.StencilSinkId],
+      src [LalinStencil.StencilStreamRef],
+      src_value [LalinCode.CodeValueId],
+      pred [LalinStencil.StencilPredicate],
+      success [LalinCode.CodeBlockId],
+      failure [LalinCode.CodeBlockId],
+    },
+    StencilKernelResultAllCompare {
+      variant_unique,
+      sink [LalinStencil.StencilSinkId],
+      left [LalinStencil.StencilStreamRef],
+      left_value [LalinCode.CodeValueId],
+      right [LalinStencil.StencilStreamRef],
+      right_value [LalinCode.CodeValueId],
+      cmp [LalinCore.CmpOp],
+      success [LalinCode.CodeBlockId],
+      failure [LalinCode.CodeBlockId],
+    },
+    StencilKernelResultAny {
+      variant_unique,
+      sink [LalinStencil.StencilSinkId],
+      src [LalinStencil.StencilStreamRef],
+      src_value [LalinCode.CodeValueId],
+      pred [LalinStencil.StencilPredicate],
+      success [LalinCode.CodeBlockId],
+      failure [LalinCode.CodeBlockId],
+    },
+    StencilKernelResultFind {
+      variant_unique,
+      sink [LalinStencil.StencilSinkId],
+      src [LalinStencil.StencilStreamRef],
+      src_value [LalinCode.CodeValueId],
+      pred [LalinStencil.StencilPredicate],
+      found_value [LalinCode.CodeValueId],
+      found [LalinCode.CodeBlockId],
+      not_found [LalinCode.CodeBlockId],
+      not_found_value [LalinValue.ValueExpr],
+    },
+  },
+  product. StencilKernelProvenanceFacet {
+    interned,
+    kernel [LalinKernel.KernelPlanned],
+    iteration [LalinStencil.StencilKernelIteration],
+    domain [LalinStencil.StencilKernelDomainProvenance],
+    accesses [LalinStencil.StencilAccessByKernelLaneProjection],
+    streams [LalinStencil.StencilStreamByKernelValueProjection],
+    result [LalinStencil.StencilKernelResultProvenance],
+  },
+  product. StencilKernelComputationProjection {
+    interned,
+    source_schedule [LalinSchedule.SchedulePlanned],
+    provenance [LalinStencil.StencilKernelProvenanceFacet],
+    computation [LalinStencil.StencilComputation],
+  },
+
+  product. StencilKernelProjectionInput {
+    interned,
+    field. module [LalinCode.CodeModule],
+    graph [LalinGraph.CodeGraph],
+    flow [LalinFlow.FlowFactSet],
+    semantics [LalinFlow.FlowSemanticFactSet],
+    kernel [LalinKernel.KernelPlanned],
+    schedule [LalinSchedule.KernelSchedule],
+    compiler [LalinStencil.StencilCompilerPolicy],
+    target [LalinBackend.BackTargetModel],
+    mem [LalinMem.MemSemanticFactSet],
+    effects [LalinEffect.EffectFactSet],
+  },
+  sum. StencilKernelProjection {
+    StencilKernelProjected { variant_unique, projection [LalinStencil.StencilKernelComputationProjection], },
+    StencilKernelProjectionRejected { variant_unique, kernel [LalinKernel.KernelPlanned], rejects [many [LalinStencil.StencilKernelProjectionReject]], },
+  },
+  sum. StencilKernelScheduleLookup {
+    StencilKernelScheduleFound { variant_unique, schedule [LalinSchedule.KernelSchedule], },
+    StencilKernelScheduleLookupMissing { variant_unique, reject [LalinStencil.StencilKernelScheduleMissing], },
+    StencilKernelScheduleLookupAmbiguous { variant_unique, reject [LalinStencil.StencilKernelScheduleAmbiguous], },
+  },
+  sum. StencilKernelScheduleContribution {
+    StencilKernelScheduleIgnored,
+    StencilKernelScheduleMatched { variant_unique, schedule [LalinSchedule.KernelSchedule], },
+  },
+  sum. StencilKernelModuleEntry {
+    StencilKernelModuleProjectedEntry {
+      variant_unique,
+      kernel [LalinKernel.KernelId],
+      result [LalinStencil.StencilKernelProjection],
+    },
+    StencilKernelModuleRejectedEntry { variant_unique, plan [LalinKernel.KernelNoPlan], },
+  },
+  product. StencilKernelModuleProjectionInput {
+    interned,
+    field. module [LalinCode.CodeModule],
+    graph [LalinGraph.CodeGraph],
+    flow [LalinFlow.FlowFactSet],
+    semantics [LalinFlow.FlowSemanticFactSet],
+    kernels [LalinKernel.KernelModulePlan],
+    schedules [LalinSchedule.ScheduleModulePlan],
+    compiler [LalinStencil.StencilCompilerPolicy],
+  },
+  product. StencilKernelModuleEntryInput {
+    interned,
+    projection [LalinStencil.StencilKernelModuleProjectionInput],
+    kernel [LalinKernel.KernelPlanned],
+  },
+  product. StencilKernelModuleProjection {
+    interned,
+    field. module [LalinCode.CodeModuleId],
+    entries [many [LalinStencil.StencilKernelModuleEntry]],
+  },
+  sum. StencilKernelModuleProjectionResult {
+    StencilKernelModuleProjected { variant_unique, projection [LalinStencil.StencilKernelModuleProjection], },
+    StencilKernelModuleProjectionRejected {
+      variant_unique,
+      expected [LalinCode.CodeModuleId],
+      actual [LalinCode.CodeModuleId],
+    },
+    StencilKernelModuleFacetMismatch { variant_unique, reason [str], },
+  },
+
+  product. StencilCodegenPlanInput {
+    interned,
+    computation [LalinStencil.StencilComputation],
+    materialization [LalinCMat.CMatMaterializationInput],
+  },
+  sum. StencilCodegenPlan {
+    StencilCodegenCMat { variant_unique, materialization [LalinCMat.CMatMaterialization], },
+    StencilCodegenRejected { variant_unique, rejects [many [LalinStencil.StencilReject]], },
   },
 }

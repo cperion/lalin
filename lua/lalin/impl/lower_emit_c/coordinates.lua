@@ -1,13 +1,13 @@
 -- Exact CMat memory-use coordinate projection. Gate 2 derives coordinates only;
 -- executable C address selection and cursor emission belong to Gate 3.
-require("lalin.schema_v2")
+require("lalin.schema")
 require("lalin.impl.code_mem")
 
-local Flow = require("lalin.schema_v2.flow")
-local Mem = require("lalin.schema_v2.mem")
-local Stencil = require("lalin.schema_v2.stencil")
-local CMat = require("lalin.schema_v2.c_materialize")
-local Lower = require("lalin.schema_v2.lower")
+local Flow = require("lalin.schema.flow")
+local Mem = require("lalin.schema.mem")
+local Stencil = require("lalin.schema.stencil")
+local CMat = require("lalin.schema.c_materialize")
+local Lower = require("lalin.schema.lower")
 
 local function append_one(values, value)
   local result = {}

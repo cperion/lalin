@@ -1,11 +1,9 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local asdl = require("lalin.asdl")
-local A = require("lalin.schema_projection")
 local Abi = require("lalin.type_abi_classify")
 
-local T = asdl.context()
-A(T)
+local T = require("lalin.schema")
 local L = Abi(T)
 local C = T.LalinCore
 local Ty = T.LalinType
@@ -22,8 +20,8 @@ local array = Ty.TArray(Ty.ArrayLenConst(4), i32)
 local pair = Ty.TNamed(Ty.TypeRefGlobal("Demo", "Pair"))
 local env = Sem.LayoutEnv({
     Sem.LayoutNamed("Demo", "Pair", {
-        Sem.FieldLayout("left", 0, i32),
-        Sem.FieldLayout("right", 4, i32),
+        Sem.FieldLayout("left", 0, 4, i32),
+        Sem.FieldLayout("right", 4, 4, i32),
     }, 8, 4),
 })
 

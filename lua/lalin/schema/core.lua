@@ -133,7 +133,9 @@ return schema. LalinCore {
   product. StaticSym { interned, key [str], field. name [str], },
   product. DataId { interned, text [str], },
   sum. SymRole { SymKindFunc, SymKindExtern, SymKindConst, SymKindStatic, SymKindType, },
-  product. OpenSym {
+  -- OpenSym → UnresolvedSymFact: renamed; role/key/name/symbol are the core identity;
+  -- the phase that resolves this fact produces a ResolvedSym instead of mutating the product.
+  product. UnresolvedSymFact {
     interned,
     role [LalinCore.SymRole],
     key [str],

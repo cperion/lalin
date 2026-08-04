@@ -1,8 +1,8 @@
 -- Typed stencil-to-C materialization.  CBackend emission begins at CMAT-3.
-require("lalin.schema_v2")
+require("lalin.schema")
 require("lalin.impl.stencil_plan")
-local Stencil = require("lalin.schema_v2.stencil")
-local CMat = require("lalin.schema_v2.c_materialize")
+local Stencil = require("lalin.schema.stencil")
+local CMat = require("lalin.schema.c_materialize")
 
 function Stencil.StencilAccessRead:cmat_mutability() return CMat.CMatAccessReadOnly end
 function Stencil.StencilAccessWrite:cmat_mutability() return CMat.CMatAccessWriteOnly end

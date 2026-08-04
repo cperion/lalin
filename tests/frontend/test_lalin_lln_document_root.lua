@@ -2,11 +2,11 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local lalin = require("lalin")
 local asdl = require("lalin.asdl")
-require("lalin.schema_v2")
-local P = package.loaded["lalin.schema_v2.parse"]
-local Tr = package.loaded["lalin.schema_v2.tree"]
-local Ty = package.loaded["lalin.schema_v2.type"]
-local C = package.loaded["lalin.schema_v2.core"]
+require("lalin.schema")
+local P = package.loaded["lalin.schema.parse"]
+local Tr = package.loaded["lalin.schema.tree"]
+local Ty = package.loaded["lalin.schema.type"]
+local C = package.loaded["lalin.schema.core"]
 
 local source = [[
 struct Pair

@@ -3,13 +3,13 @@
 -- from a CodeGraph. Includes reduction_algebra utilities and lowerability checks.
 -- Leaf methods on Core.BinaryOp, Code.CodeInstOp, Flow.*, Value.*.
 
-require("lalin.schema_v2")
-local Core   = require("lalin.schema_v2.core")
-local Code   = require("lalin.schema_v2.code")
-local Graph  = require("lalin.schema_v2.graph")
-local Flow   = require("lalin.schema_v2.flow")
-local Value  = require("lalin.schema_v2.value")
-local Backend = require("lalin.schema_v2.backend")
+require("lalin.schema")
+local Core   = require("lalin.schema.core")
+local Code   = require("lalin.schema.code")
+local Graph  = require("lalin.schema.graph")
+local Flow   = require("lalin.schema.flow")
+local Value  = require("lalin.schema.value")
+local Backend = require("lalin.schema.backend")
 
 ----------------------------------------------------------------------
 -- helpers

@@ -1,13 +1,13 @@
 -- impl/tree_check/expr.lua
 -- Expression typechecking leaf methods.
 
-require("lalin.schema_v2")
-local C      = require("lalin.schema_v2.core")
-local Ty     = require("lalin.schema_v2.type")
-local Tr     = require("lalin.schema_v2.tree")
-local B      = require("lalin.schema_v2.bind")
-local LCheck = require("lalin.schema_v2.check")
-local Sem    = require("lalin.schema_v2.sem")
+require("lalin.schema")
+local C      = require("lalin.schema.core")
+local Ty     = require("lalin.schema.type")
+local Tr     = require("lalin.schema.tree")
+local B      = require("lalin.schema.bind")
+local LCheck = require("lalin.schema.check")
+local Sem    = require("lalin.schema.sem")
 local asdl   = require("lalin.asdl")
 
 function Tr.Expr:typecheck_tree_expr(input) end  -- parent default

@@ -1,13 +1,13 @@
 -- impl/tree_check/scope.lua
 -- Type scope management leaf methods.
 
-require("lalin.schema_v2")
-local C      = require("lalin.schema_v2.core")
-local B      = require("lalin.schema_v2.bind")
-local LCheck = require("lalin.schema_v2.check")
-local Sem    = require("lalin.schema_v2.sem")
-local Ty     = require("lalin.schema_v2.type")
-local Tr     = require("lalin.schema_v2.tree")
+require("lalin.schema")
+local C      = require("lalin.schema.core")
+local B      = require("lalin.schema.bind")
+local LCheck = require("lalin.schema.check")
+local Sem    = require("lalin.schema.sem")
+local Ty     = require("lalin.schema.type")
+local Tr     = require("lalin.schema.tree")
 function LCheck.TypeValueScope:typecheck_tree_lookup_value(name)
   for i = #(self.values or {}), 1, -1 do
     local entry = self.values[i]
@@ -50,7 +50,7 @@ function LCheck.TypeModuleFacts:typecheck_tree_lookup_variant_name(type_name)
   for i = 1, #(self.variants or {}) do
     if self.variants[i].type_name == type_name then return LCheck.TypeVariantDefLookupFound(self.variants[i]) end
   end
-  return LCheck.TypeVariantDefLookupMissing(type_name, Ty.TScalar(require("lalin.schema_v2.core").ScalarVoid))
+  return LCheck.TypeVariantDefLookupMissing(type_name, Ty.TScalar(require("lalin.schema.core").ScalarVoid))
 end
 
 function LCheck.TypeVariantDefLookupFound:typecheck_tree_lookup_variant_case(variant_name)

@@ -1,11 +1,11 @@
 -- Typed Code IR to CBackend lowering composition.
-require("lalin.schema_v2")
+require("lalin.schema")
 
-local Lower = require("lalin.schema_v2.lower")
-local Code = require("lalin.schema_v2.code")
-local C = require("lalin.schema_v2.c")
-local Core = require("lalin.schema_v2.core")
-local Ty = require("lalin.schema_v2.type")
+local Lower = require("lalin.schema.lower")
+local Code = require("lalin.schema.code")
+local C = require("lalin.schema.c")
+local Core = require("lalin.schema.core")
+local Ty = require("lalin.schema.type")
 
 -- Source Ty.Type → CBackendType: deterministic mapping used by type-decl
 -- field emission (CodeTypeDecl carries Sem.FieldLayout with source types).

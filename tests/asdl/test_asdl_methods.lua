@@ -1,12 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local asdl = require("lalin.asdl")
-local Schema = require("lalin.schema")
+local Canonical = require("tests.asdl.canonical")
 
 local function new_context()
-    local T = asdl.context()
-    Schema(T)
-    return T
+    return Canonical.context()
 end
 
 local T1 = new_context()

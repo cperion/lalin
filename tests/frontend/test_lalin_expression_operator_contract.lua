@@ -1,9 +1,9 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
--- Supported expression operator surface through the schema-v2 typed frontend.
+-- Supported expression operator surface through the schema typed frontend.
 --
 -- `//` (integer division) and `^` (pow) are implemented operators in the
--- schema-v2 parser — they lower to typed ExprBinary leaves — so the old
+-- schema parser — they lower to typed ExprBinary leaves — so the old
 -- unsupported-syntax rejection assertions (E_LALIN_UNSUPPORTED_IDIV/POW
 -- diagnostics) are gone with the old parser.  This test re-expresses the
 -- supported operator coverage: every authored binary/comparison operator
@@ -11,10 +11,10 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local lalin = require("lalin")
 local asdl = require("lalin.asdl")
-require("lalin.schema_v2")
-local Tr = package.loaded["lalin.schema_v2.tree"]
-local C = package.loaded["lalin.schema_v2.core"]
-local Document = require("lalin.syntax_v2.document")
+require("lalin.schema")
+local Tr = package.loaded["lalin.schema.tree"]
+local C = package.loaded["lalin.schema.core"]
+local Document = require("lalin.syntax.document")
 
 local source = [=[
 fn ops(a [i32], b [i32]) [bool] do

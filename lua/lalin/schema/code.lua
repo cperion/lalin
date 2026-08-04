@@ -2,6 +2,7 @@ local S = require("lalin.schema.dsl")
 S.use()
 
 return schema. LalinCode {
+  -- Identity types
   product. CodeModuleId { interned, text [str], },
   product. CodeFuncId { interned, text [str], },
   product. CodeExternId { interned, text [str], },
@@ -15,12 +16,59 @@ return schema. LalinCode {
   product. CodeValueId { interned, text [str], },
   product. CodeLocalId { interned, text [str], },
   product. CodeTypeId { interned, text [str], },
+
+  sum. CodeLoopOrder { CodeLoopForward, CodeLoopBackward, },
+  sum. CodeWindowBoundary {
+    CodeWindowReject,
+    CodeWindowClamp,
+    CodeWindowWrap,
+    CodeWindowZero,
+  },
+  product. CodeLoopAxisDeclaration {
+    interned,
+    index_name [str],
+    index_ty [LalinCode.CodeType],
+    start [LalinCode.CodeValueId],
+    stop [LalinCode.CodeValueId],
+    trip [LalinCode.CodeValueId],
+    step [number],
+    order [LalinCode.CodeLoopOrder],
+  },
+  product. CodeWindowAxisDeclaration {
+    interned,
+    before [number],
+    after [number],
+    boundary [LalinCode.CodeWindowBoundary],
+  },
+  sum. CodeLoopShapeDeclaration {
+    CodeLoopShapeRangeND,
+    CodeLoopShapeWindowND {
+      variant_unique,
+      windows [many [LalinCode.CodeWindowAxisDeclaration]],
+    },
+    CodeLoopShapeTiledND {
+      variant_unique,
+      tile_sizes [many [number]],
+    },
+  },
+  product. CodeLoopDomainDeclaration {
+    interned,
+    axes [many [LalinCode.CodeLoopAxisDeclaration]],
+    shape [LalinCode.CodeLoopShapeDeclaration],
+  },
+
   sum. CodeOrigin {
     CodeOriginUnknown,
     CodeOriginSource { variant_unique, label [str], },
     CodeOriginBinding { variant_unique, binding [LalinBind.Binding], },
     CodeOriginGenerated { variant_unique, reason [str], },
+    CodeOriginLoopDomain {
+      variant_unique,
+      declaration [LalinCode.CodeLoopDomainDeclaration],
+    },
   },
+
+  -- Type system
   sum. CodeIntSignedness { CodeSigned, CodeUnsigned, },
   sum. CodeType {
     CodeTyVoid,
@@ -52,8 +100,16 @@ return schema. LalinCode {
     field. id [LalinCode.CodeTypeId],
     field. name [str],
     field. ty [LalinCode.CodeType],
+    -- Resolved layout facts: field offsets/types plus total size/align.
+    -- The tree phase fills these from the layout env so the C backend can
+    -- emit concrete struct declarations (no opaque decls for structs).
+    fields [many [LalinSem.FieldLayout]],
+    size [number],
+    align [number],
     origin [LalinCode.CodeOrigin],
   },
+
+  -- Parameters, signatures, locals
   product. CodeParam {
     interned,
     field. value [LalinCode.CodeValueId],
@@ -83,6 +139,7 @@ return schema. LalinCode {
       sig_id [LalinCode.CodeSigId],
     },
   },
+
   sum. CodeResidence {
     CodeResidenceValue,
     CodeResidenceAddressed,
@@ -98,6 +155,8 @@ return schema. LalinCode {
     residence [LalinCode.CodeResidence],
     origin [LalinCode.CodeOrigin],
   },
+
+  -- Places
   sum. CodePlace {
     CodePlaceLocal {
       variant_unique,
@@ -145,6 +204,8 @@ return schema. LalinCode {
       align [number],
     },
   },
+
+  -- Memory semantics
   sum. CodeTrapPolicy { CodeMayTrap, CodeMustNotTrap, CodeCheckedTrap, },
   sum. CodeMemoryEffect { CodeMemoryRead, CodeMemoryWrite, CodeMemoryReadWrite, },
   product. CodeMemoryAccess {
@@ -156,6 +217,8 @@ return schema. LalinCode {
     volatile [bool],
     ordering [optional [LalinCore.AtomicOrdering]],
   },
+
+  -- Constants
   sum. CodeConst {
     CodeConstLiteral {
       variant_unique,
@@ -165,6 +228,8 @@ return schema. LalinCode {
     CodeConstNull { variant_unique, field. ty [LalinCode.CodeType], },
     CodeConstUndef { variant_unique, field. ty [LalinCode.CodeType], reason [str], },
   },
+
+  -- Arithmetic semantics
   sum. CodeIntOverflow {
     CodeIntWrap,
     CodeIntTrapOnOverflow,
@@ -178,11 +243,14 @@ return schema. LalinCode {
     div [LalinCode.CodeDivPolicy],
     shift [LalinCode.CodeShiftPolicy],
   },
+
   sum. CodeFloatMode {
     CodeFloatStrict,
     CodeFloatReassoc { variant_unique, reason [str], },
     CodeFloatFastMath { variant_unique, reason [str], },
   },
+
+  -- Call targets
   sum. CodeCallTarget {
     CodeCallDirect { variant_unique, func [LalinCode.CodeFuncId], },
     CodeCallExtern { variant_unique, extern [LalinCode.CodeExternId], },
@@ -197,6 +265,8 @@ return schema. LalinCode {
       sig [LalinCode.CodeSigId],
     },
   },
+
+  -- Globals and relocations
   sum. CodeGlobalRef {
     CodeGlobalRefData { variant_unique, data [LalinCode.CodeDataId], },
     CodeGlobalRefGlobal { variant_unique, global [LalinCode.CodeGlobalId], },
@@ -211,18 +281,32 @@ return schema. LalinCode {
     addend [number],
     origin [LalinCode.CodeOrigin],
   },
+
+  -- Aggregate values
   product. CodeFieldValue {
     interned,
     field. field [LalinSem.FieldRef],
     field. value [LalinCode.CodeValueId],
   },
   product. CodeArrayValue { interned, index [number], field. value [LalinCode.CodeValueId], },
+
+  -- Variants and switches
+  product. CodeVariantField {
+    interned,
+    field_name [str],
+    field. ty [LalinCode.CodeType],
+    offset [number],
+  },
   product. CodeVariantRef {
     interned,
     owner_ty [LalinCode.CodeType],
     variant_name [str],
     tag_value [number],
-    payload_ty [optional [LalinCode.CodeType]],
+    -- Placement facts resolved from the tagged-union layout so the C
+    -- emission can address the flat __offset_N struct contract without a
+    -- second layout pass.
+    tag_offset [number],
+    fields [many [LalinCode.CodeVariantField]],
   },
   product. CodeVariantCase {
     interned,
@@ -236,6 +320,8 @@ return schema. LalinCode {
     dest [LalinCode.CodeBlockId],
     args [many [LalinCode.CodeValueId]],
   },
+
+  -- Instruction operations
   sum. CodeInstOp {
     CodeInstConst {
       variant_unique,
@@ -297,9 +383,16 @@ return schema. LalinCode {
       then_value [LalinCode.CodeValueId],
       else_value [LalinCode.CodeValueId],
     },
-    CodeInstIntrinsic {
+    -- REFACTORED: optional dst → two leaves
+    CodeInstIntrinsicVoid {
       variant_unique,
-      dst [optional [LalinCode.CodeValueId]],
+      op [LalinCore.Intrinsic],
+      field. ty [LalinCode.CodeType],
+      args [many [LalinCode.CodeValueId]],
+    },
+    CodeInstIntrinsicValue {
+      variant_unique,
+      dst [LalinCode.CodeValueId],
       op [LalinCore.Intrinsic],
       field. ty [LalinCode.CodeType],
       args [many [LalinCode.CodeValueId]],
@@ -418,20 +511,23 @@ return schema. LalinCode {
       dst [LalinCode.CodeValueId],
       field. ty [LalinCode.CodeType],
       variant [LalinCode.CodeVariantRef],
-      payload [optional [LalinCode.CodeValueId]],
+      args [many [LalinCode.CodeValueId]],
     },
     CodeInstVariantTag {
       variant_unique,
       dst [LalinCode.CodeValueId],
       tag_ty [LalinCode.CodeType],
       field. value [LalinCode.CodeValueId],
+      tag_offset [number],
     },
     CodeInstVariantPayload {
       variant_unique,
       dst [LalinCode.CodeValueId],
       variant [LalinCode.CodeVariantRef],
+      field_index [number],
       field. value [LalinCode.CodeValueId],
     },
+    -- KEPT: optional dst on call (void calls and value calls share identical semantics)
     CodeInstCall {
       variant_unique,
       dst [optional [LalinCode.CodeValueId]],
@@ -479,6 +575,8 @@ return schema. LalinCode {
     op [LalinCode.CodeInstOp],
     origin [LalinCode.CodeOrigin],
   },
+
+  -- Terminator operations
   sum. CodeTermOp {
     CodeTermJump {
       variant_unique,
@@ -517,6 +615,8 @@ return schema. LalinCode {
     op [LalinCode.CodeTermOp],
     origin [LalinCode.CodeOrigin],
   },
+
+  -- Backend projection types (CANONICAL — these replace the duplicate code_backend.lua module)
   product. CodeBackSigAbi {
     interned,
     sret [bool],
@@ -531,6 +631,7 @@ return schema. LalinCode {
     size [number],
     align [number],
   },
+
   product. CodeIntSemanticsByValueEntry {
     interned,
     value_key [str],
@@ -545,6 +646,7 @@ return schema. LalinCode {
     int_semantics_by_value [many [LalinCode.CodeIntSemanticsByValueEntry]],
     float_mode_by_value [many [LalinCode.CodeFloatModeByValueEntry]],
   },
+
   product. CodeReadonlyByInstEntry {
     interned,
     inst_key [str],
@@ -553,6 +655,7 @@ return schema. LalinCode {
   product. CodeBackReadonlyProjection {
     readonly_by_inst [many [LalinCode.CodeReadonlyByInstEntry]],
   },
+
   product. CodeSigByIdEntry {
     interned,
     sig_key [str],
@@ -573,6 +676,7 @@ return schema. LalinCode {
     inst_key [str],
     effect [LalinEffect.InstEffect],
   },
+
   product. CodeBackModuleFacts {
     sigs [many [LalinCode.CodeSigByIdEntry]],
     sig_abi_by_sig [many [LalinCode.CodeSigAbiBySigEntry]],
@@ -583,6 +687,7 @@ return schema. LalinCode {
     layout_env [optional [LalinSem.LayoutEnv]],
     target [optional [LalinBackend.BackTarget]],
   },
+
   product. CodeTypeByValueEntry {
     interned,
     value_key [str],
@@ -599,6 +704,7 @@ return schema. LalinCode {
     value_types [many [LalinCode.CodeTypeByValueEntry]],
     block_params [many [LalinCode.CodeParamsByBlockEntry]],
   },
+
   product. CodeLocalAddrByValueEntry {
     interned,
     value_key [str],
@@ -619,6 +725,7 @@ return schema. LalinCode {
     value_addr_by_value [many [LalinCode.CodeValueAddrByValueEntry]],
     value_size_by_value [many [LalinCode.CodeValueSizeByValueEntry]],
   },
+
   product. CodeCaptureByValueEntry {
     interned,
     value_key [str],
@@ -627,6 +734,7 @@ return schema. LalinCode {
   product. CodeBackClosureState {
     has_captures_by_value [many [LalinCode.CodeCaptureByValueEntry]],
   },
+
   product. CodeSlotByLocalEntry {
     interned,
     local_key [str],
@@ -635,6 +743,7 @@ return schema. LalinCode {
   product. CodeBackLocalSlotState {
     slot_by_local [many [LalinCode.CodeSlotByLocalEntry]],
   },
+
   product. CodeBackTempState {
     tmp_index [number],
     next_tmp [number],
@@ -645,6 +754,7 @@ return schema. LalinCode {
     local_slots [LalinCode.CodeBackLocalSlotState],
     temps [LalinCode.CodeBackTempState],
   },
+
   product. CodeBackInstInput {
     field. module [LalinCode.CodeBackModuleFacts],
     func [LalinCode.CodeBackFunctionFacts],
@@ -683,6 +793,8 @@ return schema. LalinCode {
     address [LalinBackend.BackAddress],
     state [LalinCode.CodeBackFunctionState],
   },
+
+  -- Blocks, functions, modules
   product. CodeBlock {
     interned,
     field. id [LalinCode.CodeBlockId],
@@ -692,12 +804,14 @@ return schema. LalinCode {
     term [LalinCode.CodeTerm],
     origin [LalinCode.CodeOrigin],
   },
+
   sum. CodeLinkage {
     CodeLinkageLocal,
     CodeLinkageExport,
     CodeLinkageImport,
     CodeLinkageDeclaration,
   },
+
   sum. CodeDataInit {
     CodeDataZero { variant_unique, offset [number], size [number], },
     CodeDataBytes { variant_unique, offset [number], bytes [str], },
@@ -738,6 +852,8 @@ return schema. LalinCode {
     sig [LalinCode.CodeSigId],
     origin [LalinCode.CodeOrigin],
   },
+
+  -- Contracts
   sum. CodeContractExpr {
     CodeContractValueRef { variant_unique, field. value [LalinCode.CodeValueId], },
     CodeContractPlaceLoad { variant_unique, place [LalinCode.CodePlace], },
@@ -777,11 +893,13 @@ return schema. LalinCode {
       field_name [str],
       component_index [number],
     },
+    CodeContractProjectionNoAliasPair { variant_unique, a [LalinCode.CodeContractExpr], b [LalinCode.CodeContractExpr], },
     CodeContractNoAlias { variant_unique, base [LalinCode.CodeValueId], },
     CodeContractReadonly { variant_unique, base [LalinCode.CodeValueId], },
     CodeContractWriteonly { variant_unique, base [LalinCode.CodeValueId], },
     CodeContractProjectionReadonly { variant_unique, base [LalinCode.CodeContractExpr], },
     CodeContractProjectionWriteonly { variant_unique, base [LalinCode.CodeContractExpr], },
+    CodeContractProjectionNoAlias { variant_unique, base [LalinCode.CodeContractExpr], },
     CodeContractInvalidate { variant_unique, base [LalinCode.CodeValueId], },
     CodeContractPreserve { variant_unique, base [LalinCode.CodeValueId], },
     CodeContractRejected { variant_unique, reason [str], },
@@ -797,6 +915,7 @@ return schema. LalinCode {
     field. module [LalinCode.CodeModuleId],
     facts [many [LalinCode.CodeFuncContractFact]],
   },
+
   product. CodeFunc {
     interned,
     field. id [LalinCode.CodeFuncId],
@@ -820,6 +939,26 @@ return schema. LalinCode {
     funcs [many [LalinCode.CodeFunc]],
     origin [LalinCode.CodeOrigin],
   },
+
+  -- RelocFailure: typed relocation failure reasons
+  sum. RelocFailure {
+    RelocTargetUndefined { target_name [str], },
+    RelocAddendOverflow { addend [number], max [number], },
+    RelocOffsetOutOfRange { offset [number], section_size [number], },
+    RelocUnsupportedTargetKind { target_kind [str], },
+    RelocDuplicateId { field. id [LalinCode.CodeRelocId], },
+  },
+
+  -- CodeUnsupportedContext: typed unsupported contexts
+  sum. CodeUnsupportedContext {
+    CodeUnsupportedLoopForm { loop_id [str], },
+    CodeUnsupportedControlStructure { structure_kind [str], },
+    CodeUnsupportedTypeCast { from [LalinCode.CodeType], to [LalinCode.CodeType], },
+    CodeUnsupportedAtomicSize { ty [LalinCode.CodeType], size [number], },
+    CodeUnsupportedIntrinsic { intrinsic [LalinCore.Intrinsic], reason [str], },
+  },
+
+  -- Validation issues
   sum. CodeIssue {
     CodeIssueMissingValue { variant_unique, field. value [LalinCode.CodeValueId], },
     CodeIssueDuplicateValue { variant_unique, field. value [LalinCode.CodeValueId], },
@@ -830,11 +969,13 @@ return schema. LalinCode {
     CodeIssueMissingExtern { variant_unique, extern [LalinCode.CodeExternId], },
     CodeIssueMissingGlobal { variant_unique, global [LalinCode.CodeGlobalId], },
     CodeIssueMissingData { variant_unique, data [LalinCode.CodeDataId], },
+    CodeIssueMissingLocal { variant_unique, local_id [LalinCode.CodeLocalId], },
     CodeIssueDuplicateSig { variant_unique, sig [LalinCode.CodeSigId], },
     CodeIssueDuplicateFunc { variant_unique, func [LalinCode.CodeFuncId], },
     CodeIssueDuplicateExtern { variant_unique, extern [LalinCode.CodeExternId], },
     CodeIssueDuplicateGlobal { variant_unique, global [LalinCode.CodeGlobalId], },
     CodeIssueDuplicateData { variant_unique, data [LalinCode.CodeDataId], },
+    CodeIssueDuplicateLocal { variant_unique, local_id [LalinCode.CodeLocalId], },
     CodeIssueDuplicateInst { variant_unique, inst [LalinCode.CodeInstId], },
     CodeIssueDuplicateTerm { variant_unique, term [LalinCode.CodeTermId], },
     CodeIssueJumpArity {
@@ -869,13 +1010,30 @@ return schema. LalinCode {
       site [str],
       access [LalinCode.CodeMemoryAccess],
     },
-    CodeIssueInvalidReloc { variant_unique, reloc [LalinCode.CodeReloc], reason [str], },
+    CodeIssueDataInitOutOfBounds {
+      variant_unique,
+      site [str],
+      offset [number],
+      extent [number],
+      size [number],
+    },
+    -- REFACTORED: stringly reason → typed RelocFailure
+    CodeIssueInvalidReloc {
+      variant_unique,
+      reloc [LalinCode.CodeReloc],
+      failure [LalinCode.RelocFailure],
+    },
     CodeIssueDataCodePointerConfusion {
       variant_unique,
       site [str],
       field. ty [LalinCode.CodeType],
     },
-    CodeIssueUnsupportedSource { variant_unique, site [str], reason [str], },
+    -- REFACTORED: stringly reason → typed CodeUnsupportedContext
+    CodeIssueUnsupportedSource {
+      variant_unique,
+      site [str],
+      context [LalinCode.CodeUnsupportedContext],
+    },
   },
   product. CodeValidationReport { interned, issues [many [LalinCode.CodeIssue]], },
 }

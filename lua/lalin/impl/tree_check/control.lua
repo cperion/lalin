@@ -1,9 +1,9 @@
 -- impl/tree_check/control.lua
 -- Control flow fact computation leaf methods.
 
-require("lalin.schema_v2")
-local Tr  = require("lalin.schema_v2.tree")
-local Sem = require("lalin.schema_v2.sem")
+require("lalin.schema")
+local Tr  = require("lalin.schema.tree")
+local Sem = require("lalin.schema.sem")
 
 function Tr.Stmt:typecheck_tree_flow_outcome() return Sem.FlowFallsThrough end
 function Tr.StmtReturnValue:typecheck_tree_flow_outcome() return Sem.FlowReturns end

@@ -1,12 +1,12 @@
 -- impl/tree_check/const.lua
 -- Constant expression evaluation leaf methods.
 
-require("lalin.schema_v2")
-local C   = require("lalin.schema_v2.core")
-local Ty  = require("lalin.schema_v2.type")
-local B   = require("lalin.schema_v2.bind")
-local Sem = require("lalin.schema_v2.sem")
-local Tr  = require("lalin.schema_v2.tree")
+require("lalin.schema")
+local C   = require("lalin.schema.core")
+local Ty  = require("lalin.schema.type")
+local B   = require("lalin.schema.bind")
+local Sem = require("lalin.schema.sem")
+local Tr  = require("lalin.schema.tree")
 
 local function known(v) return Sem.ConstKnown(v) end
 local function not_foldable(r) return Sem.ConstNotFoldable(r) end

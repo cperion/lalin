@@ -1,10 +1,10 @@
 -- Typed closure capture collection and layout methods.
-local T = require("lalin.schema_v2")
-local C = require("lalin.schema_v2.core")
-local Ty = require("lalin.schema_v2.type")
-local B = require("lalin.schema_v2.bind")
-local Sem = require("lalin.schema_v2.sem")
-local Tr = require("lalin.schema_v2.tree")
+local T = require("lalin.schema")
+local C = require("lalin.schema.core")
+local Ty = require("lalin.schema.type")
+local B = require("lalin.schema.bind")
+local Sem = require("lalin.schema.sem")
+local Tr = require("lalin.schema.tree")
 local asdl = require("lalin.asdl")
 local TypeSizeAlign = require("lalin.type_size_align")
 

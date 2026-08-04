@@ -4,6 +4,7 @@ S.use()
 return schema. LalinValue {
   product. ValueFactId { interned, text [str], },
   product. AlgebraFactId { interned, text [str], },
+
   sum. ValueExpr {
     ValueExprConst { variant_unique, const [LalinCode.CodeConst], },
     ValueExprValue { variant_unique, field. value [LalinCode.CodeValueId], },
@@ -78,6 +79,7 @@ return schema. LalinValue {
     },
     ValueExprAffine { variant_unique, affine [LalinValue.AffineExpr], },
   },
+
   product. AffineTerm { interned, field. value [LalinCode.CodeValueId], coeff [str], },
   product. AffineExpr {
     interned,
@@ -86,6 +88,7 @@ return schema. LalinValue {
     field. ty [LalinCode.CodeType],
     sem [optional [LalinCode.CodeIntSemantics]],
   },
+
   sum. ValueRange {
     ValueRangeUnknown { variant_unique, reason [str], },
     ValueRangeInt {
@@ -97,6 +100,7 @@ return schema. LalinValue {
       proof [LalinValue.AlgebraProof],
     },
   },
+
   sum. ReductionOp {
     ReductionAdd,
     ReductionMul,
@@ -111,6 +115,7 @@ return schema. LalinValue {
     field. id [LalinValue.AlgebraFactId],
     domain [LalinFlow.FlowDomain],
     accumulator [LalinCode.CodeValueId],
+    update [LalinCode.CodeValueId],
     op [LalinValue.ReductionOp],
     init [LalinValue.ValueExpr],
     contribution [LalinValue.ValueExpr],
@@ -126,17 +131,57 @@ return schema. LalinValue {
     field. expr [LalinValue.ValueExpr],
     proof [LalinValue.AlgebraProof],
   },
+
+  sum. AlgebraProofFlowGuarantee {
+    AlgebraFlowCounted { trip_count [LalinFlow.FlowTripCount], },
+    AlgebraFlowMonotonic { direction [LalinFlow.FlowLoopDirection], },
+    AlgebraFlowUnrolled { unroll_factor [number], },
+  },
+  sum. AlgebraProofNoWrapGuarantee {
+    AlgebraNoWrapTypeRange { ty [LalinCode.CodeType], },
+    AlgebraNoWrapConstBounds { min [LalinValue.ValueExpr], max [LalinValue.ValueExpr], },
+    AlgebraNoWrapNarrowingCast { from [LalinCore.Scalar], to [LalinCore.Scalar], },
+  },
+  sum. AlgebraIdentityKind {
+    AlgebraIdentityAddZero,
+    AlgebraIdentityMulOne,
+    AlgebraIdentityAndAllOnes,
+    AlgebraIdentityOrZero,
+    AlgebraIdentityXorZero,
+  },
+  sum. AlgebraProofReductionGuarantee {
+    AlgebraReductionAssociativeProven { op [LalinValue.ReductionOp], },
+    AlgebraReductionCommutativeProven { op [LalinValue.ReductionOp], },
+    AlgebraReductionFloatReassocAllowed { mode [LalinCode.CodeFloatMode], },
+  },
+
   sum. AlgebraProof {
-    AlgebraProofFlow { variant_unique, domain [LalinFlow.FlowDomain], reason [str], },
-    AlgebraProofNoWrap { variant_unique, field. value [LalinCode.CodeValueId], reason [str], },
-    AlgebraProofIdentity { variant_unique, reason [str], },
-    AlgebraProofReduction { variant_unique, fact [LalinValue.ReductionFact], reason [str], },
+    AlgebraProofFlow {
+      variant_unique,
+      domain [LalinFlow.FlowDomain],
+      guarantee [LalinValue.AlgebraProofFlowGuarantee],
+    },
+    AlgebraProofNoWrap {
+      variant_unique,
+      field. value [LalinCode.CodeValueId],
+      guarantee [LalinValue.AlgebraProofNoWrapGuarantee],
+    },
+    AlgebraProofIdentity {
+      variant_unique,
+      identity_kind [LalinValue.AlgebraIdentityKind],
+    },
+    AlgebraProofReduction {
+      variant_unique,
+      fact [LalinValue.ReductionFact],
+      guarantee [LalinValue.AlgebraProofReductionGuarantee],
+    },
     AlgebraProofComposite {
       variant_unique,
       proofs [many [LalinValue.AlgebraProof]],
-      reason [str],
+      rationale [str],
     },
   },
+
   sum. ValueFact {
     ValueExprFact {
       variant_unique,
@@ -158,6 +203,7 @@ return schema. LalinValue {
       proof [LalinValue.AlgebraProof],
     },
   },
+
   product. ValueFactSet {
     interned,
     field. module [LalinCode.CodeModuleId],
@@ -165,6 +211,7 @@ return schema. LalinValue {
     reductions [many [LalinValue.ReductionFact]],
     closed_forms [many [LalinValue.ClosedFormFact]],
   },
+
   product. ValueExprByValueEntry {
     interned,
     value_name [str],

@@ -1,6 +1,6 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
--- Parsed variant surface through the schema-v2 typed frontend.
+-- Parsed variant surface through the schema typed frontend.
 --
 -- `Union.Case(args)` constructor calls parse as the schema-owned
 -- LalinTree.ExprCtor projection and `case variant` arms project to
@@ -9,7 +9,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local lalin = require("lalin")
 local asdl = require("lalin.asdl")
-local T = require("lalin.schema_v2")
+local T = require("lalin.schema")
 require("lalin.impl.compiler_api")
 require("lalin.impl.tree_surface")
 require("lalin.impl.tree_closure")
@@ -17,7 +17,7 @@ require("lalin.impl.tree_check.init")
 require("lalin.impl.tree_region")
 local Compiler = T.LalinCompiler
 local Tr = T.LalinTree
-local Document = require("lalin.syntax_v2.document")
+local Document = require("lalin.syntax.document")
 
 local source = [=[
 union MaybeI32
