@@ -140,7 +140,6 @@ return schema. LalinType {
   product. VariantDecl {
     interned,
     field. name [str],
-    payload [LalinType.Type],
     fields [many [LalinType.FieldDecl]],
   },
 }

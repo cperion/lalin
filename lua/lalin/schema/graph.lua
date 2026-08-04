@@ -13,25 +13,46 @@ return schema. LalinGraph {
     block [LalinCode.CodeBlockId],
     inst [LalinCode.CodeInstId],
   },
+
+  sum. EdgeKind {
+    EdgeKindBranch,
+    EdgeKindFallthrough,
+    EdgeKindJump,
+    EdgeKindReturn,
+    EdgeKindBackedge,
+    EdgeKindRegionExit,
+  },
   product. GraphEdge {
     interned,
     from [LalinGraph.GraphBlockId],
     to [LalinGraph.GraphBlockId],
-    kind [str],
+    kind [LalinGraph.EdgeKind],
+  },
+
+  sum. UseRole {
+    UseRoleOperand,
+    UseRoleIndex,
+    UseRoleBase,
+    UseRoleLen,
+    UseRoleStride,
+    UseRoleCondition,
+    UseRoleJumpArg,
   },
   product. GraphUse {
     interned,
     field. value [LalinCode.CodeValueId],
     inst [optional [LalinGraph.GraphInstRef]],
     term_block [optional [LalinGraph.GraphBlockId]],
-    role [str],
+    role [LalinGraph.UseRole],
   },
+
   product. GraphDef {
     interned,
     field. value [LalinCode.CodeValueId],
     inst [optional [LalinGraph.GraphInstRef]],
     param [optional [LalinCode.CodeValueId]],
   },
+
   product. GraphLoopId { interned, text [str], },
   product. GraphLoop {
     interned,
@@ -42,6 +63,7 @@ return schema. LalinGraph {
     latches [many [LalinGraph.GraphEdge]],
     exits [many [LalinGraph.GraphEdge]],
   },
+
   product. CodeFuncGraph {
     interned,
     func [LalinCode.CodeFuncId],
@@ -50,6 +72,7 @@ return schema. LalinGraph {
     uses [many [LalinGraph.GraphUse]],
     loops [many [LalinGraph.GraphLoop]],
   },
+
   product. CodeGraph {
     interned,
     field. module [LalinCode.CodeModuleId],

@@ -3,14 +3,14 @@
 -- Produces LalinLower.LowerModule.
 -- Entry: Code.CodeModule:plan_lowering(graph, kernels, schedules, target)
 
-require("lalin.schema_v2")
-local Code     = require("lalin.schema_v2.code")
-local Graph    = require("lalin.schema_v2.graph")
-local Flow     = require("lalin.schema_v2.flow")
-local Kernel   = require("lalin.schema_v2.kernel")
-local Schedule = require("lalin.schema_v2.schedule")
-local Lower    = require("lalin.schema_v2.lower")
-local C        = require("lalin.schema_v2.c")
+require("lalin.schema")
+local Code     = require("lalin.schema.code")
+local Graph    = require("lalin.schema.graph")
+local Flow     = require("lalin.schema.flow")
+local Kernel   = require("lalin.schema.kernel")
+local Schedule = require("lalin.schema.schedule")
+local Lower    = require("lalin.schema.lower")
+local C        = require("lalin.schema.c")
 
 local function sanitize(s)
   s = tostring(s or "x"):gsub("[^%w_]", "_")

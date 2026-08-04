@@ -1,95 +1,69 @@
--- Canonical LalinSchema package loader.
+-- lalin/schema/init.lua
+-- Bootstrap: instantiates all schema declarations into ASDL runtime classes
+-- and patches package.loaded so impl files get actual type constructors.
 --
--- Runtime schema source is Lua/LalinSchema data under lua/lalin/schema/*.lua.
--- Compact .asdl text is not an active source path.
+-- After this module loads:
+--   local Tree = require("lalin.schema.tree")   → T.LalinTree
+--   Tree.ExprLit, Tree.Module, Tree.StmtLet  etc.  → actual ASDL classes
+--
+-- This must be loaded before any impl/ file.
 
-local Dsl = require("lalin.schema.dsl")
+local S = require("lalin.schema.dsl")
+local asdl = require("lalin.asdl")
 
-local M = {}
-
-local SCHEMA_MODULES = {
-    "core",
-    "backend_schema",
-    "c",
-    "c_materialize",
-    "luajit",
-    "luatrace",
-    "link",
-    "type",
-    "bind",
-    "sem",
-    "tree",
-    "check",
-    "code",
-    "code_backend",
-    "code_validate_schema",
-    "tree_lower",
-    "graph",
-    "flow",
-    "value",
-    "mem",
-    "effect",
-    "kernel",
-    "stencil",
-    "stencil_machine",
-    "exec",
-    "schedule",
-    "lower",
-    "emit_c",
-    "compiler",
-    "parse",
-    "host",
-    "source",
+-- Canonical schema files in dependency order.
+local files = {
+  "core", "parse", "source",
+  "type", "c", "bind", "sem",
+  "tree", "check", "tree_code",
+  "code", "graph", "flow", "value", "mem", "effect",
+  "kernel", "stencil", "c_materialize",
+  "lower", "schedule",
+  "backend", "cemit",
+  "compiler", "code_validation", "exec",
+  "phase", "project",
 }
 
-local function append(dst, src)
-    for i = 1, #(src or {}) do dst[#dst + 1] = src[i] end
+-- Step 1: Load all schema modules (schema + old LalinHost)
+local modules = {}
+
+-- Schema_v2 modules
+for _, name in ipairs(files) do
+  local mod_path = "lalin.schema." .. name
+  local decl = require(mod_path)
+  modules[#modules + 1] = decl
 end
 
-local function load_schema_module(name)
-    local mod = require("lalin.schema." .. name)
-    if not Dsl.is_schema_value(mod, "Module") then
-        error("lalin.schema: module lalin.schema." .. name .. " did not return a LalinSchema module", 2)
-    end
-    return mod
+-- Old LalinHost module (referenced by sem.lua via LalinHost.HostFieldRep)
+local host_decl = require("lalin.schema.host")
+modules[#modules + 1] = host_decl
+
+
+
+
+-- Step 2: Create ASDL context and instantiate all modules at once
+local T = asdl.context()
+S.define(T, modules)
+
+require("lalin.compiler_implementation").install(T)
+
+-- Step 3: Patch package.loaded so impl files get typed namespaces
+-- Map schema module name → T namespace
+local name_to_path = {}
+for _, name in ipairs(files) do
+  local mod_path = "lalin.schema." .. name
+  local decl = package.loaded[mod_path]
+  if decl and decl.name then
+    name_to_path[decl.name] = mod_path
+  end
 end
 
-function M.modules_for_test()
-    local copy = {}
-    for i, name in ipairs(SCHEMA_MODULES) do copy[i] = name end
-    return copy
+for ns_name, ns_table in pairs(T.namespaces) do
+  local mod_path = name_to_path[ns_name]
+  if mod_path then
+    package.loaded[mod_path] = ns_table
+  end
 end
 
-function M.schema_modules_for_test()
-    return M.modules_for_test()
-end
-
-function M.load_modules(names)
-    names = names or SCHEMA_MODULES
-    local out = {}
-    for _, name in ipairs(names) do out[#out + 1] = load_schema_module(name) end
-    return out
-end
-
-function M.schema(T)
-    return Dsl.to_asdl_schema(T, M.load_modules())
-end
-
-local function bind_context(T)
-    if T._lalin_canonical_schema_defined then return T end
-    Dsl.define(T, M.load_modules())
-    require("lalin.compiler_implementation").install_canonical(T)
-    T._lalin_canonical_schema_defined = true
-    return T
-end
-
-M.dsl = Dsl
-M.use = Dsl.use
-M.define = Dsl.define
-M.to_asdl_schema = Dsl.to_asdl_schema
-
-return setmetatable(M, {
-    __call = function(_, ...)
-        return bind_context(...)
-    end,
-})
+-- Also expose the full context for advanced use
+return T

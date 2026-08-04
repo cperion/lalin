@@ -2,15 +2,15 @@
 -- Type-check support: scalar facts, type classification, ABI decisions, op classification.
 -- Leaf methods on Core.Scalar, Ty.Type, Ty.TypeRef, Ty.TypeShape, Ty.ArrayLen, Core.BinaryOp, Core.UnaryOp, Core.CmpOp, Core.LogicOp, Core.MachineCastOp.
 
-local T        = require("lalin.schema_v2")
-local Core     = require("lalin.schema_v2.core")
-local Ty       = require("lalin.schema_v2.type")
+local T        = require("lalin.schema")
+local Core     = require("lalin.schema.core")
+local Ty       = require("lalin.schema.type")
 local Host     = T.LalinHost
-local Sem      = require("lalin.schema_v2.sem")
-local LCheck   = require("lalin.schema_v2.check")
+local Sem      = require("lalin.schema.sem")
+local LCheck   = require("lalin.schema.check")
 local asdl     = require("lalin.asdl")
 
--- Storage projection used by resolved field references. Schema-v2 owns this
+-- Storage projection used by resolved field references. The schema owns this
 -- projection; it must not install the legacy layout_resolve implementation.
 function Ty.Type:sem_layout_storage() return Host.HostRepOpaque("sem_layout") end
 function Ty.TScalar:sem_layout_storage() return Host.HostRepScalar(self.scalar) end

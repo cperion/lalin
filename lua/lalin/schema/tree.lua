@@ -21,18 +21,21 @@ return schema. LalinTree {
     offset [number],
   },
   product. VariantBind { interned, field. name [str], field. ty [LalinType.Type], },
-  product. SwitchVariantSourceStmtArm { interned, variant_name [str], binds [many [str]], body [many [LalinTree.Stmt]], },
+  product. VariantBindSource { interned, field. name [str], },
+  product. SwitchVariantSourceStmtArm {
+    interned,
+    variant_name [str],
+    binds [many [LalinTree.VariantBindSource]],
+    body [many [LalinTree.Stmt]],
+  },
   sum. SwitchKey {
     SwitchKeyInt { variant_unique, raw [str], },
     SwitchKeyBool { variant_unique, field. value [bool], },
     SwitchKeyName { variant_unique, field. name [str], },
     SwitchKeyExpr { variant_unique, field. expr [LalinTree.Expr], },
   },
-  sum. SwitchKeyDecision {
-    SwitchConstKeys { variant_unique, keys [many [LalinTree.SwitchKey]], },
-    SwitchExprKeys { variant_unique, keys [many [LalinTree.SwitchKey]], },
-    SwitchCompareFallback { variant_unique, keys [many [LalinTree.SwitchKey]], reason [str], },
-  },
+  -- SwitchKeyDecision DELETED — this was a delayed-control union with stringly reason.
+  -- Replaced by leaf methods on Expr returning SwitchKeyClass (in LalinCheck).
   product. SwitchStmtArm { interned, key [LalinTree.SwitchKey], body [many [LalinTree.Stmt]], },
   product. SwitchExprArm {
     interned,
@@ -110,6 +113,49 @@ return schema. LalinTree {
     DomainView { variant_unique, view [LalinTree.View], },
     DomainZipEqViews { variant_unique, views [many [LalinTree.View]], },
   },
+  sum. ControlLoopOrder { ControlLoopForward, ControlLoopBackward, },
+  sum. ControlWindowBoundary {
+    ControlWindowReject,
+    ControlWindowClamp,
+    ControlWindowWrap,
+    ControlWindowZero,
+  },
+  product. ControlLoopAxis {
+    interned,
+    index_name [str],
+    index_ty [LalinType.Type],
+    start_param_ordinal [number],
+    stop_param_ordinal [number],
+    trip_param_ordinal [number],
+    step [number],
+    order [LalinTree.ControlLoopOrder],
+  },
+  product. ControlWindowAxis {
+    interned,
+    before [number],
+    after [number],
+    boundary [LalinTree.ControlWindowBoundary],
+  },
+  sum. ControlLoopDomain {
+    ControlLoopNoDomain,
+    ControlLoopRangeND {
+      variant_unique,
+      header [LalinTree.BlockLabel],
+      axes [many [LalinTree.ControlLoopAxis]],
+    },
+    ControlLoopWindowND {
+      variant_unique,
+      header [LalinTree.BlockLabel],
+      axes [many [LalinTree.ControlLoopAxis]],
+      windows [many [LalinTree.ControlWindowAxis]],
+    },
+    ControlLoopTiledND {
+      variant_unique,
+      header [LalinTree.BlockLabel],
+      axes [many [LalinTree.ControlLoopAxis]],
+      tile_sizes [many [number]],
+    },
+  },
   sum. IndexBase {
     IndexBaseExpr { variant_unique, base [LalinTree.Expr], },
     IndexBasePlace { variant_unique, base [LalinTree.Place], elem [LalinType.Type], },
@@ -141,7 +187,12 @@ return schema. LalinTree {
       index [LalinTree.Expr],
     },
   },
-  product. RegionCont { interned, key [str], field. name [str], params [many [LalinTree.BlockParam]], },
+  product. RegionProtocolKey { interned, text [str], },
+  product. RegionResultTypeId { interned, text [str], },
+  product. RegionFunctionId { interned, text [str], },
+  product. RegionLocalNamespace { interned, text [str], },
+  product. RegionExpansionId { interned, text [str], },
+  product. RegionCont { interned, key [LalinTree.RegionProtocolKey], field. name [str], params [many [LalinTree.BlockParam]], },
   product. BlockLabel { interned, field. name [str], },
   product. BlockParam { interned, field. name [str], field. ty [LalinType.Type], },
   product. EntryBlockParam {
@@ -156,6 +207,22 @@ return schema. LalinTree {
     RegionWireBlock { variant_unique, label [LalinTree.BlockLabel], args [many [LalinTree.JumpArg]], },
     RegionWireCont { variant_unique, cont [LalinTree.RegionCont], args [many [LalinTree.JumpArg]], },
   },
+  -- Typed wire-argument forwarding.  A wire may name the invoked region's
+  -- continuation parameters as forwarding markers (e.g. `done =
+  -- finished(extra = 7, left, right)`); the projection maps the region exit
+  -- argument names to their values and the lookup leaves choose the
+  -- substituted or original jump argument.  Expression leaves classify
+  -- whether a wire argument value is a forwarding marker.
+  product. RegionWireArgEntry { interned, field. name [str], field. value [LalinTree.Expr], },
+  product. RegionWireArgProjection { interned, entries [many [LalinTree.RegionWireArgEntry]], },
+  sum. RegionWireArgLookup {
+    RegionWireArgFound { variant_unique, entry [LalinTree.RegionWireArgEntry], },
+    RegionWireArgMissing { variant_unique, field. name [str], },
+  },
+  sum. RegionWireArgMarker {
+    RegionWireArgMarkerName { variant_unique, field. name [str], },
+    RegionWireArgMarkerValue { variant_unique, },
+  },
   product. RegionContWire { interned, field. name [str], target [LalinTree.RegionWireTarget], },
   product. TypeRegionDef {
     interned,
@@ -165,52 +232,145 @@ return schema. LalinTree {
   product. RegionSealPayload {
     interned,
     cont [LalinTree.RegionCont],
-    type_name [str],
+    type_id [LalinTree.RegionResultTypeId],
   },
   product. RegionProtocol {
     interned,
-    key [str],
-    result_type_name [str],
+    key [LalinTree.RegionProtocolKey],
+    result_type [LalinTree.RegionResultTypeId],
     payloads [many [LalinTree.RegionSealPayload]],
   },
   product. RegionSeal {
     interned,
     target [LalinTree.RegionInvokeTarget],
     region [LalinTree.Region],
-    function_name [str],
+    function_id [LalinTree.RegionFunctionId],
     protocol [LalinTree.RegionProtocol],
   },
   product. RegionBundleMember {
     interned,
     seal [LalinTree.RegionSeal],
     entry_label [LalinTree.BlockLabel],
-    local_namespace [str],
+    local_namespace [LalinTree.RegionLocalNamespace],
   },
   product. RegionBundle {
     interned,
     root [LalinTree.RegionSeal],
     members [many [LalinTree.RegionBundleMember]],
   },
+
+  product. RegionDefinitionEntry { interned, target [LalinTree.RegionInvokeTarget], definition [LalinTree.TypeRegionDef], },
+  product. RegionDefinitionProjection { interned, entries [many [LalinTree.RegionDefinitionEntry]], },
+  sum. RegionDefinitionLookup {
+    RegionDefinitionFound { variant_unique, entry [LalinTree.RegionDefinitionEntry], },
+    RegionDefinitionMissing { variant_unique, target [LalinTree.RegionInvokeTarget], },
+  },
+  product. RegionProtocolEntry { interned, key [LalinTree.RegionProtocolKey], protocol [LalinTree.RegionProtocol], },
+  product. RegionProtocolProjection { interned, entries [many [LalinTree.RegionProtocolEntry]], },
+  sum. RegionProtocolLookup {
+    RegionProtocolFound { variant_unique, entry [LalinTree.RegionProtocolEntry], },
+    RegionProtocolMissing { variant_unique, key [LalinTree.RegionProtocolKey], },
+  },
+  product. RegionSealEntry { interned, target [LalinTree.RegionInvokeTarget], seal [LalinTree.RegionSeal], },
+  product. RegionSealProjection { interned, entries [many [LalinTree.RegionSealEntry]], },
+  sum. RegionSealLookup {
+    RegionSealFound { variant_unique, entry [LalinTree.RegionSealEntry], },
+    RegionSealMissing { variant_unique, target [LalinTree.RegionInvokeTarget], },
+  },
+  product. RegionBundleEntry { interned, target [LalinTree.RegionInvokeTarget], bundle [LalinTree.RegionBundle], },
+  product. RegionBundleProjection { interned, entries [many [LalinTree.RegionBundleEntry]], },
+  sum. RegionBundleLookup {
+    RegionBundleFound { variant_unique, entry [LalinTree.RegionBundleEntry], },
+    RegionBundleMissing { variant_unique, target [LalinTree.RegionInvokeTarget], },
+  },
+  product. RegionFactProjection {
+    interned,
+    definitions [LalinTree.RegionDefinitionProjection],
+    protocols [LalinTree.RegionProtocolProjection],
+    seals [LalinTree.RegionSealProjection],
+    bundles [LalinTree.RegionBundleProjection],
+  },
+  product. RegionWireEntry { interned, field. name [str], wire [LalinTree.RegionContWire], },
+  product. RegionWireProjection { interned, entries [many [LalinTree.RegionWireEntry]], },
+  sum. RegionWireLookup {
+    RegionWireFound { variant_unique, entry [LalinTree.RegionWireEntry], },
+    RegionWireMissing { variant_unique, field. name [str], },
+  },
+  product. RegionCallCaptureEntry { interned, field. name [str], field. ty [LalinType.Type], field. value [LalinTree.Expr], },
+  product. RegionCallCaptureProjection { interned, entries [many [LalinTree.RegionCallCaptureEntry]], },
+
   sum. RegionInvokeReject {
     RegionInvokeMissingTarget { variant_unique, target [LalinTree.RegionInvokeTarget], },
     RegionInvokeArgCount { variant_unique, target [LalinTree.RegionInvokeTarget], expected [number], actual [number], },
     RegionInvokeMissingWire { variant_unique, target [LalinTree.RegionInvokeTarget], cont [LalinTree.RegionCont], },
     RegionInvokeExtraWire { variant_unique, target [LalinTree.RegionInvokeTarget], field. name [str], },
     RegionInvokeDuplicateWire { variant_unique, target [LalinTree.RegionInvokeTarget], field. name [str], },
-    RegionInvokeCallFrameUnsupported { variant_unique, target [LalinTree.RegionInvokeTarget], },
+    RegionInvokeCallFrameUnsupported { variant_unique, target [LalinTree.RegionInvokeTarget], frame_kind [str], reason [str], },
   },
   product. RegionInvokeExpandInput {
     interned,
-    scope [LalinCheck.TypeValueScope],
+    state [LalinCheck.TypeStmtInput],
+    facts [LalinTree.RegionFactProjection],
+    expansion [LalinTree.RegionExpansionId],
   },
   product. RegionInvokeSplice {
     interned,
-    entry_stmt [LalinTree.Stmt],
+    entry_stmts [many [LalinTree.Stmt]],
     blocks [many [LalinTree.ControlBlock]],
+    captures [LalinTree.RegionCallCaptureProjection],
+    next_state [LalinCheck.TypeStmtInput],
   },
   sum. RegionInvokeExpandResult {
     RegionInvokeExpanded { variant_unique, splice [LalinTree.RegionInvokeSplice], },
     RegionInvokeRejected { variant_unique, reject [LalinTree.RegionInvokeReject], },
+  },
+  product. RegionStmtBody { interned, stmts [many [LalinTree.Stmt]], },
+  product. RegionStmtExpansionInput {
+    interned,
+    state [LalinCheck.TypeStmtInput],
+    facts [LalinTree.RegionFactProjection],
+    expansion [LalinTree.RegionExpansionId],
+  },
+  product. RegionStmtExpansionResult {
+    interned,
+    next_state [LalinCheck.TypeStmtInput],
+    stmts [many [LalinTree.Stmt]],
+    blocks [many [LalinTree.ControlBlock]],
+    issues [many [LalinCheck.TypeIssue]],
+  },
+  product. RegionBodyExpansionInput {
+    interned,
+    state [LalinCheck.TypeStmtInput],
+    facts [LalinTree.RegionFactProjection],
+    expansion [LalinTree.RegionExpansionId],
+  },
+  product. RegionBodyExpansionResult {
+    interned,
+    next_state [LalinCheck.TypeStmtInput],
+    body [LalinTree.RegionStmtBody],
+    blocks [many [LalinTree.ControlBlock]],
+    issues [many [LalinCheck.TypeIssue]],
+  },
+  sum. RegionBlockNode {
+    RegionEntryBlockNode { variant_unique, entry [LalinTree.EntryControlBlock], },
+    RegionControlBlockNode { variant_unique, block [LalinTree.ControlBlock], },
+  },
+  product. RegionBlockExpansionInput {
+    interned,
+    state [LalinCheck.TypeStmtInput],
+    facts [LalinTree.RegionFactProjection],
+    expansion [LalinTree.RegionExpansionId],
+  },
+  product. RegionBlockExpansionResult {
+    interned,
+    node [LalinTree.RegionBlockNode],
+    blocks [many [LalinTree.ControlBlock]],
+    issues [many [LalinCheck.TypeIssue]],
+  },
+  product. RegionModuleExpansionInput { interned, facts [LalinTree.RegionFactProjection], },
+  sum. RegionModuleExpansion {
+    RegionModuleExpanded { variant_unique, field. module [LalinTree.Module], facts [LalinTree.RegionFactProjection], issues [many [LalinCheck.TypeIssue]], },
+    RegionModuleRejected { variant_unique, field. module [LalinTree.Module], facts [LalinTree.RegionFactProjection], issues [many [LalinCheck.TypeIssue]], },
   },
   sum. FuncContract {
     ContractBounds { variant_unique, base [LalinTree.Expr], len [LalinTree.Expr], },
@@ -230,6 +390,7 @@ return schema. LalinTree {
       field_name [str],
       component_index [number],
     },
+    ContractNoAliasPair { variant_unique, a [LalinTree.Expr], b [LalinTree.Expr], },
     ContractNoAlias { variant_unique, base [LalinTree.Expr], },
     ContractReadonly { variant_unique, base [LalinTree.Expr], },
     ContractWriteonly { variant_unique, base [LalinTree.Expr], },
@@ -263,11 +424,13 @@ return schema. LalinTree {
       field_name [str],
       component_index [number],
     },
+    ContractFactExprNoAliasPair { variant_unique, a [LalinTree.Expr], b [LalinTree.Expr], },
     ContractFactNoAlias { variant_unique, base [LalinBind.Binding], },
     ContractFactReadonly { variant_unique, base [LalinBind.Binding], },
     ContractFactWriteonly { variant_unique, base [LalinBind.Binding], },
     ContractFactExprReadonly { variant_unique, base [LalinTree.Expr], },
     ContractFactExprWriteonly { variant_unique, base [LalinTree.Expr], },
+    ContractFactExprNoAlias { variant_unique, base [LalinTree.Expr], },
     ContractFactInvalidate { variant_unique, base [LalinBind.Binding], },
     ContractFactPreserve { variant_unique, base [LalinBind.Binding], },
     ContractFactRejected { variant_unique, issue [LalinCheck.TypeIssue], },
@@ -306,6 +469,11 @@ return schema. LalinTree {
     contracts [many [LalinTree.FuncContract]],
     entry [LalinTree.EntryControlBlock],
     blocks [many [LalinTree.ControlBlock]],
+  },
+  product. RegionSealMaterialization {
+    interned,
+    result_item [LalinTree.Item],
+    function_item [LalinTree.Item],
   },
   sum. ControlFact {
     ControlFactEntryBlock { variant_unique, region_id [str], label [LalinTree.BlockLabel], },
@@ -371,6 +539,15 @@ return schema. LalinTree {
     binds [many [LalinTree.BlockParam]],
   },
   product. ControlFactSet { interned, facts [many [LalinTree.ControlFact]], },
+  -- ControlRejectReason: typed reasons for irreducible control rejections.
+  -- Replaces bare `reason [str]` on ControlRejectIrreducible.
+  -- ControlRejectIrreducibleBranch is the terminal catch-all for irreducible
+  -- control flow with no further structured reason.
+  sum. ControlRejectReason {
+    ControlIrreducibleLoop { backedge_blocks [many [LalinTree.BlockLabel]], },
+    ControlIrreducibleMultiEntry { header_blocks [many [LalinTree.BlockLabel]], },
+    ControlIrreducibleBranch { reason [str], },
+  },
   sum. ControlReject {
     ControlRejectDuplicateLabel {
       variant_unique,
@@ -416,7 +593,8 @@ return schema. LalinTree {
       region_id [str],
       label [LalinTree.BlockLabel],
     },
-    ControlRejectIrreducible { variant_unique, region_id [str], reason [str], },
+    -- Fixed: reason [str] → reason [LalinTree.ControlRejectReason]
+    ControlRejectIrreducible { variant_unique, region_id [str], reason [LalinTree.ControlRejectReason], },
     ControlRejectUnknownVariant { variant_unique, region_id [str], variant_name [str], },
   },
   product. ControlRejectExplanation {
@@ -555,6 +733,12 @@ return schema. LalinTree {
       h [LalinTree.ExprHeader],
       region [LalinTree.ControlExprRegion],
     },
+    ExprDomainControl {
+      variant_unique,
+      h [LalinTree.ExprHeader],
+      region [LalinTree.ControlExprRegion],
+      domain [LalinTree.ControlLoopDomain],
+    },
     ExprBlock {
       variant_unique,
       h [LalinTree.ExprHeader],
@@ -675,6 +859,15 @@ return schema. LalinTree {
       target [LalinTree.BlockLabel],
       args [many [LalinTree.JumpArg]],
     },
+    StmtBranchJump {
+      variant_unique,
+      h [LalinTree.StmtHeader],
+      cond [LalinTree.Expr],
+      then_target [LalinTree.BlockLabel],
+      then_args [many [LalinTree.JumpArg]],
+      else_target [LalinTree.BlockLabel],
+      else_args [many [LalinTree.JumpArg]],
+    },
     StmtJumpCont {
       variant_unique,
       h [LalinTree.StmtHeader],
@@ -713,6 +906,12 @@ return schema. LalinTree {
       variant_unique,
       h [LalinTree.StmtHeader],
       region [LalinTree.ControlStmtRegion],
+    },
+    StmtDomainControl {
+      variant_unique,
+      h [LalinTree.StmtHeader],
+      region [LalinTree.ControlStmtRegion],
+      domain [LalinTree.ControlLoopDomain],
     },
     StmtTrap { variant_unique, h [LalinTree.StmtHeader], },
   },
@@ -821,340 +1020,4 @@ return schema. LalinTree {
     ModuleCode { variant_unique, module_name [str], },
   },
   product. Module { interned, h [LalinTree.ModuleHeader], items [many [LalinTree.Item]], },
-  product. TreeCodeModuleFacts {
-    interned,
-    module_name [str],
-    layout_env [LalinSem.LayoutEnv],
-    target [optional [LalinC.CBackendTarget]],
-    const_env [LalinBind.ConstEnv],
-    variant_defs [many [LalinTree.TreeCodeVariantDefEntry]],
-  },
-  product. TreeCodeSigEntry {
-    interned,
-    sig_name [str],
-    sig [LalinCode.CodeSig],
-  },
-  product. TreeCodeModuleSigState {
-    module_name [str],
-    code_sigs [many [LalinTree.TreeCodeSigEntry]],
-    code_sig_order [many [LalinCode.CodeSig]],
-  },
-  product. TreeCodeFuncRegistrationEntry {
-    interned,
-    func_name [str],
-    registration [LalinTree.TreeCodeFuncRegistration],
-  },
-  product. TreeCodeExternEntry {
-    interned,
-    extern_name [str],
-    extern [LalinCode.CodeExtern],
-  },
-  product. TreeCodeModuleRegistrationState {
-    funcs [many [LalinTree.TreeCodeFuncRegistrationEntry]],
-    externs [many [LalinTree.TreeCodeExternEntry]],
-    extern_order [many [LalinCode.CodeExtern]],
-  },
-  product. TreeCodeModuleEmissionState {
-    generated_data [many [LalinCode.CodeData]],
-    counters [many [LalinTree.TreeCodeCounterEntry]],
-  },
-  product. TreeCodeFuncRegistration {
-    interned,
-    field. id [LalinCode.CodeFuncId],
-    sig [LalinCode.CodeSigId],
-  },
-  product. TreeCodeVariant {
-    interned,
-    field. name [str],
-    tag [number],
-    payload [LalinType.Type],
-    fields [many [LalinType.FieldDecl]],
-  },
-  product. TreeCodeVariantEntry {
-    interned,
-    variant_name [str],
-    variant [LalinTree.TreeCodeVariant],
-  },
-  product. TreeCodeVariantDef {
-    interned,
-    owner [LalinType.Type],
-    variants [many [LalinTree.TreeCodeVariantEntry]],
-  },
-  product. TreeCodeVariantDefEntry {
-    interned,
-    type_name [str],
-    def [LalinTree.TreeCodeVariantDef],
-  },
-  product. TreeCodeBindingValueEntry {
-    interned,
-    binding_name [str],
-    field. value [LalinCode.CodeValueId],
-  },
-  product. TreeCodeLocalBindingEntry {
-    interned,
-    binding_name [str],
-    binding [LalinTree.TreeCodeLocalBinding],
-  },
-  product. TreeCodeBindingSnapshot {
-    bindings [many [LalinTree.TreeCodeBindingValueEntry]],
-    locals_by_key [many [LalinTree.TreeCodeLocalBindingEntry]],
-  },
-  product. TreeCodeLocalBinding {
-    interned,
-    field. id [LalinCode.CodeLocalId],
-    field. ty [LalinCode.CodeType],
-    source_ty [LalinType.Type],
-  },
-  product. TreeCodeBlockBuilder {
-    field. id [LalinCode.CodeBlockId],
-    field. name [str],
-    params [many [LalinCode.CodeParam]],
-    insts [many [LalinCode.CodeInst]],
-    origin [LalinCode.CodeOrigin],
-  },
-  sum. TreeCodeControlRegion {
-    TreeCodeExprControlRegion {
-      variant_unique,
-      exit_id [LalinCode.CodeBlockId],
-      targets [many [LalinTree.TreeCodeControlTargetEntry]],
-    },
-    TreeCodeStmtControlRegion {
-      variant_unique,
-      exit_id [LalinCode.CodeBlockId],
-      targets [many [LalinTree.TreeCodeControlTargetEntry]],
-    },
-  },
-  product. TreeCodeControlTarget {
-    interned,
-    field. id [LalinCode.CodeBlockId],
-    params [many [LalinCode.CodeParam]],
-  },
-  product. TreeCodeControlTargetEntry {
-    interned,
-    label_name [str],
-    target [LalinTree.TreeCodeControlTarget],
-  },
-  product. TreeCodeBindingState {
-    values_by_key [many [LalinTree.TreeCodeBindingValueEntry]],
-    locals_by_key [many [LalinTree.TreeCodeLocalBindingEntry]],
-  },
-  product. TreeCodeBindingPresenceEntry {
-    interned,
-    binding_name [str],
-  },
-  product. TreeCodeResidenceFacts {
-    addressed_by_key [many [LalinTree.TreeCodeBindingPresenceEntry]],
-    mutable_by_key [many [LalinTree.TreeCodeBindingPresenceEntry]],
-  },
-  product. TreeCodeEmissionState {
-    locals [many [LalinCode.CodeLocal]],
-    blocks [many [LalinCode.CodeBlock]],
-    current_blocks [many [LalinTree.TreeCodeBlockBuilder]],
-  },
-  product. TreeCodeCounterState {
-    values_by_name [many [LalinTree.TreeCodeCounterEntry]],
-  },
-  product. TreeCodeCounterEntry {
-    interned,
-    counter_name [str],
-    next_value [number],
-  },
-  product. TreeCodeAlphaRenameEntry {
-    interned,
-    binding_name [str],
-    renamed [str],
-  },
-  product. TreeCodeAlphaState {
-    renamed_by_key [many [LalinTree.TreeCodeAlphaRenameEntry]],
-    current_suffix_by_slot [many [LalinTree.TreeCodeAlphaSuffixEntry]],
-    seq [number],
-  },
-  product. TreeCodeAlphaSuffixEntry {
-    interned,
-    slot_name [str],
-    suffix [str],
-  },
-  product. TreeCodeControlRegionSlot {
-    interned,
-    slot_name [str],
-    region [LalinTree.TreeCodeControlRegion],
-  },
-  product. TreeCodeControlFlag {
-    interned,
-    flag_name [str],
-    enabled [bool],
-  },
-  product. TreeCodeControlState {
-    current_regions [many [LalinTree.TreeCodeControlRegionSlot]],
-    flags [many [LalinTree.TreeCodeControlFlag]],
-  },
-  product. TreeCodeFuncFacts {
-    module_facts [LalinTree.TreeCodeModuleFacts],
-    sigs [LalinTree.TreeCodeModuleSigState],
-    registrations [LalinTree.TreeCodeModuleRegistrationState],
-    module_emission [LalinTree.TreeCodeModuleEmissionState],
-    func_name [str],
-  },
-  product. TreeCodeFuncState {
-    bindings [LalinTree.TreeCodeBindingState],
-    residence [LalinTree.TreeCodeResidenceFacts],
-    emission [LalinTree.TreeCodeEmissionState],
-    counters [LalinTree.TreeCodeCounterState],
-    alpha [LalinTree.TreeCodeAlphaState],
-    control [LalinTree.TreeCodeControlState],
-  },
-  product. TreeCodeFuncLoweringStart {
-    facts [LalinTree.TreeCodeFuncFacts],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeModuleParts {
-    module_facts [LalinTree.TreeCodeModuleFacts],
-    sigs [LalinTree.TreeCodeModuleSigState],
-    registrations [LalinTree.TreeCodeModuleRegistrationState],
-    emission [LalinTree.TreeCodeModuleEmissionState],
-  },
-  product. TreeCodeItemRegisterInput {
-    interned,
-    module_facts [LalinTree.TreeCodeModuleFacts],
-    sigs [LalinTree.TreeCodeModuleSigState],
-    registrations [LalinTree.TreeCodeModuleRegistrationState],
-  },
-  product. TreeCodeItemContractsInput {
-    interned,
-    module_facts [LalinTree.TreeCodeModuleFacts],
-    sigs [LalinTree.TreeCodeModuleSigState],
-    registrations [LalinTree.TreeCodeModuleRegistrationState],
-    emission [LalinTree.TreeCodeModuleEmissionState],
-    contract_facts [many [LalinCode.CodeFuncContractFact]],
-  },
-  product. TreeCodeItemLowerInput {
-    interned,
-    module_facts [LalinTree.TreeCodeModuleFacts],
-    sigs [LalinTree.TreeCodeModuleSigState],
-    registrations [LalinTree.TreeCodeModuleRegistrationState],
-    emission [LalinTree.TreeCodeModuleEmissionState],
-    mod_name [str],
-    funcs [many [LalinCode.CodeFunc]],
-    data [many [LalinCode.CodeData]],
-    globals [many [LalinCode.CodeGlobal]],
-  },
-  sum. TreeCodeInput {
-    TreeCodeExprInput {
-      variant_unique,
-      facts [LalinTree.TreeCodeFuncFacts],
-      state [LalinTree.TreeCodeFuncState],
-    },
-    TreeCodePlaceInput {
-      variant_unique,
-      facts [LalinTree.TreeCodeFuncFacts],
-      state [LalinTree.TreeCodeFuncState],
-    },
-    TreeCodeStmtInput {
-      variant_unique,
-      facts [LalinTree.TreeCodeFuncFacts],
-      state [LalinTree.TreeCodeFuncState],
-    },
-    TreeCodeControlInput {
-      variant_unique,
-      facts [LalinTree.TreeCodeFuncFacts],
-      state [LalinTree.TreeCodeFuncState],
-    },
-  },
-  product. TreeCodeContractInput {
-    interned,
-    module_facts [LalinTree.TreeCodeModuleFacts],
-    sigs [LalinTree.TreeCodeModuleSigState],
-    func_name [str],
-    func_id [LalinCode.CodeFuncId],
-  },
-  product. TreeCodeStateResult {
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeCounterResult {
-    field. value [number],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeBindingKeyResult {
-    binding_name [str],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeValueIdResult {
-    field. value [LalinCode.CodeValueId],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeInstIdResult {
-    field. id [LalinCode.CodeInstId],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeTermIdResult {
-    field. id [LalinCode.CodeTermId],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeBlockIdResult {
-    field. id [LalinCode.CodeBlockId],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeTermResult {
-    field. term [LalinCode.CodeTerm],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeLocalResult {
-    field. id [LalinCode.CodeLocalId],
-    field. ty [LalinCode.CodeType],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeAlphaResult {
-    renamed_by_key [many [LalinTree.TreeCodeAlphaRenameEntry]],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeControlExitResult {
-    saw_exit [bool],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeFallthroughResult {
-    falls [bool],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeExprResult {
-    interned,
-    field. value [optional [LalinCode.CodeValueId]],
-    field. ty [LalinCode.CodeType],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodePlaceResult {
-    interned,
-    place [LalinCode.CodePlace],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeIndexPlaceResult {
-    place [LalinCode.CodePlace],
-    index [LalinCode.CodeValueId],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeViewPartsResult {
-    data [LalinCode.CodeValueId],
-    len [LalinCode.CodeValueId],
-    stride [LalinCode.CodeValueId],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeStmtResult {
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeParamResult {
-    field. param [LalinCode.CodeParam],
-    field. ty [LalinCode.CodeType],
-    state [LalinTree.TreeCodeFuncState],
-  },
-  product. TreeCodeFuncParts {
-    interned,
-    field. name [str],
-    linkage [LalinCode.CodeLinkage],
-    params [many [LalinType.Param]],
-    result [LalinType.Type],
-    body [many [LalinTree.Stmt]],
-  },
-  product. TreeCodeContractResult {
-    interned,
-    fact [LalinCode.CodeFuncContractFact],
-  },
 }

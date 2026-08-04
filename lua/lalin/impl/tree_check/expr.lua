@@ -1,13 +1,13 @@
 -- impl/tree_check/expr.lua
 -- Expression typechecking leaf methods.
 
-require("lalin.schema_v2")
-local C      = require("lalin.schema_v2.core")
-local Ty     = require("lalin.schema_v2.type")
-local Tr     = require("lalin.schema_v2.tree")
-local B      = require("lalin.schema_v2.bind")
-local LCheck = require("lalin.schema_v2.check")
-local Sem    = require("lalin.schema_v2.sem")
+require("lalin.schema")
+local C      = require("lalin.schema.core")
+local Ty     = require("lalin.schema.type")
+local Tr     = require("lalin.schema.tree")
+local B      = require("lalin.schema.bind")
+local LCheck = require("lalin.schema.check")
+local Sem    = require("lalin.schema.sem")
 local asdl   = require("lalin.asdl")
 
 function Tr.Expr:typecheck_tree_expr(input) end  -- parent default
@@ -147,7 +147,7 @@ function Sem.FieldLayoutFound:tree_check_dot_field_expr(input, base, dot)
   local field = self.layout
   -- Lower to a resolved field ref (offset + storage) so the code phase
   -- can emit field access directly; FieldByName would require a
-  -- separate sem_layout_resolve pass the v2 pipeline does not run.
+  -- separate sem_layout_resolve pass the canonical pipeline does not run.
   local ref = Sem.FieldByOffset(field.field_name, field.offset, field.ty, field.ty:sem_layout_storage())
   return LCheck.TypeExprResult(Tr.ExprField(Tr.ExprTyped(field.ty), base.expr, ref), field.ty, base.issues)
 end
@@ -277,7 +277,7 @@ function Sem.FieldLayoutFound:tree_check_dot_field_place(input, base, dot)
   local field = self.layout
   -- Lower to a resolved field ref (offset + storage) so the code phase
   -- can emit field access directly; FieldByName would require a
-  -- separate sem_layout_resolve pass the v2 pipeline does not run.
+  -- separate sem_layout_resolve pass the canonical pipeline does not run.
   local ref = Sem.FieldByOffset(field.field_name, field.offset, field.ty, field.ty:sem_layout_storage())
   return LCheck.TypePlaceResult(Tr.PlaceField(Tr.PlaceTyped(field.ty), base.place, ref), field.ty, base.issues)
 end

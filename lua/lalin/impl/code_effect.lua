@@ -2,13 +2,13 @@
 -- LalinMem, LalinEffect types. Produces LalinEffect.EffectFactSet.
 -- Entry: Graph.CodeGraph:compute_effects(module, mem, contracts)
 
-require("lalin.schema_v2")
-local Code   = require("lalin.schema_v2.code")
-local Graph  = require("lalin.schema_v2.graph")
-local Flow   = require("lalin.schema_v2.flow")
-local Value  = require("lalin.schema_v2.value")
-local Mem    = require("lalin.schema_v2.mem")
-local Effect = require("lalin.schema_v2.effect")
+require("lalin.schema")
+local Code   = require("lalin.schema.code")
+local Graph  = require("lalin.schema.graph")
+local Flow   = require("lalin.schema.flow")
+local Value  = require("lalin.schema.value")
+local Mem    = require("lalin.schema.mem")
+local Effect = require("lalin.schema.effect")
 
 local function sanitize(s)
   s = tostring(s or "x"):gsub("[^%w_]", "_")

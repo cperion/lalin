@@ -1,8 +1,8 @@
 -- impl/schedule_plan.lua — typed schedule candidates and capabilities.
-require("lalin.schema_v2")
-local Backend = require("lalin.schema_v2.backend")
-local Kernel = require("lalin.schema_v2.kernel")
-local Schedule = require("lalin.schema_v2.schedule")
+require("lalin.schema")
+local Backend = require("lalin.schema.backend")
+local Kernel = require("lalin.schema.kernel")
+local Schedule = require("lalin.schema.schedule")
 
 local function sanitize(s)
   s = tostring(s):gsub("[^%w_]", "_")
@@ -95,7 +95,7 @@ end
 function Schedule.ScheduleVectorLaneUnavailable:vector_candidate(vec) return Schedule.ScheduleCandidateNotContributed end
 function Schedule.ScheduleVectorLaneAvailable:vector_candidate(vec)
   local form = Schedule.ScheduleVector(Schedule.LaneVector(self.lane.elem_ty, vec.lanes), 1, 1, Schedule.TailScalar)
-  local capability = Schedule.ScheduleEmitterRejected(Schedule.ScheduleEmitterVector(require("lalin.schema_v2.stencil").StencilVectorFeatureNative), { Schedule.ScheduleRejectTarget("vector emitter is outside SCH-1") })
+  local capability = Schedule.ScheduleEmitterRejected(Schedule.ScheduleEmitterVector(require("lalin.schema.stencil").StencilVectorFeatureNative), { Schedule.ScheduleRejectTarget("vector emitter is outside SCH-1") })
   return Schedule.ScheduleCandidateContributed(Schedule.ScheduleVectorCandidate(form, capability))
 end
 function Backend.BackShapeScalar:schedule_vector_candidate(plan) return Schedule.ScheduleCandidateNotContributed end

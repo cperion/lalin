@@ -23,30 +23,16 @@ M.asdl = require("lalin.asdl")
 M.triplet = require("lalin.triplet")
 M.schema_context = require("lalin.schema_context")
 M.schema_projection_model = require("lalin.schema_projection_model")
-M.schema = require("lalin.schema")
-M.schema_projection = require("lalin.schema_projection")
 M.context_define_schema = require("lalin.context_define_schema")
-M.phase_model = require("lalin.phase_model")
-M.phase_dsl = require("lalin.phase_dsl")
-M.phase_validate = require("lalin.phase_validate")
-M.phase_plan = require("lalin.phase_plan")
-M.phase_execute = require("lalin.phase_execute")
-M.compiler_package = require("lalin.compiler_package")
-M.compiler_model = require("lalin.compiler_model")
-M.compiler_driver = require("lalin.compiler_driver")
 M.exotype = require("lalin.exotype")
 M.store = require("lalin.store")
-local facade_T = require("lalin.schema_v2")
+local facade_T = require("lalin.schema")
 M.dsl = require("lalin.dsl")(facade_T)
 M.loader = require("lalin.loader")
 M.path = M.loader.path
 M.lalin = M.dsl.namespace()
 M.lln = M.dsl.namespace { name = "lln" }
 M.backend_target_model = require("lalin.backend_target_model")
-M.link_target_model = require("lalin.link_target_model")
-M.link_plan_validate = require("lalin.link_plan_validate")
-M.link_command_plan = require("lalin.link_command_plan")
-M.link_execute = require("lalin.link_execute")
 M.code_type = require("lalin.impl.code_type")
 M.emit_c_compile = require("lalin.emit_c_compile")
 M.emit_c_compile = require("lalin.emit_c_compile")
@@ -479,7 +465,7 @@ end
 -- lists are valid (an empty document is still a typed decl list).
 local function parsed_decl_list(value)
     local asdl = require("lalin.asdl")
-    local P = package.loaded["lalin.schema_v2.parse"]
+    local P = package.loaded["lalin.schema.parse"]
     if type(value) ~= "table" then return nil end
     for i = 1, #value do
         if not asdl.isa(value[i], P.ParsedDecl) then return nil end
@@ -498,15 +484,15 @@ local function builder_decl_list(value)
     return value
 end
 
--- Typed compile input for the schema-v2 session boundary.  The public
+-- Typed compile input for the schema session boundary.  The public
 -- surfaces route through leaf-owned compiler_module_input methods on the
 -- typed values; the decl-list boundary is strict; the Lua DSL builder heads
 -- are an explicit public branch, never a catch-all for arbitrary tables.
 local function compile_module_input_for(name, value)
     local asdl = require("lalin.asdl")
-    local Compiler = require("lalin.schema_v2.compiler")
-    local P = package.loaded["lalin.schema_v2.parse"]
-    local Tr = package.loaded["lalin.schema_v2.tree"]
+    local Compiler = require("lalin.schema.compiler")
+    local P = package.loaded["lalin.schema.parse"]
+    local Tr = package.loaded["lalin.schema.tree"]
     require("lalin.impl.compiler_api")
     local cls = asdl.classof(value)
     if cls == P.ParsedDocument or cls == Tr.Module then
@@ -527,9 +513,9 @@ local function compile_module_input_for(name, value)
     error("compile_c_gcc/emit_c: unsupported compile input " .. tostring(value), 2)
 end
 
--- Compile through the schema-v2 typed pipeline and return the C artifact.
+-- Compile through the schema typed pipeline and return the C artifact.
 local function typed_c_artifact(name, decls, opts)
-    local Compiler = require("lalin.schema_v2.compiler")
+    local Compiler = require("lalin.schema.compiler")
     require("lalin.impl.compiler_api")
     local input = compile_module_input_for(name, decls)
     local cs = Compiler.CompilerParsedSession(input)
@@ -544,7 +530,7 @@ function M.emit_c(decl, path_or_opts, name, opts)
     opts = opts or {}
     name = name or opts.name or "lalin_c"
     local result = typed_c_artifact(name, decl, opts)
-    local CodeType = require("lalin.impl.code_type")(require("lalin.schema_v2"))
+    local CodeType = require("lalin.impl.code_type")(require("lalin.schema"))
     local artifact = {
         kind = "CBackendArtifact",
         source = result.source,
@@ -556,7 +542,7 @@ function M.emit_c(decl, path_or_opts, name, opts)
         unit = result.unit,
         -- Public target/context facts for host-model inspection.
         target = CodeType.normalize_target(opts.c_target or opts.target or opts),
-        context = require("lalin.schema_v2"),
+        context = require("lalin.schema"),
     }
     attach_c_artifact_writer(artifact)
     if path_or_opts then artifact:write(path_or_opts) end
@@ -600,11 +586,11 @@ function M.compile_c_gcc(name_or_decls, decls_or_opts, maybe_opts)
     local name, decls, opts = compile_args(name_or_decls, decls_or_opts, maybe_opts)
     opts.runner = "gcc"
     opts.name = opts.name or name
-    -- Public GCC cutover: the typed schema-v2 pipeline owns parsing, typing,
+    -- Public GCC cutover: the typed schema pipeline owns parsing, typing,
     -- lowering, and C emission.  The old lower_to_c / emit_c_lower text
     -- lowering is not part of this path.
     local asdl = require("lalin.asdl")
-    local Compiler = require("lalin.schema_v2.compiler")
+    local Compiler = require("lalin.schema.compiler")
     require("lalin.impl.compiler_api")
     local input = compile_module_input_for(name, decls)
     local cs = Compiler.CompilerParsedSession(input)
@@ -632,15 +618,15 @@ function M.compile_c_gcc(name_or_decls, decls_or_opts, maybe_opts)
     return session, session.artifact and session.artifact.combined or session:get_source()
 end
 
-function M.compile_v2(name, source_text, opts)
-  -- Public API: compile .lln source text through schema_v2 pipeline
+function M.compile_source(name, source_text, opts)
+  -- Public API: compile .lln source text through schema pipeline
   -- and optionally build/load as shared object via GCC.
   --
   -- Returns a session with :symbol(name, ctype) and :free() when gcc=true.
   -- Returns { source=..., header=... } when gcc=false (C text only).
   --
   -- Example:
-  --   local session = lalin.compile_v2("add",
+  --   local session = lalin.compile_source("add",
   --     "fn add(a[i32],b[i32])[i32] do return a+b end",
   --     { gcc = true })
   --   local add_fn = session:symbol("add", "int32_t (*)(int32_t, int32_t)")
@@ -649,8 +635,8 @@ function M.compile_v2(name, source_text, opts)
   opts = opts or {}
 
   local asdl = require("lalin.asdl")
-  local Compiler = require("lalin.schema_v2.compiler")
-  local T = require("lalin.schema_v2")
+  local Compiler = require("lalin.schema.compiler")
+  local T = require("lalin.schema")
   local CodeType = require("lalin.impl.code_type")(T)
   require("lalin.impl.compiler_api")
   local target = CodeType.normalize_target(opts.c_target or opts.target or opts)
@@ -673,9 +659,9 @@ function M.compile_v2(name, source_text, opts)
     local session, err = cs:compile_gcc(gcc_opts)
     if not session then
       if asdl.classof and asdl.classof(err) and tostring(asdl.classof(err)):match("Error") then
-        error("compile_v2 GCC: " .. tostring(err.message), 2)
+        error("compile_source GCC: " .. tostring(err.message), 2)
       else
-        error("compile_v2 GCC: " .. tostring(err or "unknown error"), 2)
+        error("compile_source GCC: " .. tostring(err or "unknown error"), 2)
       end
     end
     return session
@@ -683,10 +669,10 @@ function M.compile_v2(name, source_text, opts)
     -- C text only (like the old emit_c)
     local result = cs:compile(target)
     if result == nil then
-      error("compile_v2: compile returned nil", 2)
+      error("compile_source: compile returned nil", 2)
     end
     if asdl.classof(result) ~= Compiler.CompilerArtifactC then
-      error("compile_v2: " .. tostring(result.message), 2)
+      error("compile_source: " .. tostring(result.message), 2)
     end
     return {
       source = result.source,
@@ -699,12 +685,4 @@ function M.context(opts)
     return M.asdl.context(opts)
 end
 
-local function bind_context(T)
-    return require("lalin.schema_projection")(T)
-end
-
-return setmetatable(M, {
-    __call = function(_, ...)
-        return bind_context(...)
-    end,
-})
+return M

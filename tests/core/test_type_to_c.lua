@@ -3,7 +3,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 assert(package.loaded["lalin.type_to_c"] == nil)
 
 local asdl = require("lalin.asdl")
-local T = require("lalin.schema_v2")
+local T = require("lalin.schema")
 require("lalin.impl.lower_emit_c.code_to_c")
 
 local Core = T.LalinCore
@@ -11,7 +11,7 @@ local Ty = T.LalinType
 local C = T.LalinC
 local Code = T.LalinCode
 local Tree = T.LalinTree
-local CodeType = require("lalin.code_type")(T)
+local CodeType = require("lalin.impl.code_type")(T)
 
 local function assert_class(value, class, message)
     assert(asdl.classof(value) == class, message or ("expected " .. tostring(class) .. ", got " .. tostring(asdl.classof(value))))

@@ -1,11 +1,11 @@
 -- impl/tree_check/contract.lua
 -- Contract fact computation leaf methods.
 
-require("lalin.schema_v2")
-local Tr  = require("lalin.schema_v2.tree")
-local Sem = require("lalin.schema_v2.sem")
-local Check = require("lalin.schema_v2.check")
-local B = require("lalin.schema_v2.bind")
+require("lalin.schema")
+local Tr  = require("lalin.schema.tree")
+local Sem = require("lalin.schema.sem")
+local Check = require("lalin.schema.check")
+local B = require("lalin.schema.bind")
 
 function Tr.FuncContract:typecheck_tree_contract(_input) return self end
 function Tr.ContractBounds:typecheck_tree_contract(input)

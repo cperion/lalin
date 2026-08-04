@@ -1,7 +1,7 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local asdl = require("lalin.asdl")
-local T = require("lalin.schema_v2")
+local T = require("lalin.schema")
 local Core = T.LalinCore
 local Code = T.LalinCode
 local C = T.LalinC
@@ -41,9 +41,9 @@ local request = Compiler.CompilerCCodegenRequest(
   code_result, target,
   Stencil.StencilCompilerPolicy(
     Stencil.StencilCompilerGcc, Stencil.StencilOptO3, {}))
-local outcome = require("lalin.compiler_schema_v2_c_backend").code_result_to_c(request)
+local outcome = require("lalin.compiler_c_backend").code_result_to_c(request)
 assert(asdl.classof(outcome) == Compiler.CompilerCBackendEmitted,
-  "float module must lower through the schema-v2 C backend")
+  "float module must lower through the schema C backend")
 local unit = outcome.backend.unit
 assert(#unit.helpers == 1, "float binary lowering should register one helper")
 local helper_spec = unit.helpers[1].spec

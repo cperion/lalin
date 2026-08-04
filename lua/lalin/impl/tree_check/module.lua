@@ -2,16 +2,16 @@
 -- Module environment construction: type canonicalization, layouts, value/type entries.
 -- Ported from tree_module_type.lua.
 
-require("lalin.schema_v2")
-local C   = require("lalin.schema_v2.core")
-local Ty  = require("lalin.schema_v2.type")
-local B   = require("lalin.schema_v2.bind")
-local Sem = require("lalin.schema_v2.sem")
-local LCheck = require("lalin.schema_v2.check")
-local Tr  = require("lalin.schema_v2.tree")
+require("lalin.schema")
+local C   = require("lalin.schema.core")
+local Ty  = require("lalin.schema.type")
+local B   = require("lalin.schema.bind")
+local Sem = require("lalin.schema.sem")
+local LCheck = require("lalin.schema.check")
+local Tr  = require("lalin.schema.tree")
 local asdl = require("lalin.asdl")
 local TypeSizeAlign = require("lalin.type_size_align")
-local layout_api = TypeSizeAlign(require("lalin.schema_v2"))
+local layout_api = TypeSizeAlign(require("lalin.schema"))
 require("lalin.impl.tree_region")
 -- Leaf methods for classof-free pattern matching
 function Ty.TypeRef:is_type_ref_path() return false end
@@ -238,7 +238,7 @@ function Tr.ItemImport:tree_module_item_env_entries(input) return {} end
 function Tr.ItemRegion:tree_module_item_env_entries(input) return {} end
 function Tr.Item:tree_module_typecheck_item(_scope) return self end
 function Tr.ItemRegion:tree_module_typecheck_item(scope)
-  local Check = require("lalin.schema_v2.check")
+  local Check = require("lalin.schema.check")
   local typed_region = self.region:typecheck_tree_region_body(
     Check.TypeStmtInput(scope, Ty.TScalar(C.ScalarVoid), Check.TypeYieldNone))
   return Tr.ItemRegion(typed_region)
@@ -272,7 +272,7 @@ end
 -- Traverses items, builds scopes, resolves ValueRefName -> ValueRefBinding,
 -- and returns a new Module with ModuleTyped header containing typechecked items.
 function Tr.Module:typecheck(input)
-  local LCheck = require("lalin.schema_v2.check")
+  local LCheck = require("lalin.schema.check")
   -- surface_resolve projects type refs under the literal module name;
   -- the typecheck scope must use the same name so type/layout/variant
   -- matching agree across phases.

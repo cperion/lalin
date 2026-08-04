@@ -3,13 +3,13 @@
 -- from a CodeGraph using typed projections and concrete leaf methods.
 -- Entry: Graph.CodeGraph:compute_mem(module, flow, values, contracts)
 
-require("lalin.schema_v2")
-local Core   = require("lalin.schema_v2.core")
-local Code   = require("lalin.schema_v2.code")
-local Graph  = require("lalin.schema_v2.graph")
-local Flow   = require("lalin.schema_v2.flow")
-local Value  = require("lalin.schema_v2.value")
-local Mem    = require("lalin.schema_v2.mem")
+require("lalin.schema")
+local Core   = require("lalin.schema.core")
+local Code   = require("lalin.schema.code")
+local Graph  = require("lalin.schema.graph")
+local Flow   = require("lalin.schema.flow")
+local Value  = require("lalin.schema.value")
+local Mem    = require("lalin.schema.mem")
 
 local function sanitize(s)
   s = tostring(s or "x"):gsub("[^%w_]", "_")

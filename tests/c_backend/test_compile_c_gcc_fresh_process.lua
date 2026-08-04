@@ -3,15 +3,15 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 -- Public compile_c_gcc fresh-process proof.
 --
 -- A fresh process must compile the public .lln surface through the typed
--- schema-v2 pipeline only: lalin.syntax_v2.document -> LalinTree Module ->
--- schema-v2 phases -> schema-v2 C backend -> GCC shared object.  The old
+-- schema pipeline only: lalin.syntax.document -> LalinTree Module ->
+-- schema phases -> schema C backend -> GCC shared object.  The old
 -- lower_to_c text lowering and the old driver chain that hosted it
 -- (frontend_pipeline / compiler_canonical_c_backend / emit_c_materialize)
 -- must not be pulled into the process by the public GCC path.
 --
 -- The emitted-C shape contract is asserted directly: public symbols are the
 -- projected CodeFunc names (fn_ ids stay internal to the lower ASDL), and
--- the emitted source comes from the schema-v2 C backend.
+-- the emitted source comes from the schema C backend.
 
 local old_lowering_driver = {
   "lalin.lower_to_c",             -- old schema-projection C text lowering
@@ -57,14 +57,14 @@ assert_no_old_lowering("compile_c_gcc")
 
 -- The typed pipeline emitted the C text: public symbols are dlopen-visible.
 assert(type(c_src) == "string" and c_src:find("int32_t add") ~= nil,
-  "compile_c_gcc must return schema-v2 emitted C source")
+  "compile_c_gcc must return schema emitted C source")
 assert(session.artifact and session.artifact.kind == "CBackendArtifact",
   "session must expose the typed CBackendArtifact")
 assert(session.c_path and session.so_path, "session must expose cooked C/so paths")
 
 local ffi = require("ffi")
 local add = assert(session:symbol("add", "int32_t (*)(int32_t, int32_t)"))
-assert(add(3, 4) == 7, "gcc-compiled schema-v2 emit_c symbol must execute")
+assert(add(3, 4) == 7, "gcc-compiled schema emit_c symbol must execute")
 local use_pair = assert(session:symbol("use_pair", "int32_t (*)(void *)"))
 ffi.cdef("typedef struct { int32_t x; int32_t y; } lalin_fresh_pair;")
 local pair = ffi.new("lalin_fresh_pair[1]")
@@ -74,9 +74,9 @@ session:free()
 
 -- The typed pipeline modules are the ones that ran.
 assert(package.loaded["lalin.impl.compiler_api"] ~= nil, "typed compiler API must be loaded")
-assert(package.loaded["lalin.schema_v2.compiler"] ~= nil, "schema-v2 compiler must be loaded")
-assert(package.loaded["lalin.compiler_schema_v2_c_backend"] ~= nil, "schema-v2 C backend must be loaded")
-assert(package.loaded["lalin.syntax_v2.document"] ~= nil, "syntax_v2 document must be loaded")
+assert(package.loaded["lalin.schema.compiler"] ~= nil, "schema compiler must be loaded")
+assert(package.loaded["lalin.compiler_c_backend"] ~= nil, "schema C backend must be loaded")
+assert(package.loaded["lalin.syntax.document"] ~= nil, "syntax document must be loaded")
 assert_no_old_lowering("final")
 
 print("compile_c_gcc fresh-process typed pipeline proof ok")

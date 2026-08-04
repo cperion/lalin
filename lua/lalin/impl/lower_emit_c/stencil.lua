@@ -1,15 +1,15 @@
 -- Typed CMat-to-CBackend emission for the closed scalar range-1D scope.
-require("lalin.schema_v2")
+require("lalin.schema")
 require("lalin.impl.lower_emit_c.code_to_c")
 require("lalin.impl.cemit_emit")
 
-local T = require("lalin.schema_v2")
-local CMat = require("lalin.schema_v2.c_materialize")
-local Stencil = require("lalin.schema_v2.stencil")
-local Value = require("lalin.schema_v2.value")
-local Code = require("lalin.schema_v2.code")
-local Core = require("lalin.schema_v2.core")
-local C = require("lalin.schema_v2.c")
+local T = require("lalin.schema")
+local CMat = require("lalin.schema.c_materialize")
+local Stencil = require("lalin.schema.stencil")
+local Value = require("lalin.schema.value")
+local Code = require("lalin.schema.code")
+local Core = require("lalin.schema.core")
+local C = require("lalin.schema.c")
 
 local function copy(items)
   local out = {}

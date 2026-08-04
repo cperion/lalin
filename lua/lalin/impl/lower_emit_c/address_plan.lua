@@ -1,12 +1,12 @@
 -- Gate 3: materialize a closed executable C address plan from the exact
 -- memory-use spine and coordinate facet.
-require("lalin.schema_v2")
+require("lalin.schema")
 require("lalin.impl.lower_emit_c.coordinates")
 
-local C = require("lalin.schema_v2.c")
-local Stencil = require("lalin.schema_v2.stencil")
-local CMat = require("lalin.schema_v2.c_materialize")
-local Lower = require("lalin.schema_v2.lower")
+local C = require("lalin.schema.c")
+local Stencil = require("lalin.schema.stencil")
+local CMat = require("lalin.schema.c_materialize")
+local Lower = require("lalin.schema.lower")
 
 local function append_one(values, value)
   local result = {}

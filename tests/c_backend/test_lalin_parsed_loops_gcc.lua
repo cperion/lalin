@@ -91,7 +91,7 @@ fn soac_zip(dst [ptr [i32]], lhs [ptr [i32]], rhs [ptr [i32]], n [index]) [void]
 end
 ]=]
 
-local session = lalin.compile_v2("parsed_loops_gcc", source, {
+local session = lalin.compile_source("parsed_loops_gcc", source, {
     gcc = true,
     opt = 3,
     out_dir = "target/test_lalin_parsed_loops_gcc",

@@ -2,12 +2,12 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local lalin = require("lalin")
 local asdl = require("lalin.asdl")
-require("lalin.schema_v2")
-local P = package.loaded["lalin.schema_v2.parse"]
-local Tr = package.loaded["lalin.schema_v2.tree"]
-local Ty = package.loaded["lalin.schema_v2.type"]
-local C = package.loaded["lalin.schema_v2.core"]
-local Document = require("lalin.syntax_v2.document")
+require("lalin.schema")
+local P = package.loaded["lalin.schema.parse"]
+local Tr = package.loaded["lalin.schema.tree"]
+local Ty = package.loaded["lalin.schema.type"]
+local C = package.loaded["lalin.schema.core"]
+local Document = require("lalin.syntax.document")
 
 local function shell_quote(s)
     return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
@@ -55,7 +55,7 @@ assert(asdl.classof(expr.lhs) == Tr.ExprRef, "left operand should be a typed ref
 assert(asdl.classof(expr.rhs) == Tr.ExprLit and asdl.classof(expr.rhs.value) == C.LitInt
   and expr.rhs.value.raw == "4", "opts.env should feed document HostEval constants")
 
--- The typed document lowers to a Tree.Module through syntax_v2.
+-- The typed document lowers to a Tree.Module through syntax.
 local inline_module = Document.to_module(doc, "loader_inline")
 assert(asdl.classof(inline_module) == Tr.Module, "ParsedDocument decls should lower to a module")
 assert(#inline_module.items == 3, "all inline document decls should lower")

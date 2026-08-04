@@ -5,11 +5,11 @@
 -- Surface type resolution — replaces local type names with global refs.
 -- Ported from surface_resolve.lua.
 
-require("lalin.schema_v2")
-local Ty   = require("lalin.schema_v2.type")
-local Tr   = require("lalin.schema_v2.tree")
-local B    = require("lalin.schema_v2.bind")
-local Sem  = require("lalin.schema_v2.sem")
+require("lalin.schema")
+local Ty   = require("lalin.schema.type")
+local Tr   = require("lalin.schema.tree")
+local B    = require("lalin.schema.bind")
+local Sem  = require("lalin.schema.sem")
 local asdl = require("lalin.asdl")
 local asdl = require("lalin.asdl")
 

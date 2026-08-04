@@ -39,7 +39,7 @@ LalinTree
 ```
 
 The canonical C backend boundary is
-`lua/lalin/compiler_schema_v2_c_backend.lua:code_result_to_c`. Public compile
+`lua/lalin/compiler_schema_c_backend.lua:code_result_to_c`. Public compile
 APIs route through `lua/lalin/impl/compiler_api.lua`.
 
 ## Backend policy
@@ -61,7 +61,7 @@ backend surfaces.
 ASDL is the compiler's semantic type system. Source, checked, lower, and backend
 schemas have different jobs:
 
-- `lua/lalin/schema_v2/code.lua` owns typed code and declarations.
+- `lua/lalin/schema/code.lua` owns typed code and declarations.
 - `graph.lua` and `flow.lua` own control topology and iteration facts.
 - `value.lua`, `mem.lua`, and `effect.lua` own semantic analysis facets.
 - `kernel.lua` owns selected computation plans.
@@ -133,14 +133,14 @@ forms are rejected. The language surface is specified in
 lua/llbl.lua                         LLBL stage-0 workbench
 lua/llbl/                            LLBL bootstrap and syntax machinery
 lua/lalin/dsl/                       Lalin builder heads
-lua/lalin/schema_v2/                 canonical typed schemas
+lua/lalin/schema/                 canonical typed schemas
 lua/lalin/impl/                      phase and backend methods
 lua/lalin/impl/lower_emit_c/         CMat environment, fragment, and assembly
-lua/lalin/compiler_schema_v2_c_backend.lua
+lua/lalin/compiler_schema_c_backend.lua
                                       canonical C backend composition
 lua/lalin/impl/compiler_api.lua      public compiler API implementation
 lua/lalin/impl/cemit_emit.lua        CBackendUnit C emission
-tests/schema_v2/                     typed semantic boundary tests
+tests/schema/                     typed semantic boundary tests
 tests/c_backend/                     emitted-C and GCC execution tests
 ```
 
@@ -149,7 +149,7 @@ tests/c_backend/                     emitted-C and GCC execution tests
 Primary gates are:
 
 ```sh
-luajit tests/run.lua schema_v2
+luajit tests/run.lua schema
 luajit tests/run.lua c_backend
 luajit tests/c_backend/test_compile_c_gcc_fresh_process.lua
 ```
@@ -165,5 +165,5 @@ the final typed C boundary; they do not replace local semantic tests.
 - `docs/LLBL_GUIDE.md` — LLBL workbench and region model.
 - `docs/CONVENTIONS.md` — repository and naming conventions.
 - `docs/SCHEMA_OWNERSHIP.md` — schema ownership and cutover guard.
-- `docs/SCHEMA_V2_IMPL_MASTER_PLAN.md` — concise active compiler queue.
+- `docs/SCHEMA_IMPL_MASTER_PLAN.md` — concise active compiler queue.
 - `docs/CMAT_MEMORY_COORDINATE_ARCHITECTURE.md` — current address design.

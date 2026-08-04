@@ -1,9 +1,9 @@
 -- impl/tree_check/layout.lua
 -- Type layout matching leaf methods.
 
-require("lalin.schema_v2")
-local Ty  = require("lalin.schema_v2.type")
-local Sem = require("lalin.schema_v2.sem")
+require("lalin.schema")
+local Ty  = require("lalin.schema.type")
+local Sem = require("lalin.schema.sem")
 
 function Ty.Type:tree_check_match_layout(env, target) return false end
 function Ty.TScalar:tree_check_match_layout(env, target)

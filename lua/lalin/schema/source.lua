@@ -64,7 +64,9 @@ return schema. LalinSource {
     AnchorDiagnostic,
     AnchorExposeName,
     AnchorModuleName,
-    AnchorOpaque { variant_unique, field. name [str], },
+    -- AnchorOpaque → AnchorUnclassified: renamed to make clear this is a transient unknown,
+    -- not a permanent escape hatch.
+    AnchorUnclassified { variant_unique, field. name [str], },
   },
   product. Anchor {
     interned,
@@ -91,6 +93,13 @@ return schema. LalinSource {
     document [LalinSource.DocumentSnapshot],
     lines [many [LalinSource.SourceLineSpan]],
   },
+  -- SourceRangeFailure: typed reasons for invalid source ranges.
+  -- Replaces bare `reason [str]` on SourceIssueInvalidRange.
+  sum. SourceRangeFailure {
+    SourceRangeOutOfBounds { offset [number], },
+    SourceRangeBackwards { start [number], stop [number], },
+    SourceRangeTruncated { field. length [number], expected [number], },
+  },
   sum. SourceApplyIssue {
     SourceIssueWrongDocument {
       variant_unique,
@@ -102,7 +111,8 @@ return schema. LalinSource {
       expected_after [LalinSource.DocVersion],
       actual [LalinSource.DocVersion],
     },
-    SourceIssueInvalidRange { variant_unique, reason [str], },
+    -- Fixed: reason [str] → failure [SourceRangeFailure]
+    SourceIssueInvalidRange { variant_unique, field. field [LalinSource.SourceRange], failure [LalinSource.SourceRangeFailure], },
     SourceIssueOverlappingRanges {
       variant_unique,
       previous [LalinSource.SourceRange],

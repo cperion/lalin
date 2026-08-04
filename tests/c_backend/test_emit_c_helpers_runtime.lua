@@ -1,7 +1,7 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local asdl = require("lalin.asdl")
-local T = require("lalin.schema_v2")
+local T = require("lalin.schema")
 require("lalin.impl.cemit_emit")
 local Core = T.LalinCore
 local C = T.LalinC

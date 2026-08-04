@@ -1,13 +1,13 @@
 -- impl/tree_check/stmt.lua
 -- Statement typechecking leaf methods.
 
-require("lalin.schema_v2")
-local Tr     = require("lalin.schema_v2.tree")
-local Ty     = require("lalin.schema_v2.type")
-local C      = require("lalin.schema_v2.core")
-local LCheck = require("lalin.schema_v2.check")
-local Sem    = require("lalin.schema_v2.sem")
-local B      = require("lalin.schema_v2.bind")
+require("lalin.schema")
+local Tr     = require("lalin.schema.tree")
+local Ty     = require("lalin.schema.type")
+local C      = require("lalin.schema.core")
+local LCheck = require("lalin.schema.check")
+local Sem    = require("lalin.schema.sem")
+local B      = require("lalin.schema.bind")
 
 function Tr.Stmt:typecheck_tree_stmt(input) return LCheck.TypeStmtResult(input, {self}, {}) end
 

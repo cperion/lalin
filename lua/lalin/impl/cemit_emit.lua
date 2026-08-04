@@ -1,12 +1,12 @@
 -- impl/cemit_emit.lua
--- Methods on Cemit.*, Core.*, and C.* schema_v2 types for final C text emission.
+-- Methods on Cemit.*, Core.*, and C.* schema types for final C text emission.
 -- Rewritten: CEmitMachine operates on LalinC.CBackendUnit, not CodeModule+LowerModule.
 
-require("lalin.schema_v2")
+require("lalin.schema")
 
-local Cemit = require("lalin.schema_v2.cemit")
-local C     = require("lalin.schema_v2.c")
-local Core  = require("lalin.schema_v2.core")
+local Cemit = require("lalin.schema.cemit")
+local C     = require("lalin.schema.c")
+local Core  = require("lalin.schema.core")
 
 function C.CBackendTarget:target_capability(feature)
   return feature:c_backend_target_capability(self)
@@ -1222,8 +1222,8 @@ function C.CBackendHelperUse:c_emit_helper_lines()
   return lines
 end
 ----------------------------------------------------------------------
--- Helper ID/suffix vocabulary absorbed from the retired v1 emitter
--- (emit_c_lower.lua).  The schema-v2 C backend owns helper identity
+-- Helper ID/suffix vocabulary absorbed from the retired legacy emitter
+-- (emit_c_lower.lua).  The schema C backend owns helper identity
 -- generation; these leaf methods complete the missing classes.
 ----------------------------------------------------------------------
 
@@ -1344,8 +1344,8 @@ function C.CBackendHelperReduce:c_helper_id()
 end
 
 ----------------------------------------------------------------------
--- Helper body vocabulary absorbed from the retired v1 emitter
--- (emit_c_lower.lua).  Completes the schema-v2 C backend helper
+-- Helper body vocabulary absorbed from the retired legacy emitter
+-- (emit_c_lower.lua).  Completes the schema C backend helper
 -- emission surface (uret computation, unsigned C types, intrinsic,
 -- boolean-normalize, atomic, typed memcpy/memset, scan/find/reduce,
 -- layout-assert, and require-feature helper bodies).

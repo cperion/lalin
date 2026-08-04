@@ -1,14 +1,14 @@
--- Canonical schema-v2 region facts and immutable expansion.
+-- Canonical schema region facts and immutable expansion.
 -- Region behavior is deliberately attached to concrete ASDL leaves.
 
-require("lalin.schema_v2")
-local Tr = require("lalin.schema_v2.tree")
-local C = require("lalin.schema_v2.core")
-local B = require("lalin.schema_v2.bind")
-local Ty = require("lalin.schema_v2.type")
-local Check = require("lalin.schema_v2.check")
-local Sem = require("lalin.schema_v2.sem")
-local P = require("lalin.schema_v2.parse")
+require("lalin.schema")
+local Tr = require("lalin.schema.tree")
+local C = require("lalin.schema.core")
+local B = require("lalin.schema.bind")
+local Ty = require("lalin.schema.type")
+local Check = require("lalin.schema.check")
+local Sem = require("lalin.schema.sem")
+local P = require("lalin.schema.parse")
 
 local function append(out, values)
   for i = 1, #(values or {}) do out[#out + 1] = values[i] end

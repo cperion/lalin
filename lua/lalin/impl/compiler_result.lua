@@ -1,4 +1,4 @@
-require("lalin.schema_v2")
+require("lalin.schema")
 
 -- impl/compiler_result.lua
 -- Compiler ABI result validation (from compiler_abi.lua).
@@ -6,7 +6,7 @@ require("lalin.schema_v2")
 
 require("lalin.impl.tree_code")
 require("lalin.impl.code_validate")
-local T = package.loaded["lalin.schema_v2._context"]
+local T = package.loaded["lalin.schema._context"]
 local Compiler = Compiler
 local Code     = Code
 local Sem      = Sem

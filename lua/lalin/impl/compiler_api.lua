@@ -1,12 +1,12 @@
 -- impl/compiler_api.lua
 -- Root compiler API. CompilerSession:compile() is the public entry point.
 
-local T = require("lalin.schema_v2")
-local Compiler = require("lalin.schema_v2.compiler")
-local Sem = require("lalin.schema_v2.sem")
-local Code = require("lalin.schema_v2.code")
-local Tr = require("lalin.schema_v2.tree")
-local Stencil = require("lalin.schema_v2.stencil")
+local T = require("lalin.schema")
+local Compiler = require("lalin.schema.compiler")
+local Sem = require("lalin.schema.sem")
+local Code = require("lalin.schema.code")
+local Tr = require("lalin.schema.tree")
+local Stencil = require("lalin.schema.stencil")
 require("lalin.backend_target_model")(T) -- installs CBackendTarget:host_target_model for canonical target propagation
 -- Ensure all phase methods are installed
 require("lalin.impl.tree_surface")
@@ -30,7 +30,7 @@ require("lalin.impl.stencil_reduction")
 require("lalin.impl.stencil_c")
 require("lalin.impl.exec_plan")
 
-local CodeValidation = require("lalin.schema_v2.code_validation")
+local CodeValidation = require("lalin.schema.code_validation")
 
 function Compiler.CompilerCBackendRejected:compiler_emit_c_artifact()
   local issues = {}
@@ -58,7 +58,7 @@ local function compile_validated(input)
   local request = Compiler.CompilerCCodegenRequest(
     code_result, input.target, Stencil.StencilCompilerPolicy(
       Stencil.StencilCompilerGcc, Stencil.StencilOptO3, {}))
-  local backend = require("lalin.compiler_schema_v2_c_backend").code_result_to_c(request)
+  local backend = require("lalin.compiler_c_backend").code_result_to_c(request)
   return backend:compiler_emit_c_artifact()
 end
 
@@ -121,10 +121,10 @@ local function compile_tree_module(tree_module, source_name, c_target)
 end
 
 function Compiler.CompilerModuleInputParsedDocument:compile_session_module()
-  return require("lalin.syntax_v2.document").to_module(self.document, self.source_name)
+  return require("lalin.syntax.document").to_module(self.document, self.source_name)
 end
 function Compiler.CompilerModuleInputParsedDecls:compile_session_module()
-  return require("lalin.syntax_v2.document").to_module(self.decls, self.source_name)
+  return require("lalin.syntax.document").to_module(self.decls, self.source_name)
 end
 function Compiler.CompilerModuleInputTree:compile_session_module()
   return self.module
@@ -153,7 +153,7 @@ function Compiler.CompilerSession:compile(c_target)
   c_target = CodeType.normalize_target(c_target)
 
   -- Parse source → LalinTree Module
-  local Document = require("lalin.syntax_v2.document")
+  local Document = require("lalin.syntax.document")
   local parse_ok, doc = pcall(Document.parse, self.source_text, self.source_name)
   if not parse_ok then
     return Compiler.CompilerArtifactError("parse: " .. tostring(doc))

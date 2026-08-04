@@ -5,13 +5,13 @@
 -- alignments/control stay inside the CMat fragment; plan and namespace
 -- invariants are trusted; the first typed fragment rejection is returned.
 
-require("lalin.schema_v2")
+require("lalin.schema")
 require("lalin.impl.lower_plan")
 require("lalin.impl.lower_emit_c.lower_sem")
-local Lower = require("lalin.schema_v2.lower")
-local C = require("lalin.schema_v2.c")
-local CMat = require("lalin.schema_v2.c_materialize")
-local Code = require("lalin.schema_v2.code")
+local Lower = require("lalin.schema.lower")
+local C = require("lalin.schema.c")
+local CMat = require("lalin.schema.c_materialize")
+local Code = require("lalin.schema.code")
 
 local function sanitize(s)
   s = tostring(s or "fragment"):gsub("[^%w_]", "_")

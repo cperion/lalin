@@ -2,6 +2,15 @@ local S = require("lalin.schema.dsl")
 S.use()
 
 return schema. LalinCheck {
+  -- SwitchKeyClass: typed classification of switch key expressions.
+  -- Replaces the old SwitchKeyDecision delayed-control union.
+  -- Produced by leaf methods on Expr instead of a standalone dispatch.
+  sum. SwitchKeyClass {
+    SwitchConstKeyClass { keys [many [LalinTree.SwitchKey]], },
+    SwitchExprKeyClass { keys [many [LalinTree.SwitchKey]], },
+    SwitchCompareKeyClass { keys [many [LalinTree.SwitchKey]], comparison [LalinCore.CmpOp], },
+  },
+
   -- Typecheck input products
   product. TypeValueScope {
     interned,
@@ -15,6 +24,10 @@ return schema. LalinCheck {
     TypeValueLookupFound { variant_unique, binding [LalinBind.Binding], },
     TypeValueLookupMissing { variant_unique, field. name [str], },
   },
+  sum. TypeEntryLookup {
+    TypeEntryLookupFound { variant_unique, field. ty [LalinType.Type], },
+    TypeEntryLookupMissing { variant_unique, field. fallback [LalinType.Type], },
+  },
   sum. TypeVariantDefLookup {
     TypeVariantDefLookupFound { variant_unique, def [LalinCheck.TypeVariantDef], },
     TypeVariantDefLookupMissing { variant_unique, type_name [str], field. ty [LalinType.Type], },
@@ -23,10 +36,20 @@ return schema. LalinCheck {
     TypeVariantCaseLookupFound { variant_unique, def [LalinCheck.TypeVariantDef], case [LalinCheck.TypeVariantCase], },
     TypeVariantCaseLookupMissing { variant_unique, type_name [str], variant_name [str], field. ty [LalinType.Type], },
   },
+  -- TypeRef leaf-name projection: every TypeRef projects to its last path
+  -- segment; the lookup leaves own the found/missing decision (no nil).
+  sum. TypeRefLeafLookup {
+    TypeRefLeafFound { variant_unique, field. name [str], },
+    TypeRefLeafMissing { variant_unique, field. ref [LalinType.TypeRef], },
+  },
+  -- Named-ref projection: which TypeRef a type names for layout matching.
+  sum. TypeNamedRefLookup {
+    TypeNamedRefFound { variant_unique, field. ref [LalinType.TypeRef], },
+    TypeNamedRefMissing { variant_unique, field. ty [LalinType.Type], },
+  },
   sum. TypeVariantPayloadLookup {
     TypeVariantPayloadNone,
-    TypeVariantPayloadFound { variant_unique, field. ty [LalinType.Type], },
-    TypeVariantPayloadUnsupported { variant_unique, field_count [number], },
+    TypeVariantPayloadFields { variant_unique, fields [many [LalinType.FieldDecl]], },
   },
   product. TypeVariantArmResult { interned, arm [LalinTree.SwitchVariantStmtArm], issues [many [LalinCheck.TypeIssue]], },
   product. TypeScopeChange { interned, scope [LalinCheck.TypeValueScope], },
@@ -111,6 +134,13 @@ return schema. LalinCheck {
       issues [many [LalinCheck.TypeIssue]],
     },
   },
+  -- Aggregate field init: the resolved FieldInit plus any issues raised
+  -- during field layout/offset resolution.
+  product. TypeAggFieldInit {
+    interned,
+    init [LalinTree.FieldInit],
+    issues [many [LalinCheck.TypeIssue]],
+  },
   sum. TypeStmtResult {
     TypeStmtResult {
       variant_unique,
@@ -154,7 +184,6 @@ return schema. LalinCheck {
     interned,
     field. name [str],
     tag [number],
-    payload [LalinType.Type],
     fields [many [LalinType.FieldDecl]],
   },
   product. TypeVariantDef {
@@ -185,10 +214,7 @@ return schema. LalinCheck {
     variants [many [LalinCheck.TypeVariantDef]],
     handles [many [LalinCheck.TypeHandleDef]],
     effects [many [LalinCheck.TypeFuncEffect]],
-    regions [many [LalinTree.TypeRegionDef]],
-    region_protocols [many [LalinTree.RegionProtocol]],
-    region_seals [many [LalinTree.RegionSeal]],
-    region_bundles [many [LalinTree.RegionBundle]],
+    region [LalinTree.RegionFactProjection],
   },
   product. TypeModuleFactsInput { interned, module_name [str], },
 
@@ -290,8 +316,13 @@ return schema. LalinCheck {
     },
     TypeIssueRegionInvoke { variant_unique, reject [LalinTree.RegionInvokeReject], },
     TypeIssueUnknownVariant { variant_unique, type_name [str], variant_name [str], },
-    TypeIssueVariantBindCount { variant_unique, type_name [str], variant_name [str], expected [number], actual [number], },
-    TypeIssueVariantPayloadUnsupported { variant_unique, type_name [str], variant_name [str], field_count [number], },
+    TypeIssueVariantBindCount {
+      variant_unique,
+      type_name [str],
+      variant_name [str],
+      expected [number],
+      actual [number],
+    },
     TypeIssueVariantPayloadMismatch {
       variant_unique,
       type_name [str],

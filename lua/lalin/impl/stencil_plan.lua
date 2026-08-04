@@ -1,7 +1,7 @@
 -- Typed stencil planning and validation leaf methods.
-require("lalin.schema_v2")
-local Stencil = require("lalin.schema_v2.stencil")
-local CMat = require("lalin.schema_v2.c_materialize")
+require("lalin.schema")
+local Stencil = require("lalin.schema.stencil")
+local CMat = require("lalin.schema.c_materialize")
 
 local function execution_axes(axes)
   local out = {}

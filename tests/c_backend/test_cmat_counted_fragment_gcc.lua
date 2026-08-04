@@ -2,19 +2,19 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local ffi = require("ffi")
 local asdl = require("lalin.asdl")
-require("lalin.schema_v2")
+require("lalin.schema")
 require("lalin.impl.lower_emit_c")
 
-local Code = require("lalin.schema_v2.code")
-local Core = require("lalin.schema_v2.core")
-local Graph = require("lalin.schema_v2.graph")
-local Flow = require("lalin.schema_v2.flow")
-local Value = require("lalin.schema_v2.value")
-local Mem = require("lalin.schema_v2.mem")
-local Kernel = require("lalin.schema_v2.kernel")
-local Stencil = require("lalin.schema_v2.stencil")
-local CMat = require("lalin.schema_v2.c_materialize")
-local C = require("lalin.schema_v2.c")
+local Code = require("lalin.schema.code")
+local Core = require("lalin.schema.core")
+local Graph = require("lalin.schema.graph")
+local Flow = require("lalin.schema.flow")
+local Value = require("lalin.schema.value")
+local Mem = require("lalin.schema.mem")
+local Kernel = require("lalin.schema.kernel")
+local Stencil = require("lalin.schema.stencil")
+local CMat = require("lalin.schema.c_materialize")
+local C = require("lalin.schema.c")
 local c_gcc = require("lalin.emit_c_compile")
 
 local available, why = c_gcc.available()
@@ -209,17 +209,17 @@ local fragment_accesses = CMat.CMatCFragmentAccessBindingProjection({
     lane.backend_info[1].movement)
 })
 function CMat.CMatMemorySelectedIndex:test_coordinate(basis, _domain)
-  local Lower = require("lalin.schema_v2.lower")
+  local Lower = require("lalin.schema.lower")
   return Lower.LowerCMatIterationAffineCoordinate(basis, 0)
 end
 function CMat.CMatMemoryWindowOffset:test_coordinate(basis, domain)
-  local Lower = require("lalin.schema_v2.lower")
+  local Lower = require("lalin.schema.lower")
   return Lower.LowerCMatWindowDynamicCoordinate(
     basis, Lower.LowerCMatWindowCoordinateProvenance(
       self.offset, domain.window.extent, domain.window.boundary), 0)
 end
 function test_address_plan(materialization, accesses)
-  local Lower = require("lalin.schema_v2.lower")
+  local Lower = require("lalin.schema.lower")
   local spine = materialization.kernel:cmat_memory_use_spine()
   local iteration = materialization.provenance.iteration
   local induction = Flow.FlowInduction(
@@ -259,7 +259,7 @@ function test_address_plan(materialization, accesses)
   return projection.plan
 end
 function cursor_address_plan()
-  local Lower = require("lalin.schema_v2.lower")
+  local Lower = require("lalin.schema.lower")
   local spine = materialization.kernel:cmat_memory_use_spine()
   assert(#spine.uses == 2)
   local induction = Flow.FlowInduction(

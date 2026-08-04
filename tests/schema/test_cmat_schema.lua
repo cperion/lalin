@@ -1,0 +1,11 @@
+package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
+local asdl = require("lalin.asdl")
+require("lalin.schema")
+local CMat = require("lalin.schema.c_materialize")
+assert(asdl.classof(CMat.CMatKernelId("k")) == CMat.CMatKernelId)
+assert(asdl.isa(CMat.CMatConstEligible, CMat.CMatConstCapability))
+assert(asdl.isa(CMat.CMatRestrictIneligible("scalar"), CMat.CMatRestrictCapability))
+assert(asdl.isa(CMat.CMatLaneFixed(4), CMat.CMatLaneCapability))
+local ok = pcall(CMat.CMatMaterializationInput, { kernel = "loose" })
+assert(not ok, "CMat constructors must reject loose payloads")
+io.write("test_cmat_schema: ok\n")

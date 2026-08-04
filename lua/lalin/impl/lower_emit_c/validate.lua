@@ -1,11 +1,11 @@
 -- Canonical, schema-owned CBackend validation.
 -- Every CBackend alternative validates itself; the root only builds typed relations
 -- and composes the reports returned by those leaves.
-require("lalin.schema_v2")
+require("lalin.schema")
 require("lalin.impl.cemit_emit")
 
-local C = require("lalin.schema_v2.c")
-local Core = require("lalin.schema_v2.core")
+local C = require("lalin.schema.c")
+local Core = require("lalin.schema.core")
 
 local function report(...)
   local issues = {}
