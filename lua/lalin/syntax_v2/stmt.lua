@@ -74,6 +74,7 @@ local unary_contract_constructors = {
 local binary_contract_constructors = {
   bounds = P.ParsedContractBounds,
   disjoint = P.ParsedContractDisjoint,
+  noalias = P.ParsedContractNoAliasPair,
   same_len = P.ParsedContractSameLen,
 }
 

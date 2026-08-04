@@ -893,6 +893,7 @@ return schema. LalinCode {
       field_name [str],
       component_index [number],
     },
+    CodeContractProjectionNoAliasPair { variant_unique, a [LalinCode.CodeContractExpr], b [LalinCode.CodeContractExpr], },
     CodeContractNoAlias { variant_unique, base [LalinCode.CodeValueId], },
     CodeContractReadonly { variant_unique, base [LalinCode.CodeValueId], },
     CodeContractWriteonly { variant_unique, base [LalinCode.CodeValueId], },

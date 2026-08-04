@@ -457,6 +457,7 @@ end
 function P.ParsedContractReadonly:parsed_contract_value() return Tr.ContractReadonly(self.arg) end
 function P.ParsedContractWriteonly:parsed_contract_value() return Tr.ContractWriteonly(self.arg) end
 function P.ParsedContractNoAlias:parsed_contract_value() return Tr.ContractNoAlias(self.arg) end
+function P.ParsedContractNoAliasPair:parsed_contract_value() return Tr.ContractNoAliasPair(self.a, self.b) end
 function P.ParsedContractInvalidate:parsed_contract_value() return Tr.ContractInvalidate(self.arg) end
 function P.ParsedContractPreserve:parsed_contract_value() return Tr.ContractPreserve(self.arg) end
 function P.ParsedContractBounds:parsed_contract_value() return Tr.ContractBounds(self.a, self.b) end

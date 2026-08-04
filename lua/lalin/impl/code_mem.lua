@@ -308,14 +308,14 @@ function Code.CodeContractPlaceLoad:project_memory_contract_expr() return Mem.Me
 
 local function empty_contract_contribution()
   return Mem.MemContractContribution(
-    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 end
 
 function Code.CodeContractBounds:project_memory_contract(input)
   local s = input.source
   return Mem.MemContractContribution(
     { Mem.MemContractBoundsEntry(s.func, self.base, self.len, s) },
-    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 end
 function Code.CodeContractProjectionBounds:project_memory_contract(input)
   local s = input.source
@@ -323,28 +323,28 @@ function Code.CodeContractProjectionBounds:project_memory_contract(input)
     { Mem.MemContractProjectionBoundsEntry(
       s.func, self.base:project_memory_contract_expr(),
       self.len:project_memory_contract_expr(), s) },
-    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 end
 function Code.CodeContractWindowBounds:project_memory_contract(input)
   local s = input.source
   return Mem.MemContractContribution({}, {},
     { Mem.MemContractWindowEntry(
       s.func, self.base, self.base_len, self.start, self.len, s) },
-    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 end
 function Code.CodeContractDisjoint:project_memory_contract(input)
   local s = input.source
   return Mem.MemContractContribution(
     {}, {}, {}, {},
     { Mem.MemContractPairEntry(s.func, self.a, self.b, s) },
-    {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 end
 function Code.CodeContractSameLen:project_memory_contract(input)
   local s = input.source
   return Mem.MemContractContribution(
     {}, {}, {},
     { Mem.MemContractPairEntry(s.func, self.a, self.b, s) },
-    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 end
 function Code.CodeContractSoAComponent:project_memory_contract(input)
   local s = input.source
@@ -353,11 +353,11 @@ function Code.CodeContractSoAComponent:project_memory_contract(input)
     { Mem.MemContractSoAEntry(
       s.func, self.base, self.record_ty, self.field_name,
       self.component_index, s) },
-    {}, {}, {}, {}, {}, {}, {}, {}, {})
+    {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 end
 
 local function value_contract_contribution(slot, input, base)
-  local fields = { {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} }
+  local fields = { {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} }
   fields[slot] = { Mem.MemContractValueEntry(input.source.func, base, input.source) }
   return Mem.MemContractContribution(unpack(fields))
 end
@@ -368,25 +368,34 @@ function Code.CodeContractInvalidate:project_memory_contract(input) return value
 function Code.CodeContractPreserve:project_memory_contract(input) return value_contract_contribution(14, input, self.base) end
 
 local function projection_contract_contribution(slot, input, base)
-  local fields = { {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} }
+  local fields = { {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} }
   fields[slot] = { Mem.MemContractProjectionEntry(input.source.func, base:project_memory_contract_expr(), input.source) }
   return Mem.MemContractContribution(unpack(fields))
 end
 function Code.CodeContractProjectionReadonly:project_memory_contract(input) return projection_contract_contribution(10, input, self.base) end
 function Code.CodeContractProjectionWriteonly:project_memory_contract(input) return projection_contract_contribution(11, input, self.base) end
 function Code.CodeContractProjectionNoAlias:project_memory_contract(input) return projection_contract_contribution(12, input, self.base) end
+local function projection_pair_contract_contribution(slot, input, a, b)
+  local fields = { {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} }
+  fields[slot] = { Mem.MemContractProjectionPairEntry(input.source.func, a:project_memory_contract_expr(), b:project_memory_contract_expr(), input.source) }
+  return Mem.MemContractContribution(unpack(fields))
+end
+function Code.CodeContractProjectionNoAliasPair:project_memory_contract(input)
+  return projection_pair_contract_contribution(16, input, self.a, self.b)
+end
 function Code.CodeContractRejected:project_memory_contract(input)
   local s = input.source
   return Mem.MemContractContribution(
     {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {},
-    { Mem.MemContractRejectedEntry(s.func, self.reason, s) })
+    { Mem.MemContractRejectedEntry(s.func, self.reason, s) },
+    {})
 end
 
 local contract_fields = {
   "bounds", "projection_bounds", "windows", "same_lengths", "disjoint",
   "soa", "noalias", "readonly", "writeonly", "projection_readonly",
   "projection_writeonly", "projection_noalias", "invalidates", "preserves",
-  "rejected",
+  "rejected", "noalias_pairs",
 }
 local function merge_contract_contribution(a, b)
   local values = {}
@@ -404,7 +413,7 @@ function Code.CodeContractFactSet:project_memory_contract()
     result.same_lengths, result.disjoint, result.soa, result.noalias,
     result.readonly, result.writeonly, result.projection_readonly,
     result.projection_writeonly, result.projection_noalias, result.invalidates,
-    result.preserves, result.rejected)
+    result.preserves, result.rejected, result.noalias_pairs)
 end
 
 ----------------------------------------------------------------------
@@ -892,6 +901,13 @@ function Mem.MemValueObjectFound:add_contract_noalias(source, value, entries)
   local proof = Mem.MemProofContract(source, Mem.MemContractNoAlias("noalias", value.text))
   return append_one(entries, Mem.MemNoAliasEntry(self.object, proof))
 end
+function Mem.MemValueObjectMissing:add_contract_noalias_pair(other, source, value_name, entries) return entries end
+function Mem.MemValueObjectFound:add_contract_noalias_pair(other, source, value_name, entries) return other:add_contract_noalias_pair_from(self.object, source, value_name, entries) end
+function Mem.MemValueObjectMissing:add_contract_noalias_pair_from(first, source, value_name, entries) return entries end
+function Mem.MemValueObjectFound:add_contract_noalias_pair_from(first, source, value_name, entries)
+  local proof = Mem.MemProofContract(source, Mem.MemContractNoAlias("noalias", value_name))
+  return append_one(entries, Mem.MemDisjointEntry(first, self.object, proof))
+end
 function Mem.MemObjectMissing:append_access_mode(access, entries) return entries end
 function Mem.MemObjectFound:append_access_mode(access, entries)
   local proof = Mem.MemProofBackend(access.access.id, Mem.MemBackendNativeAlignment(access.access.access.align))
@@ -903,6 +919,18 @@ local function relation_projection(facet, contracts, func)
   local disjoint = {}
   for _, entry in ipairs(contracts.disjoint) do
     if entry.func == func then disjoint = find_value_object(facet.values, entry.a):add_contract_disjoint(find_value_object(facet.values, entry.b), entry.source, disjoint) end
+  end
+  for _, entry in ipairs(contracts.noalias_pairs or {}) do
+    if entry.func == func then
+      local found_a, value_a, found_b, value_b = false, nil, false, nil
+      for _, lp in ipairs(facet.loaded_places or {}) do
+        if not found_a and entry.a:memory_contract_matches_place(lp.place) then found_a, value_a = true, lp.value end
+        if not found_b and entry.b:memory_contract_matches_place(lp.place) then found_b, value_b = true, lp.value end
+      end
+      if found_a and found_b then
+        disjoint = find_value_object(facet.values, value_a):add_contract_noalias_pair(find_value_object(facet.values, value_b), entry.source, value_a.text, disjoint)
+      end
+    end
   end
   local noalias = {}
   for _, entry in ipairs(contracts.noalias or {}) do
