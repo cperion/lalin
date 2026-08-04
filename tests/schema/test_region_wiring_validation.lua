@@ -162,4 +162,25 @@ local pt_main = assert(pt_session:symbol("main", "int32_t (*)(void)"))
 assert(tonumber(pt_main()) == 41, "passthrough: a=40 forwarded, v=0+1 -> 41 (got " .. tostring(pt_main()) .. ")")
 pt_session:free()
 
+-- Function entry params: a fn data param flows into an entry param of the
+-- same name (the entry init resolves to a binding ref at typecheck).
+local entry_src = [[
+fn main(a [i32]) [i32]
+  entry start(a [i32])
+    jump finish(v = a + 1)
+  end
+  block finish(v [i32])
+    return v
+  end
+end]]
+local entry_decls = assert(lalin.loadstring(entry_src, "@wire_entry.lln"))
+local entry_session = assert(lalin.compile_c_gcc("wire_entry", entry_decls, {
+  gcc_opts = { opt = 3, out_dir = "target/test_wire_entry" },
+}))
+local entry_main = assert(entry_session:symbol("main", "int32_t (*)(int32_t)"))
+assert(tonumber(entry_main(41)) == 42, "fn entry param flows to block: 41 + 1 = 42")
+entry_session:free()
+
+print(("region wiring validation: %d miswires rejected at typecheck, wiring/passthrough/entry run 82/41/42"):format(count))
+
 print(("region wiring validation: %d miswires rejected at typecheck, wiring/passthrough run to 82/41"):format(count))

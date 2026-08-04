@@ -140,12 +140,26 @@ function Tr.ControlStmtRegion:typecheck_tree_control_region(input)
   local control = LCheck.TypeControlRegion(self.region_id, self.blocks or {}, {})
   local region_input = LCheck.TypeStmtInput(input.scope, input.return_ty, input.yield, control)
   local issues = {}
+  -- Entry param inits reference the enclosing scope by name (fn data params
+  -- or the invoking region's wire args); typecheck them here so lowering
+  -- receives binding refs instead of untyped name markers.
+  local typed_entry_params = {}
+  for i = 1, #(self.entry.params or {}) do
+    local p = self.entry.params[i]
+    local ir = p.init:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+    for j = 1, #(ir.issues or {}) do issues[#issues + 1] = ir.issues[j] end
+    if ir.ty ~= nil and ir.expr then
+      typed_entry_params[i] = Tr.EntryBlockParam(p.name, p.ty, ir.expr)
+    else
+      typed_entry_params[i] = p
+    end
+  end
   local entry_input = control_scope(region_input, self.region_id,
-    self.entry.label, self.entry.params, true)
+    self.entry.label, typed_entry_params, true)
   local entry_result = entry_input:typecheck_tree_stmt_body(self.entry.body)
   for i = 1, #(entry_result.issues or {}) do issues[#issues + 1] = entry_result.issues[i] end
   local entry = Tr.EntryControlBlock(
-    self.entry.label, self.entry.params, entry_result.stmts)
+    self.entry.label, typed_entry_params, entry_result.stmts)
   local blocks = {}
   for i = 1, #self.blocks do
     local block, block_issues = typecheck_control_block(region_input, self.region_id, self.blocks[i])
