@@ -105,6 +105,25 @@ function Stencil.StencilComputation:cmat_access_binding_input(access)
     CMat.CMatLocalId(access.name), self:cmat_access_restrict_decision(ref))
 end
 
+function Stencil.StencilAccessAliasPairLookup:cmat_all_compare_pair_evidence()
+  return CMat.CMatNoAliasMissing("declared alias relation for all-compare lanes is absent")
+end
+function Stencil.StencilAccessAliasPairFound:cmat_all_compare_pair_evidence()
+  return self.relation:cmat_all_compare_pair_evidence()
+end
+function Stencil.StencilAccessAliasPairMissing:cmat_all_compare_pair_evidence()
+  return CMat.CMatNoAliasMissing("missing declared alias relation")
+end
+function Stencil.StencilAccessAliasPairAmbiguous:cmat_all_compare_pair_evidence()
+  return CMat.CMatNoAliasMissing("ambiguous declared alias relation")
+end
+function Stencil.StencilAliasFact:cmat_all_compare_pair_evidence()
+  return CMat.CMatNoAliasMissing("declared alias relation is not no-alias")
+end
+function Stencil.StencilAliasNoAlias:cmat_all_compare_pair_evidence()
+  return CMat.CMatNoAliasDeclared
+end
+
 function Stencil.StencilAccess:cmat_canonical_binding(input)
   return CMat.CMatAccessBinding(
     Stencil.StencilAccessRef(self.name), self, input.local_id, self.ty, self.layout,

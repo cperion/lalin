@@ -687,6 +687,13 @@ return schema. LalinCMat {
       success [LalinCMat.CMatCExitBindingFound],
       failure [LalinCMat.CMatCExitBindingFound],
     },
+    CMatCFragmentBodyAllCompareMemcmp {
+      variant_unique,
+      state [LalinCMat.CMatCFragmentState],
+      condition [LalinC.CBackendAtom],
+      success [LalinCMat.CMatCExitBindingFound],
+      failure [LalinCMat.CMatCExitBindingFound],
+    },
     CMatCFragmentBodyAny {
       variant_unique,
       state [LalinCMat.CMatCFragmentState],
@@ -1242,6 +1249,69 @@ return schema. LalinCMat {
     control [LalinCMat.CMatCControlSinkInput],
     operation [LalinStencil.StencilSinkOpAllCompare],
     left [LalinCMat.CMatCFragmentStreamFound],
+  },
+  product. CMatAllCompareRightContinuation {
+    interned,
+    input [LalinCMat.CMatCControlAllCompareInput],
+    right [LalinCMat.CMatCFragmentStreamFound],
+  },
+  product. CMatAllCompareStrategyInput {
+    interned,
+    state [LalinCMat.CMatCFragmentState],
+    operation [LalinStencil.StencilSinkOpAllCompare],
+    left [LalinCMat.CMatCFragmentStreamFound],
+    right [LalinCMat.CMatCFragmentStreamFound],
+  },
+  product. CMatAllCompareLaneInput {
+    interned,
+    state [LalinCMat.CMatCFragmentState],
+    source [LalinCode.CodeValueId],
+  },
+  product. CMatAllCompareLaneAccessInput {
+    interned,
+    state [LalinCMat.CMatCFragmentState],
+    access [LalinStencil.StencilAccessRef],
+  },
+  product. CMatAllCompareContinueInput {
+    interned,
+    state [LalinCMat.CMatCFragmentState],
+    cmp [LalinCore.CmpOp],
+    source [LalinCode.CodeValueId],
+  },
+  product. CMatAllCompareNoAliasInput {
+    interned,
+    state [LalinCMat.CMatCFragmentState],
+    cmp [LalinCore.CmpOp],
+    left [LalinCMat.CMatAllCompareLaneReady],
+  },
+  product. CMatAllCompareTripInput {
+    interned,
+    state [LalinCMat.CMatCFragmentState],
+    cmp [LalinCore.CmpOp],
+    left [LalinCMat.CMatAllCompareLaneReady],
+    right [LalinCMat.CMatAllCompareLaneReady],
+  },
+  sum. CMatAllCompareLane {
+    CMatAllCompareLaneRejected { variant_unique, reason [str], },
+    CMatAllCompareLaneReady {
+      variant_unique,
+      access [LalinStencil.StencilAccessRef],
+      base [LalinC.CBackendAtom],
+    },
+  },
+  sum. CMatAllCompareStrategy {
+    CMatAllCompareScalar,
+    CMatAllCompareMemcmp {
+      variant_unique,
+      cmp [LalinCore.CmpOp],
+      left_base [LalinC.CBackendAtom],
+      right_base [LalinC.CBackendAtom],
+      length [LalinC.CBackendAtom],
+    },
+  },
+  sum. CMatNoAliasEvidence {
+    CMatNoAliasDeclared,
+    CMatNoAliasMissing { variant_unique, reason [str], },
   },
   product. CMatCFragmentPredicateInput {
     interned,
