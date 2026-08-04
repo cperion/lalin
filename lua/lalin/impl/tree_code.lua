@@ -2723,6 +2723,9 @@ function Tree.ContractFactExprReadonly:lower_tree_contract_fact_to_code(input) r
 function TreeCode.TreeCodeContractExprUnsupported:tree_code_contract_writeonly(input) return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject(self.reason)) end
 function TreeCode.TreeCodeContractExprSupported:tree_code_contract_writeonly(input) return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractProjectionWriteonly(self.expr), origin_generated("projection writeonly"))) end
 function Tree.ContractFactExprWriteonly:lower_tree_contract_fact_to_code(input) return input:tree_code_contract_expr_for_expr(self.base):tree_code_contract_writeonly(input) end
+function TreeCode.TreeCodeContractExprUnsupported:tree_code_contract_noalias(input) return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject(self.reason)) end
+function TreeCode.TreeCodeContractExprSupported:tree_code_contract_noalias(input) return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractProjectionNoAlias(self.expr), origin_generated("projection noalias"))) end
+function Tree.ContractFactExprNoAlias:lower_tree_contract_fact_to_code(input) return input:tree_code_contract_expr_for_expr(self.base):tree_code_contract_noalias(input) end
 function Tree.ContractFactInvalidate:lower_tree_contract_fact_to_code(input)
   return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractInvalidate(input:tree_code_value_for_binding(self.base)), origin_binding(self.base)))
 end

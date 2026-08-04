@@ -124,6 +124,10 @@ function CMat.CMatAccessBinding:cmat_c_access_ptr_type(elem)
     self.restrict_capability:cmat_c_restrict_ptr(), false)
 end
 
+function CMat.CMatAccessBinding:cmat_fragment_expected_ptr()
+  return self:cmat_c_access_ptr_type(self.ty:code_to_c_backend_type())
+end
+
 function Stencil.StencilLayoutContiguous:cmat_c_access_binding(binding)
   local elem = binding.ty:code_to_c_backend_type()
   local ptr = binding:cmat_c_access_ptr_type(elem)
