@@ -951,6 +951,10 @@ function C.CBackendHelperStore:c_helper_id()
   return C.CBackendHelperId("ml_store_" .. self.access.ty:c_helper_suffix())
 end
 
+function C.CBackendHelperMemcmp:c_helper_id()
+  return C.CBackendHelperId("ml_memcmp")
+end
+
 -- Generate the helper function signature lines
 local function helper_header(id, sig)
   local ret = sig.result:c_emit_type()

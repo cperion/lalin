@@ -1301,14 +1301,237 @@ function CMat.CMatCFragmentStreamFound:cmat_control_all_compare_right(input)
         "all-compare operands", input.left.entry.ty, self.entry.ty)
     })
   end
+  return input.operation:cmat_all_compare_strategy(
+    CMat.CMatAllCompareStrategyInput(
+      input.control.state, input.operation, input.left, self))
+    :cmat_continue_all_compare_right(
+      CMat.CMatAllCompareRightContinuation(input, self))
+end
+
+function Stencil.StencilSinkOpAllCompare:cmat_all_compare_strategy(input)
+  if input.operation.cmp ~= Core.CmpEq then
+    return CMat.CMatAllCompareScalar
+  end
+  return input.state.request.materialization.kernel.computation
+    :cmat_all_compare_lane(CMat.CMatAllCompareLaneInput(input.state, input.left.entry.source))
+    :cmat_all_compare_continue(CMat.CMatAllCompareContinueInput(
+      input.state, input.operation.cmp, input.right.entry.source))
+end
+
+function Stencil.StencilComputation:cmat_all_compare_lane(input)
+  return input.state.provenance.streams:cmat_fragment_lookup_source(input.source)
+    :cmat_all_compare_lane(input.state)
+end
+
+function Stencil.StencilStreamByKernelValueFound:cmat_all_compare_lane(state)
+  return self.entry.definition.op:cmat_all_compare_lane(state)
+end
+
+function Stencil.StencilStreamByKernelValueMissing:cmat_all_compare_lane(_state)
+  return CMat.CMatAllCompareLaneRejected("all-compare lane stream provenance is absent")
+end
+
+function Stencil.StencilStreamOp:cmat_all_compare_lane(_state)
+  return CMat.CMatAllCompareLaneRejected("all-compare lane stream op is not a direct access")
+end
+
+function Stencil.StencilStreamAccess:cmat_all_compare_lane(state)
+  return self.index:cmat_all_compare_lane_index(
+    CMat.CMatAllCompareLaneAccessInput(state, self.access))
+end
+
+function Stencil.StencilIndexSelection:cmat_all_compare_lane_index(_input)
+  return CMat.CMatAllCompareLaneRejected("all-compare lane index is not the producer counter")
+end
+
+function Stencil.StencilIndexProducer:cmat_all_compare_lane_index(input)
+  return input.state.request.materialization.kernel.computation
+    :cmat_all_compare_lane_access(input)
+end
+
+function Stencil.StencilIndexExplicit:cmat_all_compare_lane_index(input)
+  return self.index:cmat_all_compare_lane_axis(input)
+end
+
+function Stencil.StencilIndexExpr:cmat_all_compare_lane_axis(_input)
+  return CMat.CMatAllCompareLaneRejected("all-compare lane index expression is not the primary axis")
+end
+
+function Stencil.StencilIndexAxis:cmat_all_compare_lane_axis(input)
+  if self.axis.index ~= 1 then
+    return CMat.CMatAllCompareLaneRejected("all-compare lane index axis is not the primary axis")
+  end
+  return input.state.request.materialization.kernel.computation
+    :cmat_all_compare_lane_access(input)
+end
+
+function Stencil.StencilComputation:cmat_all_compare_lane_access(input)
+  for i = 1, #self.accesses do
+    if self.accesses[i].name == input.access.name then
+      return self.accesses[i].role:cmat_all_compare_lane_mutability(input)
+    end
+  end
+  return CMat.CMatAllCompareLaneRejected("all-compare lane access is absent from the computation")
+end
+
+function Stencil.StencilAccessRole:cmat_all_compare_lane_mutability(_input)
+  return CMat.CMatAllCompareLaneRejected("all-compare lane access is not readonly")
+end
+
+function Stencil.StencilAccessRead:cmat_all_compare_lane_mutability(input)
+  return input.state.request.accesses:cmat_fragment_lookup(input.access)
+    :cmat_all_compare_lane_binding(input)
+end
+
+function CMat.CMatCFragmentAccessBindingMissing:cmat_all_compare_lane_binding(_input)
+  return CMat.CMatAllCompareLaneRejected("all-compare lane access binding is absent")
+end
+
+function CMat.CMatCFragmentAccessBindingFound:cmat_all_compare_lane_binding(input)
+  local entry = self.entry
+  if entry.elem_size ~= 1 then
+    return CMat.CMatAllCompareLaneRejected("all-compare lane element size is not byte granular")
+  end
+  if entry.stride ~= 1 then
+    return CMat.CMatAllCompareLaneRejected("all-compare lane stride is not byte-contiguous")
+  end
+  return entry.bounds:cmat_all_compare_lane_bounds(input, entry)
+end
+
+function Mem.MemBounds:cmat_all_compare_lane_bounds(_input, _entry)
+  return CMat.CMatAllCompareLaneRejected("all-compare lane bounds are not exact")
+end
+
+function Mem.MemBoundsInObject:cmat_all_compare_lane_bounds(_input, entry)
+  return entry.source:cmat_all_compare_lane_base(entry.access)
+end
+
+function Mem.MemBoundsRange:cmat_all_compare_lane_bounds(_input, entry)
+  return entry.source:cmat_all_compare_lane_base(entry.access)
+end
+
+function CMat.CMatCFragmentAccessSource:cmat_all_compare_lane_base(_access)
+  return CMat.CMatAllCompareLaneRejected("all-compare lane access source has no canonical base")
+end
+
+function CMat.CMatCFragmentAccessDirect:cmat_all_compare_lane_base(access)
+  return CMat.CMatAllCompareLaneReady(access, C.CBackendAtomLocal(self.base.id))
+end
+
+function CMat.CMatCFragmentAccessField:cmat_all_compare_lane_base(access)
+  return CMat.CMatAllCompareLaneReady(access, C.CBackendAtomLocal(self.base.id))
+end
+
+function CMat.CMatAllCompareLaneRejected:cmat_all_compare_continue(_input)
+  return CMat.CMatAllCompareScalar
+end
+
+function CMat.CMatAllCompareLaneReady:cmat_all_compare_continue(input)
+  return input.state.request.materialization.kernel.computation
+    :cmat_all_compare_lane(CMat.CMatAllCompareLaneInput(input.state, input.source))
+    :cmat_all_compare_noalias(CMat.CMatAllCompareNoAliasInput(input.state, input.cmp, self))
+end
+
+function CMat.CMatAllCompareLaneRejected:cmat_all_compare_noalias(_input)
+  return CMat.CMatAllCompareScalar
+end
+
+function CMat.CMatAllCompareLaneReady:cmat_all_compare_noalias(input)
+  return input.state.request.materialization.kernel.computation.legality
+    :cmat_alias_pair_lookup(Stencil.StencilAccessAliasPairInput(input.left.access, self.access))
+    :cmat_all_compare_pair_evidence()
+    :cmat_all_compare_finish(input, input.left, self)
+end
+
+
+function CMat.CMatNoAliasEvidence:cmat_all_compare_finish(_input, _left, _right)
+  return CMat.CMatAllCompareScalar
+end
+
+function CMat.CMatNoAliasMissing:cmat_all_compare_finish(_input, _left, _right)
+  return CMat.CMatAllCompareScalar
+end
+
+function CMat.CMatNoAliasDeclared:cmat_all_compare_finish(input, left, right)
+  return input.state.provenance.iteration.trip:cmat_all_compare_trip_evidence(
+    CMat.CMatAllCompareTripInput(input.state, input.cmp, left, right))
+end
+
+function Stencil.StencilKernelTripCount:cmat_all_compare_trip_evidence(_input)
+  return CMat.CMatAllCompareScalar
+end
+
+function Stencil.StencilKernelTripExact:cmat_all_compare_trip_evidence(input)
+  return self.trip_count:cmat_all_compare_trip_evidence(input)
+end
+
+function Stencil.StencilKernelTripNonNegative:cmat_all_compare_trip_evidence(input)
+  return self.trip_count:cmat_all_compare_trip_evidence(input)
+end
+
+function Stencil.StencilKernelTripExpression:cmat_all_compare_trip_evidence(_input)
+  return CMat.CMatAllCompareScalar
+end
+
+function Flow.FlowTripCount:cmat_all_compare_trip_evidence(_input)
+  return CMat.CMatAllCompareScalar
+end
+
+function Flow.FlowTripCountExact:cmat_all_compare_trip_evidence(input)
+  return input.state.request.values:cmat_fragment_lookup(self.count)
+    :cmat_all_compare_trip_binding(input)
+end
+
+function Flow.FlowTripCountNonNegative:cmat_all_compare_trip_evidence(input)
+  return input.state.request.values:cmat_fragment_lookup(self.count)
+    :cmat_all_compare_trip_binding(input)
+end
+
+function CMat.CMatCExternalValueBindingMissing:cmat_all_compare_trip_binding(_input)
+  return CMat.CMatAllCompareScalar
+end
+
+function CMat.CMatCExternalValueBindingFound:cmat_all_compare_trip_binding(input)
+  if self.entry.c_local.ty ~= C.CBackendIndex then
+    return CMat.CMatAllCompareScalar
+  end
+  return CMat.CMatAllCompareMemcmp(
+    input.cmp, input.left.base, input.right.base,
+    C.CBackendAtomLocal(self.entry.c_local.id))
+end
+
+function CMat.CMatAllCompareScalar:cmat_continue_all_compare_right(cont)
+  local input = cont.input
   local emitted = input.control.state:cmat_window_compare(
     CMat.CMatCWindowCompareInput(
       "all_compare", input.operation.cmp, input.left.entry.atom,
-      self.entry.atom, self.entry.ty))
+      cont.right.entry.atom, cont.right.entry.ty))
   return emitted.state.provenance.result:cmat_prepare_control_exits(
     CMat.CMatCControlExitInput(
       emitted.state, input.control.sink, emitted.atom,
       emitted.state.provenance.result))
+end
+
+function CMat.CMatAllCompareMemcmp:cmat_continue_all_compare_right(cont)
+  local input = cont.input
+  local state = input.control.state
+  local i32_ty = C.CBackendScalar(Core.ScalarI32)
+  local result = state:cmat_fragment_allocate("memcmp", i32_ty)
+  local helper = result.state:cmat_fragment_add_helper(C.CBackendHelperMemcmp)
+  local called = helper.state:cmat_fragment_add_body(C.CBackendHelperCall(
+    result.c_local.id, helper.helper,
+    { self.left_base, self.right_base, self.length }))
+  local zero = C.CBackendAtomLiteral(i32_ty, Core.LitInt("0"))
+  local condition = called:cmat_fragment_allocate("memcmp_eq", C.CBackendBool8)
+  local done = condition.state:cmat_fragment_add_body(C.CBackendAssign(
+    condition.c_local.id, C.CBackendRCompare(
+      Core.CmpEq, i32_ty,
+      C.CBackendAtomLocal(result.c_local.id), zero)))
+  return done.provenance.result:cmat_prepare_control_exits(
+    CMat.CMatCControlExitInput(
+      done, input.control.sink,
+      C.CBackendAtomLocal(condition.c_local.id),
+      done.provenance.result))
 end
 function Stencil.StencilSinkOpAllCompare:cmat_fragment_emit_sink(state, sink)
   return state.streams:cmat_fragment_lookup(self.left)
@@ -1427,9 +1650,40 @@ function Stencil.StencilKernelResultAllCompare:cmat_finish_control_exits(input)
         input.second.entry.destination, "all-compare failure destination mismatch")
     })
   end
+  local op = input.control.sink.op
+  return input.control.state.streams:cmat_fragment_lookup(op.left)
+    :cmat_all_compare_finish_body(input.control, input.first, input.second, op)
+end
+
+function CMat.CMatCFragmentStreamMissing:cmat_all_compare_finish_body(_control, _first, _second, _op)
+  return CMat.CMatCFragmentSinkRejected({ CMat.CMatCEmissionMissingStream(self.stream) })
+end
+
+function CMat.CMatCFragmentStreamFound:cmat_all_compare_finish_body(control, first, second, op)
+  return control.state.streams:cmat_fragment_lookup(op.right)
+    :cmat_all_compare_finish_right(control, first, second, op, self)
+end
+
+function CMat.CMatCFragmentStreamMissing:cmat_all_compare_finish_right(_control, _first, _second, _op, _left)
+  return CMat.CMatCFragmentSinkRejected({ CMat.CMatCEmissionMissingStream(self.stream) })
+end
+
+function CMat.CMatCFragmentStreamFound:cmat_all_compare_finish_right(control, first, second, op, left)
+  return op:cmat_all_compare_strategy(
+    CMat.CMatAllCompareStrategyInput(control.state, op, left, self))
+    :cmat_all_compare_finish_strategy(control, first, second)
+end
+
+function CMat.CMatAllCompareScalar:cmat_all_compare_finish_strategy(control, first, second)
   return CMat.CMatCFragmentControlSinkEmitted(
     CMat.CMatCFragmentBodyAllCompare(
-      input.control.state, input.control.condition, input.first, input.second))
+      control.state, control.condition, first, second))
+end
+
+function CMat.CMatAllCompareMemcmp:cmat_all_compare_finish_strategy(control, first, second)
+  return CMat.CMatCFragmentControlSinkEmitted(
+    CMat.CMatCFragmentBodyAllCompareMemcmp(
+      control.state, control.condition, first, second))
 end
 function Stencil.StencilKernelResultAny:cmat_prepare_control_exits(input)
   local op = input.sink.op
@@ -2166,6 +2420,45 @@ function CMat.CMatCFragmentBodyAllCompare:cmat_fragment_finish_body_plan(body)
     self.state, body.start, body.trip, self.condition,
     CMat.CMatCControlContinueWhenTrue, self.failure, self.success, {}, {}, control)
 :cmat_fragment_assemble_control_loop()
+end
+
+function CMat.CMatCFragmentBodyAllCompareMemcmp:cmat_fragment_finish_body_plan(body)
+  local state = self.state
+  if body.start.ty ~= state.index.ty then
+    return CMat.CMatCFragmentRejected({
+      CMat.CMatCEmissionTypeMismatch(
+        "memcmp entry index", state.index.ty, body.start.ty)
+    })
+  end
+  local control = CMat.CMatCControlAllCompare(
+    self.condition, self.success:cmat_control_mapping(),
+    self.failure:cmat_control_mapping())
+  local entry_stmts = copy(state.entry_stmts)
+  entry_stmts[#entry_stmts + 1] = C.CBackendAssign(
+    state.index.id, C.CBackendRAtom(body.start.atom))
+  for i = 1, #state.cfg.open.stmts do
+    entry_stmts[#entry_stmts + 1] = state.cfg.open.stmts[i]
+  end
+  local blocks = {
+    C.CBackendBlock(state.cfg.open.label, state.cfg.open.params, entry_stmts,
+      C.CBackendIfGoto(self.condition, self.success.entry.label, {},
+        self.failure.entry.label, {})),
+  }
+  for i = 1, #state.cfg.completed do
+    blocks[#blocks + 1] = state.cfg.completed[i]
+  end
+  local alignments = {}
+  for i = 1, #state.request.covered_blocks do
+    local source = state.request.covered_blocks[i]
+    if source == state.request.replacement_source then
+      alignments[#alignments + 1] = CMat.CMatCBlockReplacementEntry(
+        source, state.cfg.open.label)
+    else
+      alignments[#alignments + 1] = CMat.CMatCBlockEliminated(source)
+    end
+  end
+  return CMat.CMatCFragmentEmitted(CMat.CMatCFragment(
+    state.cfg.open.label, blocks, state.locals, state.helpers, alignments, {}, control))
 end
 function CMat.CMatCFragmentBodyAny:cmat_fragment_finish_body_plan(body)
   local control = CMat.CMatCControlAny(
