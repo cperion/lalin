@@ -40,6 +40,32 @@ fn sugar_main() [i32]
 end
 ]=]
 
+local store_src = [=[
+struct Pair
+  x [u8]
+  y [i32]
+end
+
+fn store_main() [i32]
+  entry start()
+    var p [Pair] = Pair { x = 0, y = 0 }
+    -- store-target sugar: literal RHS adapts to the place type
+    p.x = 7
+    p.y = 42
+    return p.y
+  end
+end
+]=]
+
+local store_decls = assert(lalin.loadstring(store_src, "@literal_store_sugar.lln"))
+local store_session, store_source = lalin.compile_c_gcc("literal_store_sugar", store_decls, {
+  gcc_opts = { opt = 3, out_dir = "target/test_literal_store_sugar_gcc" },
+})
+assert(store_source:find("= ((uint8_t)7)", 1, true),
+  "store sugar must adapt the literal 7 to the u8 field type")
+local store_main = assert(store_session:symbol("store_main", "int32_t (*)(void)"))
+assert(tonumber(store_main()) == 42, "store-sugar program must return p.y = 42")
+store_session:free()
 local decls = assert(lalin.loadstring(src, "@literal_sugar.lln"))
 local session, source = lalin.compile_c_gcc("literal_sugar", decls, {
   gcc_opts = { opt = 3, out_dir = "target/test_literal_sugar_gcc" },
