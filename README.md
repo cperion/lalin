@@ -169,10 +169,9 @@ Authoritative reference:
 - `docs/CONVENTIONS.md` — naming, style, and repository conventions
 
 Active compiler design and planning:
-- `docs/SCHEMA_OWNERSHIP.md` — schema ownership and cutover guard
-- `docs/SCHEMA_V2_IMPL_MASTER_PLAN.md` — concise active compiler queue
-- `docs/CMAT_MEMORY_COORDINATE_ARCHITECTURE.md` — fused memory-coordinate design
-- `docs/LLBL_BRACKET_EVAL_ARCHITECTURE.md` — role-directed bracket evaluation
+Active compiler design and planning:
+- `docs/LUA_VM_ROADMAP.md` — staged Lua VM milestones
+- `docs/HYPERMEDIA_ARCHITECTURE.md` — active hypermedia design proposal
 - `docs/LUA_VM_ROADMAP.md` — staged Lua VM milestones
 - `docs/HYPERMEDIA_ARCHITECTURE.md` — active hypermedia design proposal
 

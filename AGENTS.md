@@ -351,17 +351,12 @@ lua/lalin/impl/cemit_emit.lua     CBackendUnit C emission
 
 ```text
 docs/ASDL_GUIDE.md          binding ASDL modeling doctrine
-docs/LLBL_GUIDE.md          central LLBL workbench and region guide
+docs/LLBL_GUIDE.md          LLBL workbench, regions, and bracket evaluation
 docs/LANGUAGE_REFERENCE.md public Lalin language reference
-docs/ARCHITECTURE.md       active compiler and backend architecture
-docs/CMAT_MEMORY_COORDINATE_ARCHITECTURE.md
-                           fused memory-coordinate design authority
-docs/SCHEMA_IMPL_MASTER_PLAN.md
-                           concise active compiler queue
-docs/SCHEMA_OWNERSHIP.md   schema ownership and cutover guard
+docs/ARCHITECTURE.md       active compiler and backend architecture (incl.
+                           CMat memory coordinates and schema ownership)
 docs/CONVENTIONS.md        naming, style, and repository conventions
 docs/DESIGN_BIBLE.md       long-form design philosophy
-```
 
 ## Non-Negotiable Rules
 
