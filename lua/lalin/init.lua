@@ -14,7 +14,6 @@
 -- Object emission (hosted pipeline):
 --   lalin.emit_c(decl [, opts])          — semantic C backend artifact (.c/.h)
 --   lalin.emit_c_artifact(decl [, opts]) — compatibility alias for emit_c
---   lalin.emit_luajit_artifact(decl [, path_or_opts [, name [, opts]]])
 --
 -- Low-level modules are exposed for direct use.
 
@@ -60,7 +59,6 @@ M.stencil_artifact_plan = require("lalin.stencil_artifact_plan")
 M.emit_c_validate = require("lalin.emit_c_validate")
 M.emit_c_lower = require("lalin.emit_c_lower")
 M.emit_c_helpers = require("lalin.emit_c_helpers")
-M.emit_c_tcc = require("lalin.emit_c_tcc")
 M.emit_c_compile = require("lalin.emit_c_compile")
 
 
@@ -87,16 +85,6 @@ local function is_lalin_parsed_decl(value)
     return type(value) == "table" and type(value.tag) == "string" and value.tag:match("^Decl") ~= nil
 end
 
-local function parsed_decls_from(value)
-    if value == nil then return nil end
-    local asdl = require("lalin.asdl")
-    local T = asdl.context()
-    require("lalin.schema_projection")(T)
-    local adapter = require("lalin.syntax.role_adapter")(T)
-    local ok, decls = pcall(function() return adapter:decls(value) end)
-    if not ok or #(decls or {}) == 0 then return nil end
-    return decls
-end
 
 local function is_schema_value(value)
 	return schema_dsl.is_schema_value(value)
@@ -434,25 +422,6 @@ function M.require(name, opts)
     return M.loader.require(name, facade_loader_opts(opts))
 end
 
-local function module_ast_from(value, name)
-    local asdl = require("lalin.asdl")
-    local ok, cls = pcall(asdl.classof, value)
-    if ok and cls and tostring(cls) == "Class(LalinTree.Module)" then return value end
-    local parsed_decls = parsed_decls_from(value)
-    if parsed_decls then return M.syntax.to_module(parsed_decls, name) end
-    if type(value) == "table" and type(value.ast) == "function" then
-        local ast = value:ast()
-        local ast_ok, ast_cls = pcall(asdl.classof, ast)
-        if ast_ok and ast_cls and tostring(ast_cls) == "Class(LalinTree.Module)" then return ast end
-        local unit = M.dsl.to_unit(name or "Unit", value)
-        if type(unit.ast) == "function" then return unit:ast() end
-        return unit
-    end
-    if type(value) == "table" and rawget(value, "__module_ast") ~= nil then return rawget(value, "__module_ast") end
-    local projected = M.dsl.to_unit(name or "Unit", value)
-    if type(projected.ast) == "function" then return projected:ast() end
-    return projected
-end
 
 function M.unit(name, decls)
     return M.dsl.unit(name, decls)
@@ -476,9 +445,6 @@ end
 
 function M.compile(name_or_decls, decls_or_opts, maybe_opts)
     local name, decls, opts = compile_args(name_or_decls, decls_or_opts, maybe_opts)
-    if opts.luajit == true or opts.bytecode == true then
-        return M.compile_luajit(name, decls, opts)
-    end
     if opts.gcc == true or opts.runner == "gcc" or opts.backend == "gcc" or opts.backend == "c_gcc" then
         opts.runner = "gcc"
         return M.compile_c(decls, opts)
@@ -491,22 +457,7 @@ function M.compile(name_or_decls, decls_or_opts, maybe_opts)
     return M.compile_c(decls, opts)
 end
 
-function M.compile_luajit(name_or_decls, decls_or_opts, maybe_opts)
-    local name, decls, opts = compile_args(name_or_decls, decls_or_opts, maybe_opts)
-    opts.bytecode = true
-    local artifact = M.emit_luajit_artifact(decls, opts)
-    local loader = loadstring or load
-    local chunk, err = loader(artifact.source, "@" .. tostring(opts.name or name) .. ".luajit.lua")
-    if chunk == nil then error(tostring(err), 2) end
-    local module = chunk()
-    if type(module) == "table" then
-        rawset(module, "__lalin_artifact", artifact)
-    end
-    return module
-end
 
-local prepare_luajit_artifact
-local prepare_c_artifact
 
 local function attach_c_artifact_writer(artifact)
     function artifact:write(write_opts)
@@ -531,81 +482,7 @@ local function attach_c_artifact_writer(artifact)
     return artifact
 end
 
-local function prepare_c_backend(decl, name, opts)
-    opts = opts or {}
-    name = name or opts.name or "lalin_c"
 
-    local asdl = require("lalin.asdl")
-    local A2 = require("lalin.schema_projection")
-    local module_ast = module_ast_from(decl, name)
-    local cls = asdl.classof(module_ast)
-    local T = (cls and asdl.context_of(cls)) or asdl.context()
-    if T.LalinCompiler == nil or T.LalinCode == nil or T.LalinLower == nil or T.LalinC == nil then A2(T) end
-
-    local Pipeline = require("lalin.frontend_pipeline")(T)
-    local checked = Pipeline.typecheck_module(module_ast, {
-        context = T,
-        site = "emit_c:typecheck",
-        name = name,
-        layout_env = opts.layout_env,
-        target = opts.target,
-        c_target = opts.c_target,
-    })
-    local code_result = Pipeline.checked_to_code_result(checked, {
-        context = T,
-        site = "emit_c:code",
-        root = "emit_c",
-        name = name,
-        target = opts.target,
-        c_target = opts.c_target,
-    })
-    local c_outcome = Pipeline.code_result_to_c(code_result, {
-        context = T,
-        site = "emit_c:c",
-        name = name,
-        target = opts.target,
-        c_target = opts.c_target,
-        c_opts = opts.c_opts,
-        target_model = opts.target_model,
-        back_target_model = opts.backend_target_model,
-    })
-    local c_result = c_outcome:public_c_backend_result()
-    if opts.reject_on_c_issues ~= false and #c_result.report.issues ~= 0 then
-        local messages = {}
-        for i = 1, #c_result.report.issues do messages[#messages + 1] = tostring(c_result.report.issues[i]) end
-        error("emit_c validation failed: " .. table.concat(messages, "\n"), 2)
-    end
-    return {
-        kind = "CBackendPlan",
-        name = name,
-        context = T,
-        module_ast = module_ast,
-        checked = checked,
-        code_result = code_result,
-        c_result = c_result,
-        c_unit = c_result.unit,
-        c_report = c_result.report,
-        unit = c_result.unit,
-    }
-end
-
-function prepare_c_artifact(decl, name, opts)
-    opts = opts or {}
-    local plan = prepare_c_backend(decl, name, opts)
-    local Emit = require("lalin.emit_c_lower")(plan.context)
-    local artifact = Emit.emit_artifact(plan.c_unit, opts)
-    artifact.kind = "CBackendArtifact"
-    artifact.name = plan.name
-    artifact.context = plan.context
-    artifact.module_ast = plan.module_ast
-    artifact.checked = plan.checked
-    artifact.code_result = plan.code_result
-    artifact.c_result = plan.c_result
-    artifact.c_unit = plan.c_unit
-    artifact.c_report = plan.c_report
-    artifact.unit = plan.c_unit
-    return attach_c_artifact_writer(artifact)
-end
 
 -- Strict typed decl-list boundary: a compile input is a parsed-decl list iff
 -- it is a plain array whose every entry is a LalinParse.ParsedDecl.  Empty
@@ -703,151 +580,10 @@ function M.emit_c_artifact(decl, path_or_opts, name, opts)
     return M.emit_c(decl, path_or_opts, name, opts)
 end
 
-function prepare_luajit_artifact(decl, name, opts)
-    opts = opts or {}
-    name = name or opts.name or "lalin_luajit"
-    local function sanitize(s)
-        s = tostring(s or "x"):gsub("[^%w_]", "_")
-        if s == "" then s = "x" end
-        if s:match("^%d") then s = "_" .. s end
-        return s
-    end
-
-    local asdl = require("lalin.asdl")
-    local A2 = require("lalin.schema_projection")
-    local module_ast = module_ast_from(decl, name)
-    local cls = asdl.classof(module_ast)
-    local T = (cls and asdl.context_of(cls)) or asdl.context()
-    if T.LalinCompiler == nil or T.LalinLuaJIT == nil or T.LalinStencil == nil then A2(T) end
-    opts.bytecode = true
-
-    local Pipeline = require("lalin.frontend_pipeline")(T)
-    local Backend = require("lalin.luajit_backend")(T)
-    local checked = Pipeline.typecheck_module(module_ast, {
-        context = T,
-        site = "emit_luajit_artifact:typecheck",
-        name = name,
-    })
-    local code_result = Pipeline.checked_to_code_result(checked, {
-        context = T,
-        site = "emit_luajit_artifact:code",
-        name = name,
-    })
-
-    local lj_module, facts, artifacts, rejects = Backend.lower_module(code_result.module, {
-        contracts = code_result.contracts,
-        layout_env = code_result.layout_env,
-        graph = opts.graph,
-        flow = opts.flow,
-        value = opts.value,
-        mem = opts.mem,
-        effect = opts.effect,
-        kernel = opts.kernel,
-        target_model = opts.target_model,
-        back_target_model = opts.backend_target_model,
-        target = opts.target,
-        schedule = opts.schedule,
-        schedule_plan = opts.schedule_plan,
-        collect_rejects = opts.collect_rejects,
-        bytecode = true,
-    })
-    if opts.reject_on_stencil_rejects ~= false and rejects and #rejects > 0 then
-        error("emit_luajit_artifact rejected module: " .. tostring(rejects[1].reason or rejects[1]), 2)
-    end
-
-    return {
-        kind = "LuaJITArtifactPlan",
-        context = T,
-        name = name,
-        bytecode = true,
-        sanitize = sanitize,
-        module_ast = module_ast,
-        checked = checked,
-        code_result = code_result,
-        backend = Backend,
-        lj_module = lj_module,
-        facts = facts,
-        stencil_plan = facts.stencil_plan or facts.stencil,
-        luajit_stencil_machines = facts.luajit_stencil_machines,
-        exec_plan = facts.exec_plan or facts.exec,
-        artifacts = artifacts,
-        rejects = rejects,
-    }
-end
 
 
-function M.plan_luajit_artifact(decl, opts)
-    opts = opts or {}
-    opts.bytecode = true
-    return prepare_luajit_artifact(decl, opts.name or "lalin_luajit", opts)
-end
 
-function M.emit_luajit_plan_artifact(plan, path_or_opts, name, opts)
-    if type(path_or_opts) == "table" and opts == nil then
-        opts = path_or_opts
-        path_or_opts = nil
-    end
-    opts = opts or {}
-    local path = path_or_opts or opts.path
-    name = name or opts.name or plan.name or "lalin_luajit"
 
-    local source, err, backend_artifact = plan.backend.emit_lua_artifact(plan.lj_module, plan.artifacts, {
-        bytecode = true,
-        bc_bank = opts.bc_bank,
-        path = path,
-        chunk_name = opts.chunk_name or name,
-        ffi_preamble = opts.ffi_preamble,
-        stem = opts.stem or plan.sanitize(name),
-        bc_bank_id = opts.bc_bank_id,
-        bc_target = opts.bc_target,
-    })
-    if source == nil then error(err or "emit_luajit_plan_artifact failed", 2) end
-    backend_artifact = backend_artifact or {}
-
-    local artifact = {
-        kind = "LuaJITSourceArtifact",
-        source = source,
-        path = path,
-        name = name,
-        unit = plan.module_ast,
-        checked = plan.checked,
-        code_result = plan.code_result,
-        lj_module = plan.lj_module,
-        facts = plan.facts,
-        stencil_plan = plan.stencil_plan,
-        luajit_stencil_machines = plan.luajit_stencil_machines,
-        exec_plan = plan.exec_plan,
-        artifacts = plan.artifacts,
-        rejects = plan.rejects,
-        bc_bank = opts.bc_bank or backend_artifact.selected_bc_bank,
-        bytecode = true,
-    }
-    function artifact:write(write_path)
-        write_path = write_path or self.path
-        assert(write_path, "emit_luajit_plan_artifact artifact:write requires a path")
-        local dir = tostring(write_path):match("^(.*)/[^/]+$")
-        if dir ~= nil and dir ~= "" then os.execute("mkdir -p '" .. dir:gsub("'", "'\\''") .. "'") end
-        local f = assert(io.open(write_path, "wb"))
-        f:write(self.source)
-        f:close()
-        self.path = write_path
-        return self
-    end
-    return artifact
-end
-
-function M.emit_luajit_artifact(decl, path_or_opts, name, opts)
-    if type(path_or_opts) == "table" and opts == nil then
-        opts = path_or_opts
-        path_or_opts = nil
-    end
-    opts = opts or {}
-    local path = path_or_opts or opts.path
-    name = name or opts.name or "lalin_luajit"
-
-    local plan = prepare_luajit_artifact(decl, name, opts)
-    return M.emit_luajit_plan_artifact(plan, path, name, opts)
-end
 
 function M.compile_c(decl, opts)
     opts = opts or {}
@@ -856,13 +592,6 @@ function M.compile_c(decl, opts)
         artifact:write(opts)
     end
     local c_src = artifact.combined
-    local CTcc = require("lalin.emit_c_tcc")
-    if opts.runner == "libtcc" or opts.use_libtcc or os.getenv("LALIN_C_USE_LIBTCC") == "1" then
-        local session, err = CTcc.compile(c_src, opts.libtcc_opts or { libraries = { "m" } })
-        if not session then error(err and err.message or "libtcc compile failed", 2) end
-        session.artifact = artifact
-        return session, c_src
-    end
     if opts.runner == "gcc" or opts.use_gcc or os.getenv("LALIN_C_USE_GCC") == "1" then
         local CGcc = require("lalin.emit_c_compile")
         local gcc_opts = {}
