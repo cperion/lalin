@@ -1086,24 +1086,53 @@ struct UiCapacity
   required [index]
 end
 
--- Stable topology shared by every semantic world. Zero identity is the physical
--- root/absence sentinel and is interpreted only by NodeSpine.resolve.
+-- Stable topology shared by every semantic world. Identity zero is the physical
+-- absence sentinel interpreted only by UiNodeSpine.resolve. Nonzero identity N
+-- addresses spine slot N-1. Children is the contiguous preorder descendant range;
+-- child_count names the number of direct children in that range.
 struct UiNodeSpine
   identity [UiIdentity]
   parent [UiIdentity]
-  first_child [UiIdentity]
-  next_sibling [UiIdentity]
+  component [UiIdentity]
+  children [UiRange]
+  child_count [u32]
   authored_order [u32]
   source_start [u32]
   source_count [u32]
 end
 
--- Authored declaration opcode is consumed only by AuthoredUi.decode.
-struct UiAuthFacet
-  opcode [u16]
-  payload [UiRange]
-  style_token [u32]
-  content [UiRange]
+-- Authored semantics are typed aligned streams, never opcode + generic payload.
+struct UiStyleTokenFacet
+  node [UiIdentity]
+  token [u32]
+end
+
+struct UiBoxFacet
+  node [UiIdentity]
+  margin [UiInsets]
+  padding [UiInsets]
+  minimum [UiExtent]
+  maximum [UiExtent]
+end
+
+struct UiTextContent
+  bytes [UiRange]
+  font [UiIdentity]
+end
+
+struct UiTextFacet
+  node [UiIdentity]
+  content [UiTextContent]
+end
+
+struct UiActivationFacet
+  node [UiIdentity]
+  component [UiIdentity]
+end
+
+struct UiWriterScope
+  node_index [index]
+  direct_child_count [u32]
 end
 
 struct UiResolvedStyle
@@ -1179,12 +1208,31 @@ struct UiRenderCommand
   order [u32]
 end
 
-struct UiNodeWorld
+struct UiAuthoredWorld
   generation [UiGeneration]
   spines [ptr [UiNodeSpine]]
-  auth [ptr [UiAuthFacet]]
-  count [index]
-  capacity [index]
+  styles [ptr [UiStyleTokenFacet]]
+  node_count [index]
+  node_capacity [index]
+  boxes [ptr [UiBoxFacet]]
+  box_count [index]
+  box_capacity [index]
+  texts [ptr [UiTextFacet]]
+  text_count [index]
+  text_capacity [index]
+  activations [ptr [UiActivationFacet]]
+  activation_count [index]
+  activation_capacity [index]
+  text_bytes [ptr [u8]]
+  text_byte_count [index]
+  text_byte_capacity [index]
+end
+
+struct UiDeclarationWriter
+  world [UiAuthoredWorld]
+  scopes [ptr [UiWriterScope]]
+  scope_count [index]
+  scope_capacity [index]
 end
 
 struct UiStyledWorld
@@ -1580,3 +1628,249 @@ end
 -- Every continuation payload above states what becomes newly known. Concrete
 -- implementation may narrow an owner's exits when stronger inputs make an outcome
 -- impossible; it may not collapse alternatives into nil, booleans, or status tags.
+
+-- ---------------------------------------------------------------------------
+-- Node spine and primitive authored declaration writer
+-- ---------------------------------------------------------------------------
+
+region UiAuthoredWorld.resolve_node(self [ptr [UiAuthoredWorld]], identity [UiIdentity];
+  resolved(slot [index]), absent, missing(identity [UiIdentity])
+)
+  entry start()
+    if identity.value == as [u64](0) then
+      jump absent
+    else
+      let slot [index] = as [index](identity.value - as [u64](1))
+      if slot < self.node_count then
+        if self.spines[slot].identity.value == identity.value then
+          jump resolved(slot = slot)
+        else
+          jump missing(identity = identity)
+        end
+      else
+        jump missing(identity = identity)
+      end
+    end
+  end
+end
+
+region UiDeclarationWriter.reset(self [ptr [UiDeclarationWriter]], generation [UiGeneration]; ready)
+  entry start()
+    self.world.generation = generation
+    self.world.node_count = as [index](0)
+    self.world.box_count = as [index](0)
+    self.world.text_count = as [index](0)
+    self.world.activation_count = as [index](0)
+    self.world.text_byte_count = as [index](0)
+    self.scope_count = as [index](0)
+    jump ready
+  end
+end
+
+region UiDeclarationWriter.open_node(
+  self [ptr [UiDeclarationWriter]],
+  parent [UiIdentity],
+  component [UiIdentity],
+  style_token [u32],
+  source_start [u32],
+  source_count [u32];
+  opened(identity [UiIdentity]),
+  full(capacity [UiCapacity]),
+  scope_full(capacity [UiCapacity]),
+  invalid_parent(parent [UiIdentity])
+)
+  entry start()
+    if self.world.node_count >= self.world.node_capacity then
+      jump full(capacity = UiCapacity {
+        available = self.world.node_capacity,
+        required = self.world.node_count + as [index](1)
+      })
+    elseif self.scope_count >= self.scope_capacity then
+      jump scope_full(capacity = UiCapacity {
+        available = self.scope_capacity,
+        required = self.scope_count + as [index](1)
+      })
+    else
+      if self.scope_count == as [index](0) then
+        if parent.value == as [u64](0) then
+          jump write
+        else
+          jump invalid_parent(parent = parent)
+        end
+      else
+        let parent_scope [UiWriterScope] = self.scopes[self.scope_count - as [index](1)]
+        let parent_identity [UiIdentity] = self.world.spines[parent_scope.node_index].identity
+        if parent.value == parent_identity.value then
+          jump write
+        else
+          jump invalid_parent(parent = parent)
+        end
+      end
+    end
+  end
+
+  block write()
+    let slot [index] = self.world.node_count
+    let identity [UiIdentity] = UiIdentity { value = as [u64](slot + as [index](1)) }
+    self.world.spines[slot].identity = identity
+    self.world.spines[slot].parent = parent
+    self.world.spines[slot].component = component
+    self.world.spines[slot].children.start = slot + as [index](1)
+    self.world.spines[slot].children.count = as [index](0)
+    self.world.spines[slot].child_count = as [u32](0)
+    self.world.spines[slot].authored_order = as [u32](slot)
+    self.world.spines[slot].source_start = source_start
+    self.world.spines[slot].source_count = source_count
+    self.world.styles[slot].node = identity
+    self.world.styles[slot].token = style_token
+
+    if self.scope_count > as [index](0) then
+      let parent_scope_index [index] = self.scope_count - as [index](1)
+      self.scopes[parent_scope_index].direct_child_count =
+        self.scopes[parent_scope_index].direct_child_count + as [u32](1)
+    end
+
+    self.scopes[self.scope_count].node_index = slot
+    self.scopes[self.scope_count].direct_child_count = as [u32](0)
+    self.scope_count = self.scope_count + as [index](1)
+    self.world.node_count = slot + as [index](1)
+    jump opened(identity = identity)
+  end
+end
+
+region UiDeclarationWriter.close_node(self [ptr [UiDeclarationWriter]];
+  closed(identity [UiIdentity]), unbalanced
+)
+  entry start()
+    if self.scope_count == as [index](0) then
+      jump unbalanced
+    else
+      let scope_index [index] = self.scope_count - as [index](1)
+      let scope [UiWriterScope] = self.scopes[scope_index]
+      let descendant_count [index] = self.world.node_count - scope.node_index - as [index](1)
+      self.world.spines[scope.node_index].children.count = descendant_count
+      self.world.spines[scope.node_index].child_count = scope.direct_child_count
+      self.scope_count = scope_index
+      jump closed(identity = self.world.spines[scope.node_index].identity)
+    end
+  end
+end
+
+region UiDeclarationWriter.box(self [ptr [UiDeclarationWriter]], node [UiIdentity],
+  margin [UiInsets], padding [UiInsets], minimum [UiExtent], maximum [UiExtent];
+  written, full(capacity [UiCapacity]), invalid_node(node [UiIdentity])
+)
+  entry start()
+    call UiAuthoredWorld.resolve_node(&self.world, node;
+      resolved = valid,
+      absent = invalid_absent,
+      missing = invalid_missing
+    )
+  end
+  block invalid_absent()
+    jump invalid_node(node = node)
+  end
+  block invalid_missing(identity [UiIdentity])
+    jump invalid_node(node = identity)
+  end
+  block valid(slot [index])
+    if self.world.box_count >= self.world.box_capacity then
+      jump full(capacity = UiCapacity {
+        available = self.world.box_capacity,
+        required = self.world.box_count + as [index](1)
+      })
+    else
+      let out [index] = self.world.box_count
+      self.world.boxes[out].node = self.world.spines[slot].identity
+      self.world.boxes[out].margin = margin
+      self.world.boxes[out].padding = padding
+      self.world.boxes[out].minimum = minimum
+      self.world.boxes[out].maximum = maximum
+      self.world.box_count = out + as [index](1)
+      jump written
+    end
+  end
+end
+
+region UiDeclarationWriter.text(self [ptr [UiDeclarationWriter]], node [UiIdentity],
+  content [UiTextContent];
+  written, full(capacity [UiCapacity]), invalid_node(node [UiIdentity]),
+  invalid_content(content [UiRange])
+)
+  entry start()
+    call UiAuthoredWorld.resolve_node(&self.world, node;
+      resolved = valid,
+      absent = invalid_absent,
+      missing = invalid_missing
+    )
+  end
+  block invalid_absent()
+    jump invalid_node(node = node)
+  end
+  block invalid_missing(identity [UiIdentity])
+    jump invalid_node(node = identity)
+  end
+  block valid(slot [index])
+    if content.bytes.start + content.bytes.count > self.world.text_byte_count then
+      jump invalid_content(content = content.bytes)
+    elseif self.world.text_count >= self.world.text_capacity then
+      jump full(capacity = UiCapacity {
+        available = self.world.text_capacity,
+        required = self.world.text_count + as [index](1)
+      })
+    else
+      let out [index] = self.world.text_count
+      self.world.texts[out].node = self.world.spines[slot].identity
+      self.world.texts[out].content = content
+      self.world.text_count = out + as [index](1)
+      jump written
+    end
+  end
+end
+
+region UiDeclarationWriter.activation(self [ptr [UiDeclarationWriter]],
+  node [UiIdentity], component [UiIdentity];
+  written, full(capacity [UiCapacity]), invalid_node(node [UiIdentity])
+)
+  entry start()
+    call UiAuthoredWorld.resolve_node(&self.world, node;
+      resolved = valid,
+      absent = invalid_absent,
+      missing = invalid_missing
+    )
+  end
+  block invalid_absent()
+    jump invalid_node(node = node)
+  end
+  block invalid_missing(identity [UiIdentity])
+    jump invalid_node(node = identity)
+  end
+  block valid(slot [index])
+    if self.world.activation_count >= self.world.activation_capacity then
+      jump full(capacity = UiCapacity {
+        available = self.world.activation_capacity,
+        required = self.world.activation_count + as [index](1)
+      })
+    else
+      let out [index] = self.world.activation_count
+      self.world.activations[out].node = self.world.spines[slot].identity
+      self.world.activations[out].component = component
+      self.world.activation_count = out + as [index](1)
+      jump written
+    end
+  end
+end
+
+region UiDeclarationWriter.commit(self [ptr [UiDeclarationWriter]];
+  committed(generation [UiGeneration]), unbalanced, empty
+)
+  entry start()
+    if self.scope_count ~= as [index](0) then
+      jump unbalanced
+    elseif self.world.node_count == as [index](0) then
+      jump empty
+    else
+      jump committed(generation = self.world.generation)
+    end
+  end
+end
