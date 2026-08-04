@@ -128,4 +128,38 @@ local main = assert(session:symbol("main", "int32_t (*)(void)"))
 assert(tonumber(main()) == 82, "correct wiring must execute to 82")
 session:free()
 
-print(("region wiring validation: %d miswires rejected at typecheck, correct wiring runs to 82"):format(count))
+-- Implicit passthrough: an omitted jump arg whose name resolves to a block
+-- param of the current block is forwarded from it. `jump loop(v = v + 1)`
+-- forwards `a`; the region machine executes to 41.
+local pt_src = [[
+region Machine(; done(v [i32]))
+  entry start()
+    jump step(a = 40, v = 0)
+  end
+  block step(a [i32], v [i32])
+    jump loop(v = v + 1)
+  end
+  block loop(a [i32], v [i32])
+    jump done(v = a + v)
+  end
+end
+
+fn main() [i32]
+  entry start()
+    call Machine(;
+      done = fin
+    )
+  end
+  block fin(v [i32])
+    return v
+  end
+end]]
+local pt_decls = assert(lalin.loadstring(pt_src, "@wire_pt.lln"))
+local pt_session = assert(lalin.compile_c_gcc("wire_pt", pt_decls, {
+  gcc_opts = { opt = 3, out_dir = "target/test_wire_pt" },
+}))
+local pt_main = assert(pt_session:symbol("main", "int32_t (*)(void)"))
+assert(tonumber(pt_main()) == 41, "passthrough: a=40 forwarded, v=0+1 -> 41 (got " .. tostring(pt_main()) .. ")")
+pt_session:free()
+
+print(("region wiring validation: %d miswires rejected at typecheck, wiring/passthrough run to 82/41"):format(count))

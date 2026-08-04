@@ -4,7 +4,9 @@
 require("lalin.schema")
 local Check = require("lalin.schema.check")
 local Tr  = require("lalin.schema.tree")
+local B   = require("lalin.schema.bind")
 local Sem = require("lalin.schema.sem")
+local asdl = require("lalin.asdl")
 
 function Tr.Stmt:typecheck_tree_flow_outcome() return Sem.FlowFallsThrough end
 function Tr.StmtReturnValue:typecheck_tree_flow_outcome() return Sem.FlowReturns end
@@ -127,21 +129,75 @@ local function validate_target_args(region_id, scope, label, params, args, issue
     end
   end
 end
+-- Implicit passthrough: an omitted target param whose name resolves to a
+-- block param of the current block is forwarded from it. This abbreviates
+-- the update-only machine pattern (`jump loop(slot = slot + 1)`).
+local function passthrough_arg(scope, name, param_ty, issues, region_id, label)
+  local lookup = scope:typecheck_tree_lookup_value(name)
+  if asdl.classof(lookup) == Check.TypeValueLookupFound then
+    local binding = lookup.binding
+    local role_cls = asdl.classof(binding.role)
+    if role_cls == B.BindingRoleBlockParam or role_cls == B.BindingRoleEntryBlockParam then
+      return Tr.JumpArg(name, Tr.ExprRef(Tr.ExprTyped(binding.ty), B.ValueRefBinding(binding)))
+    end
+  end
+  issues[#issues + 1] = Check.TypeIssueMissingJumpArg(region_id, label, name)
+  return nil
+end
+local function validate_target_args(region_id, scope, label, params, args, issues, payload_params)
+  local by_name = {}
+  for i = 1, #(params or {}) do by_name[params[i].name] = params[i] end
+  local payload = {}
+  for i = 1, #(payload_params or {}) do payload[payload_params[i].name] = payload_params[i] end
+  local seen = {}
+  local out = {}
+  for i = 1, #(args or {}) do out[i] = args[i] end
+  for i = 1, #(args or {}) do
+    local a = args[i]
+    local param = by_name[a.name]
+    if param == nil then
+      issues[#issues + 1] = Check.TypeIssueExtraJumpArg(region_id, label, a.name)
+    elseif seen[a.name] then
+      issues[#issues + 1] = Check.TypeIssueDuplicateJumpArg(region_id, label, a.name)
+    else
+      seen[a.name] = true
+      local aty = a.value.h and a.value.h.ty
+      if aty ~= nil and param.ty ~= nil then
+        local ar, pr = resolve_ty(scope, aty), resolve_ty(scope, param.ty)
+        if ar ~= pr then
+          issues[#issues + 1] = Check.TypeIssueExpected("jump arg `" .. a.name .. "`", param.ty, aty)
+        end
+      end
+    end
+  end
+  for i = 1, #(params or {}) do
+    local p = params[i]
+    if not seen[p.name] then
+      if payload[p.name] ~= nil then
+        seen[p.name] = true
+        local pr, prp = resolve_ty(scope, p.ty), resolve_ty(scope, payload[p.name].ty)
+        if pr ~= prp then
+          issues[#issues + 1] = Check.TypeIssueExpected("cont payload `" .. p.name .. "`", p.ty, payload[p.name].ty)
+        end
+      else
+        local fwd = passthrough_arg(scope, p.name, p.ty, issues, region_id, label)
+        if fwd ~= nil then out[#out + 1] = fwd end
+      end
+    end
+  end
+  return out
+end
 function Check.TypeControlBlockMissing:typecheck_validate_jump(region_id, _scope, label, _args, issues, _payload)
   issues[#issues + 1] = Check.TypeIssueMissingJumpTarget(region_id, label)
+  return _args or {}
 end
 function Check.TypeControlBlockFound:typecheck_validate_jump(region_id, scope, label, args, issues, payload_params)
-  validate_target_args(region_id, scope, label, self.block.params, args, issues, payload_params)
-end
-function Check.TypeControlBlockMissing:typecheck_validate_jump(region_id, _scope, label, _args, issues)
-  issues[#issues + 1] = Check.TypeIssueMissingJumpTarget(region_id, label)
-end
-function Check.TypeControlBlockFound:typecheck_validate_jump(region_id, scope, label, args, issues)
-  validate_target_args(region_id, scope, label, self.block.params, args, issues)
+  return validate_target_args(region_id, scope, label, self.block.params, args, issues, payload_params)
 end
 function Check.TypeControlContMissing:typecheck_validate_cont_jump(region_id, _scope, name, _args, issues)
   issues[#issues + 1] = Check.TypeIssueRegionContMissing(region_id, name)
+  return _args or {}
 end
 function Check.TypeControlContFound:typecheck_validate_cont_jump(region_id, scope, _name, args, issues)
-  validate_target_args(region_id, scope, Tr.BlockLabel(self.cont.name), self.cont.params, args, issues)
+  return validate_target_args(region_id, scope, Tr.BlockLabel(self.cont.name), self.cont.params, args, issues)
 end

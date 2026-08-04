@@ -90,7 +90,7 @@ function Tr.StmtJump:typecheck_tree_stmt(input)
     for j = 1, #(result.issues or {}) do issues[#issues + 1] = result.issues[j] end
   end
   local region_id = input.control:typecheck_control_region_id()
-  input.control:typecheck_control_block(self.target):typecheck_validate_jump(region_id, input.scope, self.target, args, issues)
+  args = input.control:typecheck_control_block(self.target):typecheck_validate_jump(region_id, input.scope, self.target, args, issues)
   return LCheck.TypeStmtResult(input,
     {Tr.StmtJump(Tr.StmtFlow(Sem.FlowJumps), self.target, args)}, issues)
 end
@@ -323,6 +323,7 @@ end
 local function validate_region_wiring(input, target_path, wiring, issues)
   local region_id = input.control:typecheck_control_region_id()
   local conts = callee_conts(input, target_path)
+  local out = {}
   for i = 1, #(wiring or {}) do
     local w = wiring[i]
     local wire_cont = nil
@@ -334,12 +335,16 @@ local function validate_region_wiring(input, target_path, wiring, issues)
         issues[#issues + 1] = LCheck.TypeIssueRegionContMissing(region_id, w.name)
       end
     end
+    local completed = w
     if w.target ~= nil and asdl.classof(w.target) == Tr.RegionWireBlock then
       local label = w.target.label
       local payload_params = wire_cont and wire_cont.params or {}
-      input.control:typecheck_control_block(label):typecheck_validate_jump(region_id, input.scope, label, w.target.args, issues, payload_params)
+      local targs = input.control:typecheck_control_block(label):typecheck_validate_jump(region_id, input.scope, label, w.target.args, issues, payload_params)
+      completed = Tr.RegionContWire(w.name, Tr.RegionWireBlock(label, targs))
     end
+    out[i] = completed
   end
+  return out
 end
 function Tr.StmtRegionEmit:typecheck_tree_stmt(input)
   -- Region emit: typecheck args, validate wiring
@@ -351,8 +356,8 @@ function Tr.StmtRegionEmit:typecheck_tree_stmt(input)
     if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
     args[i] = ar.expr
   end
-  validate_region_wiring(input, self.target.path, self.wiring or {}, issues)
-  return LCheck.TypeStmtResult(input, {Tr.StmtRegionEmit(Tr.StmtFlow(Sem.FlowFallsThrough), self.invoke_id, self.target, args, self.wiring or {})}, issues)
+  local wiring = validate_region_wiring(input, self.target.path, self.wiring or {}, issues)
+  return LCheck.TypeStmtResult(input, {Tr.StmtRegionEmit(Tr.StmtFlow(Sem.FlowFallsThrough), self.invoke_id, self.target, args, wiring)}, issues)
 end
 
 function Tr.StmtRegionCall:typecheck_tree_stmt(input)
@@ -365,8 +370,8 @@ function Tr.StmtRegionCall:typecheck_tree_stmt(input)
     if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
     args[i] = ar.expr
   end
-  validate_region_wiring(input, self.target.path, self.wiring or {}, issues)
-  return LCheck.TypeStmtResult(input, {Tr.StmtRegionCall(Tr.StmtFlow(Sem.FlowFallsThrough), self.invoke_id, self.target, args, self.wiring or {})}, issues)
+  local wiring = validate_region_wiring(input, self.target.path, self.wiring or {}, issues)
+  return LCheck.TypeStmtResult(input, {Tr.StmtRegionCall(Tr.StmtFlow(Sem.FlowFallsThrough), self.invoke_id, self.target, args, wiring)}, issues)
 end
 
 function Tr.StmtJumpCont:typecheck_tree_stmt(input)
@@ -381,6 +386,6 @@ function Tr.StmtJumpCont:typecheck_tree_stmt(input)
     args[i] = Tr.JumpArg(ja.name, jar.expr)
   end
   local region_id = input.control:typecheck_control_region_id()
-  input.control:typecheck_control_cont(self.cont.name):typecheck_validate_cont_jump(region_id, input.scope, self.cont.name, args, issues)
+  args = input.control:typecheck_control_cont(self.cont.name):typecheck_validate_cont_jump(region_id, input.scope, self.cont.name, args, issues)
   return LCheck.TypeStmtResult(input, {Tr.StmtJumpCont(Tr.StmtFlow(Sem.FlowJumps), self.cont, args)}, issues)
 end

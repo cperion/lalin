@@ -60,6 +60,36 @@ Important rules:
 - Region and continuation dataflow is explicit. Blocks do not capture hidden
   lexical state; wire target applications such as `done = next(tok, code)` pass
   the values that the target block receives.
+
+### Implicit passthrough
+
+An omitted jump or wire argument whose name matches a parameter of the
+current block is forwarded from that parameter. This abbreviates the
+update-only machine pattern without hiding any data flow:
+
+```lalin
+block sets_next(table [ptr [LuaTable]], key [LuaValue], hash [u64], value [LuaValue], slot [index], next_pc [index])
+  jump sets_loop(slot = slot + 1)
+end
+```
+
+is exactly equivalent to the explicit form that forwards `table`, `key`,
+`hash`, `value`, and `next_pc` by name. The same rule applies to continuation
+wiring: `yes = eq_true` forwards `a` and `next_pc` from the enclosing block
+when `eq_true` declares those parameters.
+
+Rules:
+
+- Passthrough is scoped by name to **block parameters of the current block**
+  (never `let`/`var` locals, region data parameters, or outer scope values).
+- Precedence per target parameter: explicit wire/jump argument, then the
+  continuation payload (for `call`/`emit` wires), then passthrough.
+- The typechecker resolves passthrough and validates the completed wire exactly
+  as if it had been written out: missing names, extra names, and type
+  mismatches are compile errors with typed diagnostics.
+  Continuation names must exist on the callee protocol, wired targets must be
+  blocks of the caller region, and payload-fed block parameters must agree in
+  name and type with the continuation payload.
 - Fast region lowering is represented as ASDL facts such as region protocols,
   region seals, and region bundles. The language does not rely on C sugar and
   later compiler luck to recover the intended machine shape.

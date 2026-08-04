@@ -253,8 +253,8 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
       let sets_entry_key_index [index] = as [index](sets_entry_key.bits >> [LuaTag.SHIFT])
       let sets_key_index [index] = as [index](key.bits >> [LuaTag.SHIFT])
       call LuaString.eq(&sets_proto.strings[sets_entry_key_index], &sets_proto.strings[sets_key_index];
-        yes = sets_store(entry = sets_entry, value = value, next_pc = next_pc),
-        no = sets_next(table, key, hash, value, slot, next_pc)
+        yes = sets_store(entry = sets_entry),
+        no = sets_next
       )
     else
       jump sets_next(table, key, hash, value, slot, next_pc)
@@ -267,7 +267,7 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
   end
 
   block sets_next(table [ptr [LuaTable]], key [LuaValue], hash [u64], value [LuaValue], slot [index], next_pc [index])
-    jump sets_loop(table = table, key = key, hash = hash, value = value, slot = slot + 1, next_pc = next_pc)
+    jump sets_loop(slot = slot + 1)
   end
 
   block gets(a [u8], table_reg [u8], key_reg [u8], next_pc [index])
@@ -306,8 +306,8 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
       let gets_entry_key_index [index] = as [index](gets_entry_key.bits >> [LuaTag.SHIFT])
       let gets_key_index [index] = as [index](key.bits >> [LuaTag.SHIFT])
       call LuaString.eq(&gets_proto.strings[gets_entry_key_index], &gets_proto.strings[gets_key_index];
-        yes = gets_found(a = a, entry = gets_entry, next_pc = next_pc),
-        no = gets_next(a, table, key, hash, slot, next_pc)
+        yes = gets_found(entry = gets_entry),
+        no = gets_next
       )
     else
       jump gets_next(a, table, key, hash, slot, next_pc)
@@ -325,7 +325,7 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
   end
 
   block gets_next(a [u8], table [ptr [LuaTable]], key [LuaValue], hash [u64], slot [index], next_pc [index])
-    jump gets_loop(a = a, table = table, key = key, hash = hash, slot = slot + 1, next_pc = next_pc)
+    jump gets_loop(slot = slot + 1)
   end
 
   block eq(a [u8], b [u8], c [u8], next_pc [index])
@@ -341,8 +341,8 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
       let eq_lhs_idx [index] = as [index](eq_lhs.bits >> [LuaTag.SHIFT])
       let eq_rhs_idx [index] = as [index](eq_rhs.bits >> [LuaTag.SHIFT])
       call LuaString.eq(&eq_proto.strings[eq_lhs_idx], &eq_proto.strings[eq_rhs_idx];
-        yes = eq_true(a, next_pc),
-        no = eq_false(a, next_pc)
+        yes = eq_true,
+        no = eq_false
       )
     else
       jump eq_false(a, next_pc)
