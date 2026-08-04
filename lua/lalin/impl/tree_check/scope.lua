@@ -109,7 +109,7 @@ local function typecheck_source_variant_arm(lookup, source_arm, input, expected_
     scope = scope:typecheck_tree_add_value(bnd.name, bnd.ty,
       B.Binding(C.Id("variant:stmt_switch_" .. source_arm.variant_name .. "_" .. bnd.name), bnd.name, bnd.ty, B.BindingRoleLocalValue))
   end
-  local arm_input = LCheck.TypeStmtInput(scope, input.return_ty, input.yield)
+  local arm_input = LCheck.TypeStmtInput(scope, input.return_ty, input.yield, input.control)
   local arm_body = arm_input:typecheck_tree_stmt_body(source_arm.body or {})
   if arm_body.issues then for _, iss in ipairs(arm_body.issues) do issues[#issues + 1] = iss end end
   return LCheck.TypeVariantArmResult(
@@ -134,7 +134,7 @@ function LCheck.TypeVariantCaseLookupMissing:typecheck_tree_source_variant_arm(s
   if #(source_arm.binds or {}) ~= 0 then
     issues[#issues + 1] = LCheck.TypeIssueVariantBindCount(self.type_name, source_arm.variant_name, 0, #(source_arm.binds or {}))
   end
-  local arm_input = LCheck.TypeStmtInput(input.scope, input.return_ty, input.yield)
+  local arm_input = LCheck.TypeStmtInput(input.scope, input.return_ty, input.yield, input.control)
   local arm_body = arm_input:typecheck_tree_stmt_body(source_arm.body or {})
   if arm_body.issues then for _, iss in ipairs(arm_body.issues) do issues[#issues + 1] = iss end end
   return LCheck.TypeVariantArmResult(Tr.SwitchVariantStmtArm(source_arm.variant_name, {}, arm_body.stmts), issues)

@@ -42,7 +42,7 @@ assert(#facts.definitions.entries == 2 and #facts.protocols.entries == 2 and #fa
 
 local state = Check.TypeStmtInput(
   Check.TypeValueScope("rgn", {}, {}, {}, Check.TypeModuleFacts({}, {}, {}, facts)),
-  i32, Check.TypeYieldNone)
+  i32, Check.TypeYieldNone, Check.TypeControlNone)
 local expansion = Tr.RegionExpansionId("nested")
 local input = Tr.RegionInvokeExpandInput(state, facts, expansion)
 

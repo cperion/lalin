@@ -11,7 +11,7 @@ local region_facts = Tr.RegionFactProjection(definitions, protocols, seals, bund
 local facts = Check.TypeModuleFacts({}, {}, {}, region_facts)
 local scope = Check.TypeValueScope("m", {}, {}, {}, facts)
 local i32 = Ty.TScalar(C.ScalarI32)
-local state = Check.TypeStmtInput(scope, i32, Check.TypeYieldNone)
+local state = Check.TypeStmtInput(scope, i32, Check.TypeYieldNone, Check.TypeControlNone)
 local expansion = Tr.RegionExpansionId("region-1")
 
 local stmt_input = Tr.RegionStmtExpansionInput(state, region_facts, expansion)

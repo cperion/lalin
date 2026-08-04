@@ -578,7 +578,7 @@ function Tr.ExprSwitch:typecheck_tree_expr(input)
   local arms = {}
   for i = 1, #(self.arms or {}) do
     local arm = self.arms[i]
-    local stmt_input = LCheck.TypeStmtInput(input.scope, Ty.TScalar(C.ScalarVoid), LCheck.TypeYieldNone)
+    local stmt_input = LCheck.TypeStmtInput(input.scope, Ty.TScalar(C.ScalarVoid), LCheck.TypeYieldNone, LCheck.TypeControlNone)
     local body = stmt_input:typecheck_tree_stmt_body(arm.body or {})
     local ar = arm.result:typecheck_tree_expr(input)
     if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
@@ -598,7 +598,7 @@ function Tr.ExprSwitch:typecheck_tree_expr(input)
     for j = 1, #(va.binds or {}) do
       scope = scope:typecheck_tree_add_value(va.binds[j].name, va.binds[j].ty)
     end
-    local stmt_input = LCheck.TypeStmtInput(scope, Ty.TScalar(C.ScalarVoid), LCheck.TypeYieldNone)
+    local stmt_input = LCheck.TypeStmtInput(scope, Ty.TScalar(C.ScalarVoid), LCheck.TypeYieldNone, LCheck.TypeControlNone)
     local body = stmt_input:typecheck_tree_stmt_body(va.body or {})
     local ar = va.result:typecheck_tree_expr(LCheck.TypeExprInput(scope))
     if ar.issues then for _, iss in ipairs(ar.issues) do issues[#issues+1]=iss end end
@@ -611,7 +611,7 @@ function Tr.ExprSwitch:typecheck_tree_expr(input)
     variant_arms[#variant_arms+1] = Tr.SwitchVariantExprArm(va.variant_name, va.binds, body.stmts, ar.expr or va.result)
   end
   -- Typecheck default
-  local stmt_input = LCheck.TypeStmtInput(input.scope, Ty.TScalar(C.ScalarVoid), LCheck.TypeYieldNone)
+  local stmt_input = LCheck.TypeStmtInput(input.scope, Ty.TScalar(C.ScalarVoid), LCheck.TypeYieldNone, LCheck.TypeControlNone)
   local default_body = stmt_input:typecheck_tree_stmt_body(self.default_body or {})
   local default_expr = self.default_expr and self.default_expr:typecheck_tree_expr(input)
   if default_expr and default_expr.ty and not default_expr.ty:tree_check_is_void_type() then
@@ -636,7 +636,7 @@ local function expr_control_scope(input, region_id, label, params, is_entry, res
       label.name .. "_" .. param.name), param.name, param.ty, role)
     scope = scope:typecheck_tree_add_value(param.name, param.ty, binding)
   end
-  return LCheck.TypeStmtInput(scope, result_ty, LCheck.TypeYieldValue(result_ty))
+  return LCheck.TypeStmtInput(scope, result_ty, LCheck.TypeYieldValue(result_ty), LCheck.TypeControlNone)
 end
 function Tr.ControlExprRegion:typecheck_tree_expr_region(input)
   local result_ty = self.result_ty or Ty.TScalar(C.ScalarVoid)
@@ -733,7 +733,7 @@ function C.IntrinsicAssume:typecheck_tree_intrinsic_result(args) return Ty.TScal
 
 -- ExprBlock: statements introduce a lexical scope used by the result.
 function Tr.ExprBlock:typecheck_tree_expr(input)
-  local stmt_input = LCheck.TypeStmtInput(input.scope, Ty.TScalar(C.ScalarVoid), LCheck.TypeYieldNone)
+  local stmt_input = LCheck.TypeStmtInput(input.scope, Ty.TScalar(C.ScalarVoid), LCheck.TypeYieldNone, LCheck.TypeControlNone)
   local body = stmt_input:typecheck_tree_stmt_body(self.stmts)
   local result = self.result:typecheck_tree_expr(LCheck.TypeExprInput(body.state.scope))
   local issues = {}
@@ -750,7 +750,7 @@ function Tr.ExprClosure:typecheck_tree_expr(input)
     local p = self.params[j]
     scope = scope:typecheck_tree_add_value(p.name, p.ty)
   end
-  local stmt_input = LCheck.TypeStmtInput(scope, self.result, LCheck.TypeYieldNone)
+  local stmt_input = LCheck.TypeStmtInput(scope, self.result, LCheck.TypeYieldNone, LCheck.TypeControlNone)
   local body = stmt_input:typecheck_tree_stmt_body(self.body or {})
   local param_types = {}
   for i = 1, #self.params do param_types[i] = self.params[i].ty end

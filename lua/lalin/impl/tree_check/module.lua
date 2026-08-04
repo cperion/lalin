@@ -235,13 +235,13 @@ function Tr.ItemConst:tree_module_item_env_entries(input) return self.c:tree_mod
 function Tr.ItemStatic:tree_module_item_env_entries(input) return self.s:tree_module_static_entry(input) end
 function Tr.ItemType:tree_module_item_env_entries(input) return self.t:tree_module_type_entry(input) end
 function Tr.ItemImport:tree_module_item_env_entries(input) return {} end
-function Tr.ItemRegion:tree_module_item_env_entries(input) return {} end
 function Tr.Item:tree_module_typecheck_item(_scope) return self end
+function Tr.ItemRegion:tree_module_item_env_entries(input) return {} end
 function Tr.ItemRegion:tree_module_typecheck_item(scope)
   local Check = require("lalin.schema.check")
-  local typed_region = self.region:typecheck_tree_region_body(
-    Check.TypeStmtInput(scope, Ty.TScalar(C.ScalarVoid), Check.TypeYieldNone))
-  return Tr.ItemRegion(typed_region)
+  local typed_region, region_issues = self.region:typecheck_tree_region_body(
+    Check.TypeStmtInput(scope, Ty.TScalar(C.ScalarVoid), Check.TypeYieldNone, Check.TypeControlNone))
+  return Tr.ItemRegion(typed_region), region_issues
 end
 function Tr.ItemData:tree_module_item_env_entries(input) return {} end
 
@@ -308,6 +308,8 @@ function Tr.Module:typecheck(input)
     LCheck.TypeModuleFacts(variants, {}, {}, region_facts))
   -- Typecheck each item (inline, no helper functions)
   local checked_items = {}
+  local checked_issues = {}
+  local checked_items = {}
   for i = 1, #self.items do
     local item = self.items[i]
     local item_class = asdl.classof(item)
@@ -335,7 +337,7 @@ function Tr.Module:typecheck(input)
         end
 
         -- Typecheck body (inline loop)
-        local stmt_input = LCheck.TypeStmtInput(scope, func.result, LCheck.TypeYieldNone)
+        local stmt_input = LCheck.TypeStmtInput(scope, func.result, LCheck.TypeYieldNone, LCheck.TypeControlNone)
         local cur_input = stmt_input
         local new_stmts = {}
         for bi = 1, #(func.body or {}) do
@@ -348,6 +350,9 @@ function Tr.Module:typecheck(input)
             for _, s in ipairs(tc_result.stmts) do
               new_stmts[#new_stmts+1] = s
             end
+          end
+          if tc_result.issues then
+            for _, iss in ipairs(tc_result.issues) do checked_issues[#checked_issues + 1] = iss end
           end
         end
 
@@ -386,9 +391,13 @@ function Tr.Module:typecheck(input)
       end
     else
       -- ItemRegion owns its body typechecking through a leaf method.
-      checked_items[i] = item:tree_module_typecheck_item(module_scope)
+      local typed_item, item_issues = item:tree_module_typecheck_item(module_scope)
+      checked_items[i] = typed_item
+      if item_issues then
+        for _, iss in ipairs(item_issues) do checked_issues[#checked_issues + 1] = iss end
+      end
     end
   end
 
-  return Tr.Module(Tr.ModuleTyped(mod_name), checked_items)
+  return Tr.Module(Tr.ModuleTyped(mod_name), checked_items), checked_issues
 end

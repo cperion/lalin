@@ -74,7 +74,7 @@ local function add_param_scope(state, region_id, block, entry)
     local binding = binding_for_param(region_id, block.label, p, i, entry)
     scope = scope:typecheck_tree_add_value(p.name, p.ty, binding)
   end
-  return Check.TypeStmtInput(scope, state.return_ty, state.yield)
+  return Check.TypeStmtInput(scope, state.return_ty, state.yield, Check.TypeControlNone)
 end
 
 -- -------------------------------------------------------------------------
@@ -647,11 +647,11 @@ function Tr.Stmt:region_expand_stmt(input)
 end
 function Tr.StmtLet:region_expand_stmt(input)
   local scope = input.state.scope:typecheck_tree_add_value(self.binding.name, self.binding.ty, self.binding)
-  return Tr.RegionStmtExpansionResult(Check.TypeStmtInput(scope, input.state.return_ty, input.state.yield), { self }, {}, {})
+  return Tr.RegionStmtExpansionResult(Check.TypeStmtInput(scope, input.state.return_ty, input.state.yield, Check.TypeControlNone), { self }, {}, {})
 end
 function Tr.StmtVar:region_expand_stmt(input)
   local scope = input.state.scope:typecheck_tree_add_value(self.binding.name, self.binding.ty, self.binding)
-  return Tr.RegionStmtExpansionResult(Check.TypeStmtInput(scope, input.state.return_ty, input.state.yield), { self }, {}, {})
+  return Tr.RegionStmtExpansionResult(Check.TypeStmtInput(scope, input.state.return_ty, input.state.yield, Check.TypeControlNone), { self }, {}, {})
 end
 function Tr.StmtIf:region_expand_stmt(input)
   local a = input:region_expand_body(self.then_body)
@@ -815,7 +815,7 @@ function Tr.RegionSealFound:region_expand_call(stmt, input)
   local switch = Tr.StmtVariantSwitchSource(Tr.StmtSurface,
     Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(binding.name)), {}, arms, { Tr.StmtTrap(Tr.StmtSurface) })
   local next_scope = input.state.scope:typecheck_tree_add_value(binding.name, result_ty, binding)
-  local next_state = Check.TypeStmtInput(next_scope, input.state.return_ty, input.state.yield)
+  local next_state = Check.TypeStmtInput(next_scope, input.state.return_ty, input.state.yield, Check.TypeControlNone)
   return Tr.RegionInvokeExpanded(Tr.RegionInvokeSplice({ let, switch }, {},
     collect_captures(stmt.wiring, seal.region.conts), next_state))
 end
@@ -846,11 +846,11 @@ function Tr.StmtRegionCall:region_expand_stmt(input) return invoke_stmt(self, in
 -- -------------------------------------------------------------------------
 local function expand_function(func, input)
   local facts = input.facts
-  local state = Check.TypeStmtInput(Check.TypeValueScope("region", {}, {}, {}, Check.TypeModuleFacts({}, {}, {}, facts)), func.result, Check.TypeYieldNone)
+  local state = Check.TypeStmtInput(Check.TypeValueScope("region", {}, {}, {}, Check.TypeModuleFacts({}, {}, {}, facts)), func.result, Check.TypeYieldNone, Check.TypeControlNone)
   for i = 1, #(func.params or {}) do
     local p = func.params[i]
     local binding = B.Binding(C.Id("arg:" .. tostring(func.name) .. ":" .. tostring(p.name)), p.name, p.ty, B.BindingRoleArg(i - 1))
-    state = Check.TypeStmtInput(state.scope:typecheck_tree_add_value(p.name, p.ty, binding), state.return_ty, state.yield)
+    state = Check.TypeStmtInput(state.scope:typecheck_tree_add_value(p.name, p.ty, binding), state.return_ty, state.yield, Check.TypeControlNone)
   end
   return Tr.RegionBodyExpansionInput(state, facts, Tr.RegionExpansionId("function:" .. tostring(func.name))):region_expand_body(func.body)
 end
@@ -860,7 +860,7 @@ function Tr.FuncExport:region_expand_function(input) return expand_function(self
 function Tr.FuncLocalContract:region_expand_function(input) return expand_function(self, input) end
 function Tr.FuncExportContract:region_expand_function(input) return expand_function(self, input) end
 function Tr.FuncDecl:region_expand_function(input)
-  return Tr.RegionBodyExpansionResult(Check.TypeStmtInput(Check.TypeValueScope("region", {}, {}, {}, Check.TypeModuleFacts({}, {}, {}, input.facts)), self.result, Check.TypeYieldNone), Tr.RegionStmtBody({}), {}, {})
+  return Tr.RegionBodyExpansionResult(Check.TypeStmtInput(Check.TypeValueScope("region", {}, {}, {}, Check.TypeModuleFacts({}, {}, {}, input.facts)), self.result, Check.TypeYieldNone, Check.TypeControlNone), Tr.RegionStmtBody({}), {}, {})
 end
 function Tr.Func:region_rebuild_expanded(body) return self end
 function Tr.FuncLocal:region_rebuild_expanded(body) return Tr.FuncLocal(self.name, self.params, self.result, body.stmts) end
@@ -909,14 +909,17 @@ end
 -- Module:typecheck carries no semantic input, so the shared phase calls it
 -- without any argument bag.
 function Tr.Module:typecheck_region_expanded()
-  local checked = self:typecheck()
+  local checked, pre_issues = self:typecheck()
   local facts = checked:region_fact_projection()
   local expansion = checked:region_expand(Tr.RegionModuleExpansionInput(facts))
   if #(expansion:region_issues() or {}) > 0 then
     return expansion
   end
-  local expanded = expansion:region_module():typecheck()
-  return Tr.RegionModuleExpanded(expanded, facts, {})
+  local expanded, exp_issues = expansion:region_module():typecheck()
+  local issues = {}
+  for i = 1, #(pre_issues or {}) do issues[#issues + 1] = pre_issues[i] end
+  for i = 1, #(exp_issues or {}) do issues[#issues + 1] = exp_issues[i] end
+  return Tr.RegionModuleExpanded(expanded, facts, issues)
 end
 
 return true

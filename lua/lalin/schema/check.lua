@@ -75,6 +75,26 @@ return schema. LalinCheck {
     scope [LalinCheck.TypeValueScope],
     return_ty [LalinType.Type],
     yield [LalinCheck.TypeYieldResult],
+    control [LalinCheck.TypeControlContext],
+  },
+  -- Region control context threaded through region/control bodies so jump
+  -- and continuation wiring validate against the enclosing block/cont tables.
+  sum. TypeControlContext {
+    TypeControlNone,
+    TypeControlRegion {
+      variant_unique,
+      region_id [str],
+      blocks [many [LalinTree.ControlBlock]],
+      conts [many [LalinTree.RegionCont]],
+    },
+  },
+  sum. TypeControlBlockLookup {
+    TypeControlBlockFound { variant_unique, block [LalinTree.ControlBlock], },
+    TypeControlBlockMissing { variant_unique, label [LalinTree.BlockLabel], },
+  },
+  sum. TypeControlContLookup {
+    TypeControlContFound { variant_unique, cont [LalinTree.RegionCont], },
+    TypeControlContMissing { variant_unique, field. name [str], },
   },
   product. TypeControlInput { interned, stmt [LalinCheck.TypeStmtInput], region_id [str], },
   product. TypeFuncInput { interned, scope [LalinCheck.TypeValueScope], },
@@ -307,6 +327,14 @@ return schema. LalinCheck {
       region_id [str],
       label [LalinTree.BlockLabel],
       field. name [str],
+    },
+    TypeIssueRegionContMissing { variant_unique, region_id [str], field. cont [str], },
+    TypeIssueRegionWireArgType {
+      region_id [str],
+      field. cont [str],
+      field. name [str],
+      expected [LalinType.Type],
+      actual [LalinType.Type],
     },
     TypeIssueUnexpectedYield { variant_unique, site [str], },
     TypeIssueInvalidControl {

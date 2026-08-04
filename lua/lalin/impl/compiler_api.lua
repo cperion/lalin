@@ -79,7 +79,7 @@ local function compile_after_closure(m, c_target)
   local ok, region_result = pcall(function() return m:typecheck_region_expanded() end)
   if not ok then return Compiler.CompilerArtifactError("typecheck: " .. tostring(region_result)) end
   if #(region_result:region_issues() or {}) > 0 then
-    return Compiler.CompilerArtifactError("region expansion rejected: " .. tostring(#region_result:region_issues()) .. " issue(s)")
+    return Compiler.CompilerArtifactError("typecheck rejected with " .. tostring(#region_result:region_issues()) .. " issue(s)")
   end
   local checked = region_result:region_module()
 
