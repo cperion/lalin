@@ -4,7 +4,7 @@
 
 This document defines the schema-first replacement for the disconnected
 `FlowCarrier` / `FlowAddress` / `LowerCarrierPlan` / `LowerAddressPlan`
-machinery in schema v2. It is the design authority for fused memory addressing.
+machinery in the schema. It is the design authority for fused memory addressing.
 Gates 1–3 and the deletion sweep are complete: exact memory uses project to
 exact coordinates and then to executable C address plans.
 
@@ -373,7 +373,7 @@ The CMat/LOWER cutover deleted rather than revived:
   lookups, and instruction-use projections;
 - per-access `CMatCFragmentAccessAddressProjected`.
 
-Both old and schema-v2 declarations are gone. The remaining legacy Code emitter
+Both old and schema declarations are gone. The remaining legacy Code emitter
 uses ordinary indexed places when it does not enter canonical CMat; GCC owns
 strength reduction for that fallback path.
 
@@ -438,6 +438,6 @@ outcome, or carry semantic state in a Lua map.
    non-unit, nonzero-start, and constant-offset cursor equations.
 5. **GCC tests — active**: cursor preheader/step execution, centered loads and
    stores, multi-sink uses, windows, folds, and early exits execute under `-O3`.
-6. **Deletion sweep — complete**: old and schema-v2 Flow/LOWER carrier/address
+6. **Deletion sweep — complete**: old and schema Flow/LOWER carrier/address
    transfer vocabulary, synthetic address locals, and projected CMat access
    sources are gone.

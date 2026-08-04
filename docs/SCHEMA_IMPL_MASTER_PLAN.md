@@ -1,4 +1,4 @@
-# Schema-v2 Compiler Plan
+# Schema Compiler Plan
 
 **Status:** active queue only. Completed migration ledgers and superseded design
 drafts were removed during documentation consolidation.
@@ -32,9 +32,9 @@ The active tree includes:
 Current validation baseline:
 
 ```text
-schema_v2: 61 passed
-c_backend: 39 passed
-embedded binary: passing
+schema: 68 passed
+c_backend: 37 passed
+embedded binary: passing (retired)
 ```
 
 Counts are informative, not completion criteria.
@@ -118,13 +118,13 @@ proof planes into a whole-fusion contract. Missing optimization capabilities sel
 conservative scalar C: noalias alone controls `restrict`, and generic proof
 obligations never gate CMat materialization.
 
-## P1.5 — public schema-v2 compiler convergence — typed traversal parity complete
+## P1.5 — public compiler convergence — typed traversal parity complete
 
-The explicit public `lalin.compile_v2` path preserves parsed function bodies and
+The explicit public `lalin.compile_source` path preserves parsed function bodies and
 executes scalar and one-dimensional clamp/wrap/zero windows, centered reject windows,
 window arithmetic streams, deterministic multisink stores, the complete integer fold and
 inclusive-scan reducer matrices, forward/backward and nonzero/non-unit traversal, multi-axis
-grid and tiled domains, global ND folds, and axis-selected ND scans through `.lln -> schema-v2
+grid and tiled domains, global ND folds, and axis-selected ND scans through `.lln -> canonical
 Tree -> Code -> Flow -> Stencil ->
 CMat -> LOWER
 -> emitted C -> GCC -O3`. Parsed loops, axes, windows, reducers, and sinks cross the
@@ -133,7 +133,7 @@ CMat -> LOWER
 domain recovery has been deleted. LOWER rejection now crosses the compiler backend
 as `CompilerCBackendRejected` and becomes a typed `CompilerArtifactError` only at the
 artifact boundary; it does not escape `CompilerSession:compile()` as a Lua error.
-Schema-v2 bracket positions now preserve Lalin's LLBL contract: every `[]` creates a
+Canonical bracket positions now preserve Lalin's LLBL contract: every `[]` creates a
 role-stamped HostEval, Lua table access constructs the value under the configured host
 environment, and canonical Lalin-owned `RoleDescriptor`s alone adapt it into typed Parsed
 ASDL. Type annotations carry `LalinType.Type`, not captured source strings. LLBL role
@@ -149,9 +149,9 @@ Nonzero `boundary = reject` displacement remains conservative until ordinary mem
 extent and authored-domain evidence can prove a narrow affine interior. Wrap realization
 is covered for distances larger than the domain extent. Integer division, remainder, and
 shift helpers emit their declared guards and operations; unsupported helper leaves fail
-during emission instead of silently returning the first operand. Canonical and schema-v2
+during emission instead of silently returning the first operand. Canonical and schema
 registry paths now return `CompilerCBackendOutcome`; phase execution carries that exact
-outcome, while successful schema-v2 artifacts enforce C validation before source is
+outcome, while successful canonical artifacts enforce C validation before source is
 accepted. Static data and slice descriptors are covered through GCC execution. Folds and scans
 use exact `StmtBranchJump` terminators so loop-carried values remain typed edge arguments.
 `ReductionFact.update` preserves exact recurrence-update identity used to recognize scans without
@@ -162,11 +162,11 @@ Grid and tiled domains preserve row-major/full-domain behavior through canonical
 typed domain shapes select `KernelNoPlan` rather than turning absent ND CMat capability into a
 module rejection. Missing optimization evidence therefore retains correct scalar C.
 
-Public parsed-loop execution parity is present on `lalin.compile_v2`, and
-`lalin.compile_c_gcc` routes through the typed schema-v2 pipeline. The v1
-surface is deleted: v1 parsing/lowering (`lua/lalin/syntax/`, `lower_to_c.lua`,
-`tree_lower.lua`, the v1 schema context, and the v1 test suites) is retired, and
-the LuaJIT bytecode / tcc runners are removed. No raw-loop adapter,
+Public parsed-loop execution parity is present on `lalin.compile_source`, and
+`lalin.compile_c_gcc` routes through the typed canonical pipeline. The legacy
+surface is deleted: the old parsing/lowering modules, the old schema context,
+and the old test suites are retired, and the LuaJIT bytecode / tcc runners are
+removed. No raw-loop adapter,
 cross-context constructor adapter, encoded-name
 
 ## P2 — schema ownership cutover
@@ -175,23 +175,23 @@ The duplicate-owner guard remains authoritative. Domain cutovers are serialized
 and may resume only when canonical fresh-process parity exists for that domain.
 
 The `LalinPhase` exception is closed: one precise no-`any` declaration remains
-owned by `schema/phase.lua`, and schema v2 consumes that declaration as data before
+owned by `schema/phase.lua`, and the canonical schema consumes that declaration as data before
 instantiating it in its own context. Phase diagnostics, determinism, external
 capabilities, and value-type references are typed; the ownership and legacy schema
 suites are green.
 
 For each cutover:
 
-1. establish the schema-v2 owner and leaf methods;
+1. establish the canonical owner and leaf methods;
 2. move all canonical consumers;
 3. run local, suite, and fresh-process tests;
 4. delete the old owner and imports;
 5. update `docs/SCHEMA_OWNERSHIP.md`;
 6. do not add re-export or constructor compatibility shims.
 
-The final old-tree retirement is complete: the v1 tests and the v1 parsing/
+The final old-tree retirement is complete: the legacy tests and the old parsing/
 lowering modules they exercised are deleted, and the surviving suites run
-against the schema-v2 pipeline only.
+against the canonical pipeline only.
 
 ## Non-goals
 
@@ -206,7 +206,7 @@ against the schema-v2 pipeline only.
 ## Required validation per gate
 
 ```sh
-luajit tests/run.lua schema_v2
+luajit tests/run.lua schema
 luajit tests/run.lua c_backend
 luajit tests/c_backend/test_compile_c_gcc_fresh_process.lua
 luajit tests/frontend/test_lalin_loader_fresh_process.lua

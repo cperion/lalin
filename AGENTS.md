@@ -190,7 +190,7 @@ memory/noalias/bounds facts, with contracts recomputed after fusion. The
 The binary copy-patch / binary-bank backend is deleted and must not be reopened.
 Only the stencil/CMat vocabulary survives as the deterministic emitted-C shape
 the stencil/CMat vocabulary survives as the deterministic emitted-C shape
-contract (`schema_v2/stencil.lua` -> CMat fragment path -> `emit_c`). The LuaJIT
+contract (`schema/stencil.lua` -> CMat fragment path -> `emit_c`). The LuaJIT
 bytecode path (`opts.luajit`, `opts.bytecode`, `compile_luajit`) is removed: only
 emitted C cooked with GCC remains, plus the explicit LuaJIT FFI function-pointer
 boundary. The old Cranelift/Rust runtime path is not part of the current architecture.
@@ -285,7 +285,7 @@ Tests are standalone LuaJIT scripts:
 ```sh
 luajit tests/run.lua
 luajit tests/run.lua frontend
-luajit tests/run.lua schema_v2
+luajit tests/run.lua schema
 luajit tests/run.lua c_backend
 ```
 
@@ -339,7 +339,7 @@ Key files:
 ```text
 lua/llbl.lua                       LLBL extensible language workbench substrate
 lua/lalin/dsl/                    Lalin authoring heads
-lua/lalin/schema_v2/              canonical ASDL/schema definitions
+lua/lalin/schema/              canonical ASDL/schema definitions
 lua/lalin/impl/                   compiler phase and backend methods
 lua/lalin/impl/compiler_api.lua   public compiler API implementation
 lua/lalin/impl/lower_emit_c/      CMat environment, fragment, and assembly
@@ -356,7 +356,7 @@ docs/LANGUAGE_REFERENCE.md public Lalin language reference
 docs/ARCHITECTURE.md       active compiler and backend architecture
 docs/CMAT_MEMORY_COORDINATE_ARCHITECTURE.md
                            fused memory-coordinate design authority
-docs/SCHEMA_V2_IMPL_MASTER_PLAN.md
+docs/SCHEMA_IMPL_MASTER_PLAN.md
                            concise active compiler queue
 docs/SCHEMA_OWNERSHIP.md   schema ownership and cutover guard
 docs/CONVENTIONS.md        naming, style, and repository conventions
