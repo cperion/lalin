@@ -21,6 +21,10 @@ function Tr.ContractDisjoint:typecheck_tree_contract(input)
   return Tr.ContractDisjoint(self.a:typecheck_tree_expr(input).expr,
     self.b:typecheck_tree_expr(input).expr)
 end
+function Tr.ContractNoAliasPair:typecheck_tree_contract(input)
+  return Tr.ContractNoAliasPair(self.a:typecheck_tree_expr(input).expr,
+    self.b:typecheck_tree_expr(input).expr)
+end
 function Tr.ContractSameLen:typecheck_tree_contract(input)
   return Tr.ContractSameLen(self.a:typecheck_tree_expr(input).expr,
     self.b:typecheck_tree_expr(input).expr)
@@ -58,6 +62,9 @@ end
 function Tr.ContractDisjoint:tree_check_contract_fact()
   return {Tr.ContractFactDisjoint(
     self.a:tree_check_contract_binding(), self.b:tree_check_contract_binding())}
+end
+function Tr.ContractNoAliasPair:tree_check_contract_fact()
+  return {Tr.ContractFactExprNoAliasPair(self.a, self.b)}
 end
 function Tr.ContractSameLen:tree_check_contract_fact()
   return {Tr.ContractFactSameLen(

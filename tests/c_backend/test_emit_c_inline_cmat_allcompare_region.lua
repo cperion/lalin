@@ -20,10 +20,14 @@ assert(not dispatch_body:find("= LuaVM_dispatch(", 1, true),
   "bytecode machine transitions must not recursively consume native frames")
 assert(source:find("= LuaVM_dispatch(", dispatch_end, true),
   "LuaProgram.run must invoke the sealed VM machine boundary")
-assert(source:find("_all_compare", 1, true),
-  "LuaString.eq must materialize the typed all-compare CMat predicate")
-assert(source:find("_cursor_", 1, true),
-  "all-compare lane loads must advance through affine CMat cursors")
+assert(source:find("ml_memcmp(", 1, true),
+  "LuaString.eq must materialize the memcmp all-compare predicate from declared noalias pair evidence")
+local restrict_count = 0
+for line in source:gmatch("[^\n]*restrict[^\n]*") do
+  if line:find("lane_access_LuaString_eq", 1, true) or line:find("cursor_", 1, true) then restrict_count = restrict_count + 1 end
+end
+assert(restrict_count >= 4,
+  "LuaString.eq byte-pointer bases/cursors must be restrict-qualified from declared noalias (found " .. restrict_count .. ")")
 assert(not source:find("v_LuaString_eq_index9 == v_LuaString_eq_index11", 1, true),
   "CMat replacement must remove the baseline scalar byte predicate")
 local main = assert(session:symbol("main", "int32_t (*)(void)"))
@@ -31,4 +35,4 @@ local status = tonumber(main())
 assert(status == 0, "compiled Lua VM bytecode program must execute to 42 (status=" .. tostring(status) .. ")")
 session:free()
 
-print("lalin Lua VM machine executed bytecode to 42 with constant-stack dispatch and CMat all-compare")
+print("lalin Lua VM machine executed bytecode to 42 with constant-stack dispatch and CMat memcmp all-compare")

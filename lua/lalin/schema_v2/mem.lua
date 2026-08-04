@@ -586,6 +586,7 @@ return schema. LalinMem {
   product. MemContractSoAEntry { interned, func [LalinCode.CodeFuncId], base [LalinCode.CodeValueId], record_ty [LalinCode.CodeType], field_name [str], component_index [number], source [LalinCode.CodeFuncContractFact], },
   product. MemContractValueEntry { interned, func [LalinCode.CodeFuncId], base [LalinCode.CodeValueId], source [LalinCode.CodeFuncContractFact], },
   product. MemContractProjectionEntry { interned, func [LalinCode.CodeFuncId], base [LalinMem.MemContractExprKey], source [LalinCode.CodeFuncContractFact], },
+  product. MemContractProjectionPairEntry { interned, func [LalinCode.CodeFuncId], a [LalinMem.MemContractExprKey], b [LalinMem.MemContractExprKey], source [LalinCode.CodeFuncContractFact], },
   product. MemContractRejectedEntry { interned, func [LalinCode.CodeFuncId], reason [str], source [LalinCode.CodeFuncContractFact], },
   product. MemContractContribution {
     bounds [many [LalinMem.MemContractBoundsEntry]],
@@ -603,6 +604,7 @@ return schema. LalinMem {
     invalidates [many [LalinMem.MemContractValueEntry]],
     preserves [many [LalinMem.MemContractValueEntry]],
     rejected [many [LalinMem.MemContractRejectedEntry]],
+    noalias_pairs [many [LalinMem.MemContractProjectionPairEntry]],
   },
   product. MemContractProjection {
     bounds [many [LalinMem.MemContractBoundsEntry]],
@@ -620,6 +622,7 @@ return schema. LalinMem {
     invalidates [many [LalinMem.MemContractValueEntry]],
     preserves [many [LalinMem.MemContractValueEntry]],
     rejected [many [LalinMem.MemContractRejectedEntry]],
+    noalias_pairs [many [LalinMem.MemContractProjectionPairEntry]],
   },
 
   -- Access projection lookups never use nil as a semantic result.

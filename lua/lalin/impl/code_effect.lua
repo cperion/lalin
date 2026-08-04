@@ -61,6 +61,9 @@ end
 function Code.CodeContractPreserve:contract_effect(input)
   return Effect.ContractEffects({ Effect.EffectRetain(self.base, contract_evidence(input)) })
 end
+function Code.CodeContractProjectionNoAliasPair:contract_effect(input)
+  return contract_no_effect(input, "noalias pair is alias evidence")
+end
 function Code.CodeContractRejected:contract_effect(input)
   return Effect.ContractEffects({ Effect.EffectUnknown(Effect.EffectEvidenceConservative(self.reason)) })
 end

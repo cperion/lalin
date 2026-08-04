@@ -38,20 +38,22 @@ region LuaString.eq(lhs [ptr [LuaString]], rhs [ptr [LuaString]];
   yes,
   no
 )
-  requires bounds(lhs.bytes)(lhs.len), readonly(lhs.bytes), bounds(rhs.bytes)(rhs.len), readonly(rhs.bytes), noalias(lhs.bytes), noalias(rhs.bytes)
+  requires bounds(lhs.bytes)(lhs.len), readonly(lhs.bytes), bounds(rhs.bytes)(rhs.len), readonly(rhs.bytes), noalias(lhs.bytes)(rhs.bytes)
   entry start()
-    if lhs.len ~= rhs.len then
+    let lhs_len [index] = lhs.len
+    let rhs_len [index] = rhs.len
+    if lhs_len ~= rhs_len then
       jump no
     end
-    jump loop(i = as [index](0))
+    jump loop(i = as [index](0), bound = lhs_len)
   end
 
-  block loop(i [index])
-    if i == lhs.len then
+  block loop(i [index], bound [index])
+    if i == bound then
       jump yes
     end
     if lhs.bytes[i] == rhs.bytes[i] then
-      jump loop(i = i + 1)
+      jump loop(i = i + 1, bound = bound)
     else
       jump no
     end

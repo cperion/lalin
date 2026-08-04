@@ -2708,6 +2708,22 @@ end
 function Tree.ContractFactSoAComponent:lower_tree_contract_fact_to_code(input)
   return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractSoAComponent(input:tree_code_value_for_binding(self.base), input:tree_code_type(self.record_ty), self.field_name, self.component_index), origin_binding(self.base)))
 end
+function Tree.ContractFactExprNoAliasPair:lower_tree_contract_fact_to_code(input)
+  return input:tree_code_contract_expr_for_expr(self.a)
+    :tree_code_contract_noalias_pair(input, input:tree_code_contract_expr_for_expr(self.b))
+end
+function TreeCode.TreeCodeContractExprUnsupported:tree_code_contract_noalias_pair(input, rhs)
+  return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject(self.reason))
+end
+function TreeCode.TreeCodeContractExprSupported:tree_code_contract_noalias_pair(input, rhs)
+  return rhs:tree_code_contract_noalias_pair_rhs(input, self.expr)
+end
+function TreeCode.TreeCodeContractExprUnsupported:tree_code_contract_noalias_pair_rhs(input, lhs)
+  return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject(self.reason))
+end
+function TreeCode.TreeCodeContractExprSupported:tree_code_contract_noalias_pair_rhs(input, lhs)
+  return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractProjectionNoAliasPair(lhs, self.expr), origin_generated("projection noalias pair")))
+end
 function Tree.ContractFactNoAlias:lower_tree_contract_fact_to_code(input)
   return TreeCode.TreeCodeContractResult(Code.CodeFuncContractFact(input.func_id, Code.CodeContractNoAlias(input:tree_code_value_for_binding(self.base)), origin_binding(self.base)))
 end

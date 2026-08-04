@@ -376,6 +376,7 @@ return schema. LalinParse {
     ParsedContractNoAlias { variant_unique, field. arg [LalinTree.Expr], },
     ParsedContractInvalidate { variant_unique, field. arg [LalinTree.Expr], },
     ParsedContractPreserve { variant_unique, field. arg [LalinTree.Expr], },
+    ParsedContractNoAliasPair { variant_unique, a [LalinTree.Expr], b [LalinTree.Expr], },
     ParsedContractBounds { variant_unique, a [LalinTree.Expr], b [LalinTree.Expr], },
     ParsedContractDisjoint { variant_unique, a [LalinTree.Expr], b [LalinTree.Expr], },
     ParsedContractSameLen { variant_unique, a [LalinTree.Expr], b [LalinTree.Expr], },
