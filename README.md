@@ -169,10 +169,6 @@ Authoritative reference:
 - `docs/CONVENTIONS.md` — naming, style, and repository conventions
 
 Active compiler design and planning:
-Active compiler design and planning:
-- `docs/LUA_VM_ROADMAP.md` — staged Lua VM milestones
-- `docs/HYPERMEDIA_ARCHITECTURE.md` — active hypermedia design proposal
-- `docs/LUA_VM_ROADMAP.md` — staged Lua VM milestones
 - `docs/HYPERMEDIA_ARCHITECTURE.md` — active hypermedia design proposal
 
 ## Design Rules
