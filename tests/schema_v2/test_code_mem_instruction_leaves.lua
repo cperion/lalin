@@ -19,7 +19,7 @@ local object = Mem.MemObjectFact(oid, fid, Mem.MemObjectLocal, Mem.MemProvLocal(
 local facet = Mem.MemTransferFacet({}, { Mem.MemLocalObjectEntry(lid, oid) }, {}, {}, {}, {}, { object }, {}, {}, {}, {}, {}, {}, {})
 local inductions = Flow.FlowInductionProjection({})
 local flow = Flow.FlowFactSet(Code.CodeModuleId("m"), {}, {}, {}, {}, {}, {}, {})
-local contracts = Mem.MemContractProjection({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+local contracts = Mem.MemContractProjection({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 
 local ops = {
   Code.CodeInstLoad(Code.CodeValueId("load"), place, access),
