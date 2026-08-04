@@ -67,8 +67,10 @@ function Tr.ContractSoAComponent:tree_check_contract_fact()
   return {Tr.ContractFactSoAComponent(
     self.base:tree_check_contract_binding(), self.record_ty, self.field_name, self.component_index)}
 end
+function Tr.Expr:tree_check_contract_noalias_fact() return { Tr.ContractFactExprNoAlias(self) } end
+function Tr.ExprRef:tree_check_contract_noalias_fact() return { Tr.ContractFactNoAlias(self:tree_check_contract_binding()) } end
 function Tr.ContractNoAlias:tree_check_contract_fact()
-  return {Tr.ContractFactNoAlias(self.base:tree_check_contract_binding())}
+  return self.base:tree_check_contract_noalias_fact()
 end
 function Tr.Expr:tree_check_contract_readonly_fact() return Tr.ContractFactExprReadonly(self) end
 function Tr.ExprRef:tree_check_contract_readonly_fact() return Tr.ContractFactReadonly(self:tree_check_contract_binding()) end

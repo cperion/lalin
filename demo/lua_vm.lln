@@ -38,7 +38,7 @@ region LuaString.eq(lhs [ptr [LuaString]], rhs [ptr [LuaString]];
   yes,
   no
 )
-  requires bounds(lhs.bytes)(lhs.len), readonly(lhs.bytes), bounds(rhs.bytes)(rhs.len), readonly(rhs.bytes)
+  requires bounds(lhs.bytes)(lhs.len), readonly(lhs.bytes), bounds(rhs.bytes)(rhs.len), readonly(rhs.bytes), noalias(lhs.bytes), noalias(rhs.bytes)
   entry start()
     if lhs.len ~= rhs.len then
       jump no
@@ -489,6 +489,69 @@ fn main() [i32]
 
   block done(result [LuaValue])
     return as [i32](as [i64](result.bits >> as [u64]([LuaTag.SHIFT])) - as [i64](42))
+  end
+
+  block failed(code [i32], pc [index])
+    return code + as [i32](pc) + 1000
+  end
+end
+
+-- String-equality hot-loop benchmark: the VM bytecode below runs the
+-- LuaString.eq sealed call LIMIT times over two identical 48-byte strings
+-- and returns (matches - LIMIT) so the native status is 0 iff every
+-- comparison matched. Exercises the noalias(lhs.bytes)(rhs.bytes)-driven
+-- restrict pipeline in the sealed all-compare materialization.
+
+fn bench_main() [i32]
+  entry start()
+    var bench_bytes_a [array [u8] [48]] = { as [u8](48), as [u8](49), as [u8](50), as [u8](51), as [u8](52), as [u8](53), as [u8](54), as [u8](55), as [u8](56), as [u8](57), as [u8](65), as [u8](66), as [u8](67), as [u8](68), as [u8](69), as [u8](70), as [u8](71), as [u8](72), as [u8](73), as [u8](74), as [u8](75), as [u8](76), as [u8](77), as [u8](78), as [u8](79), as [u8](80), as [u8](81), as [u8](82), as [u8](83), as [u8](84), as [u8](85), as [u8](86), as [u8](87), as [u8](88), as [u8](89), as [u8](90), as [u8](97), as [u8](98), as [u8](99), as [u8](100), as [u8](101), as [u8](102), as [u8](103), as [u8](104), as [u8](105), as [u8](106), as [u8](107), as [u8](108) }
+    var bench_bytes_b [array [u8] [48]] = { as [u8](48), as [u8](49), as [u8](50), as [u8](51), as [u8](52), as [u8](53), as [u8](54), as [u8](55), as [u8](56), as [u8](57), as [u8](65), as [u8](66), as [u8](67), as [u8](68), as [u8](69), as [u8](70), as [u8](71), as [u8](72), as [u8](73), as [u8](74), as [u8](75), as [u8](76), as [u8](77), as [u8](78), as [u8](79), as [u8](80), as [u8](81), as [u8](82), as [u8](83), as [u8](84), as [u8](85), as [u8](86), as [u8](87), as [u8](88), as [u8](89), as [u8](90), as [u8](97), as [u8](98), as [u8](99), as [u8](100), as [u8](101), as [u8](102), as [u8](103), as [u8](104), as [u8](105), as [u8](106), as [u8](107), as [u8](108) }
+    var bench_strings [array [LuaString] [2]] = {
+      LuaString { hash = as [u64](210714636441), len = as [index](48), bytes = &bench_bytes_a[0] },
+      LuaString { hash = as [u64](210714636441), len = as [index](48), bytes = &bench_bytes_b[0] }
+    }
+    var bench_consts [array [LuaValue] [3]] = {
+      LuaValue { bits = (as [u64](0) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) },
+      LuaValue { bits = (as [u64](2000000) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) },
+      LuaValue { bits = (as [u64](1) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) }
+    }
+    var bench_code [array [LuaInstr] [12]] = {
+      LuaInstr { op = as [u8]([LuaOP.LOADS]), a = 5, b = 0, c = 0, bx = 0, sbx = 0 },
+      LuaInstr { op = as [u8]([LuaOP.LOADS]), a = 6, b = 0, c = 0, bx = 1, sbx = 0 },
+      LuaInstr { op = as [u8]([LuaOP.LOADK]), a = 0, b = 0, c = 0, bx = 0, sbx = 0 },
+      LuaInstr { op = as [u8]([LuaOP.LOADK]), a = 1, b = 0, c = 0, bx = 1, sbx = 0 },
+      LuaInstr { op = as [u8]([LuaOP.LOADK]), a = 2, b = 0, c = 0, bx = 2, sbx = 0 },
+      LuaInstr { op = as [u8]([LuaOP.EQ]),    a = 7, b = 5, c = 6, bx = 0, sbx = 0 },
+      LuaInstr { op = as [u8]([LuaOP.JMPZ]),  a = 7, b = 0, c = 0, bx = 0, sbx = 4 },
+      LuaInstr { op = as [u8]([LuaOP.ADD]),   a = 0, b = 0, c = 2, bx = 0, sbx = 0 },
+      LuaInstr { op = as [u8]([LuaOP.LT]),    a = 8, b = 0, c = 1, bx = 0, sbx = 0 },
+      LuaInstr { op = as [u8]([LuaOP.JMPZ]),  a = 8, b = 0, c = 0, bx = 0, sbx = 1 },
+      LuaInstr { op = as [u8]([LuaOP.JMP]),   a = 0, b = 0, c = 0, bx = 0, sbx = -6 },
+      LuaInstr { op = as [u8]([LuaOP.RETURN]), a = 0, b = 0, c = 0, bx = 0, sbx = 0 }
+    }
+    var bench_regs [array [LuaValue] [9]] = {
+      LuaValue { bits = as [u64]([LuaTag.NIL]) },
+      LuaValue { bits = as [u64]([LuaTag.NIL]) },
+      LuaValue { bits = as [u64]([LuaTag.NIL]) },
+      LuaValue { bits = as [u64]([LuaTag.NIL]) },
+      LuaValue { bits = as [u64]([LuaTag.NIL]) },
+      LuaValue { bits = as [u64]([LuaTag.NIL]) },
+      LuaValue { bits = as [u64]([LuaTag.NIL]) },
+      LuaValue { bits = as [u64]([LuaTag.NIL]) },
+      LuaValue { bits = as [u64]([LuaTag.NIL]) }
+    }
+    var bench_tables [array [LuaTable] [1]] = {
+      LuaTable { array = as [ptr [LuaValue]](0), array_len = as [index](0), hash = as [ptr [LuaHashEntry]](0), hash_len = as [index](0) }
+    }
+    var bench_proto [LuaProto] = LuaProto { code = &bench_code[0], consts = &bench_consts[0], strings = &bench_strings[0] }
+    emit LuaProgram_run(&bench_proto, &bench_regs[0], &bench_tables[0];
+      done = done,
+      failed = failed
+    )
+  end
+
+  block done(result [LuaValue])
+    return as [i32](as [i64](result.bits >> as [u64]([LuaTag.SHIFT])) - as [i64](2000000))
   end
 
   block failed(code [i32], pc [index])

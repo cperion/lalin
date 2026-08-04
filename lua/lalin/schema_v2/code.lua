@@ -898,6 +898,7 @@ return schema. LalinCode {
     CodeContractWriteonly { variant_unique, base [LalinCode.CodeValueId], },
     CodeContractProjectionReadonly { variant_unique, base [LalinCode.CodeContractExpr], },
     CodeContractProjectionWriteonly { variant_unique, base [LalinCode.CodeContractExpr], },
+    CodeContractProjectionNoAlias { variant_unique, base [LalinCode.CodeContractExpr], },
     CodeContractInvalidate { variant_unique, base [LalinCode.CodeValueId], },
     CodeContractPreserve { variant_unique, base [LalinCode.CodeValueId], },
     CodeContractRejected { variant_unique, reason [str], },

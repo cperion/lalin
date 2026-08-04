@@ -428,6 +428,7 @@ return schema. LalinTree {
     ContractFactWriteonly { variant_unique, base [LalinBind.Binding], },
     ContractFactExprReadonly { variant_unique, base [LalinTree.Expr], },
     ContractFactExprWriteonly { variant_unique, base [LalinTree.Expr], },
+    ContractFactExprNoAlias { variant_unique, base [LalinTree.Expr], },
     ContractFactInvalidate { variant_unique, base [LalinBind.Binding], },
     ContractFactPreserve { variant_unique, base [LalinBind.Binding], },
     ContractFactRejected { variant_unique, issue [LalinCheck.TypeIssue], },

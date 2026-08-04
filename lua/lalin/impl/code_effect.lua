@@ -52,6 +52,9 @@ end
 function Code.CodeContractProjectionWriteonly:contract_effect(input)
   return Effect.ContractEffects({ Effect.EffectWrite(Effect.EffectObjectUnknown("writeonly contract projection"), contract_evidence(input)) })
 end
+function Code.CodeContractProjectionNoAlias:contract_effect(input)
+  return contract_no_effect(input, "projection noalias contract is alias evidence")
+end
 function Code.CodeContractInvalidate:contract_effect(input)
   return Effect.ContractEffects({ Effect.EffectInvalidate(Effect.EffectObjectStore(self.base), contract_evidence(input)) })
 end

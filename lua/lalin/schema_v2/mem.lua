@@ -599,6 +599,7 @@ return schema. LalinMem {
     writeonly [many [LalinMem.MemContractValueEntry]],
     projection_readonly [many [LalinMem.MemContractProjectionEntry]],
     projection_writeonly [many [LalinMem.MemContractProjectionEntry]],
+    projection_noalias [many [LalinMem.MemContractProjectionEntry]],
     invalidates [many [LalinMem.MemContractValueEntry]],
     preserves [many [LalinMem.MemContractValueEntry]],
     rejected [many [LalinMem.MemContractRejectedEntry]],
@@ -615,6 +616,7 @@ return schema. LalinMem {
     writeonly [many [LalinMem.MemContractValueEntry]],
     projection_readonly [many [LalinMem.MemContractProjectionEntry]],
     projection_writeonly [many [LalinMem.MemContractProjectionEntry]],
+    projection_noalias [many [LalinMem.MemContractProjectionEntry]],
     invalidates [many [LalinMem.MemContractValueEntry]],
     preserves [many [LalinMem.MemContractValueEntry]],
     rejected [many [LalinMem.MemContractRejectedEntry]],
@@ -733,8 +735,9 @@ return schema. LalinMem {
   -- Alias/dependence relations and decisions are typed alternatives.
   product. MemSameStoreEntry { interned, a [LalinMem.MemObjectId], b [LalinMem.MemObjectId], proof [LalinMem.MemProof], },
   product. MemDisjointEntry { interned, a [LalinMem.MemObjectId], b [LalinMem.MemObjectId], proof [LalinMem.MemProof], },
+  product. MemNoAliasEntry { interned, object [LalinMem.MemObjectId], proof [LalinMem.MemProof], },
   product. MemAccessModeEntry { interned, object [LalinMem.MemObjectId], mode [LalinMem.MemAccessMode], proof [LalinMem.MemProof], },
-  product. MemRelationProjection { same_store [many [LalinMem.MemSameStoreEntry]], disjoint [many [LalinMem.MemDisjointEntry]], access_modes [many [LalinMem.MemAccessModeEntry]], },
+  product. MemRelationProjection { same_store [many [LalinMem.MemSameStoreEntry]], disjoint [many [LalinMem.MemDisjointEntry]], noalias [many [LalinMem.MemNoAliasEntry]], access_modes [many [LalinMem.MemAccessModeEntry]], },
   sum. MemObjectPairDecision {
     MemObjectPairIndependent { variant_unique, proof [LalinMem.MemProof], reason [str], },
     MemObjectPairDependent { variant_unique, reason [str], },

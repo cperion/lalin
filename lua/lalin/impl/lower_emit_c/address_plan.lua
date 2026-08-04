@@ -41,7 +41,7 @@ function C.CBackendDataPtr:cmat_cursor_type(_access)
 end
 function C.CBackendQualifiedDataPtr:cmat_cursor_type(_access)
   return CMat.CMatCCursorTypeReady(C.CBackendQualifiedDataPtr(
-    self.pointee, self.const_pointee, false, self.volatile_pointee))
+    self.pointee, self.const_pointee, self.restrict_ptr, self.volatile_pointee))
 end
 function C.CBackendType:cmat_cursor_type(access)
   return CMat.CMatCCursorTypeRejected(

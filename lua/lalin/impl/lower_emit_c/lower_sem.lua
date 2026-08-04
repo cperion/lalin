@@ -1082,7 +1082,7 @@ function Mem.MemObjectProvenance:lower_cmat_access_source(input)
     Lower.LowerCMatDirectAccessInput(input.fact.binding.access, input.values, expected))
 end
 function Mem.MemProvFieldPointer:lower_cmat_access_source(input)
-  local expected = C.CBackendDataPtr(input.fact.binding.ty:code_to_c_backend_type())
+  local expected = input.fact.binding:cmat_fragment_expected_ptr()
   return input.values:cmat_fragment_lookup(self.owner_value)
     :lower_cmat_field_access(input, self.ptr_field, expected)
 end
