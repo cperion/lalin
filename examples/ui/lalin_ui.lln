@@ -1,0 +1,780 @@
+--[=[
+LALIN UI — CANONICAL ARCHITECTURE
+=================================
+
+Status
+------
+
+This file is the architectural authority and future implementation spine for
+Lalin UI. The implementation belongs beneath this comment in this `.lln`
+document and in declarations staged into it. Do not create a second detached
+architecture document whose claims can drift away from the compiled program.
+
+`examples/ui/gallery_sdl3.lua` is the functionality and conformance reference.
+`lua/ui/asdl.lua` is a vocabulary and algorithm reference. `lua/mlui/` and
+`experiments/mlui/` are prototype evidence. None of those Lua/PVM, handwritten
+bytecode, or generated-C artifacts are architectural authority.
+
+Thesis
+------
+
+A UI is a state machine controlling a view.
+
+A component is a region machine. Its instance is a typed frame. Its semantic
+outcomes are continuations. Its view is a readonly projection of that frame.
+The view projection emits immediate layout declarations. The layout kernel
+solves those declarations and emits a flat renderer-independent command stream.
+A WebGL backend consumes that stream. The same emitted-C kernel runs natively or
+as Wasm.
+
+The complete cycle is:
+
+  host input bytes
+      -> InputMachine.decode
+      -> identity routing
+      -> component region resumes
+      -> typed frames change
+      -> readonly view regions execute
+      -> authored declaration stream
+      -> style resolution
+      -> measure and layout planning
+      -> solved scene
+      -> render and interaction command stream
+      -> WebGL / SDL / headless consumer
+      -> reported geometry
+      -> next host input batch
+
+The controlling direction never reverses:
+
+  machines mutate frames
+  views observe frames
+  layout observes view declarations
+  renderers consume physical commands
+  reported identity reconnects host input to machines
+
+The renderer does not invoke application callbacks. The layout kernel does not
+own widget behavior. A view does not mutate its frame. A widget helper does not
+create a hidden state store.
+
+Design laws
+-----------
+
+1. Region continuations are the semantic design vocabulary. Stored scalar tags
+   exist only at physical boundaries and have exactly one named consumer region.
+2. Every persistent machine is a struct or unique struct with qualified methods
+   and regions. There are no node-keyed semantic side tables.
+3. Every component instance has a typed frame. There is no generic model table,
+   property bag, widget-kind switch, or string event record.
+4. Every semantic outcome is a continuation. Nil, booleans, status strings, and
+   `{ kind = ... }` records are not control protocols.
+5. Views are readonly projections. They cannot update component state, focus,
+   scroll, text editing, or application data.
+6. Layout is immediate and bounded like Clay: declaration buffers and scratch
+   arenas are rebuilt when invalid, while persistent behavior remains in frames.
+7. The render product is a flat command buffer. WebGL is one consumer, not part
+   of view or layout semantics.
+8. Bytecode is a dense boundary image, not the object model. The canonical
+   operational model is typed Lalin structs and regions.
+9. Source, resolved, planned, solved, rendered, reported, and handled facts are
+   distinct worlds. Later facts are not attached to authored nodes.
+10. The full SDL3 gallery is the minimum functionality target. A label in the
+    gallery is not proof; conformance tests must demonstrate the behavior.
+
+Existing system: preserve and replace
+-------------------------------------
+
+Preserve these domain meanings from `lua/ui/asdl.lua`:
+
+  stable identities and explicit absence
+  environment classes, themes, scales, and conditional styles
+  authored boxes, text, paint, scrolling, interaction surfaces, focus scopes,
+    layers, overlays, modals, and composition patterns
+  flow, flex, grid, sizing, constraints, alignment, margins, padding, tracks,
+    spans, clipping, transforms, and geometry
+  text measures, lines, runs, glyphs, clusters, boundaries, hit tests, selection,
+    caret, composition, and IME facts
+  solved placement and flat draw/report commands
+  pointer, keyboard, text, focus, capture, drag/drop, and scrolling semantics
+  session/window lifecycle, dirty redraw scheduling, backend capabilities, and
+    explicit resource ownership
+  custom paint lines, paths, polygons, circles, arcs, curves, meshes, and images
+
+Replace these implementation shapes:
+
+  PVM phase runners, handler maps, `classof` routing, and external visitors
+  mutable Lua flow/flex/grid planning records
+  parallel layout/decor trees realigned by array position
+  generic option bags, callback bags, providers, and model tables
+  widget bundles, surface maps, string event kinds, and arbitrary metadata
+  source-tree rewriting to inject hover/focus/active state
+  weak semantic caches and node-keyed state maps
+  imperative text-field drawing after the normal render pass
+  handwritten numeric schemas duplicated between Lua, C headers, and generated C
+  broad advertised opcodes with silently missing implementations
+  callback-driven session loops whose outcomes are not visible in signatures
+
+Object-machine stack
+--------------------
+
+Lalin UI is a stack of small typed machines, not one universal interpreter.
+Each machine owns one instruction language, one retained store where necessary,
+one set of qualified protocols, and one output world.
+
+1. ProgramMachine
+   Owns validated immutable UI program images and their resource references.
+
+2. FrameMachine
+   Owns component frame storage and durable instance identities. It resolves a
+   frame handle to temporary typed access through qualified resolver regions.
+
+3. InputMachine
+   Consumes physical host input records and reported geometry. It routes one
+   event to one owning component identity and resumes that component's region.
+
+4. ViewMachine
+   Executes readonly component view regions and emits authored declarations into
+   a bounded declaration arena.
+
+5. StyleMachine
+   Normalizes authored style tokens and resolves theme/environment/state facts.
+
+6. MeasureMachine
+   Owns intrinsic measurement, text service interaction, and reusable measured
+   facts.
+
+7. LayoutMachine
+   Plans flow/flex/grid and produces concrete solved geometry.
+
+8. RenderMachine
+   Walks solved geometry and emits ordered draw and interaction commands.
+
+9. ReportMachine
+   Consumes interaction commands with clip/transform/layer stacks and produces
+   hit, focus, scroll, drag/drop, overlay, and modal geometry.
+
+10. BackendMachine
+    Owns physical GPU/text/image resources and consumes render commands. WebGL is
+    the universal backend target; SDL and headless consumers remain useful.
+
+The root runtime object owns these machines or explicit handles to them. It is
+not a generic context bag: every field names an authority needed across frames,
+and every operation is qualified to the machine that owns it.
+
+Canonical worlds and reuse frontiers
+------------------------------------
+
+A world changes exactly when the next reusable product must change.
+
+AuthoredUi
+  The component view regions have emitted identity, topology, style tokens, text
+  and paint references. It changes when frame-observable view structure changes.
+
+ExpandedUi
+  Staged component and composition families have expanded to primitive authored
+  declarations. This expansion normally happens at program build time; dynamic
+  view execution may emit already-expanded primitives.
+
+ValidUi
+  IDs are unique in their required scope; child ranges, references, resource
+  handles, stack structure, and declaration arities are valid.
+
+ImportedUi
+  The validated declaration image has durable runtime node and resource identity.
+
+StyledUi
+  Every authored token has become explicit layout, decor, text, and interaction
+  intent under a theme/environment/state input.
+
+MeasuredUi
+  Intrinsic sizes, baselines, wrapped text, glyph/cluster/boundary facts, flex
+  items, and grid needs are known. Measurement is not recomputed by solve.
+
+LaidOutUi
+  Every node has concrete border/content geometry and planned child placement for
+  the current viewport and retained scroll positions.
+
+RenderableUi
+  Ordered draw commands and interaction-surface commands are materialized.
+
+ReportedFrame
+  Render commands have been interpreted through clip, transform, scroll, layer,
+  overlay, and modal scopes to produce absolute visible interaction geometry.
+
+InteractiveFrame
+  A ReportedFrame plus current machine frames and a physical input batch.
+
+HandledFrame
+  Input has been routed and component continuations have completed. It names the
+  updated frame world and explicit redraw/effect/close requirements.
+
+A world may contain aligned lanes for partial reuse, but a phase consumes one
+named world rather than several unrelated arguments. Epochs and generations are
+owned by the machine whose mutation invalidates the next world.
+
+Identity and topology spine
+---------------------------
+
+The existing prototype duplicates topology through Auth, Layout, Decor, Solve,
+and then realigns branches by position. The canonical design uses one spine.
+
+A NodeSpine entry carries:
+
+  durable node identity
+  parent identity or root fact
+  first-child range and child count
+  authored order
+  component instance identity
+  optional content/resource handles represented by precise local products
+  source origin for diagnostics
+
+Layout, decor, text, interaction intent, measurement, planning, solved geometry,
+render commands, and report geometry are facets aligned to that spine. Grid item
+placement is a named aligned facet, not another parallel node tree.
+
+The spine is immutable for a validated/imported view generation. A dynamic view
+may generate a new spine generation, but no later phase mutates the old one.
+
+Component model
+---------------
+
+A component family is generated by Lua at build time and produces concrete
+monomorphic Lalin declarations. Runtime widget kinds do not exist.
+
+A concrete component owns:
+
+  a frame struct
+  a frame handle/store policy when instances are dynamic
+  one or more event regions
+  one readonly view region
+  precise child continuation contracts
+  initialization and retirement protocols when lifetime is dynamic
+
+Conceptual shape:
+
+  struct ButtonFrame
+    identity, machine position, enabled facts, pressed/capture facts, app payload
+  end
+
+  region Button.step(frame, event;
+    ignored, changed, activated, capture_requested, capture_released)
+
+  region Button.view(readonly frame, writer;
+    done, full(required), invalid_resource(resource))
+
+This notation illustrates ownership; actual signatures must collapse outcomes
+to what each caller acts upon. Strengthen inputs to delete impossible exits.
+
+Blocks are machine states. Jumps are transitions. Continuations are wires.
+A scalar machine-position tag may be stored in a frame because it must survive
+between host events; only that component's dispatch region consumes it. No other
+code switches on the tag.
+
+Parent/child composition uses sealed `call` when the child is an independently
+resumable actor/frame boundary. Use open `emit` only for local protocol
+abstraction that should become part of the parent's CFG.
+
+Input and routing
+-----------------
+
+Physical host input is stored/transported as a compact encoded record because it
+crosses an ABI and may be queued. Its opcode is consumed only by
+`InputMachine.decode`, whose continuations expose meaning immediately: pointer
+movement, press/release/cancel, wheel, key press/release, text input, IME editing,
+focus movement/loss, activation, cancellation, resize, timer, and close.
+
+The decoder is physical dispatch, not UI design vocabulary.
+
+Routing proceeds through explicit regions:
+
+  decode physical input
+  apply clip/layer/modal policy to reported geometry
+  resolve target identity
+  resolve owning component frame
+  resume the component machine
+  wire its continuations to parent/application machines
+  accumulate redraw/effect/session outcomes
+
+Input is never broadcast through every widget bundle. Identity routing chooses
+one owner, with explicit bubbling/capture continuations only where a component
+protocol declares them.
+
+The ReportMachine owns hit-stack ordering. The InputMachine owns routing policy.
+Components own semantic interpretation of input after routing.
+
+View projection
+---------------
+
+A view region receives readonly access to its component frame and a declaration
+writer. It emits an immediate sequence of primitive declarations:
+
+  begin/end node
+  flow/flex/grid/container facts
+  box sizing, margin, padding, gap, alignment, tracks, spans
+  text/content/resource references
+  interaction identity and role
+  scroll viewport
+  focus scope
+  layer, overlay anchor/placement, modal scope
+  custom paint references
+
+View execution may branch on frame fields because the frame controls the view.
+It may not change those fields. A declaration writer owns capacity and exposes
+continuations such as written/full/invalid-reference rather than returning nil.
+
+Widget factories are authoring conveniences that generate frame/view/controller
+declarations. They are not runtime bundle records.
+
+Style and theme
+---------------
+
+Style authoring may preserve the useful Tailwind-like staged surface, but Lua
+only generates concrete style-token records and component declarations.
+Runtime styles are monomorphic.
+
+Conditional style inputs are explicit facts: viewport class, scheme, motion,
+density, and observable component state. Source nodes are not rewritten to inject
+state wrappers. StyleMachine consumes a StyledUi request containing the exact
+state facet needed by each node.
+
+Normalization and resolution are separate typed projections:
+
+  authored tokens -> canonical declarations -> resolved numerical facts
+
+Each token/declaration leaf owns its operation. There is no atom handler map.
+Conflicting or unsupported declarations produce typed diagnostics; no silent
+fallback chooses an unrelated default.
+
+Layout kernel
+-------------
+
+The functionality target is Clay-like immediate layout with the richer behavior
+already demonstrated in `examples/ui`:
+
+  flow layout
+  row/column flex
+  wrapping
+  grow, shrink, and basis
+  fixed, hug, fill, fractional, min/max sizing
+  padding, margins, auto margins, gaps
+  main/cross/self alignment and baseline handling
+  grid fixed/fractional/auto/minmax tracks
+  explicit spans and implicit tracks
+  intrinsic and constrained text measurement
+  nested clipping and scrolling
+  floating layers and anchor-relative overlays
+  modal geometry
+  off-screen culling
+  stable identity hit testing
+  bounded preallocated working memory
+
+Planning is a typed projection. Flow plans, flex items/lines, grid track needs,
+resolved tracks, and item placements are named structs/facets. Solve consumes
+MeasuredUi and its plans; it does not rerun measurement or recreate planning in
+loose local tables.
+
+Layout algorithms may mutate private scratch buffers owned by LayoutMachine, but
+the semantic output is a new immutable world. Scratch memory is not semantic
+state and cannot carry facts across generations without explicit epochs.
+
+Text
+----
+
+Text is part of the normal view/layout/render pipeline, including editable text.
+There is no imperative overlay pass after ordinary rendering.
+
+The canonical text vocabulary includes:
+
+  text/content handles and owned stores
+  font/resource handles
+  measurement constraints and intrinsic size
+  shaped runs and glyph positions
+  wrapped lines and baselines
+  clusters and byte ranges
+  caret boundaries and affinity
+  hit-test and range geometry
+  selection ranges
+  composition ranges and underlines
+  caret rendering
+  direction, script, language, and fallback facts where supported
+
+TextField is a component machine whose frame owns edit selection, focus, drag,
+preferred x, composition, and scroll-to-caret state. Clipboard and IME operations
+are explicit host effects wired through continuations.
+
+The small universal kernel does not hide an ambient text callback registry.
+Text service is a named backend capability object. Build-time factories select
+a concrete capability family: minimal atlas text, SDL_ttf, browser/Wasm service,
+or a richer shaping service. Required facts remain visible in phase worlds.
+
+Scrolling
+---------
+
+A scroll viewport is structural, not inferred from an arbitrary overflow flag.
+Overflow style controls clipping policy; a Scroll component/frame owns retained
+offsets and scrollbar interaction.
+
+Layout computes viewport/content bounds and maximum offsets. The Scroll machine
+consumes wheel, keyboard, pointer/thumb drag, and content/viewport changes and
+updates its frame through continuations. Clamp behavior is owned by Scroll, not
+silently performed in a generic reducer.
+
+The view projection emits viewport and content declarations from the frame. The
+report contains visible clipped scroll geometry for the next input cycle.
+
+Focus, layers, overlays, and modals
+----------------------------------
+
+These are implemented protocols, not descriptive metadata.
+
+FocusMachine owns focus identity and scope traversal. Wrap, clamp, trap, and
+passthrough policies have distinct owning region behavior. Focus order follows
+visible declaration order unless a concrete component family declares another
+typed order.
+
+LayerMachine produces a deterministic total order from layer class, authored
+order, and stable identity. Rendering and hit testing consume the same order.
+
+Overlay layout resolves anchor identity and placement against solved geometry,
+including viewport fitting and the selected placement policy.
+
+Modal machines own opening, focus capture/restoration, cancellation, acceptance,
+and closure continuations. A modal barrier covers the applicable viewport and
+prevents lower-layer hit routing. Text and custom paint obey the same layer order.
+
+Drag and drop
+-------------
+
+Pointer capture is a machine protocol, not a boolean in a generic model.
+Drag source, pending drag, active drag, target/slot resolution, drop, cancellation,
+and capture loss are explicit regions over typed frames.
+
+Reported geometry supplies visible source/target/slot facts after clipping and
+layer ordering. Input routing resumes the drag owner and wires target outcomes.
+No surface maps or string event records are used.
+
+Paint
+-----
+
+Custom paint remains first-class typed view content. Replace flat numeric point
+arrays with named Point, PathSegment, Vertex, Stroke, Fill, Mesh, and Image
+records. Paint coordinates are local to the solved paint box; transform, clip,
+scroll, layer, and opacity are applied by the common command pipeline.
+
+Paint commands include line, polyline/path, polygon, circle, arc, Bezier, mesh,
+and image. Unsupported backend capability is a typed backend outcome, never a
+silently ignored command.
+
+Render and report command stream
+--------------------------------
+
+RenderableUi is a flat ordered stream suitable for cache-friendly C/Wasm
+execution. Its physical record may carry an opcode and fixed payload fields.
+That opcode is consumed only by RenderMachine/BackendMachine dispatch regions.
+
+The command meanings include:
+
+  box/rounded box/border
+  text glyph run
+  paint path/mesh/image
+  push/pop clip
+  push/pop transform
+  begin/end scroll
+  hit/focus/cursor geometry
+  drag source/drop target/drop slot geometry
+  begin/end focus scope
+  begin/end ordered layer
+  overlay anchor/placement result
+  modal barrier
+
+Render and report commands may be separate aligned streams when that improves
+backend batching, but they derive from one solved scene and one deterministic
+ordering spine. They are never parallel semantic trees that must rediscover
+alignment.
+
+The ReportMachine walks the report command stream with explicit bounded stacks
+for transforms, clips, scrolling, focus scopes, and layers. It produces typed
+arrays of visible geometry plus the chosen hover/cursor target.
+
+WebGL backend
+-------------
+
+WebGL is a replaceable physical consumer of RenderableUi, implemented by a small
+C/Wasm-facing backend plus host imports where Web APIs require them.
+
+The baseline renderer batches:
+
+  solid/rounded rectangles and borders as instanced quads
+  glyph runs through one or more atlas textures
+  images through texture handles
+  paint paths through generated triangles or backend path tessellation
+  clip rectangles through scissor/stencil policy
+  transforms through compact instance data
+
+The backend owns GPU buffers, textures, shaders, atlas generations, and device
+loss recovery. Those are backend resources, not semantic UI state.
+
+The browser host supplies pointer/keyboard/text/IME/clipboard/window/timing input
+and presents the WebGL canvas. Native hosts may consume the same command stream
+through SDL/GPU implementations. Headless tests consume it without rendering.
+
+Portable program image
+----------------------
+
+A received UI artifact contains two coordinated programs:
+
+  machine program: encoded region CFG for controller behavior
+  view program: readonly frame loads and declaration emission
+
+It also contains:
+
+  frame-layout descriptors
+  initial frame records
+  style/constants tables
+  strings/content/resource references
+  identity and ownership tables
+  source/debug origins
+  declared capacities and ABI requirements
+
+The bytecode is generated from one schema-owned Lalin representation. The same
+source generates or verifies:
+
+  the encoder
+  the decoder/validator
+  the C ABI header
+  the debug dumper
+  the version/fingerprint
+  exact record sizes, alignment, ranges, and endianness
+
+Do not maintain a Lua encoder, handwritten C header, and separate interpreter
+constants as three authorities.
+
+Machine bytecode is an admitted projection of typed Lalin region/Code facts, not
+a second source language. Its instruction set is limited to operations required
+by UI machines: frame loads/stores, scalar computation, bounds-checked buffer
+access, physical opcode dispatch, block transfer, sealed machine call, wire
+resume, declaration emission, host-effect request, and redraw/session control.
+
+View bytecode is readonly by verification. It cannot contain frame stores or
+host effects.
+
+The loader validates before installation:
+
+  magic, ABI version, endianness, pointer/index assumptions
+  section bounds and alignment
+  record arity and opcode ownership
+  frame layout sizes and field access ranges
+  control targets and continuation arity
+  child ranges and graph topology
+  unique identities and reference validity
+  style, text, paint, image, and font resource ranges
+  stack balance for emitted scopes
+  declared capacities and host capability requirements
+
+Validation has explicit continuations for accepted, malformed, unsupported ABI,
+missing capability, insufficient capacity, and invalid resource. Unsupported
+input is never partially installed.
+
+Memory and ownership
+--------------------
+
+The runtime is bounded and allocator-pluggable. Capacity is selected at build or
+installation time where possible. A program can be rejected/reserved once rather
+than exposing allocation failure on every declaration.
+
+Program bytes are immutable borrowed input after successful validation or copied
+into an owned ProgramStore by an explicit installation protocol.
+
+FrameStore owns component frame bytes and their handle namespace.
+ContentStore owns mutable text/content buffers.
+ResourceStore owns logical font/image handles.
+LayoutMachine owns per-generation declaration, style, measure, plan, and solve
+arenas.
+RenderMachine owns command buffers.
+BackendMachine owns GPU/runtime resources.
+
+Every durable cross-reference is a handle or checked offset. Temporary access is
+granted by owning resolver regions. Raw pointers stay inside trusted store/backend
+boundaries with explicit bounds and preservation/invalidation contracts.
+
+Incrementality and redraw
+-------------------------
+
+The baseline behavior is immediate: on a dirty frame, view declarations are
+emitted and layout/render products rebuilt into bounded arenas. Correctness does
+not depend on caches.
+
+Incremental reuse is added only at named world boundaries with explicit epochs:
+
+  unchanged program/image -> reuse ImportedUi
+  unchanged theme/env/component style facet -> reuse StyledUi lane
+  unchanged text/resource metrics and width constraints -> reuse MeasuredUi lane
+  unchanged viewport/container/scroll placement -> reuse LaidOutUi lane
+  unchanged solved scene/decor -> reuse RenderableUi lane
+
+A no-op machine transition does not request redraw. Timers and animations request
+redraw through explicit session continuations. Cache keys are typed generation
+facts owned by the invalidating machine, never arbitrary function argument tuples.
+
+Session and host protocol
+-------------------------
+
+A session is one pump machine, not a graph of callbacks. Its root region makes
+all lifecycle outcomes visible: installed/running, redraw requested, timer armed,
+effect requested, close requested, backend lost, program rejected, and stopped.
+
+A representative host-facing ABI is conceptually:
+
+  ui_install(program_bytes, config, resources)
+  ui_input(input_records, count)
+  ui_step(time, viewport)
+  ui_view_ops(out_pointer, out_count)
+  ui_effects(out_pointer, out_count)
+  ui_report(out_report)
+  ui_close()
+
+The actual Lalin API uses struct-owned functions/regions and typed continuations.
+The C ABI uses status/opcode scalars only at the foreign boundary and immediately
+routes them through their single owner.
+
+Effects
+-------
+
+Application machines may request physical effects such as clipboard get/set,
+IME start/update/stop, cursor change, URL/open, file dialog, audio command, timer,
+or application-defined host message. Effects are encoded only because they cross
+the host boundary. EffectMachine.decode is their single consumer.
+
+Effects never run during readonly view projection or layout. Their completion
+returns as physical input and resumes the requesting machine through its saved
+continuation identity.
+
+Diagnostics and observability
+-----------------------------
+
+Every machine owns precise diagnostics and source origins. Required categories:
+
+  malformed program/image
+  duplicate or invalid identity
+  invalid child/control/resource range
+  unsupported instruction or capability
+  declaration/style conflict
+  measure/text backend failure
+  declaration/layout/render capacity exhaustion
+  invalid continuation wiring
+  stale/missing frame or resource handle
+  unbalanced scope stack
+  impossible geometry and non-finite numbers
+  backend/device loss
+
+Debug projection can expose machine/frame identity, current block, view spine,
+resolved facets, measure plans, solved boxes, command ranges, report geometry,
+epochs, and source origins without changing semantic behavior.
+
+Conformance target: the SDL3 gallery
+------------------------------------
+
+The canonical system is not complete until the behavior represented by
+`examples/ui/gallery_sdl3.lua` is implemented and tested through the Lalin path:
+
+  buttons and disabled behavior
+  toolbar and panels
+  toggle, checkbox, and radio
+  slider, fader, value drag, and knob
+  animated meter and progress
+  list, listbox, tabs, menu, and select
+  property row and form field
+  single-line input and multiline text area
+  selection, caret, keyboard navigation, clipboard, and IME composition
+  split-pane dragging
+  scroll panel and scrollbar behavior
+  custom paint canvas
+  popup, overlay, tooltip, popover, and modal
+  hover/focus/active/selected/disabled styling
+  Tab/Shift-Tab traversal and scope policies
+  pointer capture and drag/drop
+  responsive environment/theme behavior
+  dirty redraw and animation scheduling
+  deterministic routed event logging or equivalent machine trace
+
+Known prototype gaps become required tests, not inherited behavior:
+
+  tabs must actually select visible content
+  theme selection must change the resolved theme
+  disabled typed input must gate editing
+  overlay placement must use anchor geometry
+  canvas pointer events must route correctly
+  Escape and arrow-key behavior must reach owning machines
+  focus traps/wrap/clamp/passthrough must execute
+  layer order must reorder both rendering and hit testing
+  modal barriers must cover the intended viewport
+  editable text must obey ordinary clip/layer ordering
+
+Validation strategy
+-------------------
+
+For each behavior retain:
+
+  one focused machine/frame/continuation test
+  one layout or report geometry test where geometry is the behavior
+  one emitted-C/GCC runtime test
+  one bytecode/Wasm or bytecode/native differential test where portability matters
+
+Differential law: for the same validated program, initial frames, viewport, text
+service results, time, and input sequence, native emitted-C execution and bytecode
+VM execution produce equivalent handled frames, effects, solved geometry, and
+render/report commands.
+
+Headless tests compare typed command/report products, not screenshots alone.
+WebGL golden tests cover batching, clipping, glyph atlas use, and device recovery.
+The gallery is an integration/conformance program, not the only test.
+
+Migration and implementation order
+----------------------------------
+
+1. Freeze this architecture and derive a feature matrix from the gallery/tests.
+2. Define Lalin physical structs for identity, geometry, bounded buffers, program
+   image ranges, frame layouts, input records, effects, and command records.
+3. Implement ProgramMachine validation and one generated ABI authority.
+4. Implement NodeSpine and primitive authored declaration writer.
+5. Port style normalization/resolution as struct-owned typed operations.
+6. Port flow measurement/planning/solve, then flex, then grid.
+7. Integrate text service and ordinary text commands before editable controls.
+8. Implement RenderMachine and ReportMachine with shared ordering/stack semantics.
+9. Implement InputMachine routing and the session pump.
+10. Port component families as concrete frames + controller/view regions: button,
+    toggle, numeric controls, collections, text fields, scrolling, layers/modal.
+11. Implement the bytecode projection/interpreter from the same region/Code facts.
+12. Implement WebGL/Wasm backend and differential tests.
+13. Move gallery functionality onto the Lalin path.
+14. Delete Lua/PVM and prototype MLUI paths only after public convergence.
+
+No compatibility shim translates old widget bundles or string events into the new
+runtime. During migration, the old gallery is a behavioral oracle running beside
+the new implementation, not an admitted input path.
+
+Definition of complete
+----------------------
+
+Lalin UI is complete when:
+
+  the machine/frame/continuation graph owns all interaction
+  readonly view regions produce all visible content including editable text
+  the typed world pipeline implements the full layout/report vocabulary
+  the gallery behavior is present without Lua semantic state or callback routing
+  one generated schema owns bytecode, validation, C ABI, and debug decoding
+  emitted C and the bytecode VM agree under differential tests
+  the C/Wasm core runs bounded and allocator-pluggable
+  WebGL renders the full command vocabulary
+  SDL/headless consumers remain possible
+  no hidden semantic side maps, string dispatch, generic contexts, or fallback
+    paths remain
+  every stored scalar tag names exactly one consumer region
+  every host-visible failure is a typed internal continuation before ABI encoding
+
+This is not “a UI library written in Lalin.” It is a stack of Lalin
+object-machines whose controller regions determine state, whose view regions
+project that state, and whose final physical command stream can be rendered
+everywhere.
+
+Implementation declarations follow this authority.
+]=]
