@@ -64,9 +64,27 @@ function Tr.ExprUnary:typecheck_tree_expr(input)
   return LCheck.TypeExprResult(nil, nil, {})
 end
 
+-- Minimal literal sugar: when one operand is an ExprLit and the other side pins a
+-- definite scalar type, adapt the literal to that type before the operator rule.
+local function adapt_operand_literal(input, result, expected_ty)
+  if expected_ty == nil or result.ty == expected_ty then return result end
+  if asdl.classof(result.expr) ~= Tr.ExprLit then return result end
+  local adapted = result.expr:typecheck_tree_expr_expected(
+    LCheck.TypeExpectedExprInput(input.scope, expected_ty))
+  if adapted.ty == nil then return result end
+  return adapted
+end
+
 function Tr.ExprBinary:typecheck_tree_expr(input)
   local lr = self.lhs:typecheck_tree_expr(input); if lr.ty == nil then return lr end
   local rr = self.rhs:typecheck_tree_expr(input); if rr.ty == nil then return rr end
+  if lr.ty ~= rr.ty then
+    local adapted_l = adapt_operand_literal(input, lr, rr.ty)
+    if adapted_l ~= lr then lr = adapted_l else
+      local adapted_r = adapt_operand_literal(input, rr, lr.ty)
+      if adapted_r ~= rr then rr = adapted_r end
+    end
+  end
   local result_ty = self.op:tree_check_result_type(lr.ty, rr.ty)
   if not result_ty:tree_check_is_void_type() then
     local lhs, rhs = lr.expr, rr.expr
@@ -85,6 +103,13 @@ end
 function Tr.ExprCompare:typecheck_tree_expr(input)
   local lr = self.lhs:typecheck_tree_expr(input); if lr.ty == nil then return lr end
   local rr = self.rhs:typecheck_tree_expr(input); if rr.ty == nil then return rr end
+  if lr.ty ~= rr.ty then
+    local adapted_l = adapt_operand_literal(input, lr, rr.ty)
+    if adapted_l ~= lr then lr = adapted_l else
+      local adapted_r = adapt_operand_literal(input, rr, lr.ty)
+      if adapted_r ~= rr then rr = adapted_r end
+    end
+  end
   local result_ty = self.op:tree_check_cmp_result(lr.ty, rr.ty)
   if not result_ty:tree_check_is_void_type() then
     return LCheck.TypeExprResult(Tr.ExprCompare(Tr.ExprTyped(result_ty), self.op, lr.expr, rr.expr), result_ty, {})
@@ -103,7 +128,8 @@ function Tr.ExprLogic:typecheck_tree_expr(input)
 end
 
 function Tr.ExprCast:typecheck_tree_expr(input)
-  local vr = self.value:typecheck_tree_expr(input); if vr.ty == nil then return vr end
+  local vr = self.value:typecheck_tree_expr_expected(
+    LCheck.TypeExpectedExprInput(input.scope, self.ty)); if vr.ty == nil then return vr end
   return LCheck.TypeExprResult(Tr.ExprCast(Tr.ExprTyped(self.ty), self.op, self.ty, vr.expr), self.ty, {})
 end
 
