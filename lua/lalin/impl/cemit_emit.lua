@@ -1222,7 +1222,7 @@ function C.CBackendHelperUse:c_emit_helper_lines()
   return lines
 end
 ----------------------------------------------------------------------
--- Helper ID/suffix vocabulary absorbed from the retired v1 emitter
+-- Helper ID/suffix vocabulary absorbed from the retired legacy emitter
 -- (emit_c_lower.lua).  The schema C backend owns helper identity
 -- generation; these leaf methods complete the missing classes.
 ----------------------------------------------------------------------
@@ -1344,7 +1344,7 @@ function C.CBackendHelperReduce:c_helper_id()
 end
 
 ----------------------------------------------------------------------
--- Helper body vocabulary absorbed from the retired v1 emitter
+-- Helper body vocabulary absorbed from the retired legacy emitter
 -- (emit_c_lower.lua).  Completes the schema C backend helper
 -- emission surface (uret computation, unsigned C types, intrinsic,
 -- boolean-normalize, atomic, typed memcpy/memset, scan/find/reduce,

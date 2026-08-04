@@ -147,7 +147,7 @@ function Sem.FieldLayoutFound:tree_check_dot_field_expr(input, base, dot)
   local field = self.layout
   -- Lower to a resolved field ref (offset + storage) so the code phase
   -- can emit field access directly; FieldByName would require a
-  -- separate sem_layout_resolve pass the v2 pipeline does not run.
+  -- separate sem_layout_resolve pass the canonical pipeline does not run.
   local ref = Sem.FieldByOffset(field.field_name, field.offset, field.ty, field.ty:sem_layout_storage())
   return LCheck.TypeExprResult(Tr.ExprField(Tr.ExprTyped(field.ty), base.expr, ref), field.ty, base.issues)
 end
@@ -277,7 +277,7 @@ function Sem.FieldLayoutFound:tree_check_dot_field_place(input, base, dot)
   local field = self.layout
   -- Lower to a resolved field ref (offset + storage) so the code phase
   -- can emit field access directly; FieldByName would require a
-  -- separate sem_layout_resolve pass the v2 pipeline does not run.
+  -- separate sem_layout_resolve pass the canonical pipeline does not run.
   local ref = Sem.FieldByOffset(field.field_name, field.offset, field.ty, field.ty:sem_layout_storage())
   return LCheck.TypePlaceResult(Tr.PlaceField(Tr.PlaceTyped(field.ty), base.place, ref), field.ty, base.issues)
 end
