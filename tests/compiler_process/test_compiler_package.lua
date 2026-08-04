@@ -27,7 +27,7 @@ assert(pkg.worlds[5].ty.type_name == "Report")
 
 local canonical_implementations = T.LalinCompiler.CompilerImplementationOwner():compiler_implementation_registry()
 assert(canonical_implementations.tree_code == T.LalinCompiler.TreeCodeCanonicalImplementation)
-assert(canonical_implementations.tree_code:implementation_module_name() == "lalin.tree_lower")
+assert(canonical_implementations.tree_code:implementation_module_name() == "lalin.impl.tree_code")
 
 local V2 = require("lalin.schema_v2")
 local schema_v2_implementations = V2.LalinCompiler.CompilerImplementationOwner():compiler_implementation_registry()

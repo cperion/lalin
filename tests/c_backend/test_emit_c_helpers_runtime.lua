@@ -1,12 +1,10 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local asdl = require("lalin.asdl")
-local Schema = require("lalin.schema")
-local T = asdl.context(); Schema(T)
-
+local T = require("lalin.schema_v2")
+require("lalin.impl.cemit_emit")
 local Core = T.LalinCore
 local C = T.LalinC
-local H = require("lalin.emit_c_helpers")(T)
 
 local function exec_ok(cmd)
     local r = os.execute(cmd)
@@ -25,7 +23,7 @@ local f64 = cty("ScalarF64")
 
 local helper_order, helper_seen = {}, {}
 local function use(spec)
-    local id = H.helper_id(spec)
+    local id = spec:c_helper_id()
     if not helper_seen[id.text] then
         helper_seen[id.text] = true
         helper_order[#helper_order + 1] = C.CBackendHelperUse(id, spec)
@@ -56,6 +54,7 @@ local store_i32 = use(C.CBackendHelperStore(C.CBackendMemoryAccess(i32, 1, C.CBa
 
 local function source(main_body)
     local lines = {
+        "#include <stdbool.h>",
         "#include <stdint.h>",
         "#include <stddef.h>",
         "#include <string.h>",
@@ -64,7 +63,7 @@ local function source(main_body)
         "",
     }
     for i = 1, #helper_order do
-        local hs = H.emit_helper(helper_order[i])
+        local hs = helper_order[i]:c_emit_helper_lines()
         for j = 1, #hs do lines[#lines + 1] = hs[j] end
     end
     lines[#lines + 1] = "int main(void) {"

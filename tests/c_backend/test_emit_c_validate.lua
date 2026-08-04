@@ -1,14 +1,12 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local asdl = require("lalin.asdl")
-local Schema = require("lalin.schema")
-local T = asdl.context(); Schema(T)
-
+local T = require("lalin.schema_v2")
+require("lalin.impl.lower_emit_c")
 local Core = T.LalinCore
 local C = T.LalinC
-local Validate = require("lalin.emit_c_validate")(T)
-local Helpers = require("lalin.emit_c_helpers")(T)
-local CodeType = require("lalin.code_type")(T)
+local Validate = require("lalin.impl.lower_emit_c.validate")
+local CodeType = require("lalin.impl.code_type")(T)
 local Coverage = require("lalin.emit_c_coverage")
 
 local i32 = C.CBackendScalar(Core.ScalarI32)
@@ -20,7 +18,7 @@ local a = C.CBackendLocal(C.CBackendLocalId("a"), C.CBackendName("a"), i32)
 local b = C.CBackendLocal(C.CBackendLocalId("b"), C.CBackendName("b"), i32)
 local r = C.CBackendLocal(C.CBackendLocalId("r"), C.CBackendName("r"), i32)
 local helper_spec = C.CBackendHelperIntBinary(Core.BinAdd, i32, C.CBackendIntWrap)
-local helper = C.CBackendHelperUse(Helpers.helper_id(helper_spec), helper_spec)
+local helper = C.CBackendHelperUse(helper_spec:c_helper_id(), helper_spec)
 local entry = C.CBackendBlock(
     C.CBackendLabel("entry"),
     {},
@@ -84,7 +82,7 @@ assert(has_issue(Validate.validate(C.CBackendUnit("m", target, { sig }, {}, {}, 
 
 local atomic_access = C.CBackendMemoryAccess(i32, 4, C.CBackendMayTrap, false, Core.AtomicSeqCst)
 local atomic_spec = C.CBackendHelperAtomicLoad(atomic_access)
-local atomic = C.CBackendHelperUse(Helpers.helper_id(atomic_spec), atomic_spec)
+local atomic = C.CBackendHelperUse(atomic_spec:c_helper_id(), atomic_spec)
 assert(has_issue(Validate.validate(C.CBackendUnit("m", CodeType.default_target({ dialect = "c99" }), {}, {}, {}, {}, { atomic }, {})), C.CBackendIssueInvalidTargetFeature), "invalid atomic feature reported")
 
 local td = C.CBackendStructDecl(C.CTypeId("m", "NoAssert"), { C.CBackendField(C.CBackendName("x"), i32, 0, 4, 4) }, nil, nil)

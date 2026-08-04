@@ -30,8 +30,7 @@ assert(asdl.classof(emitted) == CMat.CMatCEmitted)
 assert(asdl.classof(emitted.unit) == C.CBackendUnit)
 assert(#emitted.unit.funcs == 1 and #emitted.unit.funcs[1].body.blocks == 4)
 assert(#require("lalin.impl.lower_emit_c.validate").validate(emitted.unit).issues == 0)
-local source = require("lalin.emit_c_lower")(require("lalin.schema_v2"))
-  .emit_artifact(emitted.unit, {}).source
+local source = require("tests.c_backend.cemit_source").source(emitted.unit, target)
 assert(source:find("cmat_map", 1, true), "canonical CMat unit must remain source-emittable")
 
 local explicit_sink = Stencil.StencilSinkDef(

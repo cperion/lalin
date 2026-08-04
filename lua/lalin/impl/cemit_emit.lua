@@ -1207,7 +1207,8 @@ function C.CBackendHelperSpec:c_emit_helper_lines()
   local id = self:c_helper_id()
   local sig = self:c_helper_signature()
   local lines, ret = helper_header(id, sig)
-  self:c_emit_helper_body(lines, ret)
+  local uret = ((not sig.result:c_emit_is_void() and sig.result) or sig.params[1] or C.CBackendIndex):c_helper_unsigned_c_type()
+  self:c_emit_helper_body(lines, ret, uret)
   lines[#lines + 1] = "}"
   return lines
 end
@@ -1215,7 +1216,8 @@ end
 function C.CBackendHelperUse:c_emit_helper_lines()
   local sig = self.spec:c_helper_signature()
   local lines, ret = helper_header(self.id, sig)
-  self.spec:c_emit_helper_body(lines, ret)
+  local uret = ((not sig.result:c_emit_is_void() and sig.result) or sig.params[1] or C.CBackendIndex):c_helper_unsigned_c_type()
+  self.spec:c_emit_helper_body(lines, ret, uret)
   lines[#lines + 1] = "}"
   return lines
 end
@@ -1339,4 +1341,142 @@ function C.CBackendHelperFind:c_helper_id()
 end
 function C.CBackendHelperReduce:c_helper_id()
   return C.CBackendHelperId("ml_reduce_" .. self.op:c_helper_suffix() .. "_" .. self.ty:c_helper_suffix() .. "_a" .. tostring(self.align))
+end
+
+----------------------------------------------------------------------
+-- Helper body vocabulary absorbed from the retired v1 emitter
+-- (emit_c_lower.lua).  Completes the schema-v2 C backend helper
+-- emission surface (uret computation, unsigned C types, intrinsic,
+-- boolean-normalize, atomic, typed memcpy/memset, scan/find/reduce,
+-- layout-assert, and require-feature helper bodies).
+----------------------------------------------------------------------
+
+function C.CBackendType:c_emit_is_void() return false end
+function C.CBackendVoid:c_emit_is_void() return true end
+
+function C.CBackendType:c_helper_unsigned_c_type() return "uint64_t" end
+function C.CBackendIndex:c_helper_unsigned_c_type() return "uintptr_t" end
+function C.CBackendScalar:c_helper_unsigned_c_type()
+  if self.scalar == Core.ScalarBool or self.scalar == Core.ScalarI8 or self.scalar == Core.ScalarU8 then return "uint8_t" end
+  if self.scalar == Core.ScalarI16 or self.scalar == Core.ScalarU16 then return "uint16_t" end
+  if self.scalar == Core.ScalarI32 or self.scalar == Core.ScalarU32 then return "uint32_t" end
+  return "uint64_t"
+end
+
+function Core.Intrinsic:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return a1;" end
+function Core.IntrinsicTrap:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    abort();" end
+function Core.IntrinsicAssume:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    if (!a1) abort();" end
+function Core.IntrinsicSqrt:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")sqrt((double)a1);" end
+function Core.IntrinsicAbs:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return a1 < 0 ? (" .. ret .. ")((" .. uret .. ")0 - (" .. uret .. ")a1) : a1;" end
+function Core.IntrinsicFma:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")fma((double)a1, (double)a2, (double)a3);" end
+function Core.IntrinsicRotl:c_emit_helper_intrinsic_body(lines, ret, uret)
+  lines[#lines + 1] = "    unsigned int s = ((unsigned int)a2) & ((unsigned int)(sizeof(a1) * 8u - 1u));"
+  lines[#lines + 1] = "    return (" .. ret .. ")(((" .. uret .. ")a1 << s) | ((" .. uret .. ")a1 >> ((sizeof(a1)*8u - s) & (sizeof(a1)*8u - 1u))));"
+end
+function Core.IntrinsicRotr:c_emit_helper_intrinsic_body(lines, ret, uret)
+  lines[#lines + 1] = "    unsigned int s = ((unsigned int)a2) & ((unsigned int)(sizeof(a1) * 8u - 1u));"
+  lines[#lines + 1] = "    return (" .. ret .. ")(((" .. uret .. ")a1 >> s) | ((" .. uret .. ")a1 << ((sizeof(a1)*8u - s) & (sizeof(a1)*8u - 1u))));"
+end
+function Core.IntrinsicPopcount:c_emit_helper_intrinsic_body(lines, ret, uret)
+  lines[#lines + 1] = "    " .. uret .. " x = (" .. uret .. ")a1; unsigned int n = 0;"
+  lines[#lines + 1] = "    while (x) { n += (unsigned int)(x & 1u); x >>= 1; } return (" .. ret .. ")n;"
+end
+function Core.IntrinsicClz:c_emit_helper_intrinsic_body(lines, ret, uret)
+  lines[#lines + 1] = "    " .. uret .. " x = (" .. uret .. ")a1; unsigned int n = 0;"
+  lines[#lines + 1] = "    for (int i = (int)(sizeof(a1)*8u)-1; i >= 0; --i) { if ((x >> i) & 1u) break; ++n; } return (" .. ret .. ")n;"
+end
+function Core.IntrinsicCtz:c_emit_helper_intrinsic_body(lines, ret, uret)
+  lines[#lines + 1] = "    " .. uret .. " x = (" .. uret .. ")a1; unsigned int n = 0;"
+  lines[#lines + 1] = "    for (unsigned int i = 0; i < sizeof(a1)*8u; ++i) { if ((x >> i) & 1u) break; ++n; } return (" .. ret .. ")n;"
+end
+function Core.IntrinsicBswap:c_emit_helper_intrinsic_body(lines, ret, uret)
+  lines[#lines + 1] = "    " .. uret .. " x = (" .. uret .. ")a1, y = 0; for (unsigned int i = 0; i < sizeof(a1); ++i) { y = (y << 8) | (x & 255u); x >>= 8; } return (" .. ret .. ")y;"
+end
+function Core.IntrinsicFloor:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")floor((double)a1);" end
+function Core.IntrinsicCeil:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")ceil((double)a1);" end
+function Core.IntrinsicTruncFloat:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")trunc((double)a1);" end
+function Core.IntrinsicRound:c_emit_helper_intrinsic_body(lines, ret, uret) lines[#lines + 1] = "    return (" .. ret .. ")round((double)a1);" end
+
+function C.CBackendHelperIntrinsic:c_emit_helper_body(lines, ret, uret)
+  self.intrinsic:c_emit_helper_intrinsic_body(lines, ret, uret)
+end
+function C.CBackendHelperBoolNormalize:c_emit_helper_body(lines)
+  lines[#lines + 1] = "    return a1 ? 1u : 0u;"
+end
+
+function Core.AtomicRmwOp:c_emit_helper_atomic_rmw(lines) error("missing c_emit_helper_atomic_rmw leaf method", 2) end
+function Core.AtomicRmwAdd:c_emit_helper_atomic_rmw(lines) lines[#lines + 1] = "    return atomic_fetch_add_explicit(p, a2, memory_order_seq_cst);" end
+function Core.AtomicRmwSub:c_emit_helper_atomic_rmw(lines) lines[#lines + 1] = "    return atomic_fetch_sub_explicit(p, a2, memory_order_seq_cst);" end
+function Core.AtomicRmwAnd:c_emit_helper_atomic_rmw(lines) lines[#lines + 1] = "    return atomic_fetch_and_explicit(p, a2, memory_order_seq_cst);" end
+function Core.AtomicRmwOr:c_emit_helper_atomic_rmw(lines) lines[#lines + 1] = "    return atomic_fetch_or_explicit(p, a2, memory_order_seq_cst);" end
+function Core.AtomicRmwXor:c_emit_helper_atomic_rmw(lines) lines[#lines + 1] = "    return atomic_fetch_xor_explicit(p, a2, memory_order_seq_cst);" end
+function Core.AtomicRmwXchg:c_emit_helper_atomic_rmw(lines) lines[#lines + 1] = "    return atomic_exchange_explicit(p, a2, memory_order_seq_cst);" end
+
+function C.CBackendHelperAtomicLoad:c_emit_helper_body(lines, ret)
+  lines[#lines + 1] = "    _Atomic(" .. self.access.ty:c_emit_type() .. ")* p = (_Atomic(" .. self.access.ty:c_emit_type() .. ")*)a1;"
+  lines[#lines + 1] = "    return atomic_load_explicit(p, memory_order_seq_cst);"
+end
+function C.CBackendHelperAtomicStore:c_emit_helper_body(lines)
+  lines[#lines + 1] = "    _Atomic(" .. self.access.ty:c_emit_type() .. ")* p = (_Atomic(" .. self.access.ty:c_emit_type() .. ")*)a1;"
+  lines[#lines + 1] = "    atomic_store_explicit(p, a2, memory_order_seq_cst);"
+end
+function C.CBackendHelperAtomicRmw:c_emit_helper_body(lines, ret)
+  lines[#lines + 1] = "    _Atomic(" .. self.access.ty:c_emit_type() .. ")* p = (_Atomic(" .. self.access.ty:c_emit_type() .. ")*)a1;"
+  self.op:c_emit_helper_atomic_rmw(lines)
+end
+function C.CBackendHelperAtomicCas:c_emit_helper_body(lines, ret)
+  lines[#lines + 1] = "    _Atomic(" .. self.access.ty:c_emit_type() .. ")* p = (_Atomic(" .. self.access.ty:c_emit_type() .. ")*)a1;"
+  lines[#lines + 1] = "    " .. self.access.ty:c_emit_type() .. " old = *(" .. self.access.ty:c_emit_type() .. "*)a2;"
+  lines[#lines + 1] = "    atomic_compare_exchange_strong_explicit(p, (" .. self.access.ty:c_emit_type() .. "*)a2, a3, memory_order_seq_cst, memory_order_seq_cst);"
+  lines[#lines + 1] = "    return old;"
+end
+function C.CBackendHelperAtomicFence:c_emit_helper_body(lines)
+  lines[#lines + 1] = "    atomic_thread_fence(memory_order_seq_cst);"
+end
+
+function C.CBackendHelperTypedMemcpy:c_emit_helper_body(lines)
+  lines[#lines + 1] = "    memcpy(a1, a2, (size_t)" .. tostring(self.size) .. ");"
+end
+function C.CBackendHelperTypedMemset:c_emit_helper_body(lines)
+  lines[#lines + 1] = "    memset(a1, a2, (size_t)" .. tostring(self.size) .. ");"
+end
+function C.CBackendHelperLayoutAssert:c_emit_helper_body(lines)
+  lines[#lines + 1] = "    typedef char ml_size_assert[(sizeof(" .. C.CBackendNamed(self.assertion.id):c_emit_type() .. ") == " .. tostring(self.assertion.size) .. ") ? 1 : -1]; (void)sizeof(ml_size_assert);"
+end
+function C.CBackendHelperRequireFeature:c_emit_helper_body(lines)
+  lines[#lines + 1] = "    /* required target feature: " .. self.feature:c_helper_suffix() .. " - " .. tostring(self.reason):gsub("[\r\n]", " ") .. " */"
+end
+function C.CBackendHelperScan:c_emit_helper_body(lines, ret, uret)
+  local elem_ty = self.ty:c_emit_type()
+  lines[#lines + 1] = "    a1 = __builtin_assume_aligned(a1, " .. tostring(self.align) .. ");"
+  lines[#lines + 1] = "    a2 = __builtin_assume_aligned(a2, " .. tostring(self.align) .. ");"
+  lines[#lines + 1] = "    " .. elem_ty .. " acc = 0;"
+  if self.inclusive then
+    lines[#lines + 1] = "    for (ml_index i = 0; i < (ml_index)a3; i++) {"
+    lines[#lines + 1] = "        acc = (" .. elem_ty .. ")(" .. self.op:c_helper_expr("acc", "a2[i]") .. ");"
+    lines[#lines + 1] = "        a1[i] = acc;"
+    lines[#lines + 1] = "    }"
+  else
+    lines[#lines + 1] = "    for (ml_index i = 0; i < (ml_index)a3; i++) {"
+    lines[#lines + 1] = "        a1[i] = acc;"
+    lines[#lines + 1] = "        acc = (" .. elem_ty .. ")(" .. self.op:c_helper_expr("acc", "a2[i]") .. ");"
+    lines[#lines + 1] = "    }"
+  end
+end
+function C.CBackendHelperFind:c_emit_helper_body(lines, ret, uret)
+  lines[#lines + 1] = "    a1 = __builtin_assume_aligned(a1, " .. tostring(self.align) .. ");"
+  lines[#lines + 1] = "    for (ml_index i = 0; i < (ml_index)a2; i++) {"
+  lines[#lines + 1] = "        if (a1[i] " .. self.cmp:c_emit_cmp_op() .. " a3) return i;"
+  lines[#lines + 1] = "    }"
+  lines[#lines + 1] = "    return a2;"
+end
+function C.CBackendHelperReduce:c_emit_helper_body(lines, ret, uret)
+  local elem_ty = self.ty:c_emit_type()
+  lines[#lines + 1] = "    a1 = __builtin_assume_aligned(a1, " .. tostring(self.align) .. ");"
+  lines[#lines + 1] = "    " .. elem_ty .. " acc = " .. (self.identity_is_zero and "0" or "a1[0]") .. ";"
+  local start = self.identity_is_zero and "0" or "1"
+  lines[#lines + 1] = "    for (ml_index i = " .. start .. "; i < (ml_index)a2; i++) {"
+  lines[#lines + 1] = "        acc = (" .. elem_ty .. ")(" .. self.op:c_helper_expr("acc", "a1[i]") .. ");"
+  lines[#lines + 1] = "    }"
+  lines[#lines + 1] = "    return acc;"
 end

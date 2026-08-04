@@ -292,6 +292,7 @@ local fragment_exits = CMat.CMatCExitBindingProjection({
 })
 local target = C.CBackendTarget(
   C.CBackendC99, C.CBackendHostedNative, 64, 64, C.CBackendLittleEndian)
+
 local request = CMat.CMatCFragmentInput(
   materialization, code_func, { block_id }, block_id, target,
   external_values, fragment_accesses,
@@ -332,8 +333,7 @@ local unit = C.CBackendUnit(
   "counted_fragment", target, { c_sig }, {}, {}, {}, fragment.helpers, { c_func })
 local report = require("lalin.impl.lower_emit_c.validate").validate(unit)
 assert(#report.issues == 0)
-local source = require("lalin.emit_c_lower")(require("lalin.schema_v2"))
-  .emit_artifact(unit, {}).source
+local source = require("tests.c_backend.cemit_source").source(unit, target)
 local session, err = c_gcc.compile(source, {
   out_dir = "target/test_cmat_counted_fragment_gcc",
   stem = "counted_fragment",
@@ -463,8 +463,7 @@ local fold_unit = C.CBackendUnit(
   fold_fragment.helpers, { fold_func })
 local fold_report = require("lalin.impl.lower_emit_c.validate").validate(fold_unit)
 assert(#fold_report.issues == 0)
-local fold_source = require("lalin.emit_c_lower")(require("lalin.schema_v2"))
-  .emit_artifact(fold_unit, {}).source
+local fold_source = require("tests.c_backend.cemit_source").source(fold_unit, target)
 local fold_session, fold_err = c_gcc.compile(fold_source, {
   out_dir = "target/test_cmat_counted_fragment_gcc",
   stem = "counted_fold", opt = 3,
@@ -580,8 +579,7 @@ local function run_window(tag, boundary, expected, offset, step_magnitude,
     tag, target, { sig }, {}, {}, {}, emitted_fragment.helpers, { fn })
   local validation = require("lalin.impl.lower_emit_c.validate").validate(unit)
   assert(#validation.issues == 0)
-  local c_source = require("lalin.emit_c_lower")(require("lalin.schema_v2"))
-  .emit_artifact(unit, {}).source
+  local c_source = require("tests.c_backend.cemit_source").source(unit, target)
   local compiled, compile_err = c_gcc.compile(c_source, {
     out_dir = "target/test_cmat_counted_fragment_gcc", stem = tag, opt = 3,
   })
@@ -752,8 +750,7 @@ local function compile_bool_control(tag, sink_op, result, result_provenance)
     tag, target, { sig }, {}, {}, {}, fragment.helpers, { fn })
   local validation = require("lalin.impl.lower_emit_c.validate").validate(unit)
   assert(#validation.issues == 0)
-  local c_source = require("lalin.emit_c_lower")(require("lalin.schema_v2"))
-    .emit_artifact(unit, {}).source
+  local c_source = require("tests.c_backend.cemit_source").source(unit, target)
   local compiled, compile_err = c_gcc.compile(c_source, {
     out_dir = "target/test_cmat_counted_fragment_gcc", stem = tag, opt = 3,
   })
@@ -891,8 +888,7 @@ local compare_unit = C.CBackendUnit(
   compare_tag, target, { compare_sig }, {}, {}, {},
   compare_fragment.helpers, { compare_c_func })
 assert(#require("lalin.impl.lower_emit_c.validate").validate(compare_unit).issues == 0)
-local compare_source = require("lalin.emit_c_lower")(require("lalin.schema_v2"))
-.emit_artifact(compare_unit, {}).source
+local compare_source = require("tests.c_backend.cemit_source").source(compare_unit, target)
 local compare_session, compare_err = c_gcc.compile(compare_source, {
   out_dir = "target/test_cmat_counted_fragment_gcc", stem = compare_tag, opt = 3,
 })
@@ -1015,8 +1011,7 @@ local find_unit = C.CBackendUnit(
   find_tag, target, { find_sig }, {}, {}, {}, find_fragment.helpers, { find_func })
 local find_validation = require("lalin.impl.lower_emit_c.validate").validate(find_unit)
 assert(#find_validation.issues == 0)
-local find_source = require("lalin.emit_c_lower")(require("lalin.schema_v2"))
-  .emit_artifact(find_unit, {}).source
+local find_source = require("tests.c_backend.cemit_source").source(find_unit, target)
 local find_session, find_err = c_gcc.compile(find_source, {
   out_dir = "target/test_cmat_counted_fragment_gcc", stem = find_tag, opt = 3,
 })

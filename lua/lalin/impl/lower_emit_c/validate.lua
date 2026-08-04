@@ -475,7 +475,17 @@ function C.CBackendUnit:c_validate(input)
   local he,hi=build_relation(self.helpers,C.CBackendValidationHelperEntry,function(x)return x.id end,function(x)return x.id end,C.CBackendIssueDuplicateHelper)
   local relations=C.CBackendValidationRelations(C.CBackendValidationSignatureRelation(se),C.CBackendValidationFunctionRelation(fe),C.CBackendValidationGlobalRelation(ge),C.CBackendValidationExternRelation(ee),C.CBackendValidationHelperRelation(he))
   local root=C.CBackendValidationUnitInput(input,relations)
-  local rs={C.CBackendValidationReport(input.abi_issues),C.CBackendValidationReport(si),C.CBackendValidationReport(fi),C.CBackendValidationReport(gi),C.CBackendValidationReport(ei),C.CBackendValidationReport(hi)}
+  local coverage_issues = {}
+  local Coverage = require("lalin.emit_c_coverage")
+  local valid_coverage_status = Coverage.statuses()
+  for sum_name, table_ in pairs(Coverage.all_tables()) do
+    for variant, c in pairs(table_) do
+      if not valid_coverage_status[c.status] then
+        coverage_issues[#coverage_issues + 1] = C.CBackendIssueCoverageMissing(sum_name, variant)
+      end
+    end
+  end
+  local rs={C.CBackendValidationReport(input.abi_issues),C.CBackendValidationReport(coverage_issues),C.CBackendValidationReport(si),C.CBackendValidationReport(fi),C.CBackendValidationReport(gi),C.CBackendValidationReport(ei),C.CBackendValidationReport(hi)}
   for i=1,#self.sigs do rs[#rs+1]=self.sigs[i]:c_validate(root) end
   for i=1,#self.types do rs[#rs+1]=self.types[i]:c_validate(root) end
   for i=1,#self.globals do rs[#rs+1]=self.globals[i]:c_validate(root) end
