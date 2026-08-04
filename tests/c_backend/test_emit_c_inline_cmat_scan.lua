@@ -24,8 +24,10 @@ local artifact = lalin.emit_c(parsed, {
     h_path = dir .. "/prefix_sum.h",
 })
 
-assert(artifact.source:find("semantic scalar CMat kernel", 1, true), "scan loop must route through inline CMat")
-assert(artifact.source:find("semantic_cmat_load", 1, true), "CMat scan should own lane loads")
+-- Typed pipeline contract: the scan loop lowers to an inline CMat kernel
+-- fragment (frag_fn_<fn>_kernel_) owning the scan lane; no outlined stencil C.
+assert(artifact.source:find("frag_fn_prefix_sum_kernel_", 1, true), "scan loop must route through inline CMat")
+assert(artifact.source:find("_scan", 1, true), "CMat scan fragment should own the scan lane")
 assert(not artifact.source:find("ml_stencil_scan_n", 1, true), "main emit_c path must inline scan CMat, not outline stencil C")
 assert(not artifact.source:find("semantic vector main loop", 1, true), "old direct vector KernelEffect emitter must not be present")
 

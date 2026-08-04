@@ -19,6 +19,33 @@ end
 function LCheck.TypeValueLookupFound:typecheck_tree_value_type_or(fallback) return self.binding.ty end
 function LCheck.TypeValueLookupMissing:typecheck_tree_value_type_or(fallback) return fallback end
 
+function LCheck.TypeValueScope:typecheck_tree_lookup_type(name, fallback)
+  for i = #(self.types or {}), 1, -1 do
+    if self.types[i].name == name then return LCheck.TypeEntryLookupFound(self.types[i].ty) end
+  end
+  return LCheck.TypeEntryLookupMissing(fallback)
+end
+function LCheck.TypeEntryLookupFound:tree_region_resolved_type() return self.ty end
+function LCheck.TypeEntryLookupMissing:tree_region_resolved_type() return self.fallback end
+function LCheck.TypeEntryLookupFound:tree_region_lookup_leaf(_scope, _leaf) return self end
+function LCheck.TypeEntryLookupMissing:tree_region_lookup_leaf(scope, leaf)
+  return scope:typecheck_tree_lookup_type(leaf, self.fallback)
+end
+function Ty.TypeRef:tree_region_type_lookup(scope, fallback) return LCheck.TypeEntryLookupMissing(fallback) end
+function Ty.TypeRefPath:tree_region_type_lookup(scope, fallback)
+  local parts, names = self.path.parts or {}, {}
+  if #parts == 0 then return LCheck.TypeEntryLookupMissing(fallback) end
+  for i = 1, #parts do names[i] = parts[i].text end
+  return scope:typecheck_tree_lookup_type(table.concat(names, "."), fallback)
+    :tree_region_lookup_leaf(scope, parts[#parts].text)
+end
+function Ty.TypeRefGlobal:tree_region_type_lookup(scope, fallback)
+  return scope:typecheck_tree_lookup_type(self.type_name, fallback)
+end
+function Ty.TNamed:tree_region_resolve_type(scope)
+  return self.ref:tree_region_type_lookup(scope, self:tree_module_canonicalize(scope.module_name)):tree_region_resolved_type()
+end
+function Ty.Type:tree_region_resolve_type(scope) return self:tree_module_canonicalize(scope.module_name) end
 function LCheck.TypeModuleFacts:typecheck_tree_lookup_variant_name(type_name)
   for i = 1, #(self.variants or {}) do
     if self.variants[i].type_name == type_name then return LCheck.TypeVariantDefLookupFound(self.variants[i]) end
@@ -40,10 +67,9 @@ function LCheck.TypeVariantDefLookupMissing:typecheck_tree_lookup_variant_case(v
 end
 
 function LCheck.TypeVariantCase:typecheck_tree_payload_lookup()
-  if #self.fields == 1 then return LCheck.TypeVariantPayloadFound(self.fields[1].ty) end
-  if #self.fields > 1 then return LCheck.TypeVariantPayloadUnsupported(#self.fields) end
-  if self.payload:tree_check_is_void_type() then return LCheck.TypeVariantPayloadNone end
-  return LCheck.TypeVariantPayloadFound(self.payload)
+  local fields = self.fields or {}
+  if #fields == 0 then return LCheck.TypeVariantPayloadNone end
+  return LCheck.TypeVariantPayloadFields(fields)
 end
 
 function LCheck.TypeValueScope:typecheck_tree_add_value(name, ty, binding)
@@ -93,16 +119,12 @@ end
 function LCheck.TypeVariantPayloadNone:typecheck_tree_source_variant_arm(lookup, source_arm, input)
   return typecheck_source_variant_arm(lookup, source_arm, input, 0, {})
 end
-function LCheck.TypeVariantPayloadFound:typecheck_tree_source_variant_arm(lookup, source_arm, input)
+function LCheck.TypeVariantPayloadFields:typecheck_tree_source_variant_arm(lookup, source_arm, input)
+  local fields = self.fields or {}
   local binds = {}
-  if #(source_arm.binds or {}) >= 1 then binds[1] = Tr.VariantBind(source_arm.binds[1].name, self.ty) end
-  return typecheck_source_variant_arm(lookup, source_arm, input, 1, binds)
-end
-function LCheck.TypeVariantPayloadUnsupported:typecheck_tree_source_variant_arm(lookup, source_arm, input)
-  local issues = { LCheck.TypeIssueVariantPayloadUnsupported(lookup.def.type_name, source_arm.variant_name, self.field_count) }
-  local arm_result = typecheck_source_variant_arm(lookup, source_arm, input, #(source_arm.binds or {}), {})
-  for _, iss in ipairs(arm_result.issues or {}) do issues[#issues + 1] = iss end
-  return LCheck.TypeVariantArmResult(arm_result.arm, issues)
+  local count = math.min(#(source_arm.binds or {}), #fields)
+  for i = 1, count do binds[i] = Tr.VariantBind(source_arm.binds[i].name, fields[i].ty) end
+  return typecheck_source_variant_arm(lookup, source_arm, input, #fields, binds)
 end
 function LCheck.TypeVariantCaseLookupFound:typecheck_tree_source_variant_arm(source_arm, input)
   return self.case:typecheck_tree_payload_lookup():typecheck_tree_source_variant_arm(self, source_arm, input)

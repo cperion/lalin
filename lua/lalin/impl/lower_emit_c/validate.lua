@@ -198,6 +198,10 @@ function C.CBackendAtomGlobal:c_validate(input)
 end
 function C.CBackendAtomLiteral:c_validate(input) return C.CBackendValidationTypedResult(self.ty, self.ty:c_validate(input)) end
 function C.CBackendAtomNull:c_validate(input) return C.CBackendValidationTypedResult(self.ty, self.ty:c_validate(input)) end
+function C.CBackendAtomAddr:c_validate(input)
+  local r = self.place:c_validate(input)
+  return C.CBackendValidationTypedResult(C.CBackendDataPtr(r.ty), r.report)
+end
 function C.CBackendValidationGlobalFound:c_validation_type() return self.entry.global.ty end
 function C.CBackendValidationGlobalMissing:c_validation_type() return C.CBackendVoid end
 

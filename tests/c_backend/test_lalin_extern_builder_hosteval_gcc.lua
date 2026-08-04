@@ -2,7 +2,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 local lalin = require("lalin")
 local c_gcc = require("lalin.emit_c_compile")
-local Document = require("lalin.syntax.document")
+local Document = require("lalin.syntax_v2.document")
 
 local available, why = c_gcc.available()
 if not available then

@@ -818,6 +818,9 @@ function C.CBackendAtomLiteral:c_emit_atom()
   return "((" .. ty_name .. ")" .. raw_lit .. ")"
 end
 function C.CBackendAtomNull:c_emit_atom() return "NULL" end
+function C.CBackendAtomAddr:c_emit_atom()
+  return "(&" .. self.place:c_emit_place() .. ")"
+end
 
 ----------------------------------------------------------------------
 -- C.CBackendRValue → c_emit_rvalue

@@ -48,7 +48,7 @@ function Compiler.CompilerCBackendEmitted:compiler_emit_c_artifact()
       "c_backend_validate: " .. table.concat(messages, "; "))
   end
   local artifact = self.emitter:emit_module(self.backend.unit)
-  return Compiler.CompilerArtifactC(artifact.source, artifact.header)
+  return Compiler.CompilerArtifactC(artifact.source, artifact.header, self.backend.unit)
 end
 
 local function compile_validated(input)
@@ -103,6 +103,51 @@ function Sem.ClosureUnsupported:compiler_compile_after_closure(c_target)
   return Compiler.CompilerArtifactError("closure_convert: " .. self.reason)
 end
 
+-- Shared typed phase pipeline after a LalinTree.Module exists.  Both the
+-- source session and the parsed/builder sessions converge here; failures
+-- become typed artifacts, never a fallback to an un-typed module.
+local function compile_tree_module(tree_module, source_name, c_target)
+  -- Phase 1: Surface resolve
+  local surface_ok, m = pcall(function() return tree_module:surface_resolve() end)
+  if not surface_ok then
+    return Compiler.CompilerArtifactError("surface_resolve: " .. tostring(m))
+  end
+
+  -- Phase 2: typed closure conversion with the selected C target's host projection.
+  local host_target = c_target:host_target_model()
+  local cc_ok, closure_result = pcall(function() return m:closure_convert(Sem.ClosureModuleInput(host_target)) end)
+  if not cc_ok then return Compiler.CompilerArtifactError("closure_convert crashed: " .. tostring(closure_result)) end
+  return closure_result:compiler_compile_after_closure(c_target)
+end
+
+function Compiler.CompilerModuleInputParsedDocument:compile_session_module()
+  return require("lalin.syntax_v2.document").to_module(self.document, self.source_name)
+end
+function Compiler.CompilerModuleInputParsedDecls:compile_session_module()
+  return require("lalin.syntax_v2.document").to_module(self.decls, self.source_name)
+end
+function Compiler.CompilerModuleInputTree:compile_session_module()
+  return self.module
+end
+
+function Compiler.CompilerModuleInputParsedDocument:compile_session_source_name() return self.source_name end
+function Compiler.CompilerModuleInputParsedDecls:compile_session_source_name() return self.source_name end
+function Compiler.CompilerModuleInputTree:compile_session_source_name() return self.source_name end
+
+-- Leaf-owned compile-input routing: the typed entry values produce their
+-- own CompilerModuleInput leaf for the parsed session boundary.  The
+-- public boundary calls these; there is no external class dispatch.
+function T.LalinParse.ParsedDocument:compiler_module_input(name)
+  return Compiler.CompilerModuleInputParsedDocument(self, name)
+end
+function Tr.Module:compiler_module_input(name)
+  return Compiler.CompilerModuleInputTree(self, name)
+end
+
+function Compiler.CompilerArtifactC:compiler_require_c_artifact() return self end
+function Compiler.CompilerArtifactError:compiler_require_c_artifact()
+  error("emit_c: " .. tostring(self.message), 3)
+end
 function Compiler.CompilerSession:compile(c_target)
   local CodeType = require("lalin.code_type")(T)
   c_target = CodeType.normalize_target(c_target)
@@ -118,19 +163,21 @@ function Compiler.CompilerSession:compile(c_target)
   if not module_ok then
     return Compiler.CompilerArtifactError("to_module: " .. tostring(tree_module))
   end
-
-  -- Phase 1: Surface resolve
-  local surface_ok, m = pcall(function() return tree_module:surface_resolve() end)
-  if not surface_ok then
-    return Compiler.CompilerArtifactError("surface_resolve: " .. tostring(m))
-  end
-
-  -- Phase 2: typed closure conversion with the selected C target's host projection.
-  local host_target = c_target:host_target_model()
-  local cc_ok, closure_result = pcall(function() return m:closure_convert(Sem.ClosureModuleInput(host_target)) end)
-  if not cc_ok then return Compiler.CompilerArtifactError("closure_convert crashed: " .. tostring(closure_result)) end
-  return closure_result:compiler_compile_after_closure(c_target)
+  return compile_tree_module(tree_module, self.source_name, c_target)
 end
+
+function Compiler.CompilerParsedSession:compile(c_target)
+  local CodeType = require("lalin.code_type")(T)
+  c_target = CodeType.normalize_target(c_target)
+  local module_ok, tree_module = pcall(function()
+    return self.input:compile_session_module()
+  end)
+  if not module_ok then
+    return Compiler.CompilerArtifactError("to_module: " .. tostring(tree_module))
+  end
+  return compile_tree_module(tree_module, self.input:compile_session_source_name(), c_target)
+end
+
 
 
 -- Compile a successful C artifact through the public IO boundary.
@@ -233,7 +280,6 @@ char *dlerror(void);
   end
 
   -- Build session object
-  -- Build session object
   local session = {
     _handle = handle,
     _freed = false,
@@ -246,6 +292,16 @@ char *dlerror(void);
     _gcc_output = gcc_output,
     _source = source,
     _header = header,
+    -- Public runtime handle contract shared with the emit_c surface.
+    c_path = c_path,
+    so_path = so_path,
+    artifact = {
+      kind = "CBackendArtifact",
+      source = source,
+      header = header,
+      combined = source,
+      support = "",
+    },
   }
 
   function session:symbol(name, ctype)
@@ -294,6 +350,16 @@ function Compiler.CompilerSession:compile_gcc(opts)
   local CodeType = require("lalin.code_type")(T)
   local target = CodeType.normalize_target(opts.c_target or opts.target or opts)
   return self:compile(target):compile_gcc_artifact(opts, self.source_name, self.source_text)
+end
+
+function Compiler.CompilerParsedSession:compile_gcc(opts)
+  opts = opts or {}
+  local CodeType = require("lalin.code_type")(T)
+  local target = CodeType.normalize_target(opts.c_target or opts.target or opts)
+  local source_name = self.input:compile_session_source_name()
+  -- No source text: the parsed input owns its typed module; the GCC artifact
+  -- boundary only needs the source name for artifact stems.
+  return self:compile(target):compile_gcc_artifact(opts, source_name, nil)
 end
 
 return Compiler

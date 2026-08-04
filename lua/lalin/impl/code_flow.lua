@@ -397,7 +397,22 @@ numeric_const = function(value, defs, consts, seen)
 end
 
 
-function Flow.FlowLoopDomainAbsent:append_native_loop_domain_facts()
+function Flow.FlowLoopIncreasing:flow_domain_order() return Flow.FlowDomainForward end
+function Flow.FlowLoopDecreasing:flow_domain_order() return Flow.FlowDomainBackward end
+function Flow.FlowLoopDomainAbsent:append_native_loop_domain_facts(
+    domain_shapes, domain_intents, loop_fact, defs, consts)
+  local counted = loop_fact.counted
+  if counted == nil then return self end
+  local step = numeric_const(counted.step, defs, consts)
+  if step == nil then return self end
+  local shape = Flow.FlowDomainShapeRange1D(
+    Code.CodeTyIndex, Value.ValueExprValue(counted.start), Value.ValueExprValue(counted.stop),
+    math.abs(step), counted.direction:flow_domain_order())
+  domain_shapes[#domain_shapes + 1] = Flow.FlowDomainShapeFact(
+    loop_fact.domain, shape, {}, Flow.FlowFactCheckerDerived)
+  domain_intents[#domain_intents + 1] = Flow.FlowDomainIntentFact(
+    loop_fact.domain, Flow.FlowDomainIntentNativeLoop("recognized counted region loop"),
+    {}, Flow.FlowFactCheckerDerived)
   return self
 end
 function Flow.FlowLoopDomainProjected:append_native_loop_domain_facts(
@@ -616,10 +631,16 @@ function Flow.FlowLoopDecreasing:flow_trip_difference(counted, idx_ty)
     Value.ValueExprValue(counted.start), Value.ValueExprValue(counted.stop), idx_ty)
 end
 
-function Flow.FlowStopConvention:flow_materialize_trip(counted, _defs, _consts, trip_expr, _trip_entry)
-  return Flow.FlowTripCountRejected(
-    Flow.FlowTripCountNotMaterialized(
-      "trip-count expression has no materialized CodeValueId"), trip_expr)
+function Flow.FlowStopConvention:flow_materialize_trip(_counted, _defs, _consts, trip_expr, _trip_entry)
+  return Flow.FlowTripCountExpression(trip_expr, nil)
+end
+function Flow.FlowStopInclusive:flow_materialize_trip(counted, defs, consts, trip_expr, _trip_entry)
+  local start = numeric_const(counted.start, defs, consts)
+  local step = numeric_const(counted.step, defs, consts)
+  if start == 0 and step == 1 then
+    return Flow.FlowTripCountExact(counted.stop, Value.ValueExprValue(counted.stop), nil)
+  end
+  return Flow.FlowTripCountExpression(trip_expr, nil)
 end
 function Flow.FlowStopExclusive:flow_materialize_trip(counted, defs, consts, trip_expr, trip_entry)
   local start = numeric_const(counted.start, defs, consts)
@@ -634,9 +655,7 @@ function Flow.FlowTripEntryFound:flow_materialize_exclusive_trip(_counted, trip_
   return Flow.FlowTripCountExact(self.value, trip_expr, nil)
 end
 function Flow.FlowTripEntryFallback:flow_materialize_exclusive_trip(_counted, trip_expr)
-  return Flow.FlowTripCountRejected(
-    Flow.FlowTripCountNotMaterialized(
-      "exclusive trip has no exact parsed-domain value"), trip_expr)
+  return Flow.FlowTripCountExpression(trip_expr, nil)
 end
 
 function Graph.CodeGraph:flow_graph_loop_projection()

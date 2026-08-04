@@ -65,10 +65,14 @@ local pipeline_facts = checked_pipeline:region_fact_projection()
 local pipeline_result = checked_pipeline:region_expand(Tr.RegionModuleExpansionInput(pipeline_facts))
 assert(asdl.isa(pipeline_result, Tr.RegionModuleExpanded))
 assert(#pipeline_result:region_issues() == 0)
--- Region items are frontend definitions consumed by expansion; only
--- executable items survive into the expanded module.
-assert(#pipeline_result.module.items == 1, "region items must be consumed by expansion")
-assert(#pipeline_result.module.items[1].func.body[1].region.blocks >= 3)
+-- Every region becomes a generated result type plus a sealed callable; the
+-- authored region definition itself does not leak into Code lowering.
+assert(#pipeline_result.module.items == 5, "two sealed regions must materialize two type/function pairs")
+assert(asdl.isa(pipeline_result.module.items[1], Tr.ItemType))
+assert(asdl.isa(pipeline_result.module.items[2], Tr.ItemFunc))
+assert(asdl.isa(pipeline_result.module.items[3], Tr.ItemType))
+assert(asdl.isa(pipeline_result.module.items[4], Tr.ItemFunc))
+assert(#pipeline_result.module.items[5].func.body[1].region.blocks >= 3)
 
 local inner_call = Tr.StmtRegionEmit(Tr.StmtSurface, "captured", inner_target, { lit(4) }, { captured_wire })
 local captured = inner_call:region_expand_invoke(input)

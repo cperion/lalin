@@ -329,6 +329,8 @@ return schema. LalinC {
       literal [LalinCore.Literal],
     },
     CBackendAtomNull { variant_unique, field. ty [LalinC.CBackendType], },
+    -- Address-of a place (used by byte-range payload access).
+    CBackendAtomAddr { variant_unique, place [LalinC.CBackendPlace], },
   },
   sum. CBackendRValue {
     CBackendRAtom { variant_unique, atom [LalinC.CBackendAtom], },

@@ -235,7 +235,7 @@ function Code.CodeInstByteSpanLen:code_validation_definition(input) return CV.Co
 function Code.CodeInstClosure:code_validation_definition(input) return CV.CodeValidationDefinesValue(self.dst, self.ty) end
 function Code.CodeInstVariantCtor:code_validation_definition(input) return CV.CodeValidationDefinesValue(self.dst, self.ty) end
 function Code.CodeInstVariantTag:code_validation_definition(input) return CV.CodeValidationDefinesValue(self.dst, self.tag_ty) end
-function Code.CodeInstVariantPayload:code_validation_definition(input) return CV.CodeValidationDefinesValue(self.dst, self.variant.payload_ty) end
+function Code.CodeInstVariantPayload:code_validation_definition(input) return CV.CodeValidationDefinesValue(self.dst, self.variant.fields[self.field_index].ty) end
 function Code.CodeInstCall:code_validation_definition(input) return input.signatures:code_sig_lookup(self.sig):code_validation_call_definition(self.dst) end
 function Code.CodeInstAtomicLoad:code_validation_definition(input) return CV.CodeValidationDefinesValue(self.dst, self.access.ty) end
 function Code.CodeInstAtomicRmw:code_validation_definition(input) return CV.CodeValidationDefinesValue(self.dst, self.access.ty) end
@@ -324,7 +324,7 @@ function Code.CodeInstByteSpanMake:code_validate(input) return append_step(value
 function Code.CodeInstByteSpanData:code_validate(input) return value_present(input, self.span) end
 function Code.CodeInstByteSpanLen:code_validate(input) return value_present(input, self.span) end
 function Code.CodeInstClosure:code_validate(input) return append_step(input.module_projection.signatures:code_sig_lookup(self.sig):code_validation_step(), append_step(value_present(input, self.fn), value_present(input, self.ctx))) end
-function Code.CodeInstVariantCtor:code_validate(input) if self.payload == nil then return empty_step() end return value_present(input, self.payload) end
+function Code.CodeInstVariantCtor:code_validate(input) return values_present(input, self.args) end
 function Code.CodeInstVariantTag:code_validate(input) return value_present(input, self.value) end
 function Code.CodeInstVariantPayload:code_validate(input) return value_present(input, self.value) end
 function Code.CodeInstCall:code_validate(input)

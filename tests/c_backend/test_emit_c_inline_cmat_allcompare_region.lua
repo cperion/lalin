@@ -8,13 +8,27 @@ local LuaErr = { EXPECT_TABLE = 101, EXPECT_INT_INDEX = 102, EXPECT_STRING_KEY =
 
 local src = assert(io.open("demo/lua_vm.lln", "r")):read("*a")
 local decls = assert(lalin.loadstring(src, "@demo/lua_vm.lln", { env = { LuaOP = LuaOP, LuaTag = LuaTag, LuaErr = LuaErr } }))
-local artifact = lalin.emit_c(decls, {
-  name = "inline_cmat_allcompare_region",
-  c_path = "target/test_emit_c_inline_cmat_allcompare_region/lua_vm.c",
-  h_path = "target/test_emit_c_inline_cmat_allcompare_region/lua_vm.h",
+local session, source = lalin.compile_c_gcc("sealed_recursive_lua_vm", decls, {
+  gcc_opts = { opt = 3, out_dir = "target/test_emit_c_sealed_recursive_region" },
 })
 
-assert(artifact.source:find("semantic scalar CMat kernel kernel:loop___lalin_region_call_LuaString_eq", 1, true), "LuaString.eq byte loop must lower through inline CMat")
-assert(artifact.source:find("v___lalin_region_call_LuaString_eq_field10[v___lalin_region_call_LuaString_eq_control_param_region_seal_LuaString_eq_loop_i] == v___lalin_region_call_LuaString_eq_field12[v___lalin_region_call_LuaString_eq_control_param_region_seal_LuaString_eq_loop_i]", 1, true), "LuaString.eq all-compare sink must emit the byte predicate")
+assert(source:find("LuaString_eq(", 1, true), "sealed LuaString.eq callable must be emitted")
+local dispatch_start = assert(source:find("LuaVM_dispatch(", 1, true))
+local dispatch_end = assert(source:find("LuaProgram_run(", dispatch_start + 1, true))
+local dispatch_body = source:sub(dispatch_start, dispatch_end - 1)
+assert(not dispatch_body:find("= LuaVM_dispatch(", 1, true),
+  "bytecode machine transitions must not recursively consume native frames")
+assert(source:find("= LuaVM_dispatch(", dispatch_end, true),
+  "LuaProgram.run must invoke the sealed VM machine boundary")
+assert(source:find("_all_compare", 1, true),
+  "LuaString.eq must materialize the typed all-compare CMat predicate")
+assert(source:find("_cursor_", 1, true),
+  "all-compare lane loads must advance through affine CMat cursors")
+assert(not source:find("v_LuaString_eq_index9 == v_LuaString_eq_index11", 1, true),
+  "CMat replacement must remove the baseline scalar byte predicate")
+local main = assert(session:symbol("main", "int32_t (*)(void)"))
+local status = tonumber(main())
+assert(status == 0, "compiled Lua VM bytecode program must execute to 42 (status=" .. tostring(status) .. ")")
+session:free()
 
-print("lalin emit_c inline CMat all-compare region ok")
+print("lalin Lua VM machine executed bytecode to 42 with constant-stack dispatch and CMat all-compare")

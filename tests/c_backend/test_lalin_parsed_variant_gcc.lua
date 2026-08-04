@@ -9,7 +9,7 @@ union MaybeI32
 end
 
 fn match_none() [i32] do
-  let value [MaybeI32] = MaybeI32::None()
+  let value [MaybeI32] = MaybeI32.None()
   switch value do
     case variant Some(payload) then
       return payload
@@ -21,7 +21,7 @@ fn match_none() [i32] do
 end
 
 fn match_payload() [i32] do
-  let value [MaybeI32] = MaybeI32::Some(42)
+  let value [MaybeI32] = MaybeI32.Some(42)
   switch value do
     case variant None then
       return 0
@@ -33,7 +33,7 @@ fn match_payload() [i32] do
 end
 
 fn match_default() [i32] do
-  let value [MaybeI32] = MaybeI32::None()
+  let value [MaybeI32] = MaybeI32.None()
   switch value do
     case variant Some(payload) then
       return payload

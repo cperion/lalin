@@ -229,7 +229,7 @@ function Code.CodeTypeDecl:lower_code_type_decl_to_c()
     local f = fields[i]
     -- Field names follow the emitted-C shape contract (__offset_N), the
     -- same naming CodePlaceField / aggregate-init emission uses.
-    cfields[i] = C.CBackendField(C.CBackendName("__offset_" .. tostring(f.offset)), f.ty:code_to_c_backend_type(), f.offset, nil, nil)
+    cfields[i] = C.CBackendField(C.CBackendName("__offset_" .. tostring(f.offset)), f.ty:code_to_c_backend_type(), f.offset, nil, f.align)
   end
   return C.CBackendStructDecl(self.ty:lower_c_decl_id(self.name), cfields, self.size, self.align)
 end

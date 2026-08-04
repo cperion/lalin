@@ -1282,8 +1282,8 @@ local function type_decl(name, body, union)
         local vars = {}
         for i, v in ipairs(body or {}) do
             local pname, payload = payload_like(v, "union alternative")
-            if pname then vars[i] = Ty.VariantDecl(pname, scalar_type("void"), field_items(payload))
-            elseif symbol_text(v, "union alternative") then vars[i] = Ty.VariantDecl(symbol_text(v, "union alternative"), scalar_type("void"), {})
+            if pname then vars[i] = Ty.VariantDecl(pname, field_items(payload))
+            elseif symbol_text(v, "union alternative") then vars[i] = Ty.VariantDecl(symbol_text(v, "union alternative"), {})
             else die("union expects alternatives", 2) end
         end
         return Tr.TypeDeclTaggedUnionSugar(name, vars)

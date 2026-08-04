@@ -1351,6 +1351,7 @@ return schema. LalinStencil {
   sum. StencilKernelTripCount {
     StencilKernelTripExact { variant_unique, trip_count [LalinFlow.FlowTripCountExact], },
     StencilKernelTripNonNegative { variant_unique, trip_count [LalinFlow.FlowTripCountNonNegative], },
+    StencilKernelTripExpression { variant_unique, trip_count [LalinFlow.FlowTripCountExpression], },
   },
   sum. StencilKernelDomainProvenance {
     StencilKernelCountedDomain1D {

@@ -269,12 +269,12 @@ function cursor_address_plan()
   local output_basis = Lower.LowerCMatAddressBasis(lane.base, induction, 8)
   local input_cursor = CMat.CMatCAddressCursor(
     CMat.CMatCAddressCursorId("counted_fragment_cursor_input"), input_basis,
-    input_param, C.CBackendLocal(
+    input_param, CMat.CMatCFragmentAccessDirect(input_param), C.CBackendLocal(
       C.CBackendLocalId("counted_fragment_cursor_input"),
       C.CBackendName("counted_fragment_cursor_input"), c_ptr), start, 4)
   local output_cursor = CMat.CMatCAddressCursor(
     CMat.CMatCAddressCursorId("counted_fragment_cursor_output"), output_basis,
-    out_param, C.CBackendLocal(
+    out_param, CMat.CMatCFragmentAccessDirect(out_param), C.CBackendLocal(
       C.CBackendLocalId("counted_fragment_cursor_output"),
       C.CBackendName("counted_fragment_cursor_output"), c_ptr), start, 8)
   return CMat.CMatCAddressPlan(spine, iteration,

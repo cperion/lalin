@@ -23,13 +23,21 @@ function Ty.TypeMemLayoutKnown:is_layout_known() return true end
 
 function B.ValueEntry:is_value_entry() return true end
 function B.TypeEntry:is_type_entry() return true end
+function B.ValueEntry:typecheck_append_module_scope(value_entries, _type_entries)
+  value_entries[#value_entries + 1] = self
+end
+function B.TypeEntry:typecheck_append_module_scope(_value_entries, type_entries)
+  type_entries[#type_entries + 1] = self
+end
 
 local function is_value_entry(x) return type(x) == 'table' and x.is_value_entry and x:is_value_entry() end
 local function is_type_entry(x) return type(x) == 'table' and x.is_type_entry and x:is_type_entry() end
 
 local function path_type_name(path)
   if not path or not path.parts or #path.parts == 0 then return nil end
-  return path.parts[1].text or path.parts[1].name
+  local names = {}
+  for i = 1, #path.parts do names[i] = path.parts[i].text or path.parts[i].name end
+  return table.concat(names, ".")
 end
 
 -- Module header name
@@ -143,7 +151,7 @@ function Tr.TypeDeclTaggedUnionSugar:tree_module_variant_defs(input)
   local variants = {}
   for i = 1, #(self.variants or {}) do
     local v = self.variants[i]
-    variants[#variants + 1] = LCheck.TypeVariantCase(v.name, i - 1, v.payload, v.fields or {})
+    variants[#variants + 1] = LCheck.TypeVariantCase(v.name, i - 1, v.fields or {})
   end
   return { LCheck.TypeVariantDef(self.name, Ty.TNamed(Ty.TypeRefGlobal(input.mod_name, self.name)), variants) }
 end
@@ -166,11 +174,11 @@ local function field_layout(fields, env, is_union, target)
     local size, align = 0, 1
     if r:is_layout_known() then size, align = r.layout.size, r.layout.align end
     if is_union then
-      out[#out+1] = Sem.FieldLayout(fields[i].field_name, 0, fields[i].ty)
+      out[#out+1] = Sem.FieldLayout(fields[i].field_name, 0, align, fields[i].ty)
       if size > max_size then max_size = size end; if align > max_align then max_align = align end
     else
       offset = align_up(offset, align)
-      out[#out+1] = Sem.FieldLayout(fields[i].field_name, offset, fields[i].ty)
+      out[#out+1] = Sem.FieldLayout(fields[i].field_name, offset, align, fields[i].ty)
       offset = offset + size; if align > max_align then max_align = align end
     end
   end
@@ -192,12 +200,12 @@ end
 function Tr.TypeDeclEnumSugar:tree_module_type_layout(input)
   local tag_ty = Ty.TScalar(C.ScalarU32)
   local tl = layout_api.result(tag_ty, input.env, input.target).layout
-  return {Sem.LayoutNamed(input.mod_name, self.name, {Sem.FieldLayout("__tag", 0, tag_ty)}, tl.size, tl.align)}
+  return {Sem.LayoutNamed(input.mod_name, self.name, {Sem.FieldLayout("__tag", 0, tl.align, tag_ty)}, tl.size, tl.align)}
 end
 function Tr.TypeDeclHandle:tree_module_type_layout(input)
   local rt = Ty.THandle(Ty.TypeRefGlobal(input.mod_name, self.name), self.repr)
   local layout = layout_api.result(rt, input.env, input.target).layout
-  return {Sem.LayoutNamed(input.mod_name, self.name, {Sem.FieldLayout("__handle", 0, rt)}, layout.size, layout.align)}
+  return {Sem.LayoutNamed(input.mod_name, self.name, {Sem.FieldLayout("__handle", 0, layout.align, rt)}, layout.size, layout.align)}
 end
 function Tr.TypeDeclTaggedUnionSugar:tree_module_type_layout(input)
   local tag_ty = Ty.TScalar(C.ScalarU32)
@@ -205,22 +213,15 @@ function Tr.TypeDeclTaggedUnionSugar:tree_module_type_layout(input)
   local payload_size, payload_align = 0, 1
   for i = 1, #self.variants do
     local v = self.variants[i]
-    local sz, al
-    if #(v.fields or {}) > 0 then
-      local _, fsz, fal = field_layout(v.fields, input.env, false, input.target)
-      sz, al = fsz, fal
-    else
-      local r = layout_api.result(v.payload, input.env, input.target)
-      local l = r:is_layout_known() and r.layout or Sem.MemLayout(0, 1)
-      sz, al = l.size, l.align
-    end
+    local _, fsz, fal = field_layout(v.fields or {}, input.env, false, input.target)
+    local sz, al = fsz, fal
     if sz > payload_size then payload_size = sz end; if al > payload_align then payload_align = al end
   end
-  local fields = {Sem.FieldLayout("__tag", 0, tag_ty)}
+  local fields = {Sem.FieldLayout("__tag", 0, tl.align, tag_ty)}
   local size, align = tl.size, tl.align
   if payload_size > 0 then
     local po = align_up(tl.size, payload_align)
-    fields[#fields+1] = Sem.FieldLayout("__payload", po, Ty.TArray(Ty.ArrayLenConst(payload_size), Ty.TScalar(C.ScalarU8)))
+    fields[#fields+1] = Sem.FieldLayout("__payload", po, payload_align, Ty.TArray(Ty.ArrayLenConst(payload_size), Ty.TScalar(C.ScalarU8)))
     size = po + payload_size; if payload_align > align then align = payload_align end
   end
   return {Sem.LayoutNamed(input.mod_name, self.name, fields, align_up(size, align), align)}
@@ -264,7 +265,7 @@ function Tr.Module:tree_module_env(target)
     end
     layouts = pass_layouts
   end
-  return {B.Env(mod_name, values, types, layouts)}
+  return B.Env(mod_name, values, types, layouts)
 end
 
 -- Pipeline entry point: typecheck the module.
@@ -277,38 +278,12 @@ function Tr.Module:typecheck(input)
   -- matching agree across phases.
   local mod_name = self.h and self.h.module_name or "module"
 
-  -- Build module-level scope from items (funcs, externs, consts, types)
+  -- Build module-level scope through item/entry leaves. Variant dispatch and
+  -- handle representation remain owned by their ASDL declaration leaves.
   local values, types = {}, {}
   for i = 1, #self.items do
-    local item = self.items[i]
-    local item_class = asdl.classof(item)
-    if item_class == Tr.ItemFunc then
-      local func = item.func
-      local ty = params_type(func.params, func.result, mod_name)
-      local binding = B.Binding(C.Id("func_"..mod_name.."_"..func.name), func.name, ty,
-        B.BindingRoleGlobalFunc(mod_name, func.name))
-      values[#values+1] = B.ValueEntry(func.name, binding)
-    elseif item_class == Tr.ItemExtern then
-      local f = item.func
-      values[#values+1] = B.ValueEntry(f.name,
-        B.Binding(C.Id("extern_"..f.name), f.name, params_type(f.params, f.result, ""),
-          B.BindingRoleExtern(f.symbol)))
-    elseif item_class == Tr.ItemConst then
-      local c = item.c
-      values[#values+1] = B.ValueEntry(c.name,
-        B.Binding(C.Id("const_"..mod_name.."_"..c.name), c.name, c.ty,
-          B.BindingRoleGlobalConst(mod_name, c.name)))
-    elseif item_class == Tr.ItemStatic then
-      local s = item.s
-      values[#values+1] = B.ValueEntry(s.name,
-        B.Binding(C.Id("static_"..mod_name.."_"..s.name), s.name, s.ty,
-          B.BindingRoleGlobalStatic(mod_name, s.name)))
-    elseif item_class == Tr.ItemType then
-      local t = item.t
-      if t.name then
-        types[#types+1] = B.TypeEntry(t.name, Ty.TNamed(Ty.TypeRefGlobal(mod_name, t.name)))
-      end
-    end
+    local entries = self.items[i]:tree_module_item_env_entries(Sem.TreeModuleEntryInput(mod_name))
+    for j = 1, #entries do entries[j]:typecheck_append_module_scope(values, types) end
   end
 
   local region_facts = self:region_fact_projection()

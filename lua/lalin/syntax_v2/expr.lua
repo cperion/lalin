@@ -238,10 +238,13 @@ local function atom(lex, ctx)
       end
       return Tree.ExprRef(Tree.ExprSurface, Bind.ValueRefName("__hole__"))
     end
-    -- Variant constructor: Type::Variant(args...)
-    if lex:next_if("::") then
-      local variant = lex:expect_name("variant constructor name")
-      lex:expect("(")
+    -- Qualified variant constructor: Type.Variant(args...). A dot followed
+    -- immediately by a member name and argument list is constructor syntax;
+    -- receiver methods use `:` and ordinary field projection remains postfix.
+    if lex:peek().value == "." and lex:peek(1).kind == "name" and lex:peek(2).value == "(" then
+      lex:next() -- consume `.`
+      local variant = lex:next()
+      lex:next() -- consume `(`
       local args = parse_expr_list(lex, ctx, ")")
       return Tree.ExprCtor(Tree.ExprSurface, t.value, variant.value, args)
     end

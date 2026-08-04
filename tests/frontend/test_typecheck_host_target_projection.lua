@@ -94,10 +94,12 @@ local artifact = lalin.emit_c(public_decls, {
         endian = "big",
     },
 })
-local public_target = artifact.checked.target
-local PublicHost = artifact.context.LalinHost
+-- Typed artifact contract: emit_c exposes the normalized CBackendTarget and
+-- the schema-v2 context so callers can inspect the host projection.
+local public_target = artifact.target
+local CB = package.loaded["lalin.schema_v2.c"]
 assert(public_target.pointer_bits == 32)
 assert(public_target.index_bits == 16)
-assert(public_target.endian == PublicHost.HostEndianBig)
+assert(public_target.endian == CB.CBackendBigEndian)
 
 io.write("lalin typecheck host target projection ok\n")

@@ -1,13 +1,20 @@
 -- lalin.loader
 --
 -- First-class .lln document loading.  A .lln file is a Lalin declaration
--- document rooted at Lalin.decls, not a Lua value chunk.  Loading returns an
--- ordered parsed declaration array (plus document metadata from loadstring /
--- loadfile), and .lln require caches that declaration array.
+-- document rooted at Lalin.decls, not a Lua value chunk.  Loading returns the
+-- typed schema-v2 document: the ordered ParsedDecl body array plus the
+-- LalinParse.ParsedDocument ASDL value that owns it, and .lln require caches
+-- that typed decl array.
+--
+-- The public loader uses lalin.syntax_v2 exclusively.  Parsing produces
+-- schema-v2 Parsed ASDL (LalinParse.ParsedDocument / ParsedDecl leaves, with
+-- bracket host evals already role-adapted into LalinType.Type and
+-- LalinTree.Expr values).  There is no dual parser, no fallback to the old
+-- lalin.syntax AST, and no adapter surface.
 
 local Loader = {}
 
-local syntax = require("lalin.syntax")
+local Document = require("lalin.syntax_v2.document")
 
 Loader.path = os.getenv("LALIN_PATH") or "./?.lln;./?/init.lln;lua/?.lln;lua/?/init.lln"
 
@@ -28,30 +35,18 @@ local function path_value(path_or_fn)
   return path_or_fn or Loader.path
 end
 
-local function default_env()
-  return require("lalin").dsl.make_env { no_namespaces = true }
-end
-
-local function merge_env(user_env)
-  local base = default_env()
-  if user_env == nil then return base end
-  local out = {}
-  for k, v in pairs(base) do out[k] = v end
-  for k, v in pairs(user_env) do out[k] = v end
+-- Parsed documents take their host environment from opts.env; syntax_v2 merges
+-- the bracket type vocabulary (i32, ptr, view, ...) beneath caller values.
+local function document_opts(opts)
+  local out = copy_opts(opts)
+  out.root_role = out.root_role or "decls"
   return out
 end
 
-local function document_opts(opts)
-  opts = copy_opts(opts)
-  opts.env = merge_env(opts.env)
-  opts.root_role = opts.root_role or "decls"
-  return opts
-end
-
 function Loader.loadstring(source, chunkname, opts)
-  local ok, decls, doc = pcall(syntax.load_document, source, chunkname or "=(lalin .lln)", document_opts(opts))
-  if not ok then return nil, decls end
-  return decls, doc
+  local ok, doc = pcall(Document.parse, source, chunkname or "=(lalin .lln)", document_opts(opts))
+  if not ok then return nil, doc end
+  return doc.body, doc
 end
 
 function Loader.loadfile(path, opts)

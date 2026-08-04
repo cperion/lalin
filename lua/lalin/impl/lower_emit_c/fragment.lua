@@ -140,8 +140,25 @@ function CMat.CMatCFragmentState:cmat_fragment_add_planned_local(c_local)
     self.values, self.streams, self.window, append(self.locals, c_local),
     self.entry_stmts, self.cfg, self.helpers, self.next_local)
 end
+function CMat.CMatCFragmentAccessDirect:cmat_fragment_install_base(state) return state end
+function C.CBackendDataPtr:cmat_fragment_owner_place(owner)
+  return C.CBackendPlaceDeref(C.CBackendAtomLocal(owner.id), self.pointee, nil)
+end
+function C.CBackendQualifiedDataPtr:cmat_fragment_owner_place(owner)
+  return C.CBackendPlaceDeref(C.CBackendAtomLocal(owner.id), self.pointee, nil)
+end
+function CMat.CMatCFragmentAccessField:cmat_fragment_install_base(state)
+  local owner_place = self.owner.ty:cmat_fragment_owner_place(self.owner)
+  local place = C.CBackendPlaceField(owner_place, C.CBackendName("__offset_" .. tostring(self.field.offset)),
+    self.pointer_ty, self.field.offset, nil, nil)
+  return state:cmat_fragment_add_planned_local(self.base)
+    :cmat_fragment_add_entry(C.CBackendPlaceLoad(self.base.id, place))
+end
 function CMat.CMatCAddressPlan:cmat_fragment_install(state)
   local next_state = state
+  for i = 1, #state.request.accesses.entries do
+    next_state = state.request.accesses.entries[i].source:cmat_fragment_install_base(next_state)
+  end
   for i = 1, #self.cursors do
     local cursor = self.cursors[i]
     local starts = {}
@@ -1748,17 +1765,57 @@ end
 function CMat.CMatCFragmentValueFound:cmat_fragment_bound_value(state, _expr)
   return CMat.CMatCFragmentBoundEmitted(state, self.entry.atom, self.entry.ty)
 end
+function CMat.CMatCFragmentBoundRejected:cmat_fragment_consider_bound(candidate) return candidate end
+function CMat.CMatCFragmentBoundEmitted:cmat_fragment_consider_bound(_candidate) return self end
+function Code.CodeInstOp:cmat_fragment_invariant_bound(_value, state)
+  return CMat.CMatCFragmentBoundRejected({ CMat.CMatCEmissionMissingValue(_value) })
+end
+function Code.CodeInstLoad:cmat_fragment_invariant_bound(value, state)
+  if self.dst ~= value then return CMat.CMatCFragmentBoundRejected({ CMat.CMatCEmissionMissingValue(value) }) end
+  return self.place:cmat_fragment_invariant_place(state, self.access.ty:code_to_c_backend_type(), value)
+end
+function Code.CodePlace:cmat_fragment_invariant_place(_state, _ty, value)
+  return CMat.CMatCFragmentBoundRejected({ CMat.CMatCEmissionMissingValue(value) })
+end
+function Code.CodePlaceField:cmat_fragment_invariant_place(state, ty, value)
+  return self.base:cmat_fragment_invariant_field(state, self.field, ty, value)
+end
+function Code.CodePlace:cmat_fragment_invariant_field(_state, _field, _ty, value)
+  return CMat.CMatCFragmentBoundRejected({ CMat.CMatCEmissionMissingValue(value) })
+end
+function Code.CodePlaceDeref:cmat_fragment_invariant_field(state, field, ty, value)
+  return state.request.values:cmat_fragment_lookup(self.addr)
+    :cmat_fragment_invariant_field_owner(state, field, ty, value)
+end
+function CMat.CMatCExternalValueBindingMissing:cmat_fragment_invariant_field_owner(_state, _field, _ty, value)
+  return CMat.CMatCFragmentBoundRejected({ CMat.CMatCEmissionMissingValue(value) })
+end
+function CMat.CMatCExternalValueBindingFound:cmat_fragment_invariant_field_owner(state, field, ty, _value)
+  local allocation = state:cmat_fragment_allocate("bound_field", ty)
+  local owner_place = self.entry.c_local.ty:cmat_fragment_owner_place(self.entry.c_local)
+  local place = C.CBackendPlaceField(owner_place, C.CBackendName("__offset_" .. tostring(field.offset)), ty, field.offset, nil, nil)
+  local next_state = allocation.state:cmat_fragment_add_entry(C.CBackendPlaceLoad(allocation.c_local.id, place))
+  return CMat.CMatCFragmentBoundEmitted(next_state, C.CBackendAtomLocal(allocation.c_local.id), ty)
+end
+function Code.CodeFunc:cmat_fragment_invariant_bound(value, state)
+  local found = CMat.CMatCFragmentBoundRejected({ CMat.CMatCEmissionMissingValue(value) })
+  for i = 1, #self.blocks do
+    for j = 1, #self.blocks[i].insts do
+      found = found:cmat_fragment_consider_bound(
+        self.blocks[i].insts[j].op:cmat_fragment_invariant_bound(value, state))
+    end
+  end
+  return found
+end
 function CMat.CMatCFragmentValueMissing:cmat_fragment_bound_value(state, expr)
-  return state.provenance.streams:cmat_fragment_lookup_source(expr.value)
-    :cmat_fragment_bound_source(state, expr)
+  return state.request.code_func:cmat_fragment_invariant_bound(expr.value, state)
 end
 function CMat.CMatCExternalValueBindingFound:cmat_fragment_bound_value(state, _expr)
   return CMat.CMatCFragmentBoundEmitted(
     state, C.CBackendAtomLocal(self.entry.c_local.id), self.entry.c_local.ty)
 end
 function CMat.CMatCExternalValueBindingMissing:cmat_fragment_bound_value(state, expr)
-  return state.provenance.streams:cmat_fragment_lookup_source(expr.value)
-:cmat_fragment_bound_source(state, expr)
+  return state.request.code_func:cmat_fragment_invariant_bound(expr.value, state)
 end
 function Value.ValueExprValue:cmat_fragment_bound(state)
   return state.request.values:cmat_fragment_lookup(self.value)
@@ -1788,6 +1845,9 @@ end
 function Stencil.StencilKernelTripNonNegative:cmat_fragment_trip(state)
   return Value.ValueExprValue(self.trip_count.count):cmat_fragment_bound(state)
     :cmat_fragment_trip_fallback(state, self)
+end
+function Stencil.StencilKernelTripExpression:cmat_fragment_trip(state)
+  return self.trip_count.expression:cmat_fragment_expr(state):cmat_fragment_bound_from_expr()
 end
 function CMat.CMatCFragmentBoundEmitted:cmat_fragment_trip_fallback(_state, _trip)
   return self
@@ -1930,9 +1990,14 @@ function CMat.CMatCFragmentWindowPlan:cmat_fragment_prepare_body(input)
 end
 function CMat.CMatCFragmentBoundEmitted:cmat_fragment_continue_trip(continuation)
   local materialization = continuation.plan:cmat_fragment_materialization()
-  local trip = materialization.provenance.iteration.trip:cmat_fragment_trip(self.state)
-  return trip:cmat_fragment_continue_body(CMat.CMatCFragmentTripContinuation(
-    continuation.plan, self, trip))
+  return materialization.provenance.iteration.trip:cmat_fragment_trip(self.state)
+    :cmat_fragment_continue_with_plan(continuation.plan, self)
+end
+function CMat.CMatCFragmentBoundRejected:cmat_fragment_continue_with_plan(_plan, _stop)
+  return CMat.CMatCFragmentRejected(self.issues)
+end
+function CMat.CMatCFragmentBoundEmitted:cmat_fragment_continue_with_plan(plan, stop)
+  return self:cmat_fragment_continue_body(CMat.CMatCFragmentTripContinuation(plan, stop, self))
 end
 function CMat.CMatCFragmentBoundRejected:cmat_fragment_continue_body(_continuation)
   return CMat.CMatCFragmentRejected(self.issues)
@@ -2642,12 +2707,13 @@ function Core.ScalarF64:cmat_fragment_size(_target) return 8 end
 function Core.ScalarIndex:cmat_fragment_size(target)
   return target.index_bits / 8
 end
-function Stencil.StencilAccessLayout:cmat_fragment_direct_stride() return 0 end
-function Stencil.StencilAccessDirect:cmat_fragment_direct_stride()
-  return self.base:cmat_fragment_direct_stride()
+function Stencil.StencilAccessLayout:cmat_fragment_direct_stride(_elem_size) return 0 end
+function Stencil.StencilAccessDirect:cmat_fragment_direct_stride(elem_size)
+  return self.base:cmat_fragment_direct_stride(elem_size)
 end
-function Stencil.StencilAccessLayoutBase:cmat_fragment_direct_stride() return 0 end
-function Stencil.StencilLayoutContiguous:cmat_fragment_direct_stride()
+function Stencil.StencilAccessLayoutBase:cmat_fragment_direct_stride(_elem_size) return 0 end
+function Stencil.StencilLayoutScalar:cmat_fragment_direct_stride(elem_size) return elem_size end
+function Stencil.StencilLayoutContiguous:cmat_fragment_direct_stride(_elem_size)
   return self.stride
 end
 
@@ -2812,7 +2878,7 @@ function CMat.CMatMaterializedKernelFragment:cmat_validate_fragment_materializat
       local provenance = self.provenance.accesses.entries[j]
       local expected_ty = provenance.access.ty:code_to_c_backend_type()
       local expected_size = expected_ty:cmat_fragment_size(request.target)
-      local expected_stride = provenance.access.layout:cmat_fragment_direct_stride()
+      local expected_stride = provenance.access.layout:cmat_fragment_direct_stride(expected_size)
       local contract_matches = 0
       for k = 1, #provenance.lane.backend_info do
         local info = provenance.lane.backend_info[k]

@@ -147,6 +147,11 @@ return schema. LalinFlow {
       trip_expr [optional [LalinValue.ValueExpr]],
       proof [optional [LalinMem.MemProof]],
     },
+    FlowTripCountExpression {
+      variant_unique,
+      expression [LalinValue.ValueExpr],
+      proof [optional [LalinMem.MemProof]],
+    },
     FlowTripCountRejected {
       variant_unique,
       reject [LalinFlow.FlowTripCountReject],

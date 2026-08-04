@@ -291,12 +291,22 @@ return schema. LalinCode {
   product. CodeArrayValue { interned, index [number], field. value [LalinCode.CodeValueId], },
 
   -- Variants and switches
+  product. CodeVariantField {
+    interned,
+    field_name [str],
+    field. ty [LalinCode.CodeType],
+    offset [number],
+  },
   product. CodeVariantRef {
     interned,
     owner_ty [LalinCode.CodeType],
     variant_name [str],
     tag_value [number],
-    payload_ty [optional [LalinCode.CodeType]],
+    -- Placement facts resolved from the tagged-union layout so the C
+    -- emission can address the flat __offset_N struct contract without a
+    -- second layout pass.
+    tag_offset [number],
+    fields [many [LalinCode.CodeVariantField]],
   },
   product. CodeVariantCase {
     interned,
@@ -501,18 +511,20 @@ return schema. LalinCode {
       dst [LalinCode.CodeValueId],
       field. ty [LalinCode.CodeType],
       variant [LalinCode.CodeVariantRef],
-      payload [optional [LalinCode.CodeValueId]],
+      args [many [LalinCode.CodeValueId]],
     },
     CodeInstVariantTag {
       variant_unique,
       dst [LalinCode.CodeValueId],
       tag_ty [LalinCode.CodeType],
       field. value [LalinCode.CodeValueId],
+      tag_offset [number],
     },
     CodeInstVariantPayload {
       variant_unique,
       dst [LalinCode.CodeValueId],
       variant [LalinCode.CodeVariantRef],
+      field_index [number],
       field. value [LalinCode.CodeValueId],
     },
     -- KEPT: optional dst on call (void calls and value calls share identical semantics)

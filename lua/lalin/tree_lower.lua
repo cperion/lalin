@@ -435,7 +435,7 @@ local function bind_context(T)
 
     function TL.TreeLowerVariant:tree_code_ref(input, owner_ty)
         local payload_ty = self:tree_code_payload_type(input)
-        return Code.CodeVariantRef(input:tree_code_type(owner_ty), self.name, self.tag, payload_ty and input:tree_code_type(payload_ty) or nil)
+        return Code.CodeVariantRef(input:tree_code_type(owner_ty), self.name, self.tag, payload_ty and input:tree_code_type(payload_ty) or nil, 0, 0)
     end
 
     function TL.TreeLowerInput:tree_code_variant_payload_type(variant)
@@ -1996,7 +1996,7 @@ local function bind_context(T)
             local tag_result = tree_code_input:tree_code_new_value("variant_tag")
             tree_code_input = tree_code_input:tree_code_with_result_state(tag_result)
             local tag = tag_result.value
-            tree_code_input = tree_code_input:tree_code_with_result_state(tree_code_input:tree_code_append_inst(Code.CodeInstVariantTag(tag, Code.CodeTyInt(32, Code.CodeUnsigned), value), origin_generated("variant tag")))
+            tree_code_input = tree_code_input:tree_code_with_result_state(tree_code_input:tree_code_append_inst(Code.CodeInstVariantTag(tag, Code.CodeTyInt(32, Code.CodeUnsigned), value, 0), origin_generated("variant tag")))
             local case_ids = {}
             local cases = {}
             for i = 1, #(stmt.variant_arms or {}) do
@@ -2172,7 +2172,7 @@ local function bind_context(T)
             local tag_result = tree_code_input:tree_code_new_value("variant_tag")
             tree_code_input = tree_code_input:tree_code_with_result_state(tag_result)
             local tag = tag_result.value
-            tree_code_input = tree_code_input:tree_code_with_result_state(tree_code_input:tree_code_append_inst(Code.CodeInstVariantTag(tag, Code.CodeTyInt(32, Code.CodeUnsigned), value), origin_generated("variant tag")))
+            tree_code_input = tree_code_input:tree_code_with_result_state(tree_code_input:tree_code_append_inst(Code.CodeInstVariantTag(tag, Code.CodeTyInt(32, Code.CodeUnsigned), value, 0), origin_generated("variant tag")))
             local result_ty = tree_code_input:tree_code_type(expr_type(expr))
             local result_value_result = tree_code_input:tree_code_new_value("switch_result")
             tree_code_input = tree_code_input:tree_code_with_result_state(result_value_result)

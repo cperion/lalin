@@ -242,6 +242,9 @@ end
 function Flow.FlowTripCountNonNegative:stencil_kernel_trip()
   return Stencil.StencilKernelTripNonNegative(self)
 end
+function Flow.FlowTripCountExpression:stencil_kernel_trip()
+  return Stencil.StencilKernelTripExpression(self)
+end
 function Flow.FlowTripCountRejected:stencil_kernel_trip()
   return Stencil.StencilKernelIterationRejected(Stencil.StencilKernelRejectedTripCount(self))
 end
@@ -284,6 +287,14 @@ function Flow.FlowTripCountNonNegative:stencil_kernel_iteration_with_trip(input)
     build.semantic.domain.start, build.semantic.domain.stop, build.semantic.domain.step,
     build.step.magnitude, build.semantic.domain.stop_convention:stencil_stop_convention(),
     input.order, Stencil.StencilKernelTripNonNegative(self)))
+end
+function Flow.FlowTripCountExpression:stencil_kernel_iteration_with_trip(input)
+  local build = input.iteration
+  return Stencil.StencilKernelIterationProjected(Stencil.StencilKernelIteration(
+    build.semantic.loop, build.induction.value, build.induction.ty,
+    build.semantic.domain.start, build.semantic.domain.stop, build.semantic.domain.step,
+    build.step.magnitude, build.semantic.domain.stop_convention:stencil_stop_convention(),
+    input.order, Stencil.StencilKernelTripExpression(self)))
 end
 
 function Stencil.StencilKernelInductionMissing:stencil_continue_iteration(_input)
@@ -836,7 +847,7 @@ function Value.ValueExpr:stencil_index_selection(input)
   return Stencil.StencilIndexExplicit(Stencil.StencilIndexPoint(input.index))
 end
 function Value.ValueExprValue:stencil_index_selection(input)
-  if self.value == input.iteration.counter then return Stencil.StencilIndexProducer end
+  if self.value.text == input.iteration.counter.text then return Stencil.StencilIndexProducer end
   return Stencil.StencilIndexExplicit(Stencil.StencilIndexPoint(input.index))
 end
 function Value.ValueExprCast:stencil_index_selection(input)
@@ -1214,7 +1225,8 @@ function Stencil.StencilKernelCountedDomain1D:stencil_prepare_result_lane(input)
   local definition = Stencil.StencilStreamDef(
     result.id, ty, Stencil.StencilStreamAccess(
       Stencil.StencilAccessRef(access.entry.access.name),
-      Stencil.StencilIndexExplicit(Stencil.StencilIndexPoint(expr.index))))
+      expr.index:stencil_index_selection(Stencil.StencilKernelIndexSelectionInput(
+        input.result.construction.state.iteration, expr.index))))
   local binding = Kernel.KernelBinding(
     Kernel.KernelValueId("kernel-result:" .. result.id.text), ty, expr)
   return Stencil.StencilKernelResultStreamPrepared(

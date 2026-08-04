@@ -833,8 +833,34 @@ union OptionI32
 end
 ```
 
-Variants may have named payload fields or no payload. Union payloads are durable
-stored data, so they cannot contain leases or owned obligations.
+Variants may have any number of named payload fields or no payload. Construct a
+variant by qualifying it with its union type using `.`:
+
+```lln
+let some [OptionI32] = OptionI32.Some(42)
+let none [OptionI32] = OptionI32.None()
+```
+
+A variant arm binds every payload field in declaration order:
+
+```lln
+union PairResult
+  Pair(left [i32], right [i32])
+  Empty
+end
+
+switch result do
+  case variant Pair(left, right) then
+    return left + right
+  case variant Empty then
+    return 0
+  default then
+    return -1
+end
+```
+
+Union payloads are durable stored data, so they cannot contain leases or owned
+obligations.
 
 ### Struct Protocols — Methods, Regions, Handles
 

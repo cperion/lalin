@@ -613,14 +613,22 @@ local function safety_for_object(objects, id)
   for _, fact in ipairs(objects) do if fact.id == id then return fact:access_safety() end end
   return Mem.MemAccessSafetyUnproven("resolved object fact is unavailable")
 end
-function Code.CodeMayTrap:memory_trap(safety) return Mem.MemMayTrap end
+function Code.CodeMayTrap:memory_trap(safety) return safety:refine_trap(Mem.MemMayTrap) end
 function Code.CodeMustNotTrap:memory_trap(safety) return Mem.MemNonTrapping("access is declared must-not-trap") end
 function Code.CodeCheckedTrap:memory_trap(safety) return Mem.MemCheckedTrap("access is explicitly checked") end
 function Mem.MemAccessSafetyProven:memory_bounds() return Mem.MemBoundsInObject(self.reason) end
 function Mem.MemAccessSafetyUnproven:memory_bounds() return Mem.MemBoundsUnknown(self.reason) end
 function Mem.MemAccessSafetyProven:refine_trap(trap) return Mem.MemNonTrapping(self.reason) end
 function Mem.MemAccessSafetyUnproven:refine_trap(trap) return trap end
-function Mem.MemPlaceResolved:memory_safety(input) return safety_for_object(input.facet.objects, self.object) end
+function Mem.MemPlaceDiscoveries:memory_safety_for(object_id, baseline)
+  for i = 1, #(self.objects or {}) do
+    if self.objects[i].id == object_id then return self.objects[i]:access_safety() end
+  end
+  return safety_for_object(baseline, object_id)
+end
+function Mem.MemPlaceResolved:memory_safety(input)
+  return self.discoveries:memory_safety_for(self.object, input.facet.objects)
+end
 function Mem.MemPlaceUnresolved:memory_safety(input) return Mem.MemAccessSafetyUnproven(self.reason) end
 function Mem.MemPlaceResolved:memory_object_lookup() return Mem.MemObjectFound(self.object) end
 function Mem.MemPlaceUnresolved:memory_object_lookup() return Mem.MemObjectMissing(Mem.MemAccessId("unresolved-place")) end
@@ -663,7 +671,81 @@ local function transfer_access(op_node, input, op, place, access)
   local next_facet = Mem.MemTransferFacet(facet.values, facet.locals, facet.constants, facet.index_offsets, loaded, facet.scaled_strides, append_all(facet.objects, resolved.discoveries.objects), append_one(facet.accesses, fact), append_one(facet.dependence_accesses, dependence), facet.intervals, facet.safety, append_all(facet.relations, resolved.discoveries.relations), append_one(facet.backend, backend), append_all(append_one(facet.proofs, proof), resolved.discoveries.proofs))
   return Mem.MemTransferUpdated(next_facet)
 end
-function Code.CodeInstLoad:transfer_memory(input) return transfer_access(self, input, Mem.MemLoad, self.place, self.access) end
+
+function Code.CodePlace:memory_contract_same_place(_other) return false end
+function Code.CodePlaceLocal:memory_contract_same_place(other) return other:memory_contract_same_local(self) end
+function Code.CodePlaceGlobal:memory_contract_same_place(other) return other:memory_contract_same_global(self) end
+function Code.CodePlaceData:memory_contract_same_place(other) return other:memory_contract_same_data(self) end
+function Code.CodePlaceDeref:memory_contract_same_place(other) return other:memory_contract_same_deref(self) end
+function Code.CodePlaceField:memory_contract_same_place(other) return other:memory_contract_same_field(self) end
+function Code.CodePlaceIndex:memory_contract_same_place(other) return other:memory_contract_same_index(self) end
+function Code.CodePlaceBytes:memory_contract_same_place(other) return other:memory_contract_same_bytes(self) end
+function Code.CodePlace:memory_contract_same_local(_place) return false end
+function Code.CodePlace:memory_contract_same_global(_place) return false end
+function Code.CodePlace:memory_contract_same_data(_place) return false end
+function Code.CodePlace:memory_contract_same_deref(_place) return false end
+function Code.CodePlace:memory_contract_same_field(_place) return false end
+function Code.CodePlace:memory_contract_same_index(_place) return false end
+function Code.CodePlace:memory_contract_same_bytes(_place) return false end
+function Code.CodePlaceLocal:memory_contract_same_local(place) return self.local_id.text == place.local_id.text end
+function Code.CodePlaceGlobal:memory_contract_same_global(place) return self.global.text == place.global.text end
+function Code.CodePlaceData:memory_contract_same_data(place) return self.data.text == place.data.text end
+function Code.CodePlaceDeref:memory_contract_same_deref(place) return self.addr.text == place.addr.text end
+function Code.CodePlaceField:memory_contract_same_field(place) return self.offset == place.offset and self.base:memory_contract_same_place(place.base) end
+function Code.CodePlaceIndex:memory_contract_same_index(place) return self.index.text == place.index.text and self.elem_size == place.elem_size and self.base:memory_contract_same_place(place.base) end
+function Code.CodePlaceBytes:memory_contract_same_bytes(place) return self.base.text == place.base.text and self.offset == place.offset and self.size == place.size end
+
+function Mem.MemContractExprKey:memory_contract_matches_place(_place) return false end
+function Mem.MemContractPlaceKey:memory_contract_matches_place(place) return self.place:memory_contract_same_place(place) end
+function Mem.MemContractValueKey:memory_contract_length_lookup(_facet) return Mem.MemContractLengthFound(self.value) end
+function Mem.MemContractPlaceKey:memory_contract_length_lookup(facet)
+  for i = 1, #(facet.loaded_places or {}) do
+    if facet.loaded_places[i].place:memory_contract_same_place(self.place) then return Mem.MemContractLengthFound(facet.loaded_places[i].value) end
+  end
+  return Mem.MemContractLengthMissing
+end
+function Mem.MemContractLengthMissing:memory_apply_projection_bounds(_entry, _op, _input, result)
+  return result
+end
+function Code.CodePlace:memory_loaded_pointer_provenance(_facet, dst) return Mem.MemProvValue(dst) end
+function Code.CodePlaceField:memory_loaded_pointer_provenance(facet, dst)
+  return self.base:memory_loaded_field_pointer_provenance(facet, self.field, dst)
+end
+function Code.CodePlace:memory_loaded_field_pointer_provenance(_facet, _field, dst) return Mem.MemProvValue(dst) end
+function Code.CodePlaceDeref:memory_loaded_field_pointer_provenance(facet, field, dst)
+  return find_value_object(facet.values, self.addr):memory_field_pointer_provenance(field, dst, self.addr)
+end
+function Mem.MemValueObjectFound:memory_field_pointer_provenance(field, dst, owner_value)
+  return Mem.MemProvFieldPointer(self.object, field, dst, owner_value)
+end
+function Mem.MemValueObjectMissing:memory_field_pointer_provenance(_field, dst, _owner_value) return Mem.MemProvValue(dst) end
+function Mem.MemContractLengthFound:memory_apply_projection_bounds(entry, op, input, result)
+  local facet = result:next_facet()
+  local id = Mem.MemObjectId(input.func.name .. ":contract:" .. sanitize(op.dst.text))
+  local elem_ty = op.access.ty:memory_object_elem_type()
+  local fact = Mem.MemObjectFact(id, input.func.id, Mem.MemObjectContract,
+    op.place:memory_loaded_pointer_provenance(facet, op.dst), elem_ty,
+    Mem.MemExtentElements(self.value, elem_ty, Mem.MemExtentLengthFromContract), Mem.MemStrideUnit)
+  local next_facet = Mem.MemTransferFacet(
+    append_one(facet.values, Mem.MemValueObjectEntry(op.dst, id)), facet.locals, facet.constants,
+    facet.index_offsets, facet.loaded_places, facet.scaled_strides, append_one(facet.objects, fact),
+    facet.accesses, facet.dependence_accesses, facet.intervals, facet.safety, facet.relations, facet.backend, facet.proofs)
+  return Mem.MemTransferUpdated(next_facet)
+end
+function Mem.MemContractProjectionBoundsEntry:memory_apply_loaded_pointer(op, input, result)
+  if self.func ~= input.func.id or not self.base:memory_contract_matches_place(op.place) then return result end
+  return self.len:memory_contract_length_lookup(result:next_facet()):memory_apply_projection_bounds(self, op, input, result)
+end
+function Mem.MemInstructionTransferResult:memory_apply_projection_bounds(op, input)
+  local result = self
+  for i = 1, #(input.contracts.projection_bounds or {}) do
+    result = input.contracts.projection_bounds[i]:memory_apply_loaded_pointer(op, input, result)
+  end
+  return result
+end
+function Code.CodeInstLoad:transfer_memory(input)
+  return transfer_access(self, input, Mem.MemLoad, self.place, self.access):memory_apply_projection_bounds(self, input)
+end
 function Code.CodeInstStore:transfer_memory(input) return transfer_access(self, input, Mem.MemStore, self.place, self.access) end
 function Code.CodeInstAtomicLoad:transfer_memory(input) return transfer_access(self, input, Mem.MemAtomicLoad, self.place, self.access) end
 function Code.CodeInstAtomicStore:transfer_memory(input) return transfer_access(self, input, Mem.MemAtomicStore, self.place, self.access) end
@@ -855,7 +937,7 @@ local function compute_mem_semantic(module, graph, flow, values, contracts)
       for _, inst in ipairs(block.insts) do
         facet = inst.op:transfer_memory(Mem.MemInstructionTransferInput(
           func, block, inst, loop, module_projection.globals,
-          module_projection.data, inductions, flow, facet)):next_facet()
+          module_projection.data, inductions, flow, contract_projection, facet)):next_facet()
       end
     end
     local projection = relation_projection(facet, contract_projection, func.id)

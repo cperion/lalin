@@ -44,12 +44,12 @@ local artifact = lalin.emit_c(assert(lalin.loadstring(src, "@test_emit_c_region_
 })
 
 assert(artifact.kind == "CBackendArtifact", "region main must use semantic C backend")
-assert(artifact.source:match("Program_run") == nil, "qualified region method should be inlined as control, not emitted as a C function")
-assert(artifact.source:match("ctl_lln_emit_"), "region emit should lower to generated control blocks")
+assert(artifact.source:match("Program_run%(") ~= nil, "region seal must materialize its callable artifact")
+assert(artifact.source:match("ctl_lln_emit_"), "open region emit must still lower to generated control blocks")
 
 if command_ok("command -v gcc >/dev/null 2>&1") then
     assert(command_ok("gcc -std=c99 -O3 " .. shell_quote(dir .. "/main.c") .. " -o " .. shell_quote(dir .. "/main_test")), "gcc should compile region-main artifact")
     assert(command_ok(shell_quote(dir .. "/main_test")), "region-main executable should return success")
 end
 
-io.write("lalin emit_c region main ok\n")
+io.write("lalin emit_c region main (sealed callable + open emit) ok\n")

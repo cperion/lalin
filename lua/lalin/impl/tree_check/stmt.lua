@@ -164,11 +164,14 @@ end
 function Tr.Region:typecheck_tree_region_body(input)
   local issues = {}
   local scope = input.scope
+  local params = {}
   for i = 1, #(self.params or {}) do
     local p = self.params[i]
+    local ty = p.ty:tree_region_resolve_type(input.scope)
+    params[i] = Ty.Param(p.name, ty)
     local binding = B.Binding(C.Id("region:param:" .. tostring(self.name) .. ":" .. tostring(p.name)),
-      p.name, p.ty, B.BindingRoleArg(i - 1))
-    scope = scope:typecheck_tree_add_value(p.name, p.ty, binding)
+      p.name, ty, B.BindingRoleArg(i - 1))
+    scope = scope:typecheck_tree_add_value(p.name, ty, binding)
   end
   local region_input = LCheck.TypeStmtInput(scope, input.return_ty, input.yield)
   local region_id = "region:" .. tostring(self.name)
@@ -184,7 +187,15 @@ function Tr.Region:typecheck_tree_region_body(input)
     blocks[i] = block
     for j = 1, #(block_issues or {}) do issues[#issues + 1] = block_issues[j] end
   end
-  return Tr.Region(self.name, self.params, self.conts, self.contracts, entry, blocks), issues
+  local conts = {}
+  for i = 1, #(self.conts or {}) do
+    local cont, params = self.conts[i], {}
+    for j = 1, #(cont.params or {}) do
+      params[j] = Tr.BlockParam(cont.params[j].name, cont.params[j].ty:tree_region_resolve_type(input.scope))
+    end
+    conts[i] = Tr.RegionCont(cont.key, cont.name, params)
+  end
+  return Tr.Region(self.name, params, conts, self.contracts, entry, blocks), issues
 end
 
 function Tr.StmtTrap:typecheck_tree_stmt(input)

@@ -24,6 +24,10 @@ return schema. LalinCheck {
     TypeValueLookupFound { variant_unique, binding [LalinBind.Binding], },
     TypeValueLookupMissing { variant_unique, field. name [str], },
   },
+  sum. TypeEntryLookup {
+    TypeEntryLookupFound { variant_unique, field. ty [LalinType.Type], },
+    TypeEntryLookupMissing { variant_unique, field. fallback [LalinType.Type], },
+  },
   sum. TypeVariantDefLookup {
     TypeVariantDefLookupFound { variant_unique, def [LalinCheck.TypeVariantDef], },
     TypeVariantDefLookupMissing { variant_unique, type_name [str], field. ty [LalinType.Type], },
@@ -45,8 +49,7 @@ return schema. LalinCheck {
   },
   sum. TypeVariantPayloadLookup {
     TypeVariantPayloadNone,
-    TypeVariantPayloadFound { variant_unique, field. ty [LalinType.Type], },
-    TypeVariantPayloadUnsupported { variant_unique, field_count [number], },
+    TypeVariantPayloadFields { variant_unique, fields [many [LalinType.FieldDecl]], },
   },
   product. TypeVariantArmResult { interned, arm [LalinTree.SwitchVariantStmtArm], issues [many [LalinCheck.TypeIssue]], },
   product. TypeScopeChange { interned, scope [LalinCheck.TypeValueScope], },
@@ -181,7 +184,6 @@ return schema. LalinCheck {
     interned,
     field. name [str],
     tag [number],
-    payload [LalinType.Type],
     fields [many [LalinType.FieldDecl]],
   },
   product. TypeVariantDef {
@@ -321,7 +323,6 @@ return schema. LalinCheck {
       expected [number],
       actual [number],
     },
-    TypeIssueVariantPayloadUnsupported { variant_unique, type_name [str], variant_name [str], field_count [number], },
     TypeIssueVariantPayloadMismatch {
       variant_unique,
       type_name [str],

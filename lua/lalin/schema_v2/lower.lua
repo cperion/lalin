@@ -664,6 +664,9 @@ return schema. LalinLower {
       variant_unique,
       argument [LalinLower.LowerCIncomingBlockArgument],
     },
+    -- The incoming edge originates in an unreachable CFG component and
+    -- contributes no executable predecessor value.
+    LowerCIncomingArgumentUnreachable { variant_unique, },
     LowerCIncomingArgumentRejected {
       variant_unique,
       issue [LalinLower.LowerIssue],

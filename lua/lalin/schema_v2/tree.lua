@@ -315,7 +315,7 @@ return schema. LalinTree {
   },
   product. RegionInvokeSplice {
     interned,
-    entry_stmt [LalinTree.Stmt],
+    entry_stmts [many [LalinTree.Stmt]],
     blocks [many [LalinTree.ControlBlock]],
     captures [LalinTree.RegionCallCaptureProjection],
     next_state [LalinCheck.TypeStmtInput],
@@ -466,6 +466,11 @@ return schema. LalinTree {
     contracts [many [LalinTree.FuncContract]],
     entry [LalinTree.EntryControlBlock],
     blocks [many [LalinTree.ControlBlock]],
+  },
+  product. RegionSealMaterialization {
+    interned,
+    result_item [LalinTree.Item],
+    function_item [LalinTree.Item],
   },
   sum. ControlFact {
     ControlFactEntryBlock { variant_unique, region_id [str], label [LalinTree.BlockLabel], },

@@ -16,6 +16,7 @@ return schema. LalinSem {
     interned,
     field_name [str],
     offset [number],
+    align [number],
     field. ty [LalinType.Type],
   },
   product. MemLayout { interned, size [number], align [number], },

@@ -26,6 +26,7 @@ end
 
 function Flow.FlowTripCountExact:kernel_trip_evidence() return Kernel.KernelTripKnown(self) end
 function Flow.FlowTripCountNonNegative:kernel_trip_evidence() return Kernel.KernelTripKnown(self) end
+function Flow.FlowTripCountExpression:kernel_trip_evidence() return Kernel.KernelTripKnown(self) end
 function Flow.FlowTripCountRejected:kernel_trip_evidence(subject)
   return Kernel.KernelTripUnavailable(self, Kernel.KernelRejectNoFacts(subject, "flow trip count rejected: " .. tostring(self.reject)))
 end
@@ -313,6 +314,135 @@ function Kernel.KernelLoopPlanReduction:materialize_kernel_build(request, build)
   return build.effects:kernel_scan_selection(input)
     :materialize_kernel_reduction(input)
 end
+local function kernel_loop_contains(loop, block_id)
+  for i = 1, #(loop.body or {}) do if loop.body[i].block.text == block_id.text then return true end end
+  return false
+end
+
+function Code.CodeTermOp:kernel_allcompare_exit_fact(_edge, _loop) return {} end
+function Code.CodeTermBranch:kernel_allcompare_exit_fact(edge, loop)
+  local then_in = kernel_loop_contains(loop, self.then_dest)
+  local else_in = kernel_loop_contains(loop, self.else_dest)
+  if then_in == else_in then return {} end
+  local polarity = then_in and Kernel.KernelAllCompareContinueWhenTrue or Kernel.KernelAllCompareContinueWhenFalse
+  return { Kernel.KernelAllComparePredicateExit(self.cond, polarity, edge.to.block) }
+end
+function Kernel.KernelAllCompareExitFact:kernel_allcompare_count_exits(out) return out end
+function Kernel.KernelAllCompareCountExit:kernel_allcompare_count_exits(out) out[#out + 1] = self; return out end
+function Kernel.KernelAllCompareExitFact:kernel_allcompare_predicate_exits(out) return out end
+function Kernel.KernelAllComparePredicateExit:kernel_allcompare_predicate_exits(out) out[#out + 1] = self; return out end
+
+function Kernel.KernelBindingMissing:kernel_allcompare_operand(_value) return Kernel.KernelAllCompareOperandMissing end
+function Kernel.KernelBindingFound:kernel_allcompare_operand(value) return self.entry.binding.expr:kernel_allcompare_operand(value) end
+function Kernel.KernelExpr:kernel_allcompare_operand(_value) return Kernel.KernelAllCompareOperandMissing end
+function Kernel.KernelExprLaneLoad:kernel_allcompare_operand(value) return Kernel.KernelAllCompareOperandFound(self, value) end
+function Kernel.KernelAllCompareOperandMissing:kernel_allcompare_finish(_right, _cmp, _success, _failure) return Kernel.KernelAllCompareMissing end
+function Kernel.KernelAllCompareOperandFound:kernel_allcompare_finish(right, cmp, success, failure)
+  return right:kernel_allcompare_finish_right(self, cmp, success, failure)
+end
+function Kernel.KernelAllCompareOperandMissing:kernel_allcompare_finish_right(_left, _cmp, _success, _failure) return Kernel.KernelAllCompareMissing end
+function Kernel.KernelAllCompareOperandFound:kernel_allcompare_finish_right(left, cmp, success, failure)
+  return Kernel.KernelAllCompareFound(
+    Kernel.KernelResultAllCompare(left.expr, left.value, self.expr, self.value, cmp, success, failure),
+    Kernel.KernelProofFunctionEquivalence("sealed counted loop compares two primary lane streams and exits on mismatch"))
+end
+
+function Core.CmpEq:kernel_allcompare_invert() return Core.CmpNe end
+function Core.CmpNe:kernel_allcompare_invert() return Core.CmpEq end
+function Core.CmpLt:kernel_allcompare_invert() return Core.CmpGe end
+function Core.CmpLe:kernel_allcompare_invert() return Core.CmpGt end
+function Core.CmpGt:kernel_allcompare_invert() return Core.CmpLe end
+function Core.CmpGe:kernel_allcompare_invert() return Core.CmpLt end
+function Kernel.KernelAllCompareContinueWhenTrue:kernel_allcompare_cmp(op) return op end
+function Kernel.KernelAllCompareContinueWhenFalse:kernel_allcompare_cmp(op) return op:kernel_allcompare_invert() end
+
+function Code.CodeInstOp:kernel_allcompare_condition(_cond, _build, _predicate, _success) return Kernel.KernelAllCompareMissing end
+function Code.CodeInstCompare:kernel_allcompare_condition(cond, build, predicate, success)
+  if self.dst.text ~= cond.text then return Kernel.KernelAllCompareMissing end
+  local left = build.bindings:lookup(self.lhs):kernel_allcompare_operand(self.lhs)
+  local right = build.bindings:lookup(self.rhs):kernel_allcompare_operand(self.rhs)
+  return left:kernel_allcompare_finish(right, predicate.polarity:kernel_allcompare_cmp(self.op), success.destination, predicate.destination)
+end
+function Kernel.KernelAllCompareMissing:kernel_allcompare_consider(candidate) return candidate end
+function Kernel.KernelAllCompareFound:kernel_allcompare_consider(_candidate) return self end
+function Code.CodeFunc:kernel_allcompare_condition(cond, build, predicate, success)
+  local found = Kernel.KernelAllCompareMissing
+  for i = 1, #self.blocks do
+    for j = 1, #self.blocks[i].insts do
+      local candidate = self.blocks[i].insts[j].op:kernel_allcompare_condition(cond, build, predicate, success)
+      found = found:kernel_allcompare_consider(candidate)
+    end
+  end
+  return found
+end
+function Kernel.KernelLoopAnalysisInput:kernel_allcompare_analysis(build)
+  local exits = {}
+  for i = 1, #self.graph.funcs do
+    for j = 1, #self.graph.funcs[i].loops do
+      local loop = self.graph.funcs[i].loops[j]
+      if loop.id == self.fact.loop then
+        for k = 1, #loop.exits do
+          local edge = loop.exits[k]
+          if edge.from.block.text == loop.header.block.text then
+            exits[#exits + 1] = Kernel.KernelAllCompareCountExit(edge.to.block)
+          else
+            for f = 1, #self.module.funcs do
+              if self.module.funcs[f].id == loop.func then
+                for b = 1, #self.module.funcs[f].blocks do
+                  if self.module.funcs[f].blocks[b].id == edge.from.block then
+                    local facts = self.module.funcs[f].blocks[b].term.op:kernel_allcompare_exit_fact(edge, loop)
+                    for n = 1, #facts do exits[#exits + 1] = facts[n] end
+                  end
+                end
+              end
+            end
+          end
+        end
+        local projection = Kernel.KernelAllCompareExitProjection(exits)
+        local counts, predicates = {}, {}
+        for n = 1, #projection.exits do
+          projection.exits[n]:kernel_allcompare_count_exits(counts)
+          projection.exits[n]:kernel_allcompare_predicate_exits(predicates)
+        end
+        if #counts == 1 and #predicates == 1 then
+          for f = 1, #self.module.funcs do
+            if self.module.funcs[f].id == loop.func then
+              return self.module.funcs[f]:kernel_allcompare_condition(predicates[1].cond, build, predicates[1], counts[1])
+            end
+          end
+        end
+      end
+    end
+  end
+  return Kernel.KernelAllCompareMissing
+end
+function Kernel.KernelAllCompareMissing:kernel_materialize_allcompare(request, _build)
+  return Kernel.KernelNoPlan(Kernel.KernelSubjectLoop(request.fact.loop), {})
+end
+function Kernel.KernelTripUnavailable:kernel_materialize_allcompare_trip(_found, request, _build)
+  return Kernel.KernelNoPlan(Kernel.KernelSubjectLoop(request.fact.loop), { self.reject })
+end
+function Kernel.KernelAllCompareFound:kernel_allcompare_build(build)
+  local lanes = {}
+  local left_id, right_id = self.result.left.lane.id, self.result.right.lane.id
+  for i = 1, #build.lanes.entries do
+    local entry = build.lanes.entries[i]
+    if entry.lane.id == left_id or entry.lane.id == right_id then lanes[#lanes + 1] = entry end
+  end
+  return Kernel.KernelLoopPlanBuild(
+    build.domain, build.trip, build.counter, Kernel.KernelLaneProjection(lanes),
+    build.bindings, build.effects, build.proofs)
+end
+function Kernel.KernelTripKnown:kernel_materialize_allcompare_trip(found, request, build)
+  return planned(request, found:kernel_allcompare_build(build), found.result, { found.proof })
+end
+function Kernel.KernelAllCompareFound:kernel_materialize_allcompare(request, build)
+  return build.trip:kernel_materialize_allcompare_trip(self, request, build)
+end
+function Kernel.KernelLoopAnalysisReadyAllCompare:materialize_kernel_selection(_selection, request)
+  local found = Kernel.KernelAllCompareFound(self.result, self.proof)
+  return self.build.trip:kernel_materialize_allcompare_trip(found, request, self.build)
+end
 function Kernel.KernelLoopPlanSkeleton:materialize_kernel_build(request, build)
   if #build.effects.entries == 0 then
     return Kernel.KernelNoPlan(Kernel.KernelSubjectLoop(request.fact.loop), {})
@@ -355,12 +485,13 @@ function Kernel.KernelLoopAnalysisRejected:kernel_append_lane(input, access, obj
 function Kernel.KernelLoopAnalysisReady:kernel_append_lane(input, access, object, backend)
   local lane = Kernel.KernelLane(
     Kernel.KernelLaneId("lane:" .. sanitize(access.id.text)),
-    object,
+    object.object,
     { access.id },
     access.base,
     access.access.ty,
     access.pattern,
-    { backend })
+    { backend },
+    object.fact)
   local build = self.build
   return Kernel.KernelLoopAnalysisReady(Kernel.KernelLoopPlanBuild(
     build.domain, build.trip, build.counter,
@@ -372,47 +503,51 @@ end
 
 function Mem.MemObjectProvenance:kernel_match_value(object, value, current) return current end
 function Mem.MemProvValue:kernel_match_value(object, value, current)
-  if self.value == value then return Mem.MemObjectFound(object.id) end
+  if self.value == value then return Kernel.KernelObjectFound(object.id, object) end
+  return current
+end
+function Mem.MemProvFieldPointer:kernel_match_value(object, value, current)
+  if self.ptr_value == value then return Kernel.KernelObjectFound(object.id, object) end
   return current
 end
 function Mem.MemObjectProvenance:kernel_match_local(object, local_id, current) return current end
 function Mem.MemProvLocal:kernel_match_local(object, local_id, current)
-  if self.local_id == local_id then return Mem.MemObjectFound(object.id) end
+  if self.local_id == local_id then return Kernel.KernelObjectFound(object.id, object) end
   return current
 end
 function Mem.MemObjectProvenance:kernel_match_global(object, global, current) return current end
 function Mem.MemProvGlobal:kernel_match_global(object, global, current)
-  if self.global == global then return Mem.MemObjectFound(object.id) end
+  if self.global == global then return Kernel.KernelObjectFound(object.id, object) end
   return current
 end
 function Mem.MemObjectProvenance:kernel_match_data(object, data, current) return current end
 function Mem.MemProvData:kernel_match_data(object, data, current)
-  if self.data == data then return Mem.MemObjectFound(object.id) end
+  if self.data == data then return Kernel.KernelObjectFound(object.id, object) end
   return current
 end
 function Mem.MemObjectProvenance:kernel_match_projection(object, parent, projection, byte_offset, current) return current end
 function Mem.MemProvProjection:kernel_match_projection(object, parent, projection, byte_offset, current)
-  if self.parent == parent and self.projection == projection and self.byte_offset == byte_offset then return Mem.MemObjectFound(object.id) end
+  if self.parent == parent and self.projection == projection and self.byte_offset == byte_offset then return Kernel.KernelObjectFound(object.id, object) end
   return current
 end
 
 local function object_for_value(objects, access, value)
-  local current = Mem.MemObjectMissing(access)
+  local current = Kernel.KernelObjectMissing(access)
   for _, object in ipairs(objects) do current = object.provenance:kernel_match_value(object, value, current) end
   return current
 end
 local function object_for_local(objects, access, local_id)
-  local current = Mem.MemObjectMissing(access)
+  local current = Kernel.KernelObjectMissing(access)
   for _, object in ipairs(objects) do current = object.provenance:kernel_match_local(object, local_id, current) end
   return current
 end
 local function object_for_global(objects, access, global)
-  local current = Mem.MemObjectMissing(access)
+  local current = Kernel.KernelObjectMissing(access)
   for _, object in ipairs(objects) do current = object.provenance:kernel_match_global(object, global, current) end
   return current
 end
 local function object_for_data(objects, access, data)
-  local current = Mem.MemObjectMissing(access)
+  local current = Kernel.KernelObjectMissing(access)
   for _, object in ipairs(objects) do current = object.provenance:kernel_match_data(object, data, current) end
   return current
 end
@@ -421,10 +556,10 @@ function Mem.MemBaseArgument:kernel_object_for_access(objects, access) return ob
 function Mem.MemBaseLocal:kernel_object_for_access(objects, access) return object_for_local(objects, access, self.local_id) end
 function Mem.MemBaseGlobal:kernel_object_for_access(objects, access) return object_for_global(objects, access, self.global) end
 function Mem.MemBaseData:kernel_object_for_access(objects, access) return object_for_data(objects, access, self.data) end
-function Mem.MemBaseUnknown:kernel_object_for_access(objects, access) return Mem.MemObjectMissing(access) end
-function Mem.MemObjectMissing:kernel_projection_for_access(objects, access, projection, byte_offset) return self end
-function Mem.MemObjectFound:kernel_projection_for_access(objects, access, projection, byte_offset)
-  local current = Mem.MemObjectMissing(access)
+function Mem.MemBaseUnknown:kernel_object_for_access(objects, access) return Kernel.KernelObjectMissing(access) end
+function Kernel.KernelObjectMissing:kernel_projection_for_access(objects, access, projection, byte_offset) return self end
+function Kernel.KernelObjectFound:kernel_projection_for_access(objects, access, projection, byte_offset)
+  local current = Kernel.KernelObjectMissing(access)
   for _, object in ipairs(objects) do current = object.provenance:kernel_match_projection(object, self.object, projection, byte_offset, current) end
   return current
 end
@@ -432,11 +567,11 @@ function Mem.MemBaseProjection:kernel_object_for_access(objects, access)
   return self.base:kernel_object_for_access(objects, access):kernel_projection_for_access(objects, access, self.projection, self.byte_offset)
 end
 
-function Mem.MemObjectMissing:kernel_analyze_object(input, analysis, access)
+function Kernel.KernelObjectMissing:kernel_analyze_object(input, analysis, access)
   return analysis:kernel_reject(input.fact, Kernel.KernelRejectUnsupportedMemory(access.id, "memory access has no canonical object projection"))
 end
-function Mem.MemObjectFound:kernel_analyze_object(input, analysis, access)
-  return input.mem:project_accesses():backend_for_access(access.id):kernel_analyze_backend(input, analysis, access, self.object)
+function Kernel.KernelObjectFound:kernel_analyze_object(input, analysis, access)
+  return input.mem:project_accesses():backend_for_access(access.id):kernel_analyze_backend(input, analysis, access, self)
 end
 function Mem.MemBackendMissing:kernel_analyze_backend(input, analysis, access, object)
   return analysis:kernel_reject(input.fact, Kernel.KernelRejectUnsupportedMemory(access.id, "memory access has no backend safety projection"))
@@ -720,8 +855,18 @@ end
 function Kernel.KernelDomainAnalysisScalar:kernel_analyze_domain(input)
   return Kernel.KernelLoopAnalysisRejected(input.fact, { self.reject })
 end
+function Kernel.KernelAllCompareMissing:kernel_apply_allcompare_analysis(analysis) return analysis end
+function Kernel.KernelAllCompareFound:kernel_apply_allcompare_analysis(analysis)
+  return Kernel.KernelLoopAnalysisReadyAllCompare(analysis.build, self.result, self.proof)
+end
+function Kernel.KernelLoopAnalysisRejected:kernel_detect_allcompare(_input) return self end
+function Kernel.KernelLoopAnalysisReadyAllCompare:kernel_detect_allcompare(_input) return self end
+function Kernel.KernelLoopAnalysisReady:kernel_detect_allcompare(input)
+  if #self.build.effects.entries ~= 0 then return self end
+  return input:kernel_allcompare_analysis(self.build):kernel_apply_allcompare_analysis(self)
+end
 function Kernel.KernelLoopAnalysisInput:analyze_kernel_loop()
-  return self.flow:kernel_domain_analysis(self):kernel_analyze_domain(self)
+  return self.flow:kernel_domain_analysis(self):kernel_analyze_domain(self):kernel_detect_allcompare(self)
 end
 
 function Kernel.KernelModulePlanRequest:plan_kernels()
@@ -729,7 +874,8 @@ function Kernel.KernelModulePlanRequest:plan_kernels()
   local plans = {}
   for _, fact in ipairs(projection.loops) do
     local candidate = fact:kernel_candidate(projection)
-    local analysis = Kernel.KernelLoopAnalysisInput(self.module, self.graph, self.flow, self.values, self.mem, self.effects, fact, candidate):analyze_kernel_loop()
+    local analysis_input = Kernel.KernelLoopAnalysisInput(self.module, self.graph, self.flow, self.values, self.mem, self.effects, fact, candidate)
+    local analysis = analysis_input:analyze_kernel_loop()
     local request = Kernel.KernelLoopPlanRequest(fact, candidate, analysis)
     plans[#plans + 1] = analysis:materialize_kernel_selection(candidate:select_kernel_loop_plan(), request)
   end

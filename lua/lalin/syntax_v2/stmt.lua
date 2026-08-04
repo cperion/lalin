@@ -321,19 +321,22 @@ function Stmt.parse(lex, ctx)
     local start = lex:next()
     local cond = Expr.parse(lex, ctx)
     lex:expect("then")
-    local then_body = unwrap_stmts(Stmt.parse_block(lex, ctx, { "elseif", "else", "end" }))
-  local else_body = {}
-  while lex:next_if("elseif") do
-    local ec = Expr.parse(lex, ctx)
-    lex:expect("then")
-    local eb = unwrap_stmts(Stmt.parse_block(lex, ctx, { "elseif", "else", "end" }))
-    else_body = { Tree.StmtIf(Tree.StmtSurface, ec, eb, else_body) }
-  end
-  if lex:next_if("else") then
-    else_body = unwrap_stmts(Stmt.parse_block(lex, ctx, { "end" }))
+    local then_body = Stmt.parse_block(lex, ctx, { "elseif", "else", "end" })
+    local clause_conds, clause_bodies = {}, {}
+    while lex:next_if("elseif") do
+      clause_conds[#clause_conds + 1] = Expr.parse(lex, ctx)
+      lex:expect("then")
+      clause_bodies[#clause_bodies + 1] = Stmt.parse_block(lex, ctx, { "elseif", "else", "end" })
+    end
+    local else_body = {}
+    if lex:next_if("else") then
+      else_body = Stmt.parse_block(lex, ctx, { "end" })
+    end
+    for i = #clause_conds, 1, -1 do
+      else_body = { P.StmtIfParsed(clause_conds[i], clause_bodies[i], else_body) }
     end
     lex:expect("end")
-    return stmt_known(Tree.StmtIf(Tree.StmtSurface, cond, then_body, else_body))
+    return P.StmtIfParsed(cond, then_body, else_body)
 
   elseif t.value == "switch" then
     local start = lex:next()
@@ -446,12 +449,14 @@ function Stmt.parse(lex, ctx)
     local ty = Type.parse(lex, ctx)
     local init = nil
     if lex:next_if("=") then init = Expr.parse(lex, ctx) end
-    -- Return intermediate: type is HostEval, resolved during lowering
+    -- Exact source occurrence identity prevents same-named locals in distinct
+    -- control blocks from collapsing into one Code value/local.
+    local binding_id = Core.Id("parsed:" .. tostring(name_tok.line) .. ":" .. tostring(name_tok.col) .. ":" .. name_tok.value)
     local default_init = Tree.ExprLit(Tree.ExprSurface, Core.LitInt("0"))
     if mutable then
-      return P.StmtVarParsed(name_tok.value, ty, init or default_init)
+      return P.StmtVarParsed(binding_id, name_tok.value, ty, init or default_init)
     else
-      return P.StmtLetParsed(name_tok.value, ty, init or default_init)
+      return P.StmtLetParsed(binding_id, name_tok.value, ty, init or default_init)
     end
 
   elseif t.value == "jump" then

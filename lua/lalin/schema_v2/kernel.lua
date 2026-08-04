@@ -90,9 +90,14 @@ return schema. LalinKernel {
     elem_ty [LalinCode.CodeType],
     pattern [LalinMem.MemAccessPattern],
     backend_info [many [LalinMem.MemBackendAccessInfo]],
+    object_fact [optional [LalinMem.MemObjectFact]],
   },
   product. KernelLaneByAccessEntry { interned, access [LalinMem.MemAccessId], field. lane [LalinKernel.KernelLane], },
   product. KernelLaneProjection { interned, entries [many [LalinKernel.KernelLaneByAccessEntry]], },
+  sum. KernelObjectLookup {
+    KernelObjectFound { variant_unique, object [LalinMem.MemObjectId], fact [LalinMem.MemObjectFact], },
+    KernelObjectMissing { variant_unique, access [LalinMem.MemAccessId], },
+  },
   sum. KernelLaneLookup {
     KernelLaneFound { variant_unique, entry [LalinKernel.KernelLaneByAccessEntry], },
     KernelLaneMissing { variant_unique, access [LalinMem.MemAccessId], },
@@ -212,6 +217,23 @@ return schema. LalinKernel {
     KernelResultClosedForm { variant_unique, closed_form [LalinValue.ClosedFormFact], },
     KernelResultOriginalControl { variant_unique, reject [LalinKernel.KernelResultOriginalControlReject], },
   },
+  sum. KernelAllCompareAnalysis {
+    KernelAllCompareFound { variant_unique, result [LalinKernel.KernelResultAllCompare], proof [LalinKernel.KernelProof], },
+    KernelAllCompareMissing,
+  },
+  sum. KernelAllCompareOperand {
+    KernelAllCompareOperandFound { variant_unique, field. expr [LalinKernel.KernelExpr], field. value [LalinCode.CodeValueId], },
+    KernelAllCompareOperandMissing,
+  },
+  sum. KernelAllComparePolarity {
+    KernelAllCompareContinueWhenTrue,
+    KernelAllCompareContinueWhenFalse,
+  },
+  sum. KernelAllCompareExitFact {
+    KernelAllCompareCountExit { variant_unique, destination [LalinCode.CodeBlockId], },
+    KernelAllComparePredicateExit { variant_unique, field. cond [LalinCode.CodeValueId], polarity [LalinKernel.KernelAllComparePolarity], destination [LalinCode.CodeBlockId], },
+  },
+  product. KernelAllCompareExitProjection { interned, exits [many [LalinKernel.KernelAllCompareExitFact]], },
   sum. KernelResultOriginalControlReject {
     KernelOriginalNoCountedLoop,
     KernelOriginalNonReducibleCFG { reason [str] },
@@ -333,6 +355,7 @@ return schema. LalinKernel {
   },
   sum. KernelLoopAnalysis {
     KernelLoopAnalysisReady { variant_unique, build [LalinKernel.KernelLoopPlanBuild], },
+    KernelLoopAnalysisReadyAllCompare { variant_unique, build [LalinKernel.KernelLoopPlanBuild], result [LalinKernel.KernelResultAllCompare], proof [LalinKernel.KernelProof], },
     KernelLoopAnalysisRejected { variant_unique, fact [LalinKernel.KernelLoopFactEntry], rejects [many [LalinKernel.KernelReject]], },
   },
   product. KernelLoopPlanRequest {

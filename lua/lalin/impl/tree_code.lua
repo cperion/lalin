@@ -305,6 +305,10 @@ function Ty.TOwned:tree_code_index_elem_type() return self.base:tree_code_index_
 ----------------------------------------------------------------------
 function Ty.TypeMemLayoutResult:tree_code_known_layout() return nil end
 function Ty.TypeMemLayoutKnown:tree_code_known_layout() return self.layout end
+function Ty.TypeMemLayoutKnown:tree_code_require_variant_layout() return self.layout end
+function Ty.TypeMemLayoutUnknown:tree_code_require_variant_layout()
+  unsupported(self, "variant field has no concrete memory layout: " .. tostring(self.ty))
+end
 
 ----------------------------------------------------------------------
 -- variant_defs on TypeDecl / Item
@@ -320,7 +324,7 @@ function Tree.TypeDeclEnumSugar:tree_code_add_variant_defs(defs, mod_name)
   for i = 1, #self.variants do
     local name = variant_name_text(self.variants[i])
     variants[#variants + 1] = TreeCode.TreeCodeVariantEntry(name,
-      TreeCode.TreeCodeVariant(name, i - 1, Ty.TScalar(Core.ScalarVoid), {}))
+      TreeCode.TreeCodeVariant(name, i - 1, {}))
   end
   defs[#defs + 1] = TreeCode.TreeCodeVariantDefEntry(self.name,
     TreeCode.TreeCodeVariantDef(Ty.TNamed(Ty.TypeRefGlobal(mod_name, self.name)), variants))
@@ -330,7 +334,7 @@ function Tree.TypeDeclTaggedUnionSugar:tree_code_add_variant_defs(defs, mod_name
   for i = 1, #self.variants do
     local v = self.variants[i]
     variants[#variants + 1] = TreeCode.TreeCodeVariantEntry(v.name,
-      TreeCode.TreeCodeVariant(v.name, i - 1, v.payload, v.fields or {}))
+      TreeCode.TreeCodeVariant(v.name, i - 1, v.fields or {}))
   end
   defs[#defs + 1] = TreeCode.TreeCodeVariantDefEntry(self.name,
     TreeCode.TreeCodeVariantDef(Ty.TNamed(Ty.TypeRefGlobal(mod_name, self.name)), variants))
@@ -841,17 +845,46 @@ function TreeCode.TreeCodeInput:tree_code_variant_def(type_name)
   return nil
 end
 
-function TreeCode.TreeCodeVariant:tree_code_payload_type(input)
-  if #(self.fields or {}) > 1 then unsupported(self, "multi-field variant payload `" .. tostring(self.name) .. "`") end
-  local ty = (#(self.fields or {}) == 1) and self.fields[1].ty or self.payload
-  if ty == nil or ty:tree_code_is_void_type() then return nil end
-  return ty
+local function tree_code_align_up(x, a)
+  if a <= 1 then return x end
+  return math.floor((x + a - 1) / a) * a
 end
+
+function TreeCode.TreeCodeVariant:tree_code_field_layouts(input)
+  -- Per-field payload aggregate layout (relative offsets within the payload
+  -- region), resolved through the typed layout projection.
+  local out, offset = {}, 0
+  for i = 1, #(self.fields or {}) do
+    local f = self.fields[i]
+    local module_facts = input:tree_code_module_facts()
+    local layout = TypeSizeAlign.result(f.ty, module_facts.layout_env, module_facts.target):tree_code_require_variant_layout()
+    local size, align = layout.size, layout.align
+    offset = tree_code_align_up(offset, align)
+    out[#out + 1] = Sem.FieldLayout(f.field_name, offset, align, f.ty)
+    offset = offset + size
+  end
+  return out
+end
+
 function TreeCode.TreeCodeVariant:tree_code_ref(input, owner_ty)
-  local payload_ty = self:tree_code_payload_type(input)
-  return Code.CodeVariantRef(input:tree_code_type(owner_ty), self.name, self.tag, payload_ty and input:tree_code_type(payload_ty) or nil)
+  -- The tagged-union layout contract fixes the tag at zero and aligns the
+  -- payload region to the strictest authored field alignment.
+  local tag_offset, payload_align = 0, 1
+  local module_facts = input:tree_code_module_facts()
+  for i = 1, #(self.fields or {}) do
+    local layout = TypeSizeAlign.result(self.fields[i].ty, module_facts.layout_env, module_facts.target):tree_code_require_variant_layout()
+    if layout.align > payload_align then payload_align = layout.align end
+  end
+  local tag_layout = TypeSizeAlign.result(Ty.TScalar(Core.ScalarU32), module_facts.layout_env, module_facts.target):tree_code_require_variant_layout()
+  local payload_offset = (#(self.fields or {}) == 0) and 0 or tree_code_align_up(tag_layout.size, payload_align)
+  local field_layouts = self:tree_code_field_layouts(input)
+  local fields = {}
+  for i = 1, #field_layouts do
+    local fl = field_layouts[i]
+    fields[i] = Code.CodeVariantField(fl.field_name, input:tree_code_type(fl.ty), payload_offset + fl.offset)
+  end
+  return Code.CodeVariantRef(input:tree_code_type(owner_ty), self.name, self.tag, tag_offset, fields)
 end
-function TreeCode.TreeCodeInput:tree_code_variant_payload_type(variant) return variant:tree_code_payload_type(self) end
 function TreeCode.TreeCodeInput:tree_code_variant_ref(owner_ty, variant) return variant:tree_code_ref(self, owner_ty) end
 
 local function tree_code_variant_entry(def, variant_name)
@@ -1466,19 +1499,19 @@ function Tree.ExprAtomicCas:lower_tree_expr_to_code(input)
 end
 
 function Tree.ExprCtor:lower_tree_expr_to_code(input)
-  if #(self.args or {}) > 1 then unsupported(self, "multi-argument variant constructor") end
   local def = input:tree_code_variant_def(self.type_name)
   local variant_entry = tree_code_variant_entry(def, self.variant_name)
   local variant = variant_entry and variant_entry.variant
   if variant == nil then unsupported(self, "unknown variant constructor") end
   local expr_ty = self.h and self.h:tree_code_expr_type(); local owner_ty = expr_ty
-  local payload = nil
-  if #(self.args or {}) == 1 then
-    local pr = self.args[1]:lower_tree_expr_to_code(input:tree_code_expr_input()); input = input:tree_code_with_result_state(pr)
-    payload = pr.value
+  local args = {}
+  for i = 1, #(self.args or {}) do
+    local pr = self.args[i]:lower_tree_expr_to_code(input:tree_code_expr_input())
+    input = input:tree_code_with_result_state(pr)
+    args[i] = pr.value
   end
   local dst_result = input:tree_code_new_value("variant_ctor"); input = input:tree_code_with_result_state(dst_result)
-  input = input:tree_code_with_result_state(input:tree_code_append_inst(Code.CodeInstVariantCtor(dst_result.value, input:tree_code_type(owner_ty), input:tree_code_variant_ref(owner_ty, variant), payload), origin_generated("variant constructor")))
+  input = input:tree_code_with_result_state(input:tree_code_append_inst(Code.CodeInstVariantCtor(dst_result.value, input:tree_code_type(owner_ty), input:tree_code_variant_ref(owner_ty, variant), args), origin_generated("variant constructor")))
   return input:tree_code_expr_result(dst_result.value, input:tree_code_type(owner_ty))
 end
 
@@ -1885,37 +1918,39 @@ function Tree.SwitchKeyName:tree_code_switch_literal() unsupported(self, "named 
 function Tree.SwitchKeyExpr:tree_code_switch_literal() unsupported(self, "expression switch case requires compare-fallback") end
 
 function Tree.SwitchVariantStmtArm:tree_code_bind_variant_payload(input, kind, owner_value, owner_ty, variant)
-  if #(self.binds or {}) == 0 then return TreeCode.TreeCodeStateResult(input:tree_code_state()) end
-  if #(self.binds or {}) > 1 then unsupported(self, "multi-bind variant arm") end
-  local payload_ty = input:tree_code_variant_payload_type(variant)
-  if payload_ty == nil then unsupported(self, "payload bind for void variant") end
+  local binds = self.binds or {}
+  if #binds == 0 then return TreeCode.TreeCodeStateResult(input:tree_code_state()) end
   local ref = input:tree_code_variant_ref(owner_ty, variant)
-  local payload_r = input:tree_code_new_value("variant_payload"); input = input:tree_code_with_result_state(payload_r)
-  input = input:tree_code_with_result_state(input:tree_code_append_inst(Code.CodeInstVariantPayload(payload_r.value, ref, owner_value), origin_generated("variant payload")))
-  local binding = variant_binding(kind, variant, self.binds[1])
-  local cty = input:tree_code_type(binding.ty)
-  if input:tree_code_binding_is_addressed(binding) or cty:tree_code_is_aggregate_type() then
-    input = input:tree_code_with_result_state(input:tree_code_bind_local_init(binding, payload_r.value, binding.ty, false))
-  else
-    input = input:tree_code_with_result_state(input:tree_code_bind_alias(binding, payload_r.value, cty))
+  for i = 1, #binds do
+    if ref.fields[i] == nil then unsupported(self, "payload bind beyond variant field count") end
+    local payload_r = input:tree_code_new_value("variant_payload"); input = input:tree_code_with_result_state(payload_r)
+    input = input:tree_code_with_result_state(input:tree_code_append_inst(Code.CodeInstVariantPayload(payload_r.value, ref, i, owner_value), origin_generated("variant payload")))
+    local binding = variant_binding(kind, variant, binds[i])
+    local cty = input:tree_code_type(binding.ty)
+    if input:tree_code_binding_is_addressed(binding) or cty:tree_code_is_aggregate_type() then
+      input = input:tree_code_with_result_state(input:tree_code_bind_local_init(binding, payload_r.value, binding.ty, false))
+    else
+      input = input:tree_code_with_result_state(input:tree_code_bind_alias(binding, payload_r.value, cty))
+    end
   end
   return TreeCode.TreeCodeStateResult(input:tree_code_state())
 end
 
 function Tree.SwitchVariantExprArm:tree_code_bind_variant_payload(input, kind, owner_value, owner_ty, variant)
-  if #(self.binds or {}) == 0 then return TreeCode.TreeCodeStateResult(input:tree_code_state()) end
-  if #(self.binds or {}) > 1 then unsupported(self, "multi-bind variant arm") end
-  local payload_ty = input:tree_code_variant_payload_type(variant)
-  if payload_ty == nil then unsupported(self, "payload bind for void variant") end
+  local binds = self.binds or {}
+  if #binds == 0 then return TreeCode.TreeCodeStateResult(input:tree_code_state()) end
   local ref = input:tree_code_variant_ref(owner_ty, variant)
-  local payload_r = input:tree_code_new_value("variant_payload"); input = input:tree_code_with_result_state(payload_r)
-  input = input:tree_code_with_result_state(input:tree_code_append_inst(Code.CodeInstVariantPayload(payload_r.value, ref, owner_value), origin_generated("variant payload")))
-  local binding = variant_binding(kind, variant, self.binds[1])
-  local cty = input:tree_code_type(binding.ty)
-  if input:tree_code_binding_is_addressed(binding) or cty:tree_code_is_aggregate_type() then
-    input = input:tree_code_with_result_state(input:tree_code_bind_local_init(binding, payload_r.value, binding.ty, false))
-  else
-    input = input:tree_code_with_result_state(input:tree_code_bind_alias(binding, payload_r.value, cty))
+  for i = 1, #binds do
+    if ref.fields[i] == nil then unsupported(self, "payload bind beyond variant field count") end
+    local payload_r = input:tree_code_new_value("variant_payload"); input = input:tree_code_with_result_state(payload_r)
+    input = input:tree_code_with_result_state(input:tree_code_append_inst(Code.CodeInstVariantPayload(payload_r.value, ref, i, owner_value), origin_generated("variant payload")))
+    local binding = variant_binding(kind, variant, binds[i])
+    local cty = input:tree_code_type(binding.ty)
+    if input:tree_code_binding_is_addressed(binding) or cty:tree_code_is_aggregate_type() then
+      input = input:tree_code_with_result_state(input:tree_code_bind_local_init(binding, payload_r.value, binding.ty, false))
+    else
+      input = input:tree_code_with_result_state(input:tree_code_bind_alias(binding, payload_r.value, cty))
+    end
   end
   return TreeCode.TreeCodeStateResult(input:tree_code_state())
 end
@@ -1930,7 +1965,7 @@ function Tree.StmtSwitch:lower_tree_stmt_to_code(input)
     if def == nil then unsupported(self, "variant switch without tagged-union facts") end
     local vr = self.value:lower_tree_expr_to_code(input:tree_code_expr_input()); input = input:tree_code_with_result_state(vr)
     local tr = input:tree_code_new_value("variant_tag"); input = input:tree_code_with_result_state(tr)
-    input = input:tree_code_with_result_state(input:tree_code_append_inst(Code.CodeInstVariantTag(tr.value, Code.CodeTyInt(32, Code.CodeUnsigned), vr.value), origin_generated("variant tag")))
+    input = input:tree_code_with_result_state(input:tree_code_append_inst(Code.CodeInstVariantTag(tr.value, Code.CodeTyInt(32, Code.CodeUnsigned), vr.value, 0), origin_generated("variant tag")))
     local cids, cases = {}, {}
     for i = 1, #(self.variant_arms or {}) do
       local ve = tree_code_variant_entry(def, self.variant_arms[i].variant_name); local v = ve and ve.variant
@@ -2370,7 +2405,7 @@ function Tree.Func:lower_tree_func_to_code(input)
       unsupported(self, "non-void function without return")
     end
   end
-  local func = Code.CodeFunc(Code.CodeFuncId("fn_" .. parts.name), parts.name, parts.linkage, transition.sig, code_params, stmt_input.state.emission.locals, entry, stmt_input.state.emission.blocks, origin_generated("function " .. parts.name))
+  local func = Code.CodeFunc(Code.CodeFuncId("fn_" .. parts.name), sanitize(parts.name), parts.linkage, transition.sig, code_params, stmt_input.state.emission.locals, entry, stmt_input.state.emission.blocks, origin_generated("function " .. parts.name))
   return TreeCode.TreeCodeFuncLowerResult(func, stmt_input.state.abi, stmt_input.state.module_emission)
 end
 
@@ -2488,9 +2523,7 @@ end
 -- Module lowering and typed contract accumulation
 ----------------------------------------------------------------------
 function Tree.Module:tree_code_layout_env(target)
-  local envs = self:tree_module_env(target)
-  local layouts = (#envs > 0 and envs[1].layouts) or {}
-  return Sem.LayoutEnv(layouts)
+  return Sem.LayoutEnv(self:tree_module_env(target).layouts)
 end
 function Tree.Module:tree_code_module_parts(opts)
   local layout_env = opts.layout_env
@@ -2538,6 +2571,12 @@ function Tree.TypeDeclStruct:tree_code_type_decl_to_code(module_facts, mod_name)
   local lookup = module_facts.layout_env:tree_code_type_layout_lookup(mod_name, self.name)
   return lookup:tree_code_struct_type_decl(module_facts, self.name, mod_name)
 end
+function Tree.TypeDeclTaggedUnionSugar:tree_code_type_decl_to_code(module_facts, mod_name)
+  -- Tagged unions resolve their __tag/__payload layout like structs; the
+  -- typed layout projection owns the concrete field facts.
+  local lookup = module_facts.layout_env:tree_code_type_layout_lookup(mod_name, self.name)
+  return lookup:tree_code_struct_type_decl(module_facts, self.name, mod_name)
+end
 function Sem.LayoutEnv:tree_code_type_layout_lookup(mod_name, type_name)
   for i = 1, #self.layouts do
     local layout = self.layouts[i]
@@ -2564,6 +2603,7 @@ end
 function Sem.TypeLayoutMissing:tree_code_struct_type_decl(module_facts, type_name, mod_name)
   return {}
 end
+
 
 function Tree.Module:lower_tree_module_result_to_code(opts)
   opts = opts or {}
@@ -2692,5 +2732,3 @@ end
 function Tree.ContractFactRejected:lower_tree_contract_fact_to_code(input)
   return TreeCode.TreeCodeContractResult(input:tree_code_contract_reject("tree contract rejected: " .. class_name(self.issue)))
 end
--- Keep schema_v2 on the canonical leaf-owned layout implementation.
-require("lalin.layout_resolve")(require("lalin.schema_v2"))

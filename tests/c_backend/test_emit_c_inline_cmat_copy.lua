@@ -18,8 +18,10 @@ end
 local parsed = assert(lalin.loadstring(src, "@test_emit_c_inline_cmat_copy.lln"))
 local dir = "target/test_emit_c_inline_cmat_copy"
 local artifact = lalin.emit_c(parsed, { name = "emit_c_inline_cmat_copy", c_path = dir .. "/copy_i32.c", h_path = dir .. "/copy_i32.h" })
-assert(artifact.source:find("semantic scalar CMat kernel", 1, true), "copy loop must route through inline CMat")
-assert(artifact.source:find("semantic_cmat_load", 1, true), "CMat copy should own lane loads")
+-- Typed pipeline contract: the loop body lowers to an inline CMat kernel
+-- fragment (frag_fn_<fn>_kernel_) owning lane loads; no outlined stencil C.
+assert(artifact.source:find("frag_fn_copy_i32_kernel_", 1, true), "copy loop must route through inline CMat")
+assert(artifact.source:find("_load", 1, true), "CMat copy fragment should own lane loads")
 assert(not artifact.source:find("ml_stencil_store_n", 1, true), "main emit_c path must inline copy CMat, not outline stencil C")
 
 if command_ok("command -v gcc >/dev/null 2>&1") then

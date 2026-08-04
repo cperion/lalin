@@ -41,6 +41,11 @@ local function target_for_region(region)
   return Tr.RegionInvokeTarget(split_name(region.name))
 end
 
+local function sealed_stem(name)
+  return tostring(name):gsub("[^%w_]", "_")
+end
+local function sealed_function_name(name) return "__lalin_region_call_" .. sealed_stem(name) end
+local function sealed_result_name(name) return "__lalin_region_result_" .. sealed_stem(name) end
 local function prefixed_label(invoke_id, label)
   return Tr.BlockLabel(tostring(invoke_id or "region") .. "." .. tostring(label.name))
 end
@@ -141,21 +146,23 @@ function Tr.ItemRegion:region_definition_projection()
 end
 function Tr.ItemRegion:region_protocol_projection()
   local payloads = {}
+  local result_name = sealed_result_name(self.region.name)
   for i = 1, #(self.region.conts or {}) do
     local cont = self.region.conts[i]
-    payloads[i] = Tr.RegionSealPayload(cont, Tr.RegionResultTypeId(tostring(self.region.name) .. "." .. tostring(cont.name)))
+    payloads[i] = Tr.RegionSealPayload(cont, Tr.RegionResultTypeId(result_name .. "." .. tostring(cont.name)))
   end
-  local protocol = Tr.RegionProtocol(Tr.RegionProtocolKey(tostring(self.region.name)), Tr.RegionResultTypeId(tostring(self.region.name) .. ".Result"), payloads)
+  local protocol = Tr.RegionProtocol(Tr.RegionProtocolKey(tostring(self.region.name)), Tr.RegionResultTypeId(result_name), payloads)
   return Tr.RegionProtocolProjection({ Tr.RegionProtocolEntry(protocol.key, protocol) })
 end
 function Tr.ItemRegion:region_seal_projection()
   local target = target_for_region(self.region)
   local payloads = {}
+  local result_name = sealed_result_name(self.region.name)
   for i = 1, #(self.region.conts or {}) do
     local cont = self.region.conts[i]
-    payloads[i] = Tr.RegionSealPayload(cont, Tr.RegionResultTypeId(tostring(self.region.name) .. "." .. tostring(cont.name)))
+    payloads[i] = Tr.RegionSealPayload(cont, Tr.RegionResultTypeId(result_name .. "." .. tostring(cont.name)))
   end
-  local protocol = Tr.RegionProtocol(Tr.RegionProtocolKey(tostring(self.region.name)), Tr.RegionResultTypeId(tostring(self.region.name) .. ".Result"), payloads)
+  local protocol = Tr.RegionProtocol(Tr.RegionProtocolKey(tostring(self.region.name)), Tr.RegionResultTypeId(result_name), payloads)
   local seal = Tr.RegionSeal(target, self.region, Tr.RegionFunctionId(tostring(self.region.name)), protocol)
   return Tr.RegionSealProjection({ Tr.RegionSealEntry(target, seal) })
 end
@@ -530,6 +537,107 @@ function Tr.StmtRegionCall:region_clone_for_invoke(invoke_id, wires, conts)
   return Tr.StmtRegionCall(self.h, tostring(invoke_id) .. "." .. tostring(self.invoke_id), self.target, self.args,
     clone_wiring(self.wiring or {}, invoke_id, wires, conts))
 end
+
+-- -------------------------------------------------------------------------
+-- Sealed callable-region materialization.
+-- -------------------------------------------------------------------------
+local function seal_stmt(stmt, result_name)
+  return stmt:region_seal_result_stmt(result_name)
+end
+
+local function seal_body(body, result_name)
+  local out = {}
+  for i = 1, #(body or {}) do out[i] = seal_stmt(body[i], result_name) end
+  return out
+end
+
+function Tr.Stmt:region_seal_result_stmt(_result_name) return self end
+function Tr.StmtJumpCont:region_seal_result_stmt(result_name)
+  local values = {}
+  for i = 1, #(self.cont.params or {}) do
+    local param = self.cont.params[i]
+    local projection_entries = {}
+    for j = 1, #(self.args or {}) do
+      projection_entries[j] = Tr.RegionWireArgEntry(self.args[j].name, self.args[j].value)
+    end
+    local value = Tr.RegionWireArgProjection(projection_entries):region_wire_arg_lookup(param.name):region_seal_payload_value(param)
+    values[i] = value
+  end
+  local args = {}
+  for i = 1, #(self.cont.params or {}) do args[i] = Tr.JumpArg(self.cont.params[i].name, values[i]) end
+  return Tr.StmtJump(Tr.StmtSurface, Tr.BlockLabel("__seal_exit_" .. sealed_stem(self.cont.name)), args)
+end
+function Tr.RegionWireArgFound:region_seal_payload_value(_param) return self.entry.value end
+function Tr.RegionWireArgMissing:region_seal_payload_value(param)
+  error("sealed region exit missing payload `" .. tostring(param.name) .. "`", 2)
+end
+function Tr.StmtIf:region_seal_result_stmt(result_name)
+  return Tr.StmtIf(self.h, self.cond, seal_body(self.then_body, result_name), seal_body(self.else_body, result_name))
+end
+function Tr.StmtSwitch:region_seal_result_stmt(result_name)
+  local arms, variants = {}, {}
+  for i = 1, #(self.arms or {}) do arms[i] = Tr.SwitchStmtArm(self.arms[i].key, seal_body(self.arms[i].body, result_name)) end
+  for i = 1, #(self.variant_arms or {}) do
+    local arm = self.variant_arms[i]
+    variants[i] = Tr.SwitchVariantStmtArm(arm.variant_name, arm.binds, seal_body(arm.body, result_name))
+  end
+  return Tr.StmtSwitch(self.h, self.value, arms, variants, seal_body(self.default_body, result_name))
+end
+function Tr.StmtVariantSwitchSource:region_seal_result_stmt(result_name)
+  local arms, variants = {}, {}
+  for i = 1, #(self.arms or {}) do arms[i] = Tr.SwitchStmtArm(self.arms[i].key, seal_body(self.arms[i].body, result_name)) end
+  for i = 1, #(self.variant_arms or {}) do
+    local arm = self.variant_arms[i]
+    variants[i] = Tr.SwitchVariantSourceStmtArm(arm.variant_name, arm.binds, seal_body(arm.body, result_name))
+  end
+  return Tr.StmtVariantSwitchSource(self.h, self.value, arms, variants, seal_body(self.default_body, result_name))
+end
+function Tr.EntryControlBlock:region_seal_result_block(result_name)
+  return Tr.EntryControlBlock(self.label, self.params, seal_body(self.body, result_name))
+end
+function Tr.ControlBlock:region_seal_result_block(result_name)
+  return Tr.ControlBlock(self.label, self.params, seal_body(self.body, result_name))
+end
+function Tr.ControlStmtRegion:region_seal_result_control(result_name)
+  local blocks = {}
+  for i = 1, #(self.blocks or {}) do blocks[i] = self.blocks[i]:region_seal_result_block(result_name) end
+  return Tr.ControlStmtRegion(self.region_id, self.entry:region_seal_result_block(result_name), blocks)
+end
+function Tr.StmtControl:region_seal_result_stmt(result_name)
+  return Tr.StmtControl(self.h, self.region:region_seal_result_control(result_name))
+end
+function Tr.StmtDomainControl:region_seal_result_stmt(result_name)
+  return Tr.StmtDomainControl(self.h, self.region:region_seal_result_control(result_name), self.domain)
+end
+
+function Tr.RegionSeal:region_materialize()
+  local result_name = self.protocol.result_type.text
+  local variants = {}
+  for i = 1, #(self.region.conts or {}) do
+    local cont, fields = self.region.conts[i], {}
+    for j = 1, #(cont.params or {}) do fields[j] = Ty.FieldDecl(cont.params[j].name, cont.params[j].ty) end
+    variants[i] = Ty.VariantDecl(cont.name, fields)
+  end
+  local result_item = Tr.ItemType(Tr.TypeDeclTaggedUnionSugar(result_name, variants))
+  local result_ty = Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(result_name) })))
+  local blocks = {}
+  for i = 1, #(self.region.blocks or {}) do blocks[i] = self.region.blocks[i]:region_seal_result_block(result_name) end
+  for i = 1, #(self.region.conts or {}) do
+    local cont, params, values = self.region.conts[i], {}, {}
+    for j = 1, #(cont.params or {}) do
+      local param = cont.params[j]
+      params[j] = Tr.BlockParam(param.name, param.ty)
+      values[j] = Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(param.name))
+    end
+    blocks[#blocks + 1] = Tr.ControlBlock(
+      Tr.BlockLabel("__seal_exit_" .. sealed_stem(cont.name)), params,
+      { Tr.StmtReturnValue(Tr.StmtSurface, Tr.ExprCtor(Tr.ExprSurface, result_name, cont.name, values)) })
+  end
+  local control = Tr.ControlStmtRegion("region:" .. tostring(self.region.name), self.region.entry:region_seal_result_block(result_name), blocks)
+  local function_item = Tr.ItemFunc(Tr.FuncLocalContract(self.function_id.text, self.region.params, result_ty, self.region.contracts,
+    { Tr.StmtControl(Tr.StmtSurface, control) }))
+  return Tr.RegionSealMaterialization(result_item, function_item)
+end
 -- -------------------------------------------------------------------------
 -- Immutable statement/body/block expansion.
 -- -------------------------------------------------------------------------
@@ -659,7 +767,7 @@ local function expand_definition(stmt, input, definition)
     blocks[#blocks + 1] = Tr.ControlBlock(raw.label, raw.params, expanded.body.stmts)
     append(blocks, expanded.blocks); append(issues, expanded.issues)
   end
-  local splice = Tr.RegionInvokeSplice(Tr.StmtJump(stmt.h, entry_label, entry_args), blocks, captures, input.state)
+  local splice = Tr.RegionInvokeSplice({ Tr.StmtJump(stmt.h, entry_label, entry_args) }, blocks, captures, input.state)
   return Tr.RegionInvokeExpanded(splice)
 end
 function Tr.RegionDefinitionFound:region_expand_invoke(stmt, input)
@@ -681,7 +789,34 @@ function Tr.RegionDefinitionFound:region_expand_invoke(stmt, input)
 end
 function Tr.RegionDefinitionMissing:region_expand_invoke(stmt, input) return reject(Tr.RegionInvokeMissingTarget(stmt.target)) end
 function Tr.RegionSealFound:region_expand_call(stmt, input)
-  return input.facts.definitions:region_definition_lookup(stmt.target):region_expand_invoke(stmt, input)
+  local seal = self.entry.seal
+  if #(seal.region.params or {}) ~= #(stmt.args or {}) then
+    return reject(Tr.RegionInvokeArgCount(stmt.target, #(seal.region.params or {}), #(stmt.args or {})))
+  end
+  local result_name = seal.protocol.result_type.text
+  local result_ty = Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(result_name) })))
+  local binding = B.Binding(C.Id("region:call:" .. tostring(stmt.invoke_id)),
+    "__region_call_result_" .. sealed_stem(stmt.invoke_id), result_ty, B.BindingRoleLocalValue)
+  local call = Tr.ExprCall(Tr.ExprSurface, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(seal.function_id.text)), stmt.args)
+  local let = Tr.StmtLet(Tr.StmtSurface, binding, call)
+  local arms = {}
+  for i = 1, #(seal.region.conts or {}) do
+    local cont, binds, payload_args = seal.region.conts[i], {}, {}
+    for j = 1, #(cont.params or {}) do
+      local param = cont.params[j]
+      local bind_name = "__region_payload_" .. sealed_stem(stmt.invoke_id) .. "_" .. sealed_stem(cont.name) .. "_" .. sealed_stem(param.name)
+      binds[j] = Tr.VariantBindSource(bind_name)
+      payload_args[j] = Tr.JumpArg(param.name, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(bind_name)))
+    end
+    local target = wire_for_cont(stmt.wiring, cont):region_retarget_jump(cont, payload_args)
+    arms[i] = Tr.SwitchVariantSourceStmtArm(cont.name, binds, { target })
+  end
+  local switch = Tr.StmtVariantSwitchSource(Tr.StmtSurface,
+    Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(binding.name)), {}, arms, { Tr.StmtTrap(Tr.StmtSurface) })
+  local next_scope = input.state.scope:typecheck_tree_add_value(binding.name, result_ty, binding)
+  local next_state = Check.TypeStmtInput(next_scope, input.state.return_ty, input.state.yield)
+  return Tr.RegionInvokeExpanded(Tr.RegionInvokeSplice({ let, switch }, {},
+    collect_captures(stmt.wiring, seal.region.conts), next_state))
 end
 function Tr.RegionSealMissing:region_expand_call(stmt, input)
   return reject(Tr.RegionInvokeCallFrameUnsupported(stmt.target, "region-call", "no canonical call frame seal"))
@@ -694,7 +829,7 @@ function Tr.StmtRegionCall:region_expand_invoke(input)
 end
 
 function Tr.RegionInvokeExpanded:region_expand_stmt(input)
-  return Tr.RegionStmtExpansionResult(self.splice.next_state, { self.splice.entry_stmt }, self.splice.blocks, {})
+  return Tr.RegionStmtExpansionResult(self.splice.next_state, self.splice.entry_stmts, self.splice.blocks, {})
 end
 function Tr.RegionInvokeRejected:region_expand_stmt(input)
   return Tr.RegionStmtExpansionResult(input.state, { Tr.StmtTrap(Tr.StmtSurface) }, {}, { Check.TypeIssueRegionInvoke(self.reject) })
@@ -737,11 +872,20 @@ function Tr.ItemFunc:region_expand_item(input)
   local body = self.func:region_expand_function(input)
   return Check.TypeItemResult({ Tr.ItemFunc(self.func:region_rebuild_expanded(body.body)) }, body.issues)
 end
-function Tr.ItemRegion:region_expand_item(_input)
-  -- Regions are frontend definitions: region expansion inlines their bodies
-  -- into invoke sites.  They are not executable code items and must not
-  -- leak past the frontend into code lowering.
-  return Check.TypeItemResult({}, {})
+function Tr.RegionSealFound:region_expand_materialized_item(input)
+  local artifacts = self.entry.seal:region_materialize()
+  local func = artifacts.function_item.func
+  local expanded = func:region_expand_function(input)
+  local sealed_body = Tr.RegionStmtBody(seal_body(expanded.body.stmts, self.entry.seal.protocol.result_type.text))
+  local function_item = Tr.ItemFunc(func:region_rebuild_expanded(sealed_body))
+  return Check.TypeItemResult({ artifacts.result_item, function_item }, expanded.issues)
+end
+function Tr.RegionSealMissing:region_expand_materialized_item(_input)
+  return Check.TypeItemResult({}, { Check.TypeIssueRegionInvoke(
+    Tr.RegionInvokeCallFrameUnsupported(self.target, "region-seal", "missing materialization seal")) })
+end
+function Tr.ItemRegion:region_expand_item(input)
+  return input.facts.seals:region_seal_lookup(target_for_region(self.region)):region_expand_materialized_item(input)
 end
 
 function Tr.Module:region_expand(input)

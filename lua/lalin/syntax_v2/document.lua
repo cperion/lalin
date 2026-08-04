@@ -267,17 +267,29 @@ function P.StmtKnown:lower_parsed_stmt(_named_env)
   return P.ParsedStmtBodyResolved({ self.stmt })
 end
 function P.StmtLetParsed:lower_parsed_stmt(named_env)
-  local binding = B.Binding(C.Id("parsed." .. self.name), self.name,
+  local binding = B.Binding(self.binding_id, self.name,
     self.ty, B.BindingRoleLocalValue)
   return P.ParsedStmtBodyResolved({ Tr.StmtLet(Tr.StmtSurface, binding, self.init) })
 end
 function P.StmtVarParsed:lower_parsed_stmt(named_env)
-  local binding = B.Binding(C.Id("parsed." .. self.name), self.name,
+  local binding = B.Binding(self.binding_id, self.name,
     self.ty, B.BindingRoleLocalValue)
   return P.ParsedStmtBodyResolved({ Tr.StmtVar(Tr.StmtSurface, binding, self.init) })
 end
+local lower_stmts -- forward declaration; must precede StmtIfParsed lowering
+function P.StmtIfParsed:lower_parsed_stmt(named_env)
+  -- The parsed if leaf owns lowering its bodies; elseif chains arrive as
+  -- nested StmtIfParsed in else_body.
+  local then_body = lower_stmts(self.then_body, named_env):parsed_control_body("if")
+  local else_body = lower_stmts(self.else_body, named_env):parsed_control_body("if")
+  return P.ParsedStmtBodyResolved({ Tr.StmtIf(Tr.StmtSurface, self.cond, then_body, else_body) })
+end
 function P.StmtRequiresParsed:lower_parsed_stmt(_named_env)
   return P.ParsedStmtBodyRejected("requires may only occur in a declaration contract prefix")
+end
+function P.ParsedStmtBodyResolved:parsed_control_body(_site) return self.stmts end
+function P.ParsedStmtBodyRejected:parsed_control_body(site)
+  error("to_module: " .. site .. " body rejected: " .. self.reason, 2)
 end
 function P.ParsedLoopSink:resolve_parsed_loop_sink(_named_env)
   error("missing parsed loop sink resolution", 2)
@@ -295,7 +307,6 @@ function P.ParsedLoopScanSink:resolve_parsed_loop_sink(named_env)
     self.axis, self.step, self.into)
 end
 
-local lower_stmts
 function P.ParsedStmtGroup:lower_parsed_stmt(named_env)
   return lower_stmts(self.stmts, named_env)
 end
@@ -629,7 +640,7 @@ local function decl_to_item(parsed, named_env, anon_counter)
       for i, f in ipairs(v.fields or {}) do
         vfields[i] = Ty.FieldDecl(f.name, f.ty)
       end
-      variants[#variants + 1] = Ty.VariantDecl(v.name, Ty.TScalar(C.ScalarVoid), vfields)
+      variants[#variants + 1] = Ty.VariantDecl(v.name, vfields)
     end
     return Tr.ItemType(Tr.TypeDeclTaggedUnionSugar(parsed.name, variants))
   elseif cls == P.ParsedHandle then
@@ -651,21 +662,35 @@ local function decl_to_item(parsed, named_env, anon_counter)
   -- Remaining ParsedDecl leaves own their item lowering.
   return parsed:parsed_decl_to_item(named_env, anon_counter)
 end
+-- ParsedDecl leaves own flattening: a decl array may carry ParsedDeclGroup
+-- splices whose items must join the ordered decl stream exactly like the
+-- ParsedDocument materialize path flattens them.
+function P.ParsedDecl:flatten_parsed_decls(out)
+  out[#out + 1] = self
+end
+function P.ParsedDeclGroup:flatten_parsed_decls(out)
+  for i = 1, #self.decls do self.decls[i]:flatten_parsed_decls(out) end
+end
 
 function Document.to_module(doc_or_decls, name)
   local decls, named_env
   local cls = asdl.classof(doc_or_decls)
   if cls == P.ParsedDocument then
     decls, named_env = Document.materialize(doc_or_decls)
-  elseif type(doc_or_decls) == "table" and doc_or_decls[1] then
+  elseif type(doc_or_decls) == "table" then
+    -- Already a decl array; materialize it.  Empty arrays are valid
+    -- (an empty document is a typed decl list); entry validation is
+    -- leaf-owned by decl_to_item.
     -- Already an array of decls; materialize them
     -- Build a synthetic env by scanning for ParsedStruct etc.
     named_env = {}
+    local flat = {}
     for _, d in ipairs(doc_or_decls) do
+      d:flatten_parsed_decls(flat)
       local dname = decl_name(d)
       if dname then named_env[dname] = d end
     end
-    decls = doc_or_decls
+    decls = flat
   else
     error("Document.to_module expects ParsedDocument or decl array", 2)
   end

@@ -384,8 +384,16 @@ return schema. LalinParse {
   sum. ParsedStmt {
     StmtKnown { variant_unique, field. stmt [LalinTree.Stmt], },
     ParsedStmtGroup { variant_unique, stmts [many [LalinParse.ParsedStmt]], },
-    StmtLetParsed { variant_unique, field. name [str], field. ty [LalinType.Type], field. init [LalinTree.Expr], },
-    StmtVarParsed { variant_unique, field. name [str], field. ty [LalinType.Type], field. init [LalinTree.Expr], },
+    StmtLetParsed { variant_unique, binding_id [LalinCore.Id], field. name [str], field. ty [LalinType.Type], field. init [LalinTree.Expr], },
+    StmtVarParsed { variant_unique, binding_id [LalinCore.Id], field. name [str], field. ty [LalinType.Type], field. init [LalinTree.Expr], },
+    -- If/elseif bodies may contain deferred parsed stmts (let/var/loop/
+    -- bracket groups); the leaf owns lowering them to Tree.Stmt bodies.
+    StmtIfParsed {
+      variant_unique,
+      field. cond [LalinTree.Expr],
+      then_body [many [LalinParse.ParsedStmt]],
+      else_body [many [LalinParse.ParsedStmt]],
+    },
     StmtRequiresParsed { variant_unique, contracts [many [LalinParse.ParsedContract]], },
     StmtLoopParsed {
       variant_unique,

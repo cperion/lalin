@@ -607,6 +607,68 @@ function prepare_c_artifact(decl, name, opts)
     return attach_c_artifact_writer(artifact)
 end
 
+-- Strict typed decl-list boundary: a compile input is a parsed-decl list iff
+-- it is a plain array whose every entry is a LalinParse.ParsedDecl.  Empty
+-- lists are valid (an empty document is still a typed decl list).
+local function parsed_decl_list(value)
+    local asdl = require("lalin.asdl")
+    local P = package.loaded["lalin.schema_v2.parse"]
+    if type(value) ~= "table" then return nil end
+    for i = 1, #value do
+        if not asdl.isa(value[i], P.ParsedDecl) then return nil end
+    end
+    return value
+end
+
+-- Explicit public builder boundary: a single Lua DSL Decl head/unit or a
+-- plain array whose every entry is a DSL Decl head.  The DSL builds
+-- LalinTree ASDL directly; there is no catch-all fallback.
+local function builder_decl_list(value)
+    if type(value) ~= "table" then return nil end
+    for i = 1, #value do
+        if not is_lalin_decl(value[i]) then return nil end
+    end
+    return value
+end
+
+-- Typed compile input for the schema-v2 session boundary.  The public
+-- surfaces route through leaf-owned compiler_module_input methods on the
+-- typed values; the decl-list boundary is strict; the Lua DSL builder heads
+-- are an explicit public branch, never a catch-all for arbitrary tables.
+local function compile_module_input_for(name, value)
+    local asdl = require("lalin.asdl")
+    local Compiler = require("lalin.schema_v2.compiler")
+    local P = package.loaded["lalin.schema_v2.parse"]
+    local Tr = package.loaded["lalin.schema_v2.tree"]
+    require("lalin.impl.compiler_api")
+    local cls = asdl.classof(value)
+    if cls == P.ParsedDocument or cls == Tr.Module then
+        -- Leaf-owned routing: the typed value builds its own input leaf.
+        return value:compiler_module_input(name)
+    end
+    local decls = parsed_decl_list(value)
+    if decls ~= nil then
+        return Compiler.CompilerModuleInputParsedDecls(decls, name)
+    end
+    if is_lalin_decl(value) or builder_decl_list(value) ~= nil then
+        -- Explicit public builder branch: Lua DSL Decl heads, units, and
+        -- decl-head arrays (lln.fn / lalin.unit) build LalinTree ASDL
+        -- through the DSL.
+        local unit = M.dsl.to_unit(name or "Unit", value)
+        return unit:ast():compiler_module_input(name)
+    end
+    error("compile_c_gcc/emit_c: unsupported compile input " .. tostring(value), 2)
+end
+
+-- Compile through the schema-v2 typed pipeline and return the C artifact.
+local function typed_c_artifact(name, decls, opts)
+    local Compiler = require("lalin.schema_v2.compiler")
+    require("lalin.impl.compiler_api")
+    local input = compile_module_input_for(name, decls)
+    local cs = Compiler.CompilerParsedSession(input)
+    return cs:compile(opts.c_target or opts.target or opts):compiler_require_c_artifact()
+end
+
 function M.emit_c(decl, path_or_opts, name, opts)
     if type(path_or_opts) == "table" and opts == nil then
         opts = path_or_opts
@@ -614,7 +676,22 @@ function M.emit_c(decl, path_or_opts, name, opts)
     end
     opts = opts or {}
     name = name or opts.name or "lalin_c"
-    local artifact = prepare_c_artifact(decl, name, opts)
+    local result = typed_c_artifact(name, decl, opts)
+    local CodeType = require("lalin.code_type")(require("lalin.schema_v2"))
+    local artifact = {
+        kind = "CBackendArtifact",
+        source = result.source,
+        header = result.header,
+        combined = result.source,
+        support = "",
+        name = name,
+        c_unit = result.unit,
+        unit = result.unit,
+        -- Public target/context facts for host-model inspection.
+        target = CodeType.normalize_target(opts.c_target or opts.target or opts),
+        context = require("lalin.schema_v2"),
+    }
+    attach_c_artifact_writer(artifact)
     if path_or_opts then artifact:write(path_or_opts) end
     if opts.c_path or opts.source_path or opts.h_path or opts.header_path or opts.support_path or opts.combined_path or opts.single_path then
         artifact:write(opts)
@@ -772,8 +849,6 @@ function M.emit_luajit_artifact(decl, path_or_opts, name, opts)
     return M.emit_luajit_plan_artifact(plan, path, name, opts)
 end
 
-
-
 function M.compile_c(decl, opts)
     opts = opts or {}
     local artifact = M.emit_c(decl, opts)
@@ -801,11 +876,41 @@ function M.compile_c(decl, opts)
     return c_src
 end
 
+
 function M.compile_c_gcc(name_or_decls, decls_or_opts, maybe_opts)
     local name, decls, opts = compile_args(name_or_decls, decls_or_opts, maybe_opts)
     opts.runner = "gcc"
     opts.name = opts.name or name
-    return M.compile_c(decls, opts)
+    -- Public GCC cutover: the typed schema-v2 pipeline owns parsing, typing,
+    -- lowering, and C emission.  The old lower_to_c / emit_c_lower text
+    -- lowering is not part of this path.
+    local asdl = require("lalin.asdl")
+    local Compiler = require("lalin.schema_v2.compiler")
+    require("lalin.impl.compiler_api")
+    local input = compile_module_input_for(name, decls)
+    local cs = Compiler.CompilerParsedSession(input)
+    local gcc_opts = {
+        name = name,
+        opt = opts.opt or 3,
+        out_dir = opts.out_dir or opts.build_dir,
+        cc = opts.cc or opts.compiler,
+        std = opts.std,
+        c_target = opts.c_target or opts.target,
+    }
+    if opts.gcc_opts then
+        for k, v in pairs(opts.gcc_opts) do gcc_opts[k] = v end
+    elseif opts.emit_c_compile_opts then
+        for k, v in pairs(opts.emit_c_compile_opts) do gcc_opts[k] = v end
+    end
+    local session, err = cs:compile_gcc(gcc_opts)
+    if not session then
+        if asdl.isa(err, Compiler.CompilerArtifactError) then
+            error("compile_c_gcc: " .. tostring(err.message), 2)
+        else
+            error("compile_c_gcc: " .. tostring(err or "unknown error"), 2)
+        end
+    end
+    return session, session.artifact and session.artifact.combined or session:get_source()
 end
 
 function M.compile_v2(name, source_text, opts)

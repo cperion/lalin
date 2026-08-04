@@ -33,6 +33,9 @@ end
 function CMat.CMatCFragmentAccessDirect:cmat_address_base(_access)
   return CMat.CMatCCursorTypeReady(self.base.ty)
 end
+function CMat.CMatCFragmentAccessField:cmat_address_base(_access)
+  return CMat.CMatCCursorTypeReady(self.base.ty)
+end
 function C.CBackendDataPtr:cmat_cursor_type(_access)
   return CMat.CMatCCursorTypeReady(self)
 end
@@ -95,7 +98,7 @@ function CMat.CMatCCursorTypeReady:cmat_finish_cursor_type(input)
   local local_id = C.CBackendLocalId(text)
   local cursor_local = C.CBackendLocal(local_id, C.CBackendName(text), self.ty)
   local cursor = CMat.CMatCAddressCursor(
-    id, input.coordinate.basis, input.binding.source.base, cursor_local,
+    id, input.coordinate.basis, input.binding.source.base, input.binding.source, cursor_local,
     input.coordinate.basis.induction.init,
     input.plan.iteration.order:cmat_cursor_step_bytes(input))
   local cursors = append_one(state.cursors, cursor)

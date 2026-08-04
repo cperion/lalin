@@ -350,6 +350,13 @@ return schema. LalinCMat {
   },
   sum. CMatCFragmentAccessSource {
     CMatCFragmentAccessDirect { variant_unique, base [LalinC.CBackendLocal], },
+    CMatCFragmentAccessField {
+      variant_unique,
+      base [LalinC.CBackendLocal],
+      owner [LalinC.CBackendLocal],
+      field. field [LalinSem.FieldRef],
+      pointer_ty [LalinC.CBackendType],
+    },
   },
   product. CMatCFragmentAccessBindingEntry {
     interned,
@@ -397,6 +404,7 @@ return schema. LalinCMat {
     field. id [LalinCMat.CMatCAddressCursorId],
     basis [LalinLower.LowerCMatAddressBasis],
     base [LalinC.CBackendLocal],
+    source [LalinCMat.CMatCFragmentAccessSource],
     cursor_local [LalinC.CBackendLocal],
     start [LalinCode.CodeValueId],
     step_bytes [number],

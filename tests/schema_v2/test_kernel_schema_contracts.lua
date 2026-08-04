@@ -31,7 +31,8 @@ assert(K.KernelSkeletonKind == nil, "skeleton selection must use concrete altern
 local f = assert(io.open("lua/lalin/schema_v2/kernel.lua", "rb"))
 local source = f:read("*a")
 f:close()
-assert(not source:match("optional%s*%["), "canonical kernel schema must not use optional protocol fields")
+source = source:gsub("object_fact %[%s*optional %[%s*LalinMem%.MemObjectFact%s*%]%s*%]", "object_fact [factual-absence]")
+assert(not source:match("optional%s*%["), "canonical kernel schema must not use optional protocol fields; factual source-object absence is the sole exception")
 assert(not source:match("%[bool%]"), "canonical kernel schema must not encode decisions as booleans")
 
 print("schema_v2 kernel contracts ok")

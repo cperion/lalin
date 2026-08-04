@@ -79,9 +79,36 @@ return schema. LalinCompiler {
     source_text [str],
     source_name [str],
   },
+  -- Typed compile inputs for the public session boundary.  The loader and
+  -- builder surfaces converge here as named ASDL alternatives: a parsed
+  -- document, a parsed decl array, or an already-built LalinTree module.
+  -- Each leaf owns producing the LalinTree.Module for the phase pipeline;
+  -- there is no source recovery and no adapter to an untyped AST.
+  sum. CompilerModuleInput {
+    CompilerModuleInputParsedDocument {
+      variant_unique,
+      document [LalinParse.ParsedDocument],
+      source_name [str],
+    },
+    CompilerModuleInputParsedDecls {
+      variant_unique,
+      field. decls [many [LalinParse.ParsedDecl]],
+      source_name [str],
+    },
+    CompilerModuleInputTree {
+      variant_unique,
+      field. module [LalinTree.Module],
+      source_name [str],
+    },
+  },
+
+  product. CompilerParsedSession {
+    interned,
+    input [LalinCompiler.CompilerModuleInput],
+  },
 
   sum. CompilerArtifact {
-    CompilerArtifactC { source [str], header [str] },
+    CompilerArtifactC { source [str], header [str], unit [LalinC.CBackendUnit] },
     CompilerArtifactError { message [str] },
   },
 }

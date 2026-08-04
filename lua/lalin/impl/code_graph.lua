@@ -266,7 +266,7 @@ function Code.CodeInstClosure:code_graph_append_uses(uses, ref)
 end
 
 function Code.CodeInstVariantCtor:code_graph_append_uses(uses, ref)
-  add_use(uses, self.payload, ref, nil, "variant.payload")
+  for i, arg in ipairs(self.args or {}) do add_use(uses, arg, ref, nil, "variant.arg" .. tostring(i)) end
 end
 
 function Code.CodeInstVariantTag:code_graph_append_uses(uses, ref)

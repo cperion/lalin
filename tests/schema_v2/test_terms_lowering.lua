@@ -210,8 +210,8 @@ local tag_param = Code.CodeParam(tag_val, "tag", i32_type, Code.CodeOriginSource
 
 -- Create variant refs
 local owner_ty = Code.CodeTyInt(32, Code.CodeSigned)  -- placeholder
-local var1 = Code.CodeVariantRef(owner_ty, "Some", 0, Code.CodeTyInt(32, Code.CodeSigned))
-local var2 = Code.CodeVariantRef(owner_ty, "None", 1, nil)
+local var1 = Code.CodeVariantRef(owner_ty, "Some", 0, 0, { Code.CodeVariantField("value", Code.CodeTyInt(32, Code.CodeSigned), 0) })
+local var2 = Code.CodeVariantRef(owner_ty, "None", 1, 0, {})
 
 local vcases = {
   Code.CodeVariantCase(var1, Code.CodeBlockId("vcase1"), {}),

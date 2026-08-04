@@ -111,7 +111,7 @@ local local_place = Code.CodePlaceLocal(Code.CodeLocalId("local:x"), i32)
 local deref_place = Code.CodePlaceDeref(data_dst, i32, 4)
 local field_ref = T.LalinSem.FieldByName("x", Ty.TScalar(Core.ScalarI32))
 local named_ty = Code.CodeTyNamed("Demo", "Pair", Ty.TNamed(Ty.TypeRefGlobal("Demo", "Pair")))
-local variant = Code.CodeVariantRef(named_ty, "some", 1, i32)
+local variant = Code.CodeVariantRef(named_ty, "some", 1, i32, 0, 0)
 local access = Code.CodeMemoryAccess(Code.CodeMemoryReadWrite, i32, 4, Code.CodeMayTrap, false, Core.AtomicSeqCst)
 ctx.value_types[data_dst.text] = ptr_i32
 ctx.value_types[Code.CodeValueId("v:fn").text] = Code.CodeTyCodePtr(sig.id)
@@ -153,7 +153,7 @@ local coverage = {
     { Code.CodeInstByteSpanLen(Code.CodeValueId("v:blen"), bytespan), LJ.LJExprProjectField },
     { Code.CodeInstClosure(Code.CodeValueId("v:closure"), Code.CodeTyClosure(sig.id), Code.CodeValueId("v:fn"), Code.CodeValueId("v:ctx"), sig.id), LJ.LJExprClosure },
     { Code.CodeInstVariantCtor(Code.CodeValueId("v:variant"), named_ty, variant, a), LJ.LJExprVariantCtor },
-    { Code.CodeInstVariantTag(Code.CodeValueId("v:tag"), i32, Code.CodeValueId("v:variant")), LJ.LJExprVariantTag },
+    { Code.CodeInstVariantTag(Code.CodeValueId("v:tag"), i32, Code.CodeValueId("v:variant"), 0), LJ.LJExprVariantTag },
     { Code.CodeInstVariantPayload(Code.CodeValueId("v:payload"), variant, Code.CodeValueId("v:variant")), LJ.LJExprVariantPayload },
     { Code.CodeInstCall(Code.CodeValueId("v:call"), Code.CodeCallDirect(Code.CodeFuncId("fn:add")), sig.id, { a, b }), LJ.LJExprCall },
     { Code.CodeInstAtomicLoad(Code.CodeValueId("v:aload"), deref_place, access, Core.AtomicSeqCst), LJ.LJExprAtomicLoad },

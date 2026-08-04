@@ -34,8 +34,10 @@ local artifact = lalin.emit_c(parsed, {
     h_path = dir .. "/sum_i32.h",
 })
 
-assert(artifact.source:find("semantic scalar CMat kernel", 1, true), "reduction loop must route through inline CMat")
-assert(artifact.source:find("semantic_cmat_load", 1, true), "CMat reduction should own lane loads")
+-- Typed pipeline contract: the fold loop lowers to an inline CMat kernel
+-- fragment (frag_fn_<fn>_kernel_) owning the fold lane; no outlined stencil C.
+assert(artifact.source:find("frag_fn_sum_i32_kernel_", 1, true), "reduction loop must route through inline CMat")
+assert(artifact.source:find("_fold", 1, true), "CMat reduction fragment should own the fold lane")
 assert(not artifact.source:find("KernelEffectFold", 1, true), "fold must not leak as direct KernelEffect emission")
 assert(not artifact.source:find("ml_stencil_reduce_n", 1, true), "main emit_c path must inline reduce CMat, not outline stencil C")
 assert(artifact.source:find("return", 1, true), "reduction function should return computed accumulator")

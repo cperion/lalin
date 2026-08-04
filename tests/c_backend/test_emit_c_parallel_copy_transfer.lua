@@ -33,7 +33,9 @@ local artifact = lalin.emit_c(decls, {
   c_path = "target/parallel_copy_transfer.c",
   h_path = "target/parallel_copy_transfer.h",
 })
-assert(artifact.source:match("__xfer_"), "cyclic block-param transfer should use a scratch temporary")
+-- Typed pipeline contract: cyclic block-param transfer uses an edge scratch
+-- temporary (lalin_edge_tmp_) so the swap cannot overwrite live values.
+assert(artifact.source:match("lalin_edge_tmp_"), "cyclic block-param transfer should use a scratch temporary")
 local ok = os.execute("gcc -std=c99 -O2 target/parallel_copy_transfer.c -o target/parallel_copy_transfer")
 assert(ok == true or ok == 0, "gcc failed for parallel_copy_transfer")
 ok = os.execute("target/parallel_copy_transfer")

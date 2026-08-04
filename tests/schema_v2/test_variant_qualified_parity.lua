@@ -2,7 +2,7 @@ package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.p
 
 -- schema-v2 parity for the /tmp/probe2.lua `variant` and `qualified` cases.
 -- Covers the two source surfaces end to end:
---   * `Type::Variant(args)` variant constructor expressions (ExprCtor)
+--   * `Type.Variant(args)` variant constructor expressions (ExprCtor)
 --   * `case variant Name(bind...) then` switch arms resolved into typed
 --     SwitchVariantStmtArm payload binds (StmtVariantSwitchSource)
 --   * qualified `fn Owner.method(self ...)` declarations with explicit and
@@ -47,7 +47,7 @@ end
 local passed = 0
 
 -- ============================================================
--- Variant surface: `::` constructor + `case variant` switch
+-- Variant surface: `.` constructor qualification + `case variant` switch
 -- ============================================================
 print("=== Variant surface parity ===")
 
@@ -57,7 +57,7 @@ union MaybeI32
   Some(value [i32])
 end
 fn match_none() [i32] do
-  let value [MaybeI32] = MaybeI32::None()
+  let value [MaybeI32] = MaybeI32.None()
   switch value do
     case variant Some(payload) then
       return payload
@@ -68,7 +68,7 @@ fn match_none() [i32] do
   end
 end
 fn use_some(x [i32]) [i32] do
-  let value [MaybeI32] = MaybeI32::Some(x)
+  let value [MaybeI32] = MaybeI32.Some(x)
   switch value do
     case variant Some(payload) then
       return payload + 1
@@ -116,9 +116,12 @@ print("  PASS: typed variant switch arms (SwitchVariantStmtArm + i32 payload bin
 
 -- Full compile_v2 artifact parity: the probe expects OK-C source output.
 local vc = compile_artifact(variant_source, "parity_variant")
+-- The tagged union lowers to the flat __offset_N struct contract: the tag
+-- lives at __offset_0 and the payload is extracted from the byte range
+-- at the layout's payload offset (no nested __payload union).
 assert(vc.source:find("switch %("), "variant: emitted C must contain the tag switch")
-assert(vc.source:find("__payload%.Some") or vc.source:find("__payload%."),
-  "variant: emitted C must extract the payload by variant field")
+assert(vc.source:find("__offset_0", 1, true) and vc.source:find("unsigned char%*"),
+  "variant: emitted C must extract the payload from the flat __offset_N struct")
 passed = passed + 1
 print("  PASS: compile_v2 variant artifact (tag switch + payload access)")
 

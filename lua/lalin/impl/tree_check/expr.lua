@@ -416,28 +416,21 @@ function LCheck.TypeVariantPayloadNone:typecheck_tree_ctor_payload(lookup, expr,
   return ctor_without_payload(lookup, expr)
 end
 
-function LCheck.TypeVariantPayloadUnsupported:typecheck_tree_ctor_payload(lookup, expr, input)
-  local issues = { LCheck.TypeIssueVariantPayloadUnsupported(lookup.def.type_name, expr.variant_name, self.field_count) }
-  local args = {}
-  for i = 1, #expr.args do
-    local ar = expr.args[i]:typecheck_tree_expr(input)
+function LCheck.TypeVariantPayloadFields:typecheck_tree_ctor_payload(lookup, expr, input)
+  local fields = self.fields or {}
+  local issues, args = {}, {}
+  if #expr.args ~= #fields then issues[#issues + 1] = LCheck.TypeIssueArgCount("variant constructor", #fields, #expr.args) end
+  local count = math.min(#expr.args, #fields)
+  for i = 1, count do
+    local expected_ty = fields[i].ty
+    local ar = expr.args[i]:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, expected_ty))
     for _, issue in ipairs(ar.issues or {}) do issues[#issues + 1] = issue end
+    if ar.ty ~= expected_ty then issues[#issues + 1] = LCheck.TypeIssueExpected("variant payload " .. fields[i].field_name, expected_ty, ar.ty) end
     args[i] = ar.expr
   end
   return LCheck.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(lookup.def.ty), expr.type_name, expr.variant_name, args), lookup.def.ty, issues)
 end
 
-function LCheck.TypeVariantPayloadFound:typecheck_tree_ctor_payload(lookup, expr, input)
-  local issues, args = {}, {}
-  if #expr.args ~= 1 then issues[#issues + 1] = LCheck.TypeIssueArgCount("variant constructor", 1, #expr.args) end
-  if #expr.args >= 1 then
-    local ar = expr.args[1]:typecheck_tree_expr_expected(LCheck.TypeExpectedExprInput(input.scope, self.ty))
-    for _, issue in ipairs(ar.issues or {}) do issues[#issues + 1] = issue end
-    if ar.ty ~= self.ty then issues[#issues + 1] = LCheck.TypeIssueExpected("variant payload", self.ty, ar.ty) end
-    args[1] = ar.expr
-  end
-  return LCheck.TypeExprResult(Tr.ExprCtor(Tr.ExprTyped(lookup.def.ty), expr.type_name, expr.variant_name, args), lookup.def.ty, issues)
-end
 
 function LCheck.TypeVariantCaseLookupFound:typecheck_tree_ctor(expr, input)
   return self.case:typecheck_tree_payload_lookup():typecheck_tree_ctor_payload(self, expr, input)

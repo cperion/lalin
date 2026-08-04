@@ -580,27 +580,34 @@ function Code.CodeInstClosure:lower_code_inst_to_c(input)
 end
 function Code.CodeInstVariantCtor:lower_code_inst_to_c(input)
   local cty, dst = self.ty:code_to_c_backend_type(), self.dst:code_to_c_local_id()
-  local fields = { C.CBackendAggregateFieldInit(C.CBackendName("__tag"), C.CBackendAtomLiteral(C.CBackendScalar(Core.ScalarU32), Core.LitInt(tostring(self.variant.tag_value))), 0) }
+  -- Tagged unions lower to the flat __offset_N struct contract: the tag
+  -- field at tag_offset and each payload field addressed inside the byte
+  -- range at its own layout offset.
+  local tag_offset = self.variant.tag_offset
+  local fields = { C.CBackendAggregateFieldInit(C.CBackendName("__offset_" .. tostring(tag_offset)), C.CBackendAtomLiteral(C.CBackendScalar(Core.ScalarU32), Core.LitInt(tostring(self.variant.tag_value))), tag_offset) }
   local stmts = { C.CBackendAggregateInit(C.CBackendPlaceLocal(dst, cty), cty, fields) }
-  if self.payload ~= nil then
-    local union_id = self.ty:code_to_c_variant_payload_union_id()
-    local payload = C.CBackendPlaceField(C.CBackendPlaceLocal(dst, cty), C.CBackendName("__payload"), C.CBackendNamed(union_id), 0, nil, nil)
-    local variant = C.CBackendPlaceField(payload, C.CBackendName(self.variant.variant_name), self.variant.payload_ty:code_to_c_backend_type(), 0, nil, nil)
-    stmts[#stmts + 1] = C.CBackendPlaceStore(variant, atom(self.payload))
+  local vfields = self.variant.fields or {}
+  for i = 1, #vfields do
+    local arg = self.args[i]
+    if arg ~= nil then
+      local f = vfields[i]
+      local place = C.CBackendPlaceBytes(C.CBackendAtomAddr(C.CBackendPlaceLocal(dst, cty)), f.offset, f.ty:code_to_c_backend_type(), 0, 1)
+      stmts[#stmts + 1] = C.CBackendPlaceStore(place, atom(arg))
+    end
   end
   return emitted_value(self.dst, self.ty, stmts)
 end
 function Code.CodeInstVariantTag:lower_code_inst_to_c(input)
   local owner_cty = input.values:lower_c_value_lookup(self.value):lower_c_backend_type()
-  local place = C.CBackendPlaceField(C.CBackendPlaceLocal(self.value:code_to_c_local_id(), owner_cty), C.CBackendName("__tag"), self.tag_ty:code_to_c_backend_type(), 0, nil, nil)
+  local tag_offset = self.tag_offset
+  local place = C.CBackendPlaceField(C.CBackendPlaceLocal(self.value:code_to_c_local_id(), owner_cty), C.CBackendName("__offset_" .. tostring(tag_offset)), self.tag_ty:code_to_c_backend_type(), tag_offset, nil, nil)
   return emitted_value(self.dst, self.tag_ty, { C.CBackendPlaceLoad(self.dst:code_to_c_local_id(), place) })
 end
 function Code.CodeInstVariantPayload:lower_code_inst_to_c(input)
   local owner_cty = self.variant.owner_ty:code_to_c_backend_type()
-  local union_id = self.variant.owner_ty:code_to_c_variant_payload_union_id()
-  local payload = C.CBackendPlaceField(C.CBackendPlaceLocal(self.value:code_to_c_local_id(), owner_cty), C.CBackendName("__payload"), C.CBackendNamed(union_id), 0, nil, nil)
-  local place = C.CBackendPlaceField(payload, C.CBackendName(self.variant.variant_name), self.variant.payload_ty:code_to_c_backend_type(), 0, nil, nil)
-  return emitted_value(self.dst, self.variant.payload_ty, { C.CBackendPlaceLoad(self.dst:code_to_c_local_id(), place) })
+  local field = self.variant.fields[self.field_index]
+  local place = C.CBackendPlaceBytes(C.CBackendAtomAddr(C.CBackendPlaceLocal(self.value:code_to_c_local_id(), owner_cty)), field.offset, field.ty:code_to_c_backend_type(), 0, 1)
+  return emitted_value(self.dst, field.ty, { C.CBackendPlaceLoad(self.dst:code_to_c_local_id(), place) })
 end
 
 function Code.CodeInstCall:lower_code_inst_to_c(input)

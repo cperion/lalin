@@ -143,6 +143,7 @@ return schema. LalinMem {
       owner [LalinMem.MemObjectId],
       ptr_field [LalinSem.FieldRef],
       ptr_value [LalinCode.CodeValueId],
+      owner_value [LalinCode.CodeValueId],
     },
     MemProvUnknown { variant_unique, reason [str], },
   },
@@ -573,6 +574,10 @@ return schema. LalinMem {
     MemContractValueKey { variant_unique, field. value [LalinCode.CodeValueId], },
     MemContractPlaceKey { variant_unique, place [LalinCode.CodePlace], },
   },
+  sum. MemContractLengthLookup {
+    MemContractLengthFound { variant_unique, field. value [LalinCode.CodeValueId], },
+    MemContractLengthMissing,
+  },
   product. MemContractProjectInput { source [LalinCode.CodeFuncContractFact], },
   product. MemContractBoundsEntry { interned, func [LalinCode.CodeFuncId], base [LalinCode.CodeValueId], len [LalinCode.CodeValueId], source [LalinCode.CodeFuncContractFact], },
   product. MemContractProjectionBoundsEntry { interned, func [LalinCode.CodeFuncId], base [LalinMem.MemContractExprKey], len [LalinMem.MemContractExprKey], source [LalinCode.CodeFuncContractFact], },
@@ -716,6 +721,7 @@ return schema. LalinMem {
     data [many [LalinMem.MemDataObjectEntry]],
     inductions [LalinFlow.FlowInductionProjection],
     flow [LalinFlow.FlowFactSet],
+    contracts [LalinMem.MemContractProjection],
     facet [LalinMem.MemTransferFacet],
   },
   sum. MemInstructionTransferResult {

@@ -746,8 +746,7 @@ function Tr.ModuleSem:closure_module_name() return self.module_name end
 function Tr.ModuleCode:closure_module_name() return self.module_name end
 function Tr.Module:closure_convert(input)
   local module_name = self.h:closure_module_name()
-  local ModuleType = require("lalin.tree_module_type")(T)
-  local layouts = Sem.LayoutEnv(ModuleType.env(self,input.target).layouts)
+  local layouts = Sem.LayoutEnv(self:tree_module_env(input.target).layouts)
   local supply = Sem.ClosureNameSupply(module_name, "module", 1)
   local result = Sem.ClosureModuleComposing(Sem.ClosureModuleComposition({}, supply, layouts, input.target))
   for i = 1, #self.items do result = result:closure_continue_item(self.items[i], module_name) end

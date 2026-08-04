@@ -88,59 +88,56 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
   runtime_error(code [i32], pc [index])
 )
   entry start()
+    jump dispatch(current_pc = pc)
+  end
+
+  block dispatch(current_pc [index])
     let dispatch_proto [ptr [LuaProto]] = frame.proto
-    let instr [LuaInstr] = dispatch_proto.code[pc]
-    -- M3 benchmark workload is arithmetic-heavy, so keep ADD first. A source `switch`
-    -- exists and lowers to C switch/jump-table, but predictable hot branches are
-    -- faster for this tiny benchmark.
+    let instr [LuaInstr] = dispatch_proto.code[current_pc]
+    -- The VM machine advances through region edges, so bytecode progression
+    -- stays in one native frame. Sealed calls remain for nested object behavior.
     if instr.op == as [u8]([LuaOP.ADD]) then
-      jump add(a = instr.a, b = instr.b, c = instr.c, next_pc = pc + 1)
+      jump add(a = instr.a, b = instr.b, c = instr.c, next_pc = current_pc + 1)
     elseif instr.op == as [u8]([LuaOP.RETURN]) then
       jump ret(a = instr.a)
     elseif instr.op == as [u8]([LuaOP.JMPZ]) then
-      jump jmpz(a = instr.a, sbx = instr.sbx, next_pc = pc + 1)
+      jump jmpz(a = instr.a, sbx = instr.sbx, next_pc = current_pc + 1)
     elseif instr.op == as [u8]([LuaOP.JMP]) then
-      jump jmp(sbx = instr.sbx, next_pc = pc + 1)
+      jump jmp(sbx = instr.sbx, next_pc = current_pc + 1)
     elseif instr.op == as [u8]([LuaOP.LT]) then
-      jump lt(a = instr.a, b = instr.b, c = instr.c, next_pc = pc + 1)
+      jump lt(a = instr.a, b = instr.b, c = instr.c, next_pc = current_pc + 1)
     elseif instr.op == as [u8]([LuaOP.LOADK]) then
-      jump loadk(a = instr.a, bx = instr.bx, next_pc = pc + 1)
+      jump loadk(a = instr.a, bx = instr.bx, next_pc = current_pc + 1)
     elseif instr.op == as [u8]([LuaOP.MOVE]) then
-      jump move(a = instr.a, b = instr.b, next_pc = pc + 1)
+      jump move(a = instr.a, b = instr.b, next_pc = current_pc + 1)
     elseif instr.op == as [u8]([LuaOP.LOADS]) then
-      jump loads(a = instr.a, bx = instr.bx, next_pc = pc + 1)
+      jump loads(a = instr.a, bx = instr.bx, next_pc = current_pc + 1)
     elseif instr.op == as [u8]([LuaOP.EQ]) then
-      jump eq(a = instr.a, b = instr.b, c = instr.c, next_pc = pc + 1)
+      jump eq(a = instr.a, b = instr.b, c = instr.c, next_pc = current_pc + 1)
     elseif instr.op == as [u8]([LuaOP.NEWTABLE]) then
-      jump newtable(a = instr.a, bx = instr.bx, next_pc = pc + 1)
+      jump newtable(a = instr.a, bx = instr.bx, next_pc = current_pc + 1)
     elseif instr.op == as [u8]([LuaOP.SETI]) then
-      jump seti(table_reg = instr.a, index_reg = instr.b, value_reg = instr.c, next_pc = pc + 1)
+      jump seti(table_reg = instr.a, index_reg = instr.b, value_reg = instr.c, next_pc = current_pc + 1)
     elseif instr.op == as [u8]([LuaOP.GETI]) then
-      jump geti(a = instr.a, table_reg = instr.b, index_reg = instr.c, next_pc = pc + 1)
+      jump geti(a = instr.a, table_reg = instr.b, index_reg = instr.c, next_pc = current_pc + 1)
     elseif instr.op == as [u8]([LuaOP.SETS]) then
-      jump sets(table_reg = instr.a, key_reg = instr.b, value_reg = instr.c, next_pc = pc + 1)
+      jump sets(table_reg = instr.a, key_reg = instr.b, value_reg = instr.c, next_pc = current_pc + 1)
     elseif instr.op == as [u8]([LuaOP.GETS]) then
-      jump gets(a = instr.a, table_reg = instr.b, key_reg = instr.c, next_pc = pc + 1)
+      jump gets(a = instr.a, table_reg = instr.b, key_reg = instr.c, next_pc = current_pc + 1)
     else
-      jump bad(op = instr.op, pc = pc)
+      jump bad(op = instr.op, pc = current_pc)
     end
   end
 
   block loadk(a [u8], bx [u32], next_pc [index])
     let loadk_proto [ptr [LuaProto]] = frame.proto
     frame.regs[a] = loadk_proto.consts[bx]
-    call LuaVM.dispatch(self, frame, next_pc;
-      returned,
-      runtime_error
-    )
+    jump dispatch(current_pc = next_pc)
   end
 
   block move(a [u8], b [u8], next_pc [index])
     frame.regs[a] = frame.regs[b]
-    call LuaVM.dispatch(self, frame, next_pc;
-      returned,
-      runtime_error
-    )
+    jump dispatch(current_pc = next_pc)
   end
 
   block loads(a [u8], bx [u32], next_pc [index])
@@ -148,18 +145,12 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
     -- work can replace this payload with pointer/compressed-pointer bits while
     -- keeping the one-word LuaValue register shape.
     frame.regs[a] = LuaValue { bits = (as [u64](bx) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.STRING]) }
-    call LuaVM.dispatch(self, frame, next_pc;
-      returned,
-      runtime_error
-    )
+    jump dispatch(current_pc = next_pc)
   end
 
   block newtable(a [u8], bx [u32], next_pc [index])
     frame.regs[a] = LuaValue { bits = (as [u64](bx) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.TABLE]) }
-    call LuaVM.dispatch(self, frame, next_pc;
-      returned,
-      runtime_error
-    )
+    jump dispatch(current_pc = next_pc)
   end
 
   block table_error(code [i32], next_pc [index])
@@ -187,10 +178,7 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
     let seti_table [ptr [LuaTable]] = &self.tables[seti_table_index]
     if seti_slot < seti_table.array_len then
       seti_table.array[seti_slot] = seti_value
-      call LuaVM.dispatch(self, frame, next_pc;
-        returned = returned,
-        runtime_error = runtime_error
-      )
+      jump dispatch(current_pc = next_pc)
     else
       jump table_error(code = [LuaErr.INDEX_OOB], next_pc = next_pc)
     end
@@ -216,10 +204,7 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
     let geti_table [ptr [LuaTable]] = &self.tables[geti_table_index]
     if geti_slot < geti_table.array_len then
       frame.regs[a] = geti_table.array[geti_slot]
-      call LuaVM.dispatch(self, frame, next_pc;
-        returned = returned,
-        runtime_error = runtime_error
-      )
+      jump dispatch(current_pc = next_pc)
     else
       jump table_error(code = [LuaErr.INDEX_OOB], next_pc = next_pc)
     end
@@ -255,10 +240,7 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
       sets_entry.hash = hash
       sets_entry.key = key
       sets_entry.value = value
-      call LuaVM.dispatch(self, frame, next_pc;
-        returned = returned,
-        runtime_error = runtime_error
-      )
+      jump dispatch(current_pc = next_pc)
     end
     if sets_entry.hash == hash then
       let sets_entry_key [LuaValue] = sets_entry.key
@@ -279,10 +261,7 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
 
   block sets_store(entry [ptr [LuaHashEntry]], value [LuaValue], next_pc [index])
     entry.value = value
-    call LuaVM.dispatch(self, frame, next_pc;
-      returned,
-      runtime_error
-    )
+    jump dispatch(current_pc = next_pc)
   end
 
   block sets_next(table [ptr [LuaTable]], key [LuaValue], hash [u64], value [LuaValue], slot [index], next_pc [index])
@@ -335,18 +314,12 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
 
   block gets_found(a [u8], entry [ptr [LuaHashEntry]], next_pc [index])
     frame.regs[a] = entry.value
-    call LuaVM.dispatch(self, frame, next_pc;
-      returned,
-      runtime_error
-    )
+    jump dispatch(current_pc = next_pc)
   end
 
   block gets_missing(a [u8], next_pc [index])
     frame.regs[a] = LuaValue { bits = as [u64]([LuaTag.NIL]) }
-    call LuaVM.dispatch(self, frame, next_pc;
-      returned,
-      runtime_error
-    )
+    jump dispatch(current_pc = next_pc)
   end
 
   block gets_next(a [u8], table [ptr [LuaTable]], key [LuaValue], hash [u64], slot [index], next_pc [index])
@@ -376,18 +349,11 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
 
   block eq_true(a [u8], next_pc [index])
     frame.regs[a] = LuaValue { bits = as [u64]([LuaTag.TRUE]) }
-    call LuaVM.dispatch(self, frame, next_pc;
-      returned,
-      runtime_error
-    )
+    jump dispatch(current_pc = next_pc)
   end
 
   block eq_false(a [u8], next_pc [index])
-    frame.regs[a] = LuaValue { bits = as [u64]([LuaTag.FALSE]) }
-    call LuaVM.dispatch(self, frame, next_pc;
-      returned,
-      runtime_error
-    )
+    jump dispatch(current_pc = next_pc)
   end
 
   block add(a [u8], b [u8], c [u8], next_pc [index])
@@ -397,10 +363,7 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
     let add_rhs_i [i64] = as [i64](add_rhs.bits >> as [u64]([LuaTag.SHIFT]))
     let add_sum [i64] = add_lhs_i + add_rhs_i
     frame.regs[a] = LuaValue { bits = (as [u64](add_sum) << as [u64]([LuaTag.SHIFT])) | as [u64]([LuaTag.INT]) }
-    call LuaVM.dispatch(self, frame, next_pc;
-      returned,
-      runtime_error
-    )
+    jump dispatch(current_pc = next_pc)
   end
 
   block lt(a [u8], b [u8], c [u8], next_pc [index])
@@ -413,31 +376,19 @@ region LuaVM.dispatch(self [ptr [LuaVM]], frame [ptr [LuaFrame]], pc [index];
     else
       frame.regs[a] = LuaValue { bits = as [u64]([LuaTag.FALSE]) }
     end
-    call LuaVM.dispatch(self, frame, next_pc;
-      returned,
-      runtime_error
-    )
+    jump dispatch(current_pc = next_pc)
   end
 
   block jmp(sbx [i32], next_pc [index])
-    call LuaVM.dispatch(self, frame, as [index](as [i32](next_pc) + sbx);
-      returned,
-      runtime_error
-    )
+    jump dispatch(current_pc = as [index](as [i32](next_pc) + sbx))
   end
 
   block jmpz(a [u8], sbx [i32], next_pc [index])
     let cond [LuaValue] = frame.regs[a]
     if cond.bits == as [u64]([LuaTag.NIL]) or cond.bits == as [u64]([LuaTag.FALSE]) then
-      call LuaVM.dispatch(self, frame, as [index](as [i32](next_pc) + sbx);
-        returned = returned,
-        runtime_error = runtime_error
-      )
+      jump dispatch(current_pc = as [index](as [i32](next_pc) + sbx))
     else
-      call LuaVM.dispatch(self, frame, next_pc;
-        returned = returned,
-        runtime_error = runtime_error
-      )
+      jump dispatch(current_pc = next_pc)
     end
   end
 

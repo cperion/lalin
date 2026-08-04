@@ -41,9 +41,15 @@ function Tr.Expr:tree_check_contract_binding() error("contract requires a value 
 function Tr.ExprRef:tree_check_contract_binding() return self.ref:tree_check_contract_binding() end
 
 function Tr.FuncContract:tree_check_contract_fact() return {} end
+
+function Tr.Expr:tree_check_contract_bounds_fact(len) return { Tr.ContractFactExprBounds(self, len) } end
+function Tr.ExprRef:tree_check_contract_bounds_fact(len) return len:tree_check_contract_bounds_for_ref(self) end
+function Tr.Expr:tree_check_contract_bounds_for_ref(base) return { Tr.ContractFactExprBounds(base, self) } end
+function Tr.ExprRef:tree_check_contract_bounds_for_ref(base)
+  return { Tr.ContractFactBounds(base:tree_check_contract_binding(), self:tree_check_contract_binding()) }
+end
 function Tr.ContractBounds:tree_check_contract_fact()
-  return {Tr.ContractFactBounds(
-    self.base:tree_check_contract_binding(), self.len:tree_check_contract_binding())}
+  return self.base:tree_check_contract_bounds_fact(self.len)
 end
 function Tr.ContractWindowBounds:tree_check_contract_fact()
   return {Tr.ContractFactWindowBounds(
@@ -64,11 +70,15 @@ end
 function Tr.ContractNoAlias:tree_check_contract_fact()
   return {Tr.ContractFactNoAlias(self.base:tree_check_contract_binding())}
 end
+function Tr.Expr:tree_check_contract_readonly_fact() return Tr.ContractFactExprReadonly(self) end
+function Tr.ExprRef:tree_check_contract_readonly_fact() return Tr.ContractFactReadonly(self:tree_check_contract_binding()) end
 function Tr.ContractReadonly:tree_check_contract_fact()
-  return {Tr.ContractFactReadonly(self.base:tree_check_contract_binding())}
+  return {self.base:tree_check_contract_readonly_fact()}
 end
+function Tr.Expr:tree_check_contract_writeonly_fact() return Tr.ContractFactExprWriteonly(self) end
+function Tr.ExprRef:tree_check_contract_writeonly_fact() return Tr.ContractFactWriteonly(self:tree_check_contract_binding()) end
 function Tr.ContractWriteonly:tree_check_contract_fact()
-  return {Tr.ContractFactWriteonly(self.base:tree_check_contract_binding())}
+  return {self.base:tree_check_contract_writeonly_fact()}
 end
 function Tr.ContractInvalidate:tree_check_contract_fact()
   return {Tr.ContractFactInvalidate(self.base:tree_check_contract_binding())}

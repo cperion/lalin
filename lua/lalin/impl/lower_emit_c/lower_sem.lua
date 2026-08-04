@@ -14,6 +14,7 @@ local C = require("lalin.schema_v2.c")
 local Code = require("lalin.schema_v2.code")
 local Mem = require("lalin.schema_v2.mem")
 local Graph = require("lalin.schema_v2.graph")
+local Kernel = require("lalin.schema_v2.kernel")
 
 local function copy(items)
   local out = {}
@@ -413,12 +414,20 @@ function Lower.LowerCFunctionParamSite:lower_c_resolve_incoming(input)
       Lower.LowerCSourceFunctionParam))
 end
 function Lower.LowerCBlockParamSite:lower_c_resolve_incoming(input)
+  if self.block == input.edge.origin.source then
+    return Lower.LowerCIncomingArgumentResolved(Lower.LowerCIncomingBlockArgument(
+      input.edge, input.ordinal, input.value, self, Lower.LowerCSourceDominates(self.block, input.edge.origin.source)))
+  end
   local continuation = Lower.LowerCDominatingIncomingArgumentInput(input, self.block)
   return input.dominance:lower_c_dominance_lookup(
     Lower.LowerCDominanceQuery(self.block, input.edge.origin.source))
 :lower_c_resolve_incoming(continuation)
 end
 function Lower.LowerCInstructionSite:lower_c_resolve_incoming(input)
+  if self.block == input.edge.origin.source then
+    return Lower.LowerCIncomingArgumentResolved(Lower.LowerCIncomingBlockArgument(
+      input.edge, input.ordinal, input.value, self, Lower.LowerCSourceDominates(self.block, input.edge.origin.source)))
+  end
   local continuation = Lower.LowerCDominatingIncomingArgumentInput(input, self.block)
   return input.dominance:lower_c_dominance_lookup(
     Lower.LowerCDominanceQuery(self.block, input.edge.origin.source))
@@ -437,16 +446,16 @@ function Lower.LowerCDoesNotDominate:lower_c_resolve_incoming(input)
       input.request.func, input.request.replacement,
       "incoming argument definition does not dominate its source edge"))
 end
-function Lower.LowerCDominanceMissing:lower_c_resolve_incoming(input)
-  return Lower.LowerCIncomingArgumentRejected(
-    Lower.LowerIssueEntryAdapterRejected(
-      input.request.func, input.request.replacement,
-      "incoming argument source is absent from dominance evidence"))
+function Lower.LowerCDominanceMissing:lower_c_resolve_incoming(_input)
+  return Lower.LowerCIncomingArgumentUnreachable
 end
 function Lower.LowerCIncomingArgumentResolved:lower_c_collect_incoming(collection)
   local entries = copy(collection.entries)
   entries[#entries + 1] = self.argument
   return Lower.LowerCIncomingArgumentsCollecting(entries)
+end
+function Lower.LowerCIncomingArgumentUnreachable:lower_c_collect_incoming(collection)
+  return collection
 end
 function Lower.LowerCIncomingArgumentRejected:lower_c_collect_incoming(_collection)
   return Lower.LowerCIncomingArgumentsRejected(self.issue)
@@ -508,12 +517,6 @@ function Lower.LowerCReplacementEntryAdapterInput:lower_c_entry_adapters()
       Lower.LowerIssueEntryAdapterRejected(
         self.code_func.id, self.replacement,
         "parameterized function-entry replacement lacks an initializer"))
-  end
-  if #blocks[1].params > 0 and #incoming_edges == 0 then
-    return Lower.LowerCReplacementEntryAdapterRejected(
-      Lower.LowerIssueEntryAdapterRejected(
-        self.code_func.id, self.replacement,
-        "parameterized replacement block has no incoming edge"))
   end
   for i = 1, #incoming_edges do
     if #incoming_edges[i].args ~= #blocks[1].params then
@@ -1073,12 +1076,32 @@ function Mem.MemBaseUnknown:lower_cmat_direct_access(input)
   return Lower.LowerCMatAccessSourceRejected(access_issue(
     input.access, "unknown memory base: " .. self.reason))
 end
+function Mem.MemObjectProvenance:lower_cmat_access_source(input)
+  local expected = C.CBackendDataPtr(input.fact.binding.ty:code_to_c_backend_type())
+  return input.fact.provenance.lane.base:lower_cmat_direct_access(
+    Lower.LowerCMatDirectAccessInput(input.fact.binding.access, input.values, expected))
+end
+function Mem.MemProvFieldPointer:lower_cmat_access_source(input)
+  local expected = C.CBackendDataPtr(input.fact.binding.ty:code_to_c_backend_type())
+  return input.values:cmat_fragment_lookup(self.owner_value)
+    :lower_cmat_field_access(input, self.ptr_field, expected)
+end
+function CMat.CMatCExternalValueBindingMissing:lower_cmat_field_access(input, _field, _expected)
+  return Lower.LowerCMatAccessSourceRejected(access_issue(input.fact.binding.access,
+    "projected field owner is unavailable at fragment entry"))
+end
+function CMat.CMatCExternalValueBindingFound:lower_cmat_field_access(input, field, expected)
+  local text = input.fact.binding.access.name .. "_base"
+  local base = C.CBackendLocal(C.CBackendLocalId(text), C.CBackendName(text), expected)
+  return Lower.LowerCMatAccessSourceReady(
+    CMat.CMatCFragmentAccessField(base, self.entry.c_local, field, expected))
+end
+function Kernel.KernelLane:lower_cmat_access_source(input)
+  if self.object_fact ~= nil then return self.object_fact.provenance:lower_cmat_access_source(input) end
+  return Mem.MemObjectProvenance.lower_cmat_access_source(self, input)
+end
 function Lower.LowerCMatAccessSourceInput:lower_cmat_access_source()
-  local expected = C.CBackendDataPtr(
-    self.fact.binding.ty:code_to_c_backend_type())
-  return self.fact.provenance.lane.base:lower_cmat_direct_access(
-    Lower.LowerCMatDirectAccessInput(
-      self.fact.binding.access, self.values, expected))
+  return self.fact.provenance.lane:lower_cmat_access_source(self)
 end
 function Lower.LowerCMatAccessSourceReady:lower_cmat_finish_access(input)
   local entries = copy(input.collection.entries)
@@ -1265,10 +1288,11 @@ function Lower.LowerCMatAccessBuildReady:lower_cmat_continue_accesses(input)
   end
   local elem_size = binding.ty:code_to_c_backend_type()
 :cmat_fragment_size(request.target)
-  local stride = binding.layout:cmat_fragment_direct_stride()
+  local stride = binding.layout:cmat_fragment_direct_stride(elem_size)
   if elem_size <= 0 or stride <= 0 or stride % elem_size ~= 0 then
     return Lower.LowerCMatAccessesRejected(access_issue(
-      binding.access, "access layout is not direct scalar memory"))
+      binding.access, "access layout is not direct scalar memory: " .. tostring(binding.layout)
+        .. ", ty=" .. tostring(binding.ty) .. ", elem_size=" .. tostring(elem_size) .. ", stride=" .. tostring(stride)))
   end
   local evidence = Lower.LowerCMatAccessEvidence(
     request, binding, provenance[1], lane.accesses[1], lane.backend_info[1],

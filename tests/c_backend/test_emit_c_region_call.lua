@@ -42,12 +42,16 @@ local artifact = lalin.emit_c(assert(lalin.loadstring(src, "@test_emit_c_region_
 })
 
 assert(artifact.kind == "CBackendArtifact", "region call must lower through semantic C backend")
-assert(artifact.source:match("__lalin_region_call_Program_run"), "region call should generate a sealed callable region function")
-assert(artifact.source:match("switch"), "caller should dispatch on the sealed region result")
+-- `call` is a real sealed frame boundary: the region materializes as a
+-- callable returning its generated continuation-result union, and the caller
+-- dispatches that result.
+assert(artifact.source:match("Program_run%(") ~= nil, "sealed region callable must be emitted")
+assert(artifact.source:match("__lalin_region_result_Program_run") ~= nil, "sealed result union must be emitted")
+assert(artifact.source:match("= Program_run%(") ~= nil, "caller must invoke the sealed callable")
 
 if command_ok("command -v gcc >/dev/null 2>&1") then
     assert(command_ok("gcc -std=c99 -O3 " .. shell_quote(dir .. "/main.c") .. " -o " .. shell_quote(dir .. "/main_test")), "gcc should compile region-call artifact")
     assert(command_ok(shell_quote(dir .. "/main_test")), "region-call executable should return success")
 end
 
-io.write("lalin emit_c region call ok\n")
+io.write("lalin emit_c sealed region call ok\n")

@@ -62,7 +62,6 @@ return schema. LalinTreeCode {
     interned,
     field. name [str],
     tag [number],
-    payload [LalinType.Type],
     fields [many [LalinType.FieldDecl]],
   },
   product. TreeCodeVariantEntry {
