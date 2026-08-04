@@ -1030,3 +1030,553 @@ everywhere.
 
 Implementation declarations follow this authority.
 ]=]
+
+-- ---------------------------------------------------------------------------
+-- Canonical physical vocabulary
+-- ---------------------------------------------------------------------------
+-- These records are the executable schema spine. They contain durable or
+-- bounded physical facts only. Semantic decisions remain region continuations.
+
+struct UiIdentity
+  value [u64]
+end
+
+struct UiGeneration
+  value [u64]
+end
+
+struct UiRange
+  start [index]
+  count [index]
+end
+
+struct UiPoint
+  x [i32]
+  y [i32]
+end
+
+struct UiExtent
+  width [i32]
+  height [i32]
+end
+
+struct UiRect
+  x [i32]
+  y [i32]
+  width [i32]
+  height [i32]
+end
+
+struct UiInsets
+  left [i32]
+  top [i32]
+  right [i32]
+  bottom [i32]
+end
+
+struct UiColor
+  red [u8]
+  green [u8]
+  blue [u8]
+  alpha [u8]
+end
+
+struct UiCapacity
+  available [index]
+  required [index]
+end
+
+-- Stable topology shared by every semantic world. Zero identity is the physical
+-- root/absence sentinel and is interpreted only by NodeSpine.resolve.
+struct UiNodeSpine
+  identity [UiIdentity]
+  parent [UiIdentity]
+  first_child [UiIdentity]
+  next_sibling [UiIdentity]
+  authored_order [u32]
+  source_start [u32]
+  source_count [u32]
+end
+
+-- Authored declaration opcode is consumed only by AuthoredUi.decode.
+struct UiAuthFacet
+  opcode [u16]
+  payload [UiRange]
+  style_token [u32]
+  content [UiRange]
+end
+
+struct UiResolvedStyle
+  foreground [UiColor]
+  background [UiColor]
+  border [UiColor]
+  border_width [UiInsets]
+  padding [UiInsets]
+  gap_x [i32]
+  gap_y [i32]
+  font [UiIdentity]
+  font_size [i32]
+  attributes [u32]
+end
+
+struct UiStyleFacet
+  style [UiResolvedStyle]
+  style_identity [UiIdentity]
+  style_generation [UiGeneration]
+end
+
+struct UiMeasureFacet
+  minimum [UiExtent]
+  preferred [UiExtent]
+  maximum [UiExtent]
+  baseline [i32]
+  content_generation [UiGeneration]
+end
+
+struct UiLayoutFacet
+  border_box [UiRect]
+  content_box [UiRect]
+  clip_box [UiRect]
+  scroll_extent [UiExtent]
+  layer [i32]
+  order [u32]
+end
+
+struct UiDecorFacet
+  opacity [u8]
+  corner_radius [i32]
+  cursor [u16]
+  flags [u16]
+end
+
+struct UiSceneFacet
+  command_range [UiRange]
+  report_range [UiRange]
+end
+
+struct UiReportEntry
+  identity [UiIdentity]
+  component [UiIdentity]
+  visible [UiRect]
+  clip [UiRect]
+  layer [i32]
+  order [u32]
+  focus_scope [UiIdentity]
+  report_generation [UiGeneration]
+end
+
+-- Render command opcode is consumed only by RenderCommand.decode. Payload ranges
+-- point into command-owned geometry/text/resource arrays.
+struct UiRenderCommand
+  opcode [u16]
+  flags [u16]
+  identity [UiIdentity]
+  geometry [UiRange]
+  payload [UiRange]
+  style [UiIdentity]
+  clip [UiRect]
+  layer [i32]
+  order [u32]
+end
+
+struct UiNodeWorld
+  generation [UiGeneration]
+  spines [ptr [UiNodeSpine]]
+  auth [ptr [UiAuthFacet]]
+  count [index]
+  capacity [index]
+end
+
+struct UiStyledWorld
+  source_generation [UiGeneration]
+  generation [UiGeneration]
+  spines [ptr [UiNodeSpine]]
+  styles [ptr [UiStyleFacet]]
+  count [index]
+  capacity [index]
+end
+
+struct UiMeasuredWorld
+  source_generation [UiGeneration]
+  generation [UiGeneration]
+  spines [ptr [UiNodeSpine]]
+  styles [ptr [UiStyleFacet]]
+  measures [ptr [UiMeasureFacet]]
+  count [index]
+  capacity [index]
+end
+
+struct UiLaidOutWorld
+  source_generation [UiGeneration]
+  generation [UiGeneration]
+  spines [ptr [UiNodeSpine]]
+  styles [ptr [UiStyleFacet]]
+  measures [ptr [UiMeasureFacet]]
+  layout [ptr [UiLayoutFacet]]
+  decor [ptr [UiDecorFacet]]
+  count [index]
+  capacity [index]
+end
+
+struct UiRenderableWorld
+  source_generation [UiGeneration]
+  generation [UiGeneration]
+  commands [ptr [UiRenderCommand]]
+  command_count [index]
+  command_capacity [index]
+  reports [ptr [UiReportEntry]]
+  report_count [index]
+  report_capacity [index]
+end
+
+-- Physical host input opcode is consumed only by InputBoundary.decode.
+struct UiInputRecord
+  opcode [u16]
+  flags [u16]
+  target [UiIdentity]
+  x [i32]
+  y [i32]
+  arg0 [u32]
+  arg1 [u32]
+  payload [UiRange]
+  timestamp [u64]
+end
+
+-- Physical host effect opcode is consumed only by EffectBoundary.decode.
+struct UiEffectRecord
+  opcode [u16]
+  flags [u16]
+  requester [UiIdentity]
+  continuation [UiIdentity]
+  generation [UiGeneration]
+  payload [UiRange]
+end
+
+struct UiInputBuffer
+  records [ptr [UiInputRecord]]
+  count [index]
+  capacity [index]
+end
+
+struct UiEffectBuffer
+  records [ptr [UiEffectRecord]]
+  count [index]
+  capacity [index]
+end
+
+-- ---------------------------------------------------------------------------
+-- Terminal physical vocabulary
+-- ---------------------------------------------------------------------------
+
+-- Color mode is consumed only by TerminalStyle.project. Input/mouse protocol
+-- encodings are consumed only by TerminalCapabilityMachine.install.
+struct TerminalCapabilities
+  generation [UiGeneration]
+  viewport [UiExtent]
+  color_mode [u8]
+  unicode_width_policy [u8]
+  mouse_protocol [u8]
+  bracketed_paste [u8]
+  focus_reporting [u8]
+  synchronized_update [u8]
+  clipboard [u8]
+  cursor_shape [u8]
+end
+
+-- Decoder mode is physical persistent state consumed only by
+-- TerminalDecodeMachine.feed/timeout.
+struct TerminalDecodeFrame
+  mode [u8]
+  utf8_expected [u8]
+  utf8_seen [u8]
+  parameter_count [u8]
+  scalar_accumulator [u32]
+  escape_accumulator [u32]
+  parameters [ptr [u32]]
+  parameter_capacity [index]
+  paste_bytes [ptr [u8]]
+  paste_count [index]
+  paste_capacity [index]
+  byte_offset [u64]
+end
+
+struct TerminalInputChunk
+  bytes [ptr [u8]]
+  count [index]
+  stream_offset [u64]
+end
+
+struct TerminalGraphemeSpine
+  source [UiRange]
+  cell_offset [index]
+  cell_width [u8]
+  scalar_count [u8]
+end
+
+struct TerminalGraphemeFacet
+  text_identity [UiIdentity]
+  style_identity [UiIdentity]
+  command_identity [UiIdentity]
+end
+
+struct TerminalGraphemeWorld
+  source_generation [UiGeneration]
+  capability_generation [UiGeneration]
+  generation [UiGeneration]
+  spines [ptr [TerminalGraphemeSpine]]
+  facets [ptr [TerminalGraphemeFacet]]
+  count [index]
+  capacity [index]
+end
+
+-- Span role is consumed only by TerminalDiffMachine.diff/full_redraw.
+struct TerminalCellSpine
+  row [u32]
+  column [u32]
+  span_lead [index]
+  span_width [u8]
+  span_role [u8]
+end
+
+struct TerminalCellGlyphFacet
+  bytes [UiRange]
+  grapheme [UiIdentity]
+end
+
+struct TerminalCellStyleFacet
+  foreground [u32]
+  background [u32]
+  attributes [u32]
+  style_identity [UiIdentity]
+end
+
+struct TerminalCellOwnershipFacet
+  command [UiIdentity]
+  component [UiIdentity]
+end
+
+struct TerminalCellWorld
+  source_generation [UiGeneration]
+  capability_generation [UiGeneration]
+  generation [UiGeneration]
+  viewport [UiExtent]
+  spines [ptr [TerminalCellSpine]]
+  glyphs [ptr [TerminalCellGlyphFacet]]
+  styles [ptr [TerminalCellStyleFacet]]
+  owners [ptr [TerminalCellOwnershipFacet]]
+  text_bytes [ptr [u8]]
+  text_count [index]
+  text_capacity [index]
+  cell_count [index]
+  cell_capacity [index]
+end
+
+-- Patch opcode is consumed only by AnsiEncodeMachine.encode.
+struct TerminalPatchRun
+  opcode [u8]
+  flags [u8]
+  row [u32]
+  column [u32]
+  cell_count [u32]
+  style [TerminalCellStyleFacet]
+  bytes [UiRange]
+end
+
+struct TerminalPatchWorld
+  base_generation [UiGeneration]
+  target_generation [UiGeneration]
+  runs [ptr [TerminalPatchRun]]
+  run_count [index]
+  run_capacity [index]
+  text_bytes [ptr [u8]]
+  text_count [index]
+  text_capacity [index]
+end
+
+struct TerminalPhysicalState
+  generation [UiGeneration]
+  cursor [UiPoint]
+  style [TerminalCellStyleFacet]
+  modes [u32]
+  cursor_visible [u8]
+  cursor_shape [u8]
+end
+
+struct TerminalOutputImage
+  base_generation [UiGeneration]
+  target_generation [UiGeneration]
+  bytes [ptr [u8]]
+  byte_count [index]
+  byte_capacity [index]
+  write_offset [index]
+  result_state [TerminalPhysicalState]
+end
+
+struct TerminalCapacityPlan
+  input_bytes [index]
+  decoder_parameters [index]
+  paste_bytes [index]
+  graphemes [index]
+  cells [index]
+  cell_text_bytes [index]
+  patch_runs [index]
+  patch_text_bytes [index]
+  output_bytes [index]
+end
+
+struct TerminalRasterFrame
+  next [ptr [TerminalCellWorld]]
+  graphemes [ptr [TerminalGraphemeWorld]]
+end
+
+struct TerminalDiffFrame
+  committed [ptr [TerminalCellWorld]]
+  next [ptr [TerminalCellWorld]]
+  patch [ptr [TerminalPatchWorld]]
+end
+
+struct AnsiEncodeFrame
+  capabilities [ptr [TerminalCapabilities]]
+  physical [ptr [TerminalPhysicalState]]
+  output [ptr [TerminalOutputImage]]
+end
+
+-- Host write opcode is consumed only by TerminalSessionMachine.write_result.
+struct TerminalWriteResult
+  opcode [u8]
+  byte_count [index]
+  error_code [i32]
+end
+
+struct TerminalSessionFrame
+  capabilities [ptr [TerminalCapabilities]]
+  decoder [ptr [TerminalDecodeFrame]]
+  input [ptr [UiInputBuffer]]
+  effects [ptr [UiEffectBuffer]]
+  renderable [ptr [UiRenderableWorld]]
+  raster [ptr [TerminalRasterFrame]]
+  diff [ptr [TerminalDiffFrame]]
+  encoder [ptr [AnsiEncodeFrame]]
+  pending_output [ptr [TerminalOutputImage]]
+  frame_generation [UiGeneration]
+  output_state [u8]  -- consumed only by TerminalSessionMachine.resume_output
+end
+
+-- ---------------------------------------------------------------------------
+-- Canonical continuation contracts
+-- ---------------------------------------------------------------------------
+-- These are the exact behavioral boundaries to implement as qualified regions.
+-- They are comments until each owner receives its executable body; they are not
+-- placeholder status functions or an alternate dynamic protocol.
+--
+-- Common world pipeline
+--
+--   ProgramMachine.install(image, stores;
+--     installed(program_generation),
+--     invalid(diagnostic),
+--     capacity(required))
+--
+--   ViewMachine.project(root_frame, node_writer;
+--     projected(authored_generation),
+--     unchanged(authored_generation),
+--     capacity(required))
+--
+--   StyleMachine.project(authored, style_store;
+--     projected(styled_generation),
+--     unchanged(styled_generation),
+--     invalid(node, diagnostic),
+--     capacity(required))
+--
+--   MeasureMachine.project(styled, text_service, measure_store;
+--     projected(measured_generation),
+--     unchanged(measured_generation),
+--     text_request(request, continuation),
+--     invalid(node, diagnostic),
+--     capacity(required))
+--
+--   LayoutMachine.project(measured, viewport, layout_store;
+--     projected(layout_generation),
+--     unchanged(layout_generation),
+--     unsatisfied(node, diagnostic),
+--     capacity(required))
+--
+--   RenderMachine.project(layout, command_store, report_store;
+--     projected(render_generation, report_generation),
+--     unchanged(render_generation, report_generation),
+--     unsupported(node, command),
+--     capacity(required))
+--
+-- Boundary decoding and routing
+--
+--   InputBoundary.decode(record;
+--     pointer_move(position), pointer_press(position, button),
+--     pointer_release(position, button), wheel(position, dx, dy),
+--     key_press(key, modifiers), key_release(key, modifiers),
+--     text(bytes), paste(bytes), focus(gained), resize(extent),
+--     timer(timer_identity, generation), close, unsupported(opcode))
+--
+--   InputMachine.route(reported_frame, semantic_input;
+--     target(component, local_position), root, blocked(modal),
+--     stale(report_generation), missed)
+--
+--   EffectBoundary.decode(record;
+--     write(bytes, requester, continuation, generation),
+--     timer(deadline, requester, continuation, generation),
+--     clipboard_read(requester, continuation, generation),
+--     clipboard_write(bytes, requester, continuation, generation),
+--     cursor(cursor), title(bytes), redraw, unsupported(opcode))
+--
+-- Terminal capability and input
+--
+--   TerminalCapabilityMachine.install(boundary_record, frame;
+--     installed(capability_generation), unsupported(feature), invalid(diagnostic))
+--
+--   TerminalDecodeMachine.next(frame, chunk;
+--     key_press(key, modifiers, consumed), key_release(key, modifiers, consumed),
+--     text(bytes, consumed), paste(bytes, consumed),
+--     pointer_move(position, modifiers, consumed),
+--     pointer_press(position, button, modifiers, consumed),
+--     pointer_release(position, button, modifiers, consumed),
+--     wheel(position, dx, dy, consumed), focus(gained, consumed),
+--     end_of_chunk(consumed), incomplete(consumed),
+--     malformed(offset, diagnostic), unsupported(sequence), capacity(required))
+--
+--   TerminalDecodeMachine.timeout(frame;
+--     escape_key, malformed(offset, diagnostic), unchanged)
+--
+-- Terminal projection
+--
+--   TerminalMeasureMachine.project(renderable, capabilities, grapheme_store;
+--     projected(grapheme_generation), unchanged(grapheme_generation),
+--     invalid_text(command, offset, diagnostic), capacity(required))
+--
+--   TerminalRasterMachine.project(renderable, graphemes, capabilities, next_cells;
+--     projected(cell_generation), unchanged(cell_generation),
+--     clipped_span(command, row, column), unsupported(command), capacity(required))
+--
+--   TerminalDiffMachine.project(committed, next, patch_store;
+--     empty(target_generation), incremental(target_generation),
+--     full_redraw(target_generation), stale(base_generation), capacity(required))
+--
+--   AnsiEncodeMachine.encode(patch, capabilities, physical_state, output;
+--     encoded(target_generation), unsupported(run), capacity(required))
+--
+-- Session and transactional output
+--
+--   TerminalSessionMachine.accept_bytes(session, chunk;
+--     drained, input_ready, output_pending, blocked, failed(diagnostic))
+--
+--   TerminalSessionMachine.pump(session;
+--     idle, output_ready(image), wait_input, wait_text(request),
+--     wait_effect(effect), capacity(required), failed(diagnostic))
+--
+--   TerminalSessionMachine.write_result(session, result;
+--     committed(target_generation), resume_write(offset), wait_writable,
+--     restored, failed(diagnostic))
+--
+--   TerminalSessionMachine.resume_output(session;
+--     output_ready(image), wait_writable, idle, failed(diagnostic))
+--
+-- Every continuation payload above states what becomes newly known. Concrete
+-- implementation may narrow an owner's exits when stronger inputs make an outcome
+-- impossible; it may not collapse alternatives into nil, booleans, or status tags.
