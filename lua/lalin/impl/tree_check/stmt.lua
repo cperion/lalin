@@ -190,7 +190,15 @@ function Tr.Region:typecheck_tree_region_body(input)
     local p = self.params[i]
     local ty = p.ty:tree_region_resolve_type(input.scope)
     params[i] = Ty.Param(p.name, ty)
-    local binding = B.Binding(C.Id("region:param:" .. tostring(self.name) .. ":" .. tostring(p.name)),
+    -- A region data param is an argument.  When the region is invoked as a
+    -- sealed callable its data params become the callable's fn params, which
+    -- bind under `arg_<name>_<param>` at typecheck (tree_check/module.lua) and
+    -- lowering (Ty.Param:tree_code_param_binding).  Binding region data params
+    -- under that same identity keeps every reference typed against the region
+    -- body resolvable against the registered fn-param value; a distinct
+    -- `region:param:` identity would leave direct place references (field
+    -- stores) unbound at lowering when the body keeps its pass-1 bindings.
+    local binding = B.Binding(C.Id("arg_" .. tostring(self.name) .. "_" .. tostring(p.name)),
       p.name, ty, B.BindingRoleArg(i - 1))
     scope = scope:typecheck_tree_add_value(p.name, ty, binding)
   end

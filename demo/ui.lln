@@ -1,0 +1,284 @@
+--[[
+=============================================================================
+ Lalin UI: machines, frames, wires
+=============================================================================
+
+This file is the architecture AND the implementation: a single
+self-documented demo of driving a user interface from Lalin
+machines.  The design center is region continuations, not
+variants: a widget is a machine, an instance is a typed frame,
+and interaction is continuation-passing.
+
+The design in one paragraph
+-----------------------------------------------------------------------------
+A widget is a region machine: its states are blocks, its
+transitions are jumps, and its completion is a continuation.
+A widget instance is a typed struct frame that owns the machine's
+state.  The UI is one pump machine (ui_step) that owns the frames,
+routes input events by identity, and resumes the right machine
+through a sealed call whose continuation carries the loop index
+back into the dispatch loop.  Draw is a readonly projection pass
+over the frames.
+
+Three layers (XState's config / state / interpreter)
+-----------------------------------------------------------------------------
+  Definition   a widget type is a region; blocks are states,
+               jumps are transitions, continuations are wires.
+  Instance     a widget instance is a typed struct frame; the
+               machine's state is owned by the struct.
+  Pump         the UI is one region machine that owns the frames,
+               routes events, resumes machines, and draws.
+
+XState mapping (the web's state-machine vocabulary)
+-----------------------------------------------------------------------------
+  state        -> block
+  transition   -> jump
+  event        -> jump payload
+  guard        -> typed condition before a jump
+  effect       -> statements in a block
+  context      -> frame payload product
+  compound     -> child frame inside a frame payload
+  actor/spawn  -> sealed `call` boundary
+  onDone       -> `jump done(result)` resumes the caller's
+                  continuation with the result
+  interpreter  -> the pump region + host input
+  selector     -> a readonly projection pass (Render.screen)
+
+Design law
+-----------------------------------------------------------------------------
+We never design with variants, even though the schema has them.
+The machine position (which block) is an implementation facet of
+the frame: a stored tag dispatched at the physical boundary,
+exactly like LuaVM.dispatch.  Tags exist only at the physical
+boundary.  Blocks, jumps, and continuations are the vocabulary.
+
+Composition
+-----------------------------------------------------------------------------
+  Static nesting   a frame payload contains child frames.
+  Dynamic actor    `call Widget.run(...; done = resume(i))` is a
+                   sealed frame boundary; the callee's
+                   `jump done(result)` resumes the caller's
+                   continuation with the result.
+  Parallel         the pump owns N frames and steps them all per
+                   event batch.
+
+The demo slice
+-----------------------------------------------------------------------------
+  Toggle   click flips active            (the XState hello world)
+  Field    click focuses, keys append    (state owned by the frame)
+  Dialog   a sealed actor: open, OK,     (done / stay wires)
+           or stay open on other clicks
+  Pump     ui_step: dispatch loop,       (the interpreter)
+           focus ring, draw
+  Render   a readonly pass that draws    (the selector)
+           the frames into a caller-owned buffer
+
+The render target here is a caller-owned byte buffer so the proof
+runs headless; a real target would extern-write ANSI through C.
+
+Screen format: "T=1F=1:abD=0M=0" + NUL  (field text until 'D')
+
+  T = toggle.active    F = field.focused : <field bytes>
+  D = dialog.active    M = status.message (1 after dialog OK)
+
+UI constants (UIId / UIKind / UI) arrive from the Lua host through
+`[]` bracket host evaluation (LLBL-owned), like LuaOP in lua_vm.lln.
+=============================================================================
+]]
+
+-- UI protocol --------------------------------------------------------------
+-- Input events are encoded data from the host (the physical boundary).
+
+struct InputEvent
+  target [i32]   -- which widget: UIId.*
+  kind   [u8]    -- which event: UIKind.*
+  key    [u8]    -- key char for UIKind.KEY
+end
+
+-- Widget frames: each machine's state, owned by the struct -----------------
+
+struct ToggleFrame
+  active [u8]    -- 0 off, 1 on
+end
+
+struct FieldFrame
+  focused [u8]   -- 0 blurred, 1 focused
+  len     [i32]  -- bytes used in buf
+  buf     [ptr [u8]]  -- caller-owned, UI.FIELD_CAP capacity
+end
+
+struct DialogFrame
+  active [u8]    -- 1 while the dialog is open
+end
+
+struct UiStatus  -- the pump's report facet (what the host test reads)
+  toggle_on    [u8]
+  field_len    [i32]
+  field_first  [u8]
+  dialog_open  [u8]
+  message      [u8]
+  focus        [i32]
+end
+
+-- Toggle machine: the XState hello world ------------------------------------
+-- One state, one wire.  A click flips the frame's own flag.
+
+region Toggle.run(frame [ptr [ToggleFrame]], ev [InputEvent]; done)
+  entry start()
+    if frame.active == as [u8](0) then
+      frame.active = as [u8](1)
+    else
+      frame.active = as [u8](0)
+    end
+    jump done
+  end
+end
+
+-- Field machine: focus and text live in the frame ---------------------------
+-- CLICK toggles focus; KEY appends to the caller-owned buffer while focused.
+
+region Field.run(frame [ptr [FieldFrame]], ev [InputEvent]; done)
+  entry start()
+    if ev.kind == [UIKind.CLICK] then
+      if frame.focused == as [u8](0) then
+        frame.focused = as [u8](1)
+      else
+        frame.focused = as [u8](0)
+      end
+    else
+      if ev.kind == [UIKind.KEY] then
+        if frame.focused == as [u8](1) then
+          if frame.len < [UI.FIELD_CAP] then
+            frame.buf[frame.len] = ev.key
+            frame.len = frame.len + 1
+          end
+        end
+      end
+    end
+    jump done
+  end
+end
+
+-- Dialog machine: a sealed actor with two wires -----------------------------
+-- CLICK on UIId.OK resumes the caller's `done` wire with a result; any other
+-- click resumes `stay`, so the pump keeps routing events to the dialog.
+
+region Dialog.step(frame [ptr [DialogFrame]], ev [InputEvent]; done(ok [u8]), stay())
+  entry start()
+    if ev.target == [UIId.OK] then
+      jump done(ok = as [u8](1))
+    else
+      jump stay
+    end
+  end
+end
+
+-- Render: the readonly draw pass (the selector) -----------------------------
+-- Draws the frames into a caller-owned byte buffer.  Every byte is written
+-- at a fixed offset; the field text is a jump loop over the frame's buffer.
+
+region Render.screen(out [ptr [u8]], cap [index],
+                     toggle [ptr [ToggleFrame]], field [ptr [FieldFrame]],
+                     dialog [ptr [DialogFrame]], status [ptr [UiStatus]];
+                     done(len [index]))
+  entry start()
+    out[0] = as [u8](84)               -- 'T'
+    out[1] = as [u8](61)               -- '='
+    out[2] = toggle.active + as [u8](48)  -- '0'/'1'
+    out[3] = as [u8](70)               -- 'F'
+    out[4] = as [u8](61)               -- '='
+    out[5] = field.focused + as [u8](48)  -- '0'/'1'
+    out[6] = as [u8](58)               -- ':'
+    jump text(at = as [index](7), k = as [i32](0))
+  end
+
+  block text(at [index], k [i32])
+    if k < field.len then
+      out[at] = field.buf[k]
+      jump text(at = at + 1, k = k + 1)
+    else
+      jump tail(at = at)
+    end
+  end
+
+  block tail(at [index])
+    out[at]     = as [u8](68)          -- 'D'
+    out[at + 1] = as [u8](61)          -- '='
+    out[at + 2] = dialog.active + as [u8](48)
+    out[at + 3] = as [u8](77)          -- 'M'
+    out[at + 4] = as [u8](61)          -- '='
+    out[at + 5] = status.message + as [u8](48)
+    out[at + 6] = as [u8](0)           -- NUL terminator
+    jump done(len = at + 7)
+  end
+end
+
+-- Pump: the UI interpreter --------------------------------------------------
+-- Owns the frames, routes input by identity, resumes machines through sealed
+-- calls whose continuations carry the loop index, then draws.
+
+fn ui_step(events [ptr [InputEvent]], count [index],
+           toggle [ptr [ToggleFrame]], field [ptr [FieldFrame]],
+           dialog [ptr [DialogFrame]], status [ptr [UiStatus]],
+           screen [ptr [u8]], screen_len [index]) [i32]
+  entry start()
+    status.toggle_on = as [u8](0)
+    status.field_len = as [i32](0)
+    status.field_first = as [u8](0)
+    status.dialog_open = as [u8](0)
+    status.message = as [u8](0)
+    status.focus = as [i32](0)
+    jump dispatch(i = as [index](0))
+  end
+
+  block dispatch(i [index])
+    if i == count then
+      jump draw()
+    else
+      let ev [InputEvent] = events[i]
+      if ev.target == [UIId.TOGGLE] then
+        call Toggle.run(toggle, ev; done = resume(i))
+      elseif ev.target == [UIId.FIELD] then
+        call Field.run(field, ev; done = resume(i))
+      elseif ev.target == [UIId.OPEN] then
+        dialog.active = as [u8](1)
+        jump dispatch(i = i + 1)
+      elseif ev.target == [UIId.OK] then
+        call Dialog.step(dialog, ev; done = dialog_done(i), stay = dialog_stay(i))
+      elseif ev.kind == [UIKind.TAB] then
+        -- focus ring: TAB sends a synthetic click to the field, which owns
+        -- its own focus state (each struct owns its stuff).
+        call Field.run(field, InputEvent { target = [UIId.FIELD], kind = [UIKind.CLICK], key = 0 }; done = resume(i))
+      else
+        jump dispatch(i = i + 1)
+      end
+    end
+  end
+
+  block resume(i [index])
+    jump dispatch(i = i + 1)
+  end
+
+  block dialog_done(i [index])
+    dialog.active = as [u8](0)
+    status.message = as [u8](1)
+    jump dispatch(i = i + 1)
+  end
+
+  block dialog_stay(i [index])
+    jump dispatch(i = i + 1)
+  end
+
+  block draw()
+    call Render.screen(screen, screen_len, toggle, field, dialog, status; done = finish)
+  end
+
+  block finish(len [index])
+    status.toggle_on = toggle.active
+    status.field_len = field.len
+    status.field_first = field.buf[0]
+    status.dialog_open = dialog.active
+    status.focus = as [i32](field.focused)
+    return as [i32](0)
+  end
+end
