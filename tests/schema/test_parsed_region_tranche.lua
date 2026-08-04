@@ -129,36 +129,44 @@ assert(asdl.classof(emit_ret.wiring[1].target) == Tr.RegionWireCont and emit_ret
 
 local wires = { Tr.RegionContWire("done", Tr.RegionWireBlock(Tr.BlockLabel("caller_done"), {})) }
 local id = "outer"
-
+local captures = Tr.RegionEmitCaptureProjection({})
+local block_environments = {}
+for _, name in ipairs({ "tail", "then_l", "else_l", "done" }) do
+  block_environments[#block_environments + 1] =
+    Tr.RegionEmitBlockEnvironment(Tr.BlockLabel(name), {}, {})
+end
+local environment = Tr.RegionEmitEnvironment({}, {},
+  Tr.RegionEmitBlockEnvironmentProjection(block_environments), captures)
+local clone_input = Tr.RegionEmitCloneInput(id, wires, { cont }, environment)
 local jump_clone = Tr.StmtJump(Tr.StmtSurface, Tr.BlockLabel("tail"), { Tr.JumpArg("v", ref("x")) })
-  :region_clone_for_invoke(id, wires, { cont })
+  :region_clone_for_emit(clone_input)
 assert(asdl.classof(jump_clone) == Tr.StmtJump and jump_clone.target.name == "outer.tail",
   "invoke clone must prefix jump targets")
 
 local branch = Tr.StmtBranchJump(Tr.StmtSurface, ref("x"),
   Tr.BlockLabel("then_l"), {}, Tr.BlockLabel("else_l"), {})
-local branch_clone = branch:region_clone_for_invoke(id, wires, { cont })
+local branch_clone = branch:region_clone_for_emit(clone_input)
 assert(asdl.classof(branch_clone) == Tr.StmtBranchJump)
 assert(branch_clone.then_target.name == "outer.then_l" and branch_clone.else_target.name == "outer.else_l")
 
-local variant_source_clone = variant_source:region_clone_for_invoke(id, wires, { cont })
+local variant_source_clone = variant_source:region_clone_for_emit(clone_input)
 assert(asdl.classof(variant_source_clone.variant_arms[1].body[1]) == Tr.StmtJump
   and variant_source_clone.variant_arms[1].body[1].target.name == "outer.done")
 
 local wire_block_clone = Tr.RegionWireBlock(Tr.BlockLabel("caller_block"), { Tr.JumpArg("v", lit(3)) })
-  :region_clone_for_invoke(id, wires, { cont })
+  :region_clone_for_emit(clone_input)
 assert(wire_block_clone.label.name == "outer.caller_block", "wire block labels must be prefixed")
 
 -- RegionWireCont clone retargets through the outer invoke's wiring.
 local cont_wire = Tr.RegionContWire("done", Tr.RegionWireCont(cont, { Tr.JumpArg("v", lit(4)) }))
-local cont_wire_clone = cont_wire:region_clone_for_invoke(id, wires, { cont })
+local cont_wire_clone = cont_wire:region_clone_for_emit(clone_input)
 assert(asdl.classof(cont_wire_clone.target) == Tr.RegionWireBlock
   and cont_wire_clone.target.label.name == "caller_done", "cont wire must retarget to the caller wire target")
 
 -- Nested emit/call compose deterministic invoke ids and clone wiring.
 local nested = Tr.StmtRegionEmit(Tr.StmtSurface, "lln.emit.7", inner_target, { lit(2) },
   { Tr.RegionContWire("done", Tr.RegionWireBlock(Tr.BlockLabel("after"), {})) })
-local nested_clone = nested:region_clone_for_invoke(id, wires, { cont })
+local nested_clone = nested:region_clone_for_emit(clone_input)
 assert(asdl.classof(nested_clone) == Tr.StmtRegionEmit)
 assert(nested_clone.invoke_id == "outer.lln.emit.7", "nested invoke ids must compose")
 assert(nested_clone.wiring[1].target.label.name == "outer.after", "nested wiring labels must be prefixed")
@@ -166,7 +174,7 @@ assert(nested_clone.wiring[1].target.label.name == "outer.after", "nested wiring
 -- StmtIf/StmtSwitch clone still recurse and retarget cont jumps through wiring.
 local nested_if = Tr.StmtIf(Tr.StmtSurface, ref("x"),
   { Tr.StmtJumpCont(Tr.StmtSurface, cont, { Tr.JumpArg("v", lit(5)) }) }, {})
-local nested_if_clone = nested_if:region_clone_for_invoke(id, wires, { cont })
+local nested_if_clone = nested_if:region_clone_for_emit(clone_input)
 assert(asdl.classof(nested_if_clone.then_body[1]) == Tr.StmtJump
   and nested_if_clone.then_body[1].target.name == "caller_done",
   "StmtJumpCont inside if must retarget through the wire projection")
@@ -408,10 +416,10 @@ assert(asdl.classof(wire_projection:region_wire_arg_lookup("nope")) == Tr.Region
 
 -- Lookup result leaves choose substituted/original jump arguments.
 local marker_arg = Tr.JumpArg("left", ref("left"))
-local substituted = found_left:region_wire_arg_result(marker_arg)
+local substituted = found_left:region_call_wire_arg(marker_arg)
 assert(substituted.name == "left" and substituted.value == ref("x"),
   "found lookup must substitute the region exit value")
-local original = wire_projection:region_wire_arg_lookup("nope"):region_wire_arg_result(marker_arg)
+local original = wire_projection:region_wire_arg_lookup("nope"):region_call_wire_arg(marker_arg)
 assert(original == marker_arg, "missing lookup must keep the explicit argument")
 
 -- End-to-end wire retargeting: named `extra = 7` plus positional markers
@@ -421,7 +429,7 @@ local wire_block = Tr.RegionWireBlock(Tr.BlockLabel("finished"), {
   Tr.JumpArg("left", ref("left")),
   Tr.JumpArg("right", ref("right")),
 })
-local jump = wire_block:region_retarget_jump(nil, source_args)
+local jump = wire_block:region_retarget_call_jump(nil, source_args)
 assert(asdl.classof(jump) == Tr.StmtJump and jump.target.name == "finished")
 assert(#jump.args == 3)
 assert(jump.args[1].name == "extra" and jump.args[1].value == lit(7))
@@ -431,11 +439,11 @@ assert(jump.args[3].name == "right" and jump.args[3].value == ref("y"))
 -- A marker naming no region exit argument keeps its explicit value.
 local partial = Tr.RegionWireBlock(Tr.BlockLabel("done"), {
   Tr.JumpArg("extra", ref("extra")),
-}):region_retarget_jump(nil, source_args).args
+}):region_retarget_call_jump(nil, source_args).args
 assert(#partial == 1 and partial[1].value == ref("extra"), "unmatched marker must pass through")
 
 -- Empty explicit wire arguments forward the region exit arguments.
-local passthrough = Tr.RegionWireBlock(Tr.BlockLabel("done"), {}):region_retarget_jump(nil, source_args).args
+local passthrough = Tr.RegionWireBlock(Tr.BlockLabel("done"), {}):region_retarget_call_jump(nil, source_args).args
 assert(#passthrough == 2 and passthrough[1].value == ref("x") and passthrough[2].value == ref("y"))
 
 print("schema ParsedRegion -> Tree.Region tranche ok")

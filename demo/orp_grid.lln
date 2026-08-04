@@ -358,7 +358,7 @@ fn grid_step(events [ptr [InputRecord]], count [index], store [ptr [GridStore]])
     if i == count then
       jump project
     else
-      call InputRecord.decode(&events[i];
+      emit InputRecord.decode(&events[i];
         key = on_key(target, ch, i),
         activate = on_activate(target, i),
         cycle = on_cycle(target, i),
@@ -451,21 +451,21 @@ fn grid_step(events [ptr [InputRecord]], count [index], store [ptr [GridStore]])
   end
 
   block project()
-    call CellFrame.view(&store.cells[0], as [u8]([GridId.CELL_A]), store;
+    emit CellFrame.view(&store.cells[0], as [u8]([GridId.CELL_A]), store;
       written = project_b,
       full = decl_full
     )
   end
 
   block project_b()
-    call CellFrame.view(&store.cells[1], as [u8]([GridId.CELL_B]), store;
+    emit CellFrame.view(&store.cells[1], as [u8]([GridId.CELL_B]), store;
       written = project_task,
       full = decl_full
     )
   end
 
   block project_task()
-    call TaskFrame.view(store.task, store;
+    emit TaskFrame.view(store.task, store;
       written = solve_start,
       full = decl_full
     )
@@ -479,7 +479,7 @@ fn grid_step(events [ptr [InputRecord]], count [index], store [ptr [GridStore]])
   end
 
   block solve_start()
-    call GridStore.solve(store;
+    emit GridStore.solve(store;
       done = raster_start,
       overflow = solve_overflow
     )
@@ -493,7 +493,7 @@ fn grid_step(events [ptr [InputRecord]], count [index], store [ptr [GridStore]])
   end
 
   block raster_start()
-    call GridStore.raster(store; done = finish)
+    emit GridStore.raster(store; done = finish)
   end
 
   block finish()

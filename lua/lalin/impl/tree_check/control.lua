@@ -194,10 +194,10 @@ end
 function Check.TypeControlBlockFound:typecheck_validate_jump(region_id, scope, label, args, issues, payload_params)
   return validate_target_args(region_id, scope, label, self.block.params, args, issues, payload_params)
 end
-function Check.TypeControlContMissing:typecheck_validate_cont_jump(region_id, _scope, name, _args, issues)
+function Check.TypeControlContMissing:typecheck_validate_cont_jump(region_id, _scope, name, _args, issues, _payload)
   issues[#issues + 1] = Check.TypeIssueRegionContMissing(region_id, name)
   return _args or {}
 end
-function Check.TypeControlContFound:typecheck_validate_cont_jump(region_id, scope, _name, args, issues)
-  return validate_target_args(region_id, scope, Tr.BlockLabel(self.cont.name), self.cont.params, args, issues)
+function Check.TypeControlContFound:typecheck_validate_cont_jump(region_id, scope, _name, args, issues, payload)
+  return validate_target_args(region_id, scope, Tr.BlockLabel(self.cont.name), self.cont.params, args, issues, payload)
 end

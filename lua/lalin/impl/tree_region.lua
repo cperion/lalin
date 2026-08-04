@@ -230,18 +230,34 @@ function Tr.RegionWireArgProjection:region_wire_arg_lookup(name)
   return Tr.RegionWireArgMissing(name)
 end
 
-function Tr.RegionWireArgFound:region_wire_arg_result(arg)
-  return Tr.JumpArg(arg.name, self.entry.value)
-end
-function Tr.RegionWireArgMissing:region_wire_arg_result(arg)
-  return arg
+local function capture_name(prefix, index)
+  return "__region_capture_" .. tostring(prefix) .. "_" .. tostring(index)
 end
 
-function Tr.RegionWireArgMarkerName:region_wire_arg_result(projection, arg)
-  return projection:region_wire_arg_lookup(self.name):region_wire_arg_result(arg)
+function Tr.RegionEmitCaptureProjection:region_emit_capture_lookup(name)
+  for i = 1, #(self.entries or {}) do
+    if self.entries[i].name == name then return Tr.RegionEmitCaptureFound(self.entries[i]) end
+  end
+  return Tr.RegionEmitCaptureMissing(name)
 end
-function Tr.RegionWireArgMarkerValue:region_wire_arg_result(_projection, arg)
-  return arg
+function Tr.RegionEmitCaptureFound:region_emit_capture_arg(arg)
+  return Tr.JumpArg(arg.name, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(self.entry.name)))
+end
+function Tr.RegionEmitCaptureMissing:region_emit_capture_arg(_arg)
+  error("region emit capture missing `" .. tostring(self.name) .. "`", 2)
+end
+
+function Tr.RegionWireArgFound:region_emit_wire_arg(arg, _captures, _capture_name)
+  return Tr.JumpArg(arg.name, self.entry.value)
+end
+function Tr.RegionWireArgMissing:region_emit_wire_arg(arg, captures, name)
+  return captures:region_emit_capture_lookup(name):region_emit_capture_arg(arg)
+end
+function Tr.RegionWireArgMarkerName:region_emit_wire_arg(projection, arg, captures, name)
+  return projection:region_wire_arg_lookup(self.name):region_emit_wire_arg(arg, captures, name)
+end
+function Tr.RegionWireArgMarkerValue:region_emit_wire_arg(_projection, arg, captures, name)
+  return captures:region_emit_capture_lookup(name):region_emit_capture_arg(arg)
 end
 
 -- Forwarding-marker classification is leaf-owned on expressions.
@@ -250,7 +266,7 @@ function Tr.ExprRef:region_wire_arg_marker() return self.ref:region_wire_arg_mar
 function B.ValueRef:region_wire_arg_marker() return Tr.RegionWireArgMarkerValue end
 function B.ValueRefName:region_wire_arg_marker() return Tr.RegionWireArgMarkerName(self.name) end
 
-local function wire_args(target_args, source_args)
+local function wire_args(target_args, source_args, captures, prefix)
   if #(target_args or {}) == 0 then return source_args or {} end
   local entries = {}
   for i = 1, #(source_args or {}) do
@@ -260,32 +276,63 @@ local function wire_args(target_args, source_args)
   local out = {}
   for i = 1, #(target_args or {}) do
     local arg = target_args[i]
-    out[i] = arg.value:region_wire_arg_marker():region_wire_arg_result(projection, arg)
+    out[i] = arg.value:region_wire_arg_marker():region_emit_wire_arg(
+      projection, arg, captures, capture_name(prefix, i))
   end
   return out
 end
-function Tr.RegionWireTarget:region_retarget_jump(cont, args) return Tr.StmtTrap(Tr.StmtSurface) end
-function Tr.RegionWireBlock:region_retarget_jump(cont, args)
-  return Tr.StmtJump(Tr.StmtSurface, self.label, wire_args(self.args, args))
+function Tr.RegionWireTarget:region_retarget_emit_jump(_cont, _args, _captures) return Tr.StmtTrap(Tr.StmtSurface) end
+function Tr.RegionWireBlock:region_retarget_emit_jump(cont, args, captures)
+  local prefix = tostring(cont.name) .. "_" .. tostring(self.label.name)
+  return Tr.StmtJump(Tr.StmtSurface, self.label, wire_args(self.args, args, captures, prefix))
 end
-function Tr.RegionWireCont:region_retarget_jump(cont, args)
-  return Tr.StmtJumpCont(Tr.StmtSurface, self.cont, wire_args(self.args, args))
+function Tr.RegionWireCont:region_retarget_emit_jump(cont, args, captures)
+  local prefix = tostring(cont.name) .. "_cont_" .. tostring(self.cont.name)
+  return Tr.StmtJumpCont(Tr.StmtSurface, self.cont, wire_args(self.args, args, captures, prefix))
 end
-function Tr.RegionWireFound:region_retarget_jump(cont, args)
-  return self.entry.wire.target:region_retarget_jump(cont, args)
+function Tr.RegionWireFound:region_retarget_emit_jump(cont, args, captures)
+  return self.entry.wire.target:region_retarget_emit_jump(cont, args, captures)
 end
-function Tr.RegionWireMissing:region_retarget_jump(cont, args) return Tr.StmtTrap(Tr.StmtSurface) end
+function Tr.RegionWireMissing:region_retarget_emit_jump(_cont, _args, _captures) return Tr.StmtTrap(Tr.StmtSurface) end
+
+function Tr.RegionWireArgFound:region_call_wire_arg(arg)
+  return Tr.JumpArg(arg.name, self.entry.value)
+end
+function Tr.RegionWireArgMissing:region_call_wire_arg(arg) return arg end
+function Tr.RegionWireArgMarkerName:region_call_wire_arg(projection, arg)
+  return projection:region_wire_arg_lookup(self.name):region_call_wire_arg(arg)
+end
+function Tr.RegionWireArgMarkerValue:region_call_wire_arg(_projection, arg) return arg end
+local function call_wire_args(target_args, source_args)
+  if #(target_args or {}) == 0 then return source_args or {} end
+  local entries = {}
+  for i = 1, #(source_args or {}) do entries[i] = Tr.RegionWireArgEntry(source_args[i].name, source_args[i].value) end
+  local projection = Tr.RegionWireArgProjection(entries)
+  local out = {}
+  for i = 1, #(target_args or {}) do
+    local arg = target_args[i]
+    out[i] = arg.value:region_wire_arg_marker():region_call_wire_arg(projection, arg)
+  end
+  return out
+end
+function Tr.RegionWireTarget:region_retarget_call_jump(_cont, _args) return Tr.StmtTrap(Tr.StmtSurface) end
+function Tr.RegionWireBlock:region_retarget_call_jump(cont, args)
+  return Tr.StmtJump(Tr.StmtSurface, self.label, call_wire_args(self.args, args))
+end
+function Tr.RegionWireCont:region_retarget_call_jump(cont, args)
+  return Tr.StmtJumpCont(Tr.StmtSurface, self.cont, call_wire_args(self.args, args))
+end
+function Tr.RegionWireFound:region_retarget_call_jump(cont, args)
+  return self.entry.wire.target:region_retarget_call_jump(cont, args)
+end
+function Tr.RegionWireMissing:region_retarget_call_jump(_cont, _args) return Tr.StmtTrap(Tr.StmtSurface) end
 
 local function wire_for_cont(wires, cont)
   local entries = {}
   for i = 1, #(wires or {}) do entries[i] = Tr.RegionWireEntry(wires[i].name, wires[i]) end
-  local projection = Tr.RegionWireProjection(entries)
-  return projection:region_wire_lookup(cont.name)
+  return Tr.RegionWireProjection(entries):region_wire_lookup(cont.name)
 end
 
--- A wire argument that names a continuation parameter is forwarded (not
--- captured); the marker leaves own the decision, reusing the same
--- leaf-owned expression classification as wire-argument substitution.
 function Tr.RegionWireArgMarkerValue:region_wire_arg_captured(_cont) return true end
 function Tr.RegionWireArgMarkerName:region_wire_arg_captured(cont)
   for j = 1, #(cont and cont.params or {}) do
@@ -299,15 +346,19 @@ local function capture_projection_for_args(args, cont, prefix)
   for i = 1, #(args or {}) do
     local arg = args[i]
     if arg.value:region_wire_arg_marker():region_wire_arg_captured(cont) then
-      entries[#entries + 1] = Tr.RegionCallCaptureEntry(
-        "__region_capture_" .. tostring(prefix) .. "_" .. tostring(i), expr_type(arg.value), arg.value)
+      entries[#entries + 1] = Tr.RegionEmitCaptureEntry(
+        capture_name(prefix, i), expr_type(arg.value), arg.value)
     end
   end
-  return Tr.RegionCallCaptureProjection(entries)
+  return Tr.RegionEmitCaptureProjection(entries)
 end
-function Tr.RegionWireTarget:region_capture_projection(cont) return Tr.RegionCallCaptureProjection({}) end
-function Tr.RegionWireBlock:region_capture_projection(cont) return capture_projection_for_args(self.args, cont, self.label.name) end
-function Tr.RegionWireCont:region_capture_projection(cont) return capture_projection_for_args(self.args, cont, "cont_" .. self.cont.name) end
+function Tr.RegionWireTarget:region_capture_projection(_cont) return Tr.RegionEmitCaptureProjection({}) end
+function Tr.RegionWireBlock:region_capture_projection(cont)
+  return capture_projection_for_args(self.args, cont, tostring(cont.name) .. "_" .. tostring(self.label.name))
+end
+function Tr.RegionWireCont:region_capture_projection(cont)
+  return capture_projection_for_args(self.args, cont, tostring(cont.name) .. "_cont_" .. tostring(self.cont.name))
+end
 function Tr.RegionContWire:region_capture_projection(cont) return self.target:region_capture_projection(cont) end
 local function collect_captures(wiring, conts)
   local entries = {}
@@ -317,7 +368,7 @@ local function collect_captures(wiring, conts)
     for j = 1, #conts do if conts[j]:region_cont_matches_name(wire.name) then cont = conts[j] end end
     append(entries, wire:region_capture_projection(cont).entries)
   end
-  return Tr.RegionCallCaptureProjection(entries)
+  return Tr.RegionEmitCaptureProjection(entries)
 end
 
 -- -------------------------------------------------------------------------
@@ -464,79 +515,115 @@ function P.ParsedContractBounds:parsed_contract_value() return Tr.ContractBounds
 function P.ParsedContractDisjoint:parsed_contract_value() return Tr.ContractDisjoint(self.a, self.b) end
 function P.ParsedContractSameLen:parsed_contract_value() return Tr.ContractSameLen(self.a, self.b) end
 
-local function clone_stmt(stmt, invoke_id, wires, conts)
-  return stmt:region_clone_for_invoke(invoke_id, wires, conts)
+local function clone_stmt(stmt, input)
+  return stmt:region_clone_for_emit(input)
 end
 
-function Tr.Stmt:region_clone_for_invoke(invoke_id, wires, conts) return self end
-function Tr.StmtJumpCont:region_clone_for_invoke(invoke_id, wires, conts)
-  local found = wire_for_cont(wires, self.cont)
-  return found:region_retarget_jump(self.cont, self.args)
-end
-function Tr.StmtIf:region_clone_for_invoke(invoke_id, wires, conts)
-  local a, b = {}, {}
-  for i = 1, #(self.then_body or {}) do a[i] = clone_stmt(self.then_body[i], invoke_id, wires, conts) end
-  for i = 1, #(self.else_body or {}) do b[i] = clone_stmt(self.else_body[i], invoke_id, wires, conts) end
-  return Tr.StmtIf(self.h, self.cond, a, b)
-end
-function Tr.StmtSwitch:region_clone_for_invoke(invoke_id, wires, conts)
-  local arms, variants, default_body = {}, {}, {}
-  for i = 1, #(self.arms or {}) do
-    local body = {}; for j = 1, #(self.arms[i].body or {}) do body[j] = clone_stmt(self.arms[i].body[j], invoke_id, wires, conts) end
-    arms[i] = Tr.SwitchStmtArm(self.arms[i].key, body)
+function Tr.RegionEmitBlockEnvironmentProjection:region_emit_block_environment_lookup(label)
+  for i = 1, #(self.entries or {}) do
+    if self.entries[i].label.name == label.name then
+      return Tr.RegionEmitBlockEnvironmentFound(self.entries[i])
+    end
   end
-  for i = 1, #(self.variant_arms or {}) do
-    local body = {}; for j = 1, #(self.variant_arms[i].body or {}) do body[j] = clone_stmt(self.variant_arms[i].body[j], invoke_id, wires, conts) end
-    variants[i] = Tr.SwitchVariantStmtArm(self.variant_arms[i].variant_name, self.variant_arms[i].binds, body)
-  end
-  for i = 1, #(self.default_body or {}) do default_body[i] = clone_stmt(self.default_body[i], invoke_id, wires, conts) end
-  return Tr.StmtSwitch(self.h, self.value, arms, variants, default_body)
+  return Tr.RegionEmitBlockEnvironmentMissing(label)
 end
-function Tr.StmtControl:region_clone_for_invoke(invoke_id, wires, conts) return self end
-function Tr.StmtJump:region_clone_for_invoke(invoke_id, wires, conts)
-  return Tr.StmtJump(self.h, prefixed_label(invoke_id, self.target), self.args)
-end
-function Tr.StmtBranchJump:region_clone_for_invoke(invoke_id, wires, conts)
-  return Tr.StmtBranchJump(self.h, self.cond,
-    prefixed_label(invoke_id, self.then_target), self.then_args,
-    prefixed_label(invoke_id, self.else_target), self.else_args)
-end
-function Tr.StmtVariantSwitchSource:region_clone_for_invoke(invoke_id, wires, conts)
-  local arms, variant_arms, default_body = {}, {}, {}
-  for i = 1, #(self.arms or {}) do
-    local body = {}; for j = 1, #(self.arms[i].body or {}) do body[j] = clone_stmt(self.arms[i].body[j], invoke_id, wires, conts) end
-    arms[i] = Tr.SwitchStmtArm(self.arms[i].key, body)
-  end
-  for i = 1, #(self.variant_arms or {}) do
-    local body = {}; for j = 1, #(self.variant_arms[i].body or {}) do body[j] = clone_stmt(self.variant_arms[i].body[j], invoke_id, wires, conts) end
-    variant_arms[i] = Tr.SwitchVariantSourceStmtArm(self.variant_arms[i].variant_name, self.variant_arms[i].binds, body)
-  end
-  for i = 1, #(self.default_body or {}) do default_body[i] = clone_stmt(self.default_body[i], invoke_id, wires, conts) end
-  return Tr.StmtVariantSwitchSource(self.h, self.value, arms, variant_arms, default_body)
-end
-local function clone_wiring(wiring, invoke_id, wires, conts)
+function Tr.RegionEmitBlockEnvironmentFound:region_emit_forward_args(args)
   local out = {}
-  for i = 1, #(wiring or {}) do out[i] = wiring[i]:region_clone_for_invoke(invoke_id, wires, conts) end
+  append(out, args)
+  append(out, self.entry.forward_args)
   return out
 end
-function Tr.RegionWireBlock:region_clone_for_invoke(invoke_id, wires, conts)
-  return Tr.RegionWireBlock(prefixed_label(invoke_id, self.label), self.args)
+function Tr.RegionEmitBlockEnvironmentFound:region_emit_block_params() return self.entry.params end
+function Tr.RegionEmitBlockEnvironmentMissing:region_emit_forward_args(_args)
+  error("region emit block environment missing `" .. tostring(self.label.name) .. "`", 2)
+end
+function Tr.RegionEmitBlockEnvironmentMissing:region_emit_block_params()
+  error("region emit block environment missing `" .. tostring(self.label.name) .. "`", 2)
+end
+local function forwarded(args, input, target)
+  return input.environment.blocks:region_emit_block_environment_lookup(target):region_emit_forward_args(args)
+end
+
+function Tr.Stmt:region_clone_for_emit(_input) return self end
+local function emit_local_binding(binding, invoke_id)
+  return B.Binding(C.Id("emit:local:" .. tostring(invoke_id) .. ":" .. tostring(binding.id.text)),
+    binding.name, binding.ty, binding.role)
+end
+function Tr.StmtLet:region_clone_for_emit(input)
+  return Tr.StmtLet(self.h, emit_local_binding(self.binding, input.invoke_id), self.init)
+end
+function Tr.StmtVar:region_clone_for_emit(input)
+  return Tr.StmtVar(self.h, emit_local_binding(self.binding, input.invoke_id), self.init)
+end
+function Tr.StmtJumpCont:region_clone_for_emit(input)
+  return wire_for_cont(input.wires, self.cont):region_retarget_emit_jump(
+    self.cont, self.args, input.environment.captures)
+end
+function Tr.StmtIf:region_clone_for_emit(input)
+  local a, b = {}, {}
+  for i = 1, #(self.then_body or {}) do a[i] = clone_stmt(self.then_body[i], input) end
+  for i = 1, #(self.else_body or {}) do b[i] = clone_stmt(self.else_body[i], input) end
+  return Tr.StmtIf(self.h, self.cond, a, b)
+end
+function Tr.StmtSwitch:region_clone_for_emit(input)
+  local arms, variants, default_body = {}, {}, {}
+  for i = 1, #(self.arms or {}) do
+    local body = {}; for j = 1, #(self.arms[i].body or {}) do body[j] = clone_stmt(self.arms[i].body[j], input) end
+    arms[i] = Tr.SwitchStmtArm(self.arms[i].key, body)
+  end
+  for i = 1, #(self.variant_arms or {}) do
+    local body = {}; for j = 1, #(self.variant_arms[i].body or {}) do body[j] = clone_stmt(self.variant_arms[i].body[j], input) end
+    variants[i] = Tr.SwitchVariantStmtArm(self.variant_arms[i].variant_name, self.variant_arms[i].binds, body)
+  end
+  for i = 1, #(self.default_body or {}) do default_body[i] = clone_stmt(self.default_body[i], input) end
+  return Tr.StmtSwitch(self.h, self.value, arms, variants, default_body)
+end
+function Tr.StmtControl:region_clone_for_emit(_input) return self end
+function Tr.StmtJump:region_clone_for_emit(input)
+  return Tr.StmtJump(self.h, prefixed_label(input.invoke_id, self.target),
+    forwarded(self.args, input, self.target))
+end
+function Tr.StmtBranchJump:region_clone_for_emit(input)
+  return Tr.StmtBranchJump(self.h, self.cond,
+    prefixed_label(input.invoke_id, self.then_target), forwarded(self.then_args, input, self.then_target),
+    prefixed_label(input.invoke_id, self.else_target), forwarded(self.else_args, input, self.else_target))
+end
+function Tr.StmtVariantSwitchSource:region_clone_for_emit(input)
+  local arms, variant_arms, default_body = {}, {}, {}
+  for i = 1, #(self.arms or {}) do
+    local body = {}; for j = 1, #(self.arms[i].body or {}) do body[j] = clone_stmt(self.arms[i].body[j], input) end
+    arms[i] = Tr.SwitchStmtArm(self.arms[i].key, body)
+  end
+  for i = 1, #(self.variant_arms or {}) do
+    local body = {}; for j = 1, #(self.variant_arms[i].body or {}) do body[j] = clone_stmt(self.variant_arms[i].body[j], input) end
+    variant_arms[i] = Tr.SwitchVariantSourceStmtArm(self.variant_arms[i].variant_name, self.variant_arms[i].binds, body)
+  end
+  for i = 1, #(self.default_body or {}) do default_body[i] = clone_stmt(self.default_body[i], input) end
+  return Tr.StmtVariantSwitchSource(self.h, self.value, arms, variant_arms, default_body)
+end
+local function clone_wiring(wiring, input)
+  local out = {}
+  for i = 1, #(wiring or {}) do out[i] = wiring[i]:region_clone_for_emit(input) end
+  return out
+end
+function Tr.RegionWireBlock:region_clone_for_emit(input)
+  return Tr.RegionWireBlock(prefixed_label(input.invoke_id, self.label), self.args)
 end
 function Tr.RegionWireFound:region_clone_cont_wire(_cont, _original) return self.entry.wire.target end
 function Tr.RegionWireMissing:region_clone_cont_wire(_cont, original) return original end
-function Tr.RegionWireCont:region_clone_for_invoke(invoke_id, wires, conts)
-  return wire_for_cont(wires, self.cont):region_clone_cont_wire(self.cont, self)
+function Tr.RegionWireCont:region_clone_for_emit(input)
+  return wire_for_cont(input.wires, self.cont):region_clone_cont_wire(self.cont, self)
 end
-function Tr.RegionContWire:region_clone_for_invoke(invoke_id, wires, conts)
-  return Tr.RegionContWire(self.name, self.target:region_clone_for_invoke(invoke_id, wires, conts))
+function Tr.RegionContWire:region_clone_for_emit(input)
+  return Tr.RegionContWire(self.name, self.target:region_clone_for_emit(input))
 end
-function Tr.StmtRegionEmit:region_clone_for_invoke(invoke_id, wires, conts)
-  return Tr.StmtRegionEmit(self.h, tostring(invoke_id) .. "." .. tostring(self.invoke_id), self.target, self.args,
-    clone_wiring(self.wiring or {}, invoke_id, wires, conts))
+function Tr.StmtRegionEmit:region_clone_for_emit(input)
+  return Tr.StmtRegionEmit(self.h, tostring(input.invoke_id) .. "." .. tostring(self.invoke_id), self.target, self.args,
+    clone_wiring(self.wiring or {}, input))
 end
-function Tr.StmtRegionCall:region_clone_for_invoke(invoke_id, wires, conts)
-  return Tr.StmtRegionCall(self.h, tostring(invoke_id) .. "." .. tostring(self.invoke_id), self.target, self.args,
-    clone_wiring(self.wiring or {}, invoke_id, wires, conts))
+function Tr.StmtRegionCall:region_clone_for_emit(input)
+  return Tr.StmtRegionCall(self.h, tostring(input.invoke_id) .. "." .. tostring(self.invoke_id), self.target, self.args,
+    clone_wiring(self.wiring or {}, input))
 end
 
 -- -------------------------------------------------------------------------
@@ -736,11 +823,68 @@ function Tr.StmtDomainControl:region_expand_stmt(input)
 end
 
 
-local function reject(reject_leaf) return Tr.RegionInvokeRejected(reject_leaf) end
+local function emit_reject(reject_leaf) return Tr.RegionEmitRejected(reject_leaf) end
+local function call_reject(reject_leaf) return Tr.RegionCallRejected(reject_leaf) end
+function Tr.RegionEmitOwnedParamProjection:region_emit_owned_param_lookup(name)
+  for i = 1, #(self.params or {}) do
+    if self.params[i].name == name then return Tr.RegionEmitOwnedParamFound(self.params[i]) end
+  end
+  return Tr.RegionEmitOwnedParamMissing(name)
+end
+function Tr.RegionEmitOwnedParamFound:region_emit_environment_admission(param)
+  return Tr.RegionEmitEnvironmentShadowed(param)
+end
+function Tr.RegionEmitOwnedParamMissing:region_emit_environment_admission(param)
+  return Tr.RegionEmitEnvironmentIncluded(param,
+    Tr.JumpArg(param.name, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(param.name))))
+end
+function Tr.RegionEmitEnvironmentIncluded:region_emit_add_environment(params, forward_args)
+  params[#params + 1] = self.param
+  forward_args[#forward_args + 1] = self.forward
+end
+function Tr.RegionEmitEnvironmentShadowed:region_emit_add_environment(_params, _forward_args) end
+
+local function emit_block_environment(label, owned_params, region, captures)
+  local params, forward_args = {}, {}
+  local owned = Tr.RegionEmitOwnedParamProjection(owned_params)
+  for i = 1, #(region.params or {}) do
+    local p = region.params[i]
+    local param = Tr.BlockParam(p.name, p.ty)
+    owned:region_emit_owned_param_lookup(param.name):region_emit_environment_admission(param)
+      :region_emit_add_environment(params, forward_args)
+  end
+  for i = 1, #(captures.entries or {}) do
+    local capture = captures.entries[i]
+    local param = Tr.BlockParam(capture.name, capture.ty)
+    owned:region_emit_owned_param_lookup(param.name):region_emit_environment_admission(param)
+      :region_emit_add_environment(params, forward_args)
+  end
+  return Tr.RegionEmitBlockEnvironment(label, params, forward_args)
+end
+local function emit_environment(region, captures)
+  local entry_params, entry_args, entries, owned = {}, {}, {}, {}
+  for i = 1, #(region.params or {}) do owned[#owned + 1] = Tr.BlockParam(region.params[i].name, region.params[i].ty) end
+  for i = 1, #(region.entry.params or {}) do owned[#owned + 1] = Tr.BlockParam(region.entry.params[i].name, region.entry.params[i].ty) end
+  for i = 1, #(captures.entries or {}) do
+    local capture = captures.entries[i]
+    entry_params[#entry_params + 1] = Tr.BlockParam(capture.name, capture.ty)
+    entry_args[#entry_args + 1] = Tr.JumpArg(capture.name, capture.init)
+  end
+  entries[#entries + 1] = emit_block_environment(region.entry.label, owned, region, captures)
+  for i = 1, #(region.blocks or {}) do
+    local block = region.blocks[i]
+    entries[#entries + 1] = emit_block_environment(block.label, block.params, region, captures)
+  end
+  return Tr.RegionEmitEnvironment(entry_params, entry_args,
+    Tr.RegionEmitBlockEnvironmentProjection(entries), captures)
+end
+
 local function expand_definition(stmt, input, definition)
   local region = definition.region
   local wires = stmt.wiring or {}
   local captures = collect_captures(wires, region.conts or {})
+  local environment = emit_environment(region, captures)
+  local clone_input = Tr.RegionEmitCloneInput(stmt.invoke_id, wires, region.conts or {}, environment)
   local entry_label = prefixed_label(stmt.invoke_id, region.entry.label)
   local entry_params, entry_args = {}, {}
   for i = 1, #(region.params or {}) do
@@ -753,46 +897,52 @@ local function expand_definition(stmt, input, definition)
     entry_params[#entry_params + 1] = Tr.BlockParam(p.name, p.ty)
     entry_args[#entry_args + 1] = Tr.JumpArg(p.name, p.init)
   end
+  append(entry_params, environment.entry_params)
+  append(entry_args, environment.entry_args)
   local blocks, issues = {}, {}
   local raw_entry = Tr.ControlBlock(entry_label, entry_params,
-    (function() local b = {}; for i = 1, #(region.entry.body or {}) do b[i] = clone_stmt(region.entry.body[i], stmt.invoke_id, wires, region.conts) end return b end)())
+    (function() local body = {}; for i = 1, #(region.entry.body or {}) do body[i] = clone_stmt(region.entry.body[i], clone_input) end return body end)())
   local entry_body = Tr.RegionBodyExpansionInput(input.state, input.facts, input.expansion):region_expand_body(raw_entry.body)
   blocks[#blocks + 1] = Tr.ControlBlock(raw_entry.label, raw_entry.params, entry_body.body.stmts)
   append(blocks, entry_body.blocks); append(issues, entry_body.issues)
   for i = 1, #(region.blocks or {}) do
     local source = region.blocks[i]
-    local body = {}
-    for j = 1, #(source.body or {}) do body[j] = clone_stmt(source.body[j], stmt.invoke_id, wires, region.conts) end
-    local raw = Tr.ControlBlock(prefixed_label(stmt.invoke_id, source.label), source.params, body)
+    local body, params = {}, {}
+    for j = 1, #(source.body or {}) do body[j] = clone_stmt(source.body[j], clone_input) end
+    append(params, source.params)
+    local block_environment = environment.blocks:region_emit_block_environment_lookup(source.label)
+    append(params, block_environment:region_emit_block_params())
+    local raw = Tr.ControlBlock(prefixed_label(stmt.invoke_id, source.label), params, body)
     local expanded = Tr.RegionBodyExpansionInput(input.state, input.facts, input.expansion):region_expand_body(raw.body)
     blocks[#blocks + 1] = Tr.ControlBlock(raw.label, raw.params, expanded.body.stmts)
     append(blocks, expanded.blocks); append(issues, expanded.issues)
   end
-  local splice = Tr.RegionInvokeSplice({ Tr.StmtJump(stmt.h, entry_label, entry_args) }, blocks, captures, input.state)
-  return Tr.RegionInvokeExpanded(splice)
+  local splice = Tr.RegionEmitSplice({ Tr.StmtJump(stmt.h, entry_label, entry_args) }, blocks, input.state)
+  return Tr.RegionEmitExpanded(splice)
 end
 function Tr.RegionDefinitionFound:region_expand_invoke(stmt, input)
   local region = self.entry.definition.region
-  if #(region.params or {}) ~= #(stmt.args or {}) then return reject(Tr.RegionInvokeArgCount(stmt.target, #(region.params or {}), #(stmt.args or {}))) end
+  if #(region.params or {}) ~= #(stmt.args or {}) then return emit_reject(Tr.RegionInvokeArgCount(stmt.target, #(region.params or {}), #(stmt.args or {}))) end
   for i = 1, #(stmt.wiring or {}) do
+    local found = false
     for j = 1, i - 1 do
-      if stmt.wiring[j].name == stmt.wiring[i].name then return reject(Tr.RegionInvokeDuplicateWire(stmt.target, stmt.wiring[i].name)) end
+      if stmt.wiring[j].name == stmt.wiring[i].name then return emit_reject(Tr.RegionInvokeDuplicateWire(stmt.target, stmt.wiring[i].name)) end
     end
     for j = 1, #(region.conts or {}) do if region.conts[j]:region_cont_matches_name(stmt.wiring[i].name) then found = true end end
-    if not found then return reject(Tr.RegionInvokeExtraWire(stmt.target, stmt.wiring[i].name)) end
+    if not found then return emit_reject(Tr.RegionInvokeExtraWire(stmt.target, stmt.wiring[i].name)) end
   end
   for i = 1, #(region.conts or {}) do
     local found = false
     for j = 1, #(stmt.wiring or {}) do if stmt.wiring[j].name == region.conts[i].name then found = true end end
-    if not found then return reject(Tr.RegionInvokeMissingWire(stmt.target, region.conts[i])) end
+    if not found then return emit_reject(Tr.RegionInvokeMissingWire(stmt.target, region.conts[i])) end
   end
   return expand_definition(stmt, input, self.entry.definition)
 end
-function Tr.RegionDefinitionMissing:region_expand_invoke(stmt, input) return reject(Tr.RegionInvokeMissingTarget(stmt.target)) end
+function Tr.RegionDefinitionMissing:region_expand_invoke(stmt, input) return emit_reject(Tr.RegionInvokeMissingTarget(stmt.target)) end
 function Tr.RegionSealFound:region_expand_call(stmt, input)
   local seal = self.entry.seal
   if #(seal.region.params or {}) ~= #(stmt.args or {}) then
-    return reject(Tr.RegionInvokeArgCount(stmt.target, #(seal.region.params or {}), #(stmt.args or {})))
+    return call_reject(Tr.RegionInvokeArgCount(stmt.target, #(seal.region.params or {}), #(stmt.args or {})))
   end
   local result_name = seal.protocol.result_type.text
   local result_ty = Ty.TNamed(Ty.TypeRefPath(C.Path({ C.Name(result_name) })))
@@ -809,18 +959,17 @@ function Tr.RegionSealFound:region_expand_call(stmt, input)
       binds[j] = Tr.VariantBindSource(bind_name)
       payload_args[j] = Tr.JumpArg(param.name, Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(bind_name)))
     end
-    local target = wire_for_cont(stmt.wiring, cont):region_retarget_jump(cont, payload_args)
+    local target = wire_for_cont(stmt.wiring, cont):region_retarget_call_jump(cont, payload_args)
     arms[i] = Tr.SwitchVariantSourceStmtArm(cont.name, binds, { target })
   end
   local switch = Tr.StmtVariantSwitchSource(Tr.StmtSurface,
     Tr.ExprRef(Tr.ExprSurface, B.ValueRefName(binding.name)), {}, arms, { Tr.StmtTrap(Tr.StmtSurface) })
   local next_scope = input.state.scope:typecheck_tree_add_value(binding.name, result_ty, binding)
   local next_state = Check.TypeStmtInput(next_scope, input.state.return_ty, input.state.yield, Check.TypeControlNone)
-  return Tr.RegionInvokeExpanded(Tr.RegionInvokeSplice({ let, switch }, {},
-    collect_captures(stmt.wiring, seal.region.conts), next_state))
+  return Tr.RegionCallExpanded(Tr.RegionCallExpansion({ let, switch }, next_state))
 end
 function Tr.RegionSealMissing:region_expand_call(stmt, input)
-  return reject(Tr.RegionInvokeCallFrameUnsupported(stmt.target, "region-call", "no canonical call frame seal"))
+  return call_reject(Tr.RegionInvokeCallFrameUnsupported(stmt.target, "region-call", "no canonical call frame seal"))
 end
 function Tr.StmtRegionEmit:region_expand_invoke(input)
   return input.facts.definitions:region_definition_lookup(self.target):region_expand_invoke(self, input)
@@ -829,10 +978,16 @@ function Tr.StmtRegionCall:region_expand_invoke(input)
   return input.facts.seals:region_seal_lookup(self.target):region_expand_call(self, input)
 end
 
-function Tr.RegionInvokeExpanded:region_expand_stmt(input)
+function Tr.RegionEmitExpanded:region_expand_stmt(_input)
   return Tr.RegionStmtExpansionResult(self.splice.next_state, self.splice.entry_stmts, self.splice.blocks, {})
 end
-function Tr.RegionInvokeRejected:region_expand_stmt(input)
+function Tr.RegionEmitRejected:region_expand_stmt(input)
+  return Tr.RegionStmtExpansionResult(input.state, { Tr.StmtTrap(Tr.StmtSurface) }, {}, { Check.TypeIssueRegionInvoke(self.reject) })
+end
+function Tr.RegionCallExpanded:region_expand_stmt(_input)
+  return Tr.RegionStmtExpansionResult(self.expansion.next_state, self.expansion.stmts, {}, {})
+end
+function Tr.RegionCallRejected:region_expand_stmt(input)
   return Tr.RegionStmtExpansionResult(input.state, { Tr.StmtTrap(Tr.StmtSurface) }, {}, { Check.TypeIssueRegionInvoke(self.reject) })
 end
 local function invoke_stmt(stmt, input)

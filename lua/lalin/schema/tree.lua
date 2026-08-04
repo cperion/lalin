@@ -296,8 +296,58 @@ return schema. LalinTree {
     RegionWireFound { variant_unique, entry [LalinTree.RegionWireEntry], },
     RegionWireMissing { variant_unique, field. name [str], },
   },
-  product. RegionCallCaptureEntry { interned, field. name [str], field. ty [LalinType.Type], field. value [LalinTree.Expr], },
-  product. RegionCallCaptureProjection { interned, entries [many [LalinTree.RegionCallCaptureEntry]], },
+  product. RegionEmitCaptureEntry {
+    interned,
+    field. name [str],
+    field. ty [LalinType.Type],
+    init [LalinTree.Expr],
+  },
+  product. RegionEmitCaptureProjection { interned, entries [many [LalinTree.RegionEmitCaptureEntry]], },
+  sum. RegionEmitCaptureLookup {
+    RegionEmitCaptureFound { variant_unique, entry [LalinTree.RegionEmitCaptureEntry], },
+    RegionEmitCaptureMissing { variant_unique, field. name [str], },
+  },
+  product. RegionEmitOwnedParamProjection { interned, params [many [LalinTree.BlockParam]], },
+  sum. RegionEmitOwnedParamLookup {
+    RegionEmitOwnedParamFound { variant_unique, param [LalinTree.BlockParam], },
+    RegionEmitOwnedParamMissing { variant_unique, field. name [str], },
+  },
+  sum. RegionEmitEnvironmentAdmission {
+    RegionEmitEnvironmentIncluded {
+      variant_unique,
+      param [LalinTree.BlockParam],
+      forward [LalinTree.JumpArg],
+    },
+    RegionEmitEnvironmentShadowed { variant_unique, param [LalinTree.BlockParam], },
+  },
+  product. RegionEmitBlockEnvironment {
+    interned,
+    label [LalinTree.BlockLabel],
+    params [many [LalinTree.BlockParam]],
+    forward_args [many [LalinTree.JumpArg]],
+  },
+  product. RegionEmitBlockEnvironmentProjection {
+    interned,
+    entries [many [LalinTree.RegionEmitBlockEnvironment]],
+  },
+  sum. RegionEmitBlockEnvironmentLookup {
+    RegionEmitBlockEnvironmentFound { variant_unique, entry [LalinTree.RegionEmitBlockEnvironment], },
+    RegionEmitBlockEnvironmentMissing { variant_unique, label [LalinTree.BlockLabel], },
+  },
+  product. RegionEmitEnvironment {
+    interned,
+    entry_params [many [LalinTree.BlockParam]],
+    entry_args [many [LalinTree.JumpArg]],
+    blocks [LalinTree.RegionEmitBlockEnvironmentProjection],
+    captures [LalinTree.RegionEmitCaptureProjection],
+  },
+  product. RegionEmitCloneInput {
+    interned,
+    invoke_id [str],
+    wires [many [LalinTree.RegionContWire]],
+    conts [many [LalinTree.RegionCont]],
+    environment [LalinTree.RegionEmitEnvironment],
+  },
 
   sum. RegionInvokeReject {
     RegionInvokeMissingTarget { variant_unique, target [LalinTree.RegionInvokeTarget], },
@@ -313,16 +363,24 @@ return schema. LalinTree {
     facts [LalinTree.RegionFactProjection],
     expansion [LalinTree.RegionExpansionId],
   },
-  product. RegionInvokeSplice {
+  product. RegionEmitSplice {
     interned,
     entry_stmts [many [LalinTree.Stmt]],
     blocks [many [LalinTree.ControlBlock]],
-    captures [LalinTree.RegionCallCaptureProjection],
     next_state [LalinCheck.TypeStmtInput],
   },
-  sum. RegionInvokeExpandResult {
-    RegionInvokeExpanded { variant_unique, splice [LalinTree.RegionInvokeSplice], },
-    RegionInvokeRejected { variant_unique, reject [LalinTree.RegionInvokeReject], },
+  sum. RegionEmitExpandResult {
+    RegionEmitExpanded { variant_unique, splice [LalinTree.RegionEmitSplice], },
+    RegionEmitRejected { variant_unique, reject [LalinTree.RegionInvokeReject], },
+  },
+  product. RegionCallExpansion {
+    interned,
+    stmts [many [LalinTree.Stmt]],
+    next_state [LalinCheck.TypeStmtInput],
+  },
+  sum. RegionCallExpandResult {
+    RegionCallExpanded { variant_unique, expansion [LalinTree.RegionCallExpansion], },
+    RegionCallRejected { variant_unique, reject [LalinTree.RegionInvokeReject], },
   },
   product. RegionStmtBody { interned, stmts [many [LalinTree.Stmt]], },
   product. RegionStmtExpansionInput {

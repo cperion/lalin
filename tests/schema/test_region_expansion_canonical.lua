@@ -50,7 +50,7 @@ local nested = Tr.StmtRegionEmit(Tr.StmtSurface, "outer", outer_target, { lit(3)
   Tr.RegionContWire("done", Tr.RegionWireBlock(Tr.BlockLabel("caller_done"), {})),
 })
 local accepted = nested:region_expand_invoke(input)
-assert(asdl.isa(accepted, Tr.RegionInvokeExpanded))
+assert(asdl.isa(accepted, Tr.RegionEmitExpanded))
 assert(#accepted.splice.blocks >= 3, "nested region expansion must retain the inner splice blocks")
 local pipeline_control = Tr.ControlStmtRegion("run",
   Tr.EntryControlBlock(Tr.BlockLabel("entry"), {}, { nested }),
@@ -76,14 +76,19 @@ assert(#pipeline_result.module.items[5].func.body[1].region.blocks >= 3)
 
 local inner_call = Tr.StmtRegionEmit(Tr.StmtSurface, "captured", inner_target, { lit(4) }, { captured_wire })
 local captured = inner_call:region_expand_invoke(input)
-assert(asdl.isa(captured, Tr.RegionInvokeExpanded))
-assert(#captured.splice.captures.entries == 1, "wire expression must become a typed capture entry")
-assert(captured.splice.captures.entries[1].ty == i32)
+assert(asdl.isa(captured, Tr.RegionEmitExpanded))
+local splice_entry = captured.splice.blocks[1]
+local capture_param = splice_entry.params[#splice_entry.params]
+assert(capture_param.name:match("^__region_capture_"), "wire expression must become an explicit CFG environment parameter")
+assert(capture_param.ty == i32)
+local entry_jump = captured.splice.entry_stmts[1]
+assert(entry_jump.args[#entry_jump.args].name == capture_param.name,
+  "capture initializer must be carried on the splice-entry jump")
 assert(captured.splice.next_state == state, "expansion state is immutable")
 
 local missing = Tr.StmtRegionEmit(Tr.StmtSurface, "missing", target("R", "NoSuchRegion"), { lit(1) }, {})
 local rejected = missing:region_expand_invoke(input)
-assert(asdl.isa(rejected, Tr.RegionInvokeRejected))
+assert(asdl.isa(rejected, Tr.RegionEmitRejected))
 local explanation = Check.TypeIssueRegionInvoke(rejected.reject):typecheck_tree_explanation()
 assert(explanation.code == "E0408" and explanation.primary ~= "")
 

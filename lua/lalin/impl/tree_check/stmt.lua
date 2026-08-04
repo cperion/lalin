@@ -342,29 +342,61 @@ local function callee_conts(input, target_path)
   end
   return nil
 end
+local function typecheck_captured_wire_arg(arg, input, issues)
+  local result = arg.value:typecheck_tree_expr(LCheck.TypeExprInput(input.scope))
+  for j = 1, #(result.issues or {}) do issues[#issues + 1] = result.issues[j] end
+  return Tr.JumpArg(arg.name, result.expr)
+end
+function Tr.RegionWireArgMarkerValue:typecheck_region_wire_arg(arg, input, issues)
+  return typecheck_captured_wire_arg(arg, input, issues)
+end
+function Tr.RegionWireArgMarkerName:typecheck_region_wire_arg(arg, input, issues)
+  for i = 1, #(input.payload or {}) do
+    if input.payload[i].name == self.name then return arg end
+  end
+  return typecheck_captured_wire_arg(arg, input, issues)
+end
+local function typecheck_wire_args(args, input, issues)
+  local out = {}
+  for i = 1, #(args or {}) do
+    local arg = args[i]
+    out[i] = arg.value:region_wire_arg_marker():typecheck_region_wire_arg(arg, input, issues)
+  end
+  return out
+end
+
+function Tr.RegionWireTarget:typecheck_region_wire(_input, _issues) return self end
+function Tr.RegionWireBlock:typecheck_region_wire(input, issues)
+  local args = typecheck_wire_args(self.args, input, issues)
+  local checked = input.control:typecheck_control_block(self.label):typecheck_validate_jump(
+    input.region_id, input.scope, self.label, args, issues, input.payload)
+  return Tr.RegionWireBlock(self.label, checked)
+end
+function Tr.RegionWireCont:typecheck_region_wire(input, issues)
+  local args = typecheck_wire_args(self.args, input, issues)
+  local checked = input.control:typecheck_control_cont(self.cont.name):typecheck_validate_cont_jump(
+    input.region_id, input.scope, self.cont.name, args, issues, input.payload)
+  return Tr.RegionWireCont(self.cont, checked)
+end
+
 local function validate_region_wiring(input, target_path, wiring, issues)
   local region_id = input.control:typecheck_control_region_id()
   local conts = callee_conts(input, target_path)
   local out = {}
   for i = 1, #(wiring or {}) do
-    local w = wiring[i]
+    local wire = wiring[i]
     local wire_cont = nil
     if conts ~= nil then
       for j = 1, #conts do
-        if conts[j].name == w.name then wire_cont = conts[j] break end
+        if conts[j].name == wire.name then wire_cont = conts[j] break end
       end
       if wire_cont == nil then
-        issues[#issues + 1] = LCheck.TypeIssueRegionContMissing(region_id, w.name)
+        issues[#issues + 1] = LCheck.TypeIssueRegionContMissing(region_id, wire.name)
       end
     end
-    local completed = w
-    if w.target ~= nil and asdl.classof(w.target) == Tr.RegionWireBlock then
-      local label = w.target.label
-      local payload_params = wire_cont and wire_cont.params or {}
-      local targs = input.control:typecheck_control_block(label):typecheck_validate_jump(region_id, input.scope, label, w.target.args, issues, payload_params)
-      completed = Tr.RegionContWire(w.name, Tr.RegionWireBlock(label, targs))
-    end
-    out[i] = completed
+    local payload = wire_cont and wire_cont.params or {}
+    local wire_input = LCheck.TypeRegionWireInput(input.scope, input.control, region_id, payload)
+    out[i] = Tr.RegionContWire(wire.name, wire.target:typecheck_region_wire(wire_input, issues))
   end
   return out
 end

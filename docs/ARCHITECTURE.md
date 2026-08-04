@@ -79,6 +79,30 @@ The ownership inventory and executable duplicate guard are documented in
 The ownership inventory and executable duplicate guard are documented in the
 "Schema ownership" section of this document. The binding doctrine is `docs/ASDL_GUIDE.md`.
 
+## Region expansion ownership
+
+`emit` and `call` are distinct typed operations. `emit` is open CFG expansion;
+`call` is a sealed function/frame boundary returning a generated result variant.
+They do not share an expansion result shape.
+
+Open expansion is owned by the `RegionEmit*` ASDL vocabulary. Every invocation
+projects a `RegionEmitEnvironment` with a block-aligned environment facet. Region
+data parameters and caller wire captures become explicit block parameters,
+splice-entry arguments, and internal-jump forwarding arguments. A block facet
+omits data parameters shadowed by that block's own parameters. Continuation
+payload markers remain values produced by the callee exit; other wire expressions
+are captures evaluated at the emit site and carried through the emitted CFG.
+
+The first typecheck establishes region protocols and source facts. Expansion
+constructs fresh invocation-local block topology and local binding identities.
+A second authoritative typecheck resolves every expression and place against that
+final topology. Resolved place leaves recursively rebuild their bases; pass-one
+region bindings are never accepted as lowering identities.
+
+Sealed calls instead use `RegionCallExpansion`: a real function call, generated
+result value, and caller-side variant dispatch. Neither emit environments nor
+caller wire captures are smuggled into the sealed call frame.
+
 ## Kernel, Stencil, and CMat
 
 Kernel planning identifies typed lanes, bindings, effects, counted domains,

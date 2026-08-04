@@ -307,6 +307,16 @@ function Sem.FieldLayoutFound:tree_check_dot_field_place(input, base, dot)
   local ref = Sem.FieldByOffset(field.field_name, field.offset, field.ty, field.ty:sem_layout_storage())
   return LCheck.TypePlaceResult(Tr.PlaceField(Tr.PlaceTyped(field.ty), base.place, ref), field.ty, base.issues)
 end
+
+-- Resolved fields still own recursive rebuilding. Region expansion runs a
+-- second authoritative typecheck; retaining a pass-one PlaceField unchanged
+-- would retain the source region's nested binding identities.
+function Tr.PlaceField:typecheck_tree_place(input)
+  local base = self.base:typecheck_tree_place(LCheck.TypePlaceInput(input.scope))
+  local ty = self.h and self.h:tree_code_place_type() or Ty.TScalar(C.ScalarVoid)
+  return LCheck.TypePlaceResult(
+    Tr.PlaceField(Tr.PlaceTyped(ty), base.place, self.field), ty, base.issues or {})
+end
 function Sem.FieldLayoutMissing:tree_check_dot_field_place(input, base, dot)
   return LCheck.TypePlaceResult(dot, Ty.TScalar(C.ScalarVoid), base.issues)
 end

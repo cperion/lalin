@@ -97,6 +97,13 @@ return schema. LalinCheck {
     TypeControlContMissing { variant_unique, field. name [str], },
   },
   product. TypeControlInput { interned, stmt [LalinCheck.TypeStmtInput], region_id [str], },
+  product. TypeRegionWireInput {
+    interned,
+    scope [LalinCheck.TypeValueScope],
+    control [LalinCheck.TypeControlContext],
+    region_id [str],
+    payload [many [LalinTree.BlockParam]],
+  },
   product. TypeFuncInput { interned, scope [LalinCheck.TypeValueScope], },
   product. TypeItemInput { interned, scope [LalinCheck.TypeValueScope], },
   product. TypePolicyInput { interned, site [str], },

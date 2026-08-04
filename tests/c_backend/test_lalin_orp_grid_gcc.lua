@@ -48,14 +48,15 @@ local session, source = lalin.compile_c_gcc("lalin_orp_grid_gcc", decls, {
 })
 
 local called = {
-    "InputRecord_decode",
     "CellFrame_set_char", "CellFrame_activate", "CellFrame_blur", "TaskFrame_step",
-    "CellFrame_view", "TaskFrame_view",
-    "GridStore_enqueue", "GridStore_solve", "GridStore_raster",
+    "GridStore_enqueue",
 }
 for _, name in ipairs(called) do
     assert(source:match("__lalin_region_result_" .. name), "sealed object-machine result for " .. name)
     assert(source:match("= " .. name .. "%(") ~= nil, "pump invokes sealed object-machine " .. name)
+end
+for _, name in ipairs({ "InputRecord_decode", "CellFrame_view", "TaskFrame_view", "GridStore_solve", "GridStore_raster" }) do
+    assert(source:match("= " .. name .. "%(") == nil, name .. " must remain open CFG composition")
 end
 
 local grid_step = assert(session:symbol("grid_step", "int32_t (*)(InputRecord*, size_t, GridStore*)"))
