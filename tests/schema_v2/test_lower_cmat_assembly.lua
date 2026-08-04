@@ -380,8 +380,7 @@ assert(#assembled_report.issues == 0)
 local c_gcc = require("lalin.emit_c_compile")
 local available = c_gcc.available()
 if available then
-  local source = require("lalin.emit_c_lower")(require("lalin.schema_v2"))
-    .emit_artifact(assembled_unit, {}).source
+  local source = require("tests.c_backend.cemit_source").source(assembled_unit, target)
   local session, err = c_gcc.compile(source, {
     out_dir = "target/test_lower_cmat_assembly", stem = "canonical_assembly", opt = 3,
   })

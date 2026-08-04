@@ -27,7 +27,7 @@ local function materialize(computation, symbol)
 end
 local function source_for(emitted)
   assert(asdl.classof(emitted) == CMat.CMatCEmitted)
-  return require("lalin.emit_c_lower")(require("lalin.schema_v2")).emit_artifact(emitted.unit, {}).source
+  return require("tests.c_backend.cemit_source").source(emitted.unit, target)
 end
 local function compile(emitted, stem)
   local session, err = c_gcc.compile(source_for(emitted), { out_dir = "target/test_stencil_c_gcc", stem = stem, opt = 3 })

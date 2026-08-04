@@ -239,8 +239,7 @@ local unit = C.CBackendUnit(
 local report = require("lalin.impl.lower_emit_c.validate").validate(unit)
 assert(#report.issues == 0)
 
-local source = require("lalin.emit_c_lower")(require("lalin.schema_v2"))
-  .emit_artifact(unit, {}).source
+local source = require("tests.c_backend.cemit_source").source(unit, target)
 local session, err = c_gcc.compile(source, {
   out_dir = "target/test_cmat_multisink_gcc",
   stem = "multisink",

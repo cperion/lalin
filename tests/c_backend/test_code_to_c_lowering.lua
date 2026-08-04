@@ -1,13 +1,11 @@
 package.path = "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua;" .. package.path
 
 local asdl = require("lalin.asdl")
-local Schema = require("lalin.schema")
-local T = asdl.context(); Schema(T)
-
+local T = require("lalin.schema_v2")
 local Core = T.LalinCore
 local Code = T.LalinCode
 local C = T.LalinC
-local CodeToC = require("lalin.code_to_c")(T)
+local CodeType = require("lalin.impl.code_type")(T)
 
 local origin = Code.CodeOriginGenerated("test_code_to_c_lowering")
 local f64 = Code.CodeTyFloat(64)
@@ -32,7 +30,21 @@ local module = Code.CodeModule(
     origin
 )
 
-local unit = CodeToC.module(module)
+require("lalin.impl.compiler_api")
+local Compiler = T.LalinCompiler
+local Sem = T.LalinSem
+local Stencil = T.LalinStencil
+local target = CodeType.default_target()
+local code_result = Compiler.CodeResult(
+  module, Code.CodeContractFactSet(module.id, {}), Sem.LayoutEnv({}))
+local request = Compiler.CompilerCCodegenRequest(
+  code_result, target,
+  Stencil.StencilCompilerPolicy(
+    Stencil.StencilCompilerGcc, Stencil.StencilOptO3, {}))
+local outcome = require("lalin.compiler_schema_v2_c_backend").code_result_to_c(request)
+assert(asdl.classof(outcome) == Compiler.CompilerCBackendEmitted,
+  "float module must lower through the schema-v2 C backend")
+local unit = outcome.backend.unit
 assert(#unit.helpers == 1, "float binary lowering should register one helper")
 local helper_spec = unit.helpers[1].spec
 assert(asdl.classof(helper_spec) == C.CBackendHelperFloatBinary, "float binary must lower to CBackendHelperFloatBinary")
