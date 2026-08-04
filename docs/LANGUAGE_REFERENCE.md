@@ -1114,6 +1114,8 @@ Statement blocks end at `end`, `elseif`, `else`, `case`, or `default` depending 
 ```lln
 requires bounds(dst)(n), bounds(src)(n), disjoint(dst)(src)
 requires readonly(src), writeonly(dst)
+requires noalias(lhs.bytes)(rhs.bytes)
+requires readonly(src), writeonly(dst)
 ```
 
 Contracts are not comments. They feed memory classification, non-trapping
@@ -1375,9 +1377,19 @@ nil
 ```
 
 Integer and float literal typing is resolved during typechecking and lowering.
-Integer literals can adopt an expected integer type. Float literals can adopt an
-expected `f32` or `f64` type. `nil` can adopt an expected pointer type.
+A literal adopts the type pinned by its context; no explicit `as` cast is
+needed where the context fixes the type:
 
+- `let`/`var` initializers adopt the binding type (`let x [u64] = 42`).
+- A literal operand of a binary or comparison adapts to the other operand's
+  pinned type (`x << 4` with `x [u64]` stays `u64`; the mixed-width i32
+  down-cast trap does not apply).
+- A literal inside `as [T](...)` adapts to the cast target.
+- A literal stored into a field or array slot adapts to the place type
+  (`p.x = 7` for `x [u8]`).
+- `[lua_expr]` host literals adapt the same way (`instr.op == [OP.ADD]`
+  compares `u8` against the adapted host integer).
+`nil` can adopt an expected pointer type.
 String literals are byte slices:
 
 ```lln
@@ -1646,6 +1658,21 @@ support the same shorthand used by calls and wire target applications.
 
 `entry` and `block` declarations introduce region-local control labels. Their
 parameters are explicit block inputs, not captured variables:
+
+An `entry` parameter of a function body takes its initial value from the
+enclosing scope by name — typically a same-named function data parameter. An
+entry parameter with no matching source value is a compile error:
+
+```lln
+fn main(a [i32]) [i32]
+  entry start(a [i32])     -- flows in from the fn data param `a`
+    jump finish(v = a + 1)
+  end
+  block finish(v [i32])
+    return v
+  end
+end
+```
 
 ```lln
 entry start()
