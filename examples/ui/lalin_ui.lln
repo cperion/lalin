@@ -779,6 +779,201 @@ Headless tests compare typed command/report products, not screenshots alone.
 WebGL golden tests cover batching, clipping, glyph atlas use, and device recovery.
 The gallery is an integration/conformance program, not the only test.
 
+Terminal-first realization
+--------------------------
+
+The first complete backend is a terminal. This is an implementation order and a
+physical realization of the common UI worlds, not a terminal-specific component
+architecture. Component frames, controller regions, view declarations, style,
+layout, render commands, reporting, focus, scrolling, layers, modals, effects, and
+the root pump remain backend-independent. Replacing the terminal projection with
+WebGL must not alter a component machine or semantic input protocol.
+
+Terminal object-machine stack
+
+1. TerminalCapabilityMachine
+   Owns the installed terminal capability frame: viewport cells, color depth,
+   Unicode/width policy, mouse protocol, bracketed paste support, focus reporting,
+   synchronized-update support, and output feature gates. Capability negotiation
+   is a host boundary record consumed only by its install region. Components never
+   branch on terminal capabilities.
+
+2. TerminalDecodeMachine
+   Owns persistent byte-stream decoder state across reads: UTF-8 prefix, escape/CSI
+   sequence progress, parameter accumulation, paste mode, and mouse sequence
+   progress. Its feed region consumes bytes and exposes semantic continuations such
+   as key, text, paste, pointer, wheel, focus, resize, unsupported, incomplete, and
+   malformed. Escape bytes and numeric key/mouse encodings have this one consumer.
+
+3. TerminalMeasureMachine
+   Owns the terminal text metric policy. It projects validated text runs into
+   grapheme boundaries and cell widths under the installed width policy. Zero-width
+   combining clusters attach to one leading cell; width-two clusters reserve one
+   leading and one continuation cell. Invalid scalar input is a typed diagnostic,
+   never an implicit replacement chosen by rasterization.
+
+4. TerminalRasterMachine
+   Consumes backend-independent RenderableUi commands in common clip/layer order and
+   projects them into a bounded TerminalCellWorld. It owns cell clipping, glyph-span
+   reservation, style application, opacity reduction policy, and deterministic
+   overlap. It cannot mutate component frames or solved geometry.
+
+5. TerminalDiffMachine
+   Compares a committed TerminalCellWorld with the next world and projects an
+   ordered TerminalPatchWorld. It owns run coalescing, cursor-motion choice, style
+   transition choice, wide-glyph invalidation, row-tail clearing, full-redraw
+   admission, and commit. Diffing is an optimization over equivalent cell worlds; a
+   full redraw is always the semantic reference.
+
+6. AnsiEncodeMachine
+   Is the single consumer of terminal patch opcodes and installed capabilities. It
+   encodes cursor movement, SGR changes, text bytes, erasure, synchronized update,
+   cursor visibility/shape, title, clipboard, and mode setup/restore into a bounded
+   host byte buffer. No semantic machine emits ANSI fragments.
+
+7. TerminalSessionMachine
+   Wires host reads and resize records through TerminalDecodeMachine, common input
+   routing, component controllers, readonly projection, layout, render/report,
+   terminal raster, diff, ANSI encode, host writes, and commit. It owns deterministic
+   batch order and redraw scheduling, but none of the child machines' semantic facts.
+
+Terminal worlds
+
+TerminalCapabilities
+  Persistent installed physical facts. A capability generation changes only when
+  the terminal contract or viewport changes.
+
+TerminalDecodeFrame
+  Persistent partial-input state. It is not an event queue and is never inspected by
+  components.
+
+TerminalGraphemeWorld
+  Readonly text-metric projection aligned to source text runs, carrying byte ranges,
+  scalar validity, cluster width, and fallback diagnostics.
+
+TerminalCellWorld
+  A dense viewport projection with one TerminalCellSpine entry per coordinate and
+  aligned glyph, style, and ownership facets. It carries a world generation, width,
+  height, and exact initialized range.
+
+TerminalPatchWorld
+  An ordered bounded sequence of differences from one cell-world generation to the
+  next. It names both generations; applying a patch to any other committed world is
+  rejected.
+
+TerminalOutputImage
+  Encoded bytes plus the physical mode/cursor result expected after a successful host
+  write. It is not committed until the write continuation reports completion.
+
+Terminal cell spine and facets
+
+A TerminalCellSpine entry owns coordinate and glyph-span topology:
+
+  linear cell index
+  row and column
+  span identity
+  leading, continuation, or empty participation
+  source render-command identity
+  clip/layer order already consumed
+
+Aligned facets carry:
+
+  GlyphFacet: validated grapheme byte range and display width
+  StyleFacet: foreground, background, attributes, and resolved style identity
+  OwnershipFacet: semantic node/component identity used only for diagnostics; input
+    routing continues to use ReportedFrame geometry, never reverse-engineered cells
+
+A width-two grapheme owns exactly one leading cell and one continuation cell. A later
+command replacing either cell invalidates the complete prior span before installing
+its own span. Continuation cells never independently encode text or style. Clipping
+a wide grapheme at a viewport edge produces a typed clipped-span decision; it does
+not leave a half glyph.
+
+Terminal style projection
+
+Common resolved style remains richer than terminal SGR. TerminalRasterMachine owns a
+typed style projection whose leaves name supported color/attribute realization or a
+declared degradation. Capability-dependent alternatives include truecolor, indexed
+color, basic color, monochrome attributes, and unsupported decoration. Components
+cannot observe which leaf was selected. Equal terminal style values intern to stable
+style identities during one cell-world generation; no external style cache is
+semantic state.
+
+Input boundary and routing
+
+Host reads are byte chunks, not events. TerminalDecodeMachine may consume no complete
+event, one event, or several events from a chunk, expressed as continuation flow.
+Incomplete UTF-8 and escape sequences remain in TerminalDecodeFrame. Timeout is a
+separate host timer continuation consumed by the decoder; elapsed time is never
+inferred from an empty read.
+
+Decoded key, text, paste, pointer, wheel, focus, and resize continuations enter the
+same common InputMachine used by other backends. Terminal mouse coordinates are cell
+coordinates adapted once into common viewport coordinates. Hit testing uses the
+previous committed ReportedFrame. Controller transitions invalidate worlds; the root
+pump then projects the next frame. No event is routed against partially rebuilt
+geometry.
+
+Terminal output and commit protocol
+
+The physical output path is transactional:
+
+  committed TerminalCellWorld
+    + next TerminalCellWorld
+    -> TerminalDiffMachine
+    -> TerminalPatchWorld
+    -> AnsiEncodeMachine
+    -> TerminalOutputImage
+    -> host write
+       written -> commit next world and physical cursor/mode frame
+       partial -> resume the same image at an explicit byte offset
+       blocked -> retain image and request writable notification
+       failed  -> typed terminal failure and restoration protocol
+
+A failed or partial write never advances the committed cell-world generation. Input
+processing may continue only under the session's explicit backpressure policy; it
+cannot silently overwrite the pending output image.
+
+Capacity and memory
+
+All terminal worlds are bounded caller-owned or store-owned arrays. Capacity products
+name viewport cell capacity, grapheme capacity, patch-run capacity, encoded-byte
+capacity, and pending-input capacity separately. Exhaustion is exposed by the machine
+that owns that resource. The session may retry with a larger host-owned arena, choose
+a typed full-redraw alternative, or terminate; truncation is never semantic success.
+
+Terminal reuse laws
+
+  unchanged RenderableUi generation + unchanged terminal capability generation
+    -> reuse TerminalCellWorld
+  equal next and committed TerminalCellWorld
+    -> empty TerminalPatchWorld
+  changed cell world + valid committed generation
+    -> incremental patch or typed full-redraw selection
+  resized viewport or changed width policy
+    -> invalidate grapheme placement, cell world, patch baseline, and reported
+       viewport geometry
+  changed color capability only
+    -> retain common RenderableUi, reproject terminal styles and cells
+  host write not completed
+    -> retain pending TerminalOutputImage; do not commit its target generation
+
+Terminal conformance gates
+
+The terminal backend is admitted only after focused tests prove:
+
+  fragmented UTF-8 and CSI decoding across arbitrary host read boundaries
+  malformed and unsupported input outcomes
+  bracketed paste and resize ordering
+  grapheme width, combining marks, wide glyphs, and right-edge clipping
+  clip/layer/modal ordering parity with common render/report worlds
+  focus, scrolling, editable text, selection, caret, and keyboard navigation
+  full redraw equivalence with incremental diff application
+  wide-span invalidation under overlapping updates
+  partial/blocked/failed output transaction behavior
+  deterministic output for equal capabilities, worlds, and initial physical state
+  emitted-C/GCC execution through the embedded `lalin` binary
+
 Migration and implementation order
 ----------------------------------
 
@@ -794,10 +989,16 @@ Migration and implementation order
 9. Implement InputMachine routing and the session pump.
 10. Port component families as concrete frames + controller/view regions: button,
     toggle, numeric controls, collections, text fields, scrolling, layers/modal.
-11. Implement the bytecode projection/interpreter from the same region/Code facts.
-12. Implement WebGL/Wasm backend and differential tests.
-13. Move gallery functionality onto the Lalin path.
-14. Delete Lua/PVM and prototype MLUI paths only after public convergence.
+11. Implement terminal capability, decoder, measure, cell-raster, diff, ANSI, and
+    session machines; prove them against the common command/report products.
+12. Move a terminal conformance application onto the Lalin path and complete focus,
+    editable text, scrolling, overlays, and modal behavior there.
+13. Implement the portable program-image projection/interpreter from the same
+    region/Code facts.
+14. Implement WebGL/Wasm as a second physical projection and run backend-independent
+    differential tests.
+15. Move the SDL3 gallery functionality onto the common Lalin component path.
+16. Delete Lua/PVM and prototype MLUI paths only after public convergence.
 
 No compatibility shim translates old widget bundles or string events into the new
 runtime. During migration, the old gallery is a behavioral oracle running beside
