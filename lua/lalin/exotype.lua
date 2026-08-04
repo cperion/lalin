@@ -6,7 +6,7 @@
 -- runtime dynamic dispatch objects.
 
 local llbl = require("llbl")
-local Ast = require("lalin.syntax.ast")
+local Ast = require("lalin.impl.syntax_ast")
 
 local Exotype = {}
 

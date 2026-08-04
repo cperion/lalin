@@ -3,46 +3,44 @@ local M = {}
 function M.install_canonical(T)
     local Compiler = T.LalinCompiler
 
-    function Compiler.CompilerCBackendEmitted:public_c_backend_result()
-        return self.backend
-    end
-    function Compiler.CompilerCBackendRejected:public_c_backend_result()
-        local issues = {}
-        for i = 1, #self.issues do issues[i] = tostring(self.issues[i]) end
-        error("C backend rejected with " .. #issues
-            .. " issue(s): " .. table.concat(issues, "; "), 2)
-    end
-
+    -- The canonical (v1) registry is retired with the v1 C-lowering surface;
+    -- its method bodies now route to the schema-v2 pipeline modules so the
+    -- legacy registry consumer stays on the schema-v2 implementation.
     function Compiler.CompilerImplementationOwner:compiler_implementation_registry()
         return Compiler.CompilerImplementationRegistry(Compiler.TreeCodeCanonicalImplementation)
     end
 
     function Compiler.TreeCodeCanonicalImplementation:implementation_module_name()
-        return "lalin.tree_lower"
+        return "lalin.impl.tree_code"
     end
 
     function Compiler.TreeCodeCanonicalImplementation:surface_resolve(module)
-        return require("lalin.surface_resolve")(T).module(module)
+        require("lalin.impl.tree_surface")
+        return module:surface_resolve()
     end
 
     function Compiler.TreeCodeCanonicalImplementation:closure_convert(module, input)
-        return require("lalin.closure_convert")(T).module(module, input)
+        require("lalin.impl.tree_closure")
+        return module:closure_convert(input)
     end
 
     function Compiler.TreeCodeCanonicalImplementation:typecheck_module(module, input)
-        return require("lalin.tree_typecheck")(T).check_module(module, input)
+        require("lalin.impl.tree_check")
+        return module:typecheck(input)
     end
 
     function Compiler.TreeCodeCanonicalImplementation:module_result(module, opts)
-        return require("lalin.tree_lower")(T).module_result(module, opts)
+        require("lalin.impl.tree_code")
+        return module:lower_tree_module_result_to_code(opts)
     end
 
     function Compiler.TreeCodeCanonicalImplementation:code_validation_issues(module, collector)
-        return require("lalin.code_validate")(T).validate(module, collector).issues
+        require("lalin.impl.code_validate")
+        return require("lalin.impl.code_validate").validate(module):compiler_code_issues()
     end
 
     function Compiler.TreeCodeCanonicalImplementation:code_result_to_c(code_result, opts)
-        return require("lalin.compiler_canonical_c_backend")(T).code_result_to_c(code_result, opts)
+        return require("lalin.compiler_schema_v2_c_backend").code_result_to_c(code_result, opts)
     end
 end
 

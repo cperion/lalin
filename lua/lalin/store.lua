@@ -9,7 +9,7 @@
 -- The policy returns parsed declarations.  The compiled Lalin artifact sees
 -- explicit handles, regions, and functions; there is no runtime generic store.
 
-local Ast = require("lalin.syntax.ast")
+local Ast = require("lalin.impl.syntax_ast")
 local Exotype = require("lalin.exotype")
 
 local Store = {}

@@ -24,7 +24,7 @@ local T = asdl.context_of(module_ast)
 local C = T.LalinCompiler
 local P = T.LalinPhase
 Machines.install_stage_methods(T)
-local stage = P.CompilerCStageInput(require("lalin.code_type")(T).default_target())
+local stage = P.CompilerCStageInput(require("lalin.impl.code_type")(T).default_target())
 
 local checked = Machines.typecheck_module(stage, module_ast)
 
