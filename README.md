@@ -163,6 +163,7 @@ an encoded exit union and dispatch back to named exits.
 Authoritative reference:
 - `docs/ASDL_GUIDE.md` — binding ASDL and compiler-method doctrine
 - `docs/DESIGN_BIBLE.md` — long-form explicit architecture method
+- `docs/OBJECT_REGION_PROJECTION_PATTERN.md` — general Lalin object-machine pattern
 - `docs/LANGUAGE_REFERENCE.md` — public Lalin language reference
 - `docs/LLBL_GUIDE.md` — LLBL workbench and region guide
 - `docs/ARCHITECTURE.md` — active compiler and backend architecture

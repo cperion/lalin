@@ -357,6 +357,8 @@ docs/ARCHITECTURE.md       active compiler and backend architecture (incl.
                            CMat memory coordinates and schema ownership)
 docs/CONVENTIONS.md        naming, style, and repository conventions
 docs/DESIGN_BIBLE.md       long-form design philosophy
+docs/OBJECT_REGION_PROJECTION_PATTERN.md
+                           general object-machine/region/projection pattern
 
 ## Non-Negotiable Rules
 

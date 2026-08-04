@@ -1,0 +1,502 @@
+--[=[
+Object–Region–Projection: executable terminal-grid proof
+========================================================
+
+This is a complete worked realization of the general ORP pattern described in
+docs/OBJECT_REGION_PROJECTION_PATTERN.md. The terminal grid makes every stage
+visible, but ORP is not a UI pattern. The same shape applies to parsers, stores,
+schedulers, compiler machines, protocol services, and simulations.
+
+The four-part law demonstrated here:
+
+  persistent fact       -> CellFrame / TaskFrame / GridStore fields
+  immediate decision    -> region continuations
+  derived fact          -> readonly view declarations and solved cells
+  queued/portable fact  -> InputRecord / Effect, each with one decoder/consumer
+
+Objects own frames. Qualified regions transition them. Qualified readonly view
+regions project them. Continuations compose them. One deterministic pump owns
+physical input decoding, routing, projection, solving, rasterization, and effects.
+
+The terminal is 10 columns by 3 rows. Two CellFrame actors project fixed-width
+row declarations. A TaskFrame actor projects a fill-width declaration. GridStore
+solves declarations into rectangles and rasterizes them into a caller-owned cell
+buffer. Effects are explicit physical records: phase 0 is immediate; phase 1 is
+a delayed host effect produced when TaskFrame completes across event batches.
+
+Input and effect opcodes are physical boundary facts. InputRecord.decode is the
+only region that interprets input opcodes. Semantic machines receive typed
+continuation edges and never switch on those bytes.
+
+]=]
+
+struct InputRecord
+  target [i32]
+  op [u8]
+  arg [u8]
+end
+
+struct CellFrame
+  content [u8]
+  focused [u8]
+  active [u8]
+  epoch [u32]
+end
+
+struct TaskFrame
+  ticks [i32]
+  done [u8]
+end
+
+struct ViewDecl
+  id [u8]
+  row [u8]
+  width [u8]
+  height [u8]
+  mark [u8]
+end
+
+struct SolvedCell
+  id [u8]
+  x [u8]
+  y [u8]
+  width [u8]
+  height [u8]
+  mark [u8]
+end
+
+struct EffectRecord
+  kind [u8]
+  arg [u8]
+  phase [u8]
+end
+
+struct GridStore
+  cells [ptr [CellFrame]]
+  cell_count [index]
+  task [ptr [TaskFrame]]
+
+  decls [ptr [ViewDecl]]
+  decl_cap [index]
+  decl_count [index]
+
+  solved [ptr [SolvedCell]]
+  solve_cap [index]
+  solve_count [index]
+
+  effects [ptr [EffectRecord]]
+  effect_cap [index]
+  effect_count [index]
+
+  screen [ptr [u8]]
+  screen_cap [index]
+  screen_len [index]
+
+  cursor_row [i32]
+  cursor_col [i32]
+  epoch [u32]
+  task_result [u8]
+end
+
+-- Exactly one consumer owns the physical input opcode encoding.
+region InputRecord.decode(self [ptr [InputRecord]];
+  key(target [i32], ch [u8]),
+  activate(target [i32]),
+  cycle(target [i32]),
+  tick,
+  unsupported(op [u8])
+)
+  entry start()
+    if self.op == [GridOp.KEY] then
+      jump key(target = self.target, ch = self.arg)
+    elseif self.op == [GridOp.ENTER] then
+      jump activate(target = self.target)
+    elseif self.op == [GridOp.TAB] then
+      jump cycle(target = self.target)
+    elseif self.op == [GridOp.TICK] then
+      jump tick
+    else
+      jump unsupported(op = self.op)
+    end
+  end
+end
+
+-- Controller regions: semantic alternatives are continuations.
+region CellFrame.set_char(self [ptr [CellFrame]], ch [u8]; changed, same)
+  entry start()
+    if self.content == ch then
+      jump same
+    else
+      self.content = ch
+      self.epoch = self.epoch + as [u32](1)
+      jump changed
+    end
+  end
+end
+
+region CellFrame.activate(self [ptr [CellFrame]]; changed, same)
+  entry start()
+    if self.focused == as [u8](0) then
+      self.focused = as [u8](1)
+      jump changed
+    else
+      if self.active == as [u8](0) then
+        self.active = as [u8](1)
+      else
+        self.active = as [u8](0)
+      end
+      jump changed
+    end
+  end
+end
+
+region CellFrame.blur(self [ptr [CellFrame]]; changed, same)
+  entry start()
+    if self.focused == as [u8](0) then
+      jump same
+    else
+      self.focused = as [u8](0)
+      jump changed
+    end
+  end
+end
+
+region TaskFrame.step(self [ptr [TaskFrame]]; running, done)
+  entry start()
+    if self.done == as [u8](1) then
+      jump done
+    else
+      if self.ticks <= as [i32](1) then
+        self.ticks = as [i32](0)
+        self.done = as [u8](1)
+        jump done
+      else
+        self.ticks = self.ticks - as [i32](1)
+        jump running
+      end
+    end
+  end
+end
+
+-- Physical effect buffer: one owner interprets capacity and record shape.
+region GridStore.enqueue(self [ptr [GridStore]], kind [u8], arg [u8], phase [u8]; queued, full)
+  entry start()
+    if self.effect_count >= self.effect_cap then
+      jump full
+    else
+      let n [index] = self.effect_count
+      self.effects[n].kind = kind
+      self.effects[n].arg = arg
+      self.effects[n].phase = phase
+      self.effect_count = n + as [index](1)
+      jump queued
+    end
+  end
+end
+
+-- Readonly projections. They write a later world but never mutate source frames.
+region CellFrame.view(self [ptr [CellFrame]], id [u8], store [ptr [GridStore]]; written, full)
+  requires readonly(self)
+  entry start()
+    if store.decl_count >= store.decl_cap then
+      jump full
+    else
+      let n [index] = store.decl_count
+      store.decls[n].id = id
+      store.decls[n].row = as [u8](0)
+      store.decls[n].width = as [u8](4)
+      store.decls[n].height = as [u8](1)
+      store.decls[n].mark = self.focused + as [u8](as [i32](self.active) * as [i32](2))
+      store.decl_count = n + as [index](1)
+      jump written
+    end
+  end
+end
+
+region TaskFrame.view(self [ptr [TaskFrame]], store [ptr [GridStore]]; written, full)
+  requires readonly(self)
+  entry start()
+    if store.decl_count >= store.decl_cap then
+      jump full
+    else
+      let n [index] = store.decl_count
+      store.decls[n].id = as [u8]([GridId.TASK])
+      store.decls[n].row = as [u8](1)
+      store.decls[n].width = as [u8](0)  -- zero means fill in this physical declaration language
+      store.decls[n].height = as [u8](1)
+      store.decls[n].mark = self.done
+      store.decl_count = n + as [index](1)
+      jump written
+    end
+  end
+end
+
+-- Tiny Clay-like terminal solver. Declarations are immediate; solved geometry
+-- is a separate projection world. CFG walks avoid arbitrary imperative loops.
+region GridStore.solve(self [ptr [GridStore]]; done, overflow)
+  entry start()
+    self.solve_count = as [index](0)
+    jump place(i = as [index](0), col = as [i32](0))
+  end
+
+  block place(i [index], col [i32])
+    if i == self.decl_count then
+      jump done
+    else
+      if self.solve_count >= self.solve_cap then
+        jump overflow
+      else
+        let d [ViewDecl] = self.decls[i]
+        let n [index] = self.solve_count
+        self.solved[n].id = d.id
+        self.solved[n].y = d.row
+        self.solved[n].height = d.height
+        self.solved[n].mark = d.mark
+        if d.row == as [u8](0) then
+          self.solved[n].x = as [u8](col)
+          self.solved[n].width = d.width
+          self.solve_count = n + as [index](1)
+          jump place(i = i + as [index](1), col = col + as [i32](d.width))
+        else
+          self.solved[n].x = as [u8](0)
+          if d.width == as [u8](0) then
+            self.solved[n].width = as [u8]([GridCtl.W])
+          else
+            self.solved[n].width = d.width
+          end
+          self.solve_count = n + as [index](1)
+          jump place(i = i + as [index](1), col = col)
+        end
+      end
+    end
+  end
+end
+
+-- Physical terminal-cell materialization from solved geometry.
+region GridStore.raster(self [ptr [GridStore]]; done)
+  entry start()
+    if self.screen_cap < as [index]([GridCtl.SCREEN_CAP]) then
+      self.screen_len = as [index](0)
+      jump done
+    else
+      self.screen_len = as [index]([GridCtl.W] * [GridCtl.H])
+      self.screen[self.screen_len] = as [u8](0)
+      jump clear(i = as [index](0))
+    end
+  end
+
+  block clear(i [index])
+    if i == self.screen_len then
+      jump stamp(i = as [index](0))
+    else
+      self.screen[i] = as [u8](32)
+      jump clear(i = i + as [index](1))
+    end
+  end
+
+  block stamp(i [index])
+    if i == self.solve_count then
+      jump done
+    else
+      let s [SolvedCell] = self.solved[i]
+      let base [i32] = as [i32](s.y) * as [i32]([GridCtl.W]) + as [i32](s.x)
+      let right [i32] = base + as [i32](2)
+      if (as [i32](s.mark) & as [i32](2)) ~= as [i32](0) then
+        self.screen[base] = as [u8](35)
+        self.screen[right] = as [u8](35)
+      else
+        self.screen[base] = as [u8](91)
+        self.screen[right] = as [u8](93)
+      end
+      if s.id == as [u8]([GridId.TASK]) then
+        if self.task.done == as [u8](1) then
+          self.screen[base + as [i32](1)] = as [u8](68)
+        else
+          self.screen[base + as [i32](1)] = as [u8](111)
+        end
+      else
+        let cell [CellFrame] = self.cells[as [index](s.id)]
+        if cell.content ~= as [u8](0) then
+          self.screen[base + as [i32](1)] = cell.content
+        else
+          if cell.focused == as [u8](1) then
+            self.screen[base + as [i32](1)] = as [u8](62)
+          else
+            self.screen[base + as [i32](1)] = as [u8](32)
+          end
+        end
+      end
+      jump stamp(i = i + as [index](1))
+    end
+  end
+end
+
+fn grid_reset(store [ptr [GridStore]]) [void]
+  store.decl_count = as [index](0)
+  store.solve_count = as [index](0)
+  store.effect_count = as [index](0)
+  store.screen_len = as [index](0)
+  store.cursor_row = as [i32](0)
+  store.cursor_col = as [i32](0)
+  store.epoch = as [u32](0)
+  store.task_result = as [u8](0)
+  return
+end
+
+-- Deterministic root pump. Each object-machine has a sealed call/frame boundary;
+-- continuation target applications thread explicit pump state through dispatch.
+fn grid_step(events [ptr [InputRecord]], count [index], store [ptr [GridStore]]) [i32]
+  entry start()
+    store.decl_count = as [index](0)
+    store.solve_count = as [index](0)
+    store.effect_count = as [index](0)
+    store.screen_len = as [index](0)
+    jump dispatch(i = as [index](0))
+  end
+
+  block dispatch(i [index])
+    if i == count then
+      jump project
+    else
+      call InputRecord.decode(&events[i];
+        key = on_key(target, ch, i),
+        activate = on_activate(target, i),
+        cycle = on_cycle(target, i),
+        tick = on_tick(i),
+        unsupported = on_unsupported(op, i)
+      )
+    end
+  end
+
+  block resume(i [index])
+    jump dispatch(i = i + as [index](1))
+  end
+
+  block on_key(target [i32], ch [u8], i [index])
+    if target >= as [i32](0) and target < as [i32](store.cell_count) then
+      call CellFrame.set_char(&store.cells[target], ch;
+        changed = key_changed(i, target),
+        same = resume(i)
+      )
+    else
+      jump resume(i)
+    end
+  end
+
+  block key_changed(i [index], target [i32])
+    store.epoch = store.epoch + as [u32](1)
+    store.cursor_row = as [i32](0)
+    store.cursor_col = target * as [i32](4) + as [i32](1)
+    call GridStore.enqueue(store, as [u8]([EffectKind.CURSOR]), as [u8](target), as [u8](0);
+      queued = resume(i),
+      full = resume(i)
+    )
+  end
+
+  block on_activate(target [i32], i [index])
+    if target >= as [i32](0) and target < as [i32](store.cell_count) then
+      call CellFrame.activate(&store.cells[target];
+        changed = activate_changed(i),
+        same = resume(i)
+      )
+    else
+      jump resume(i)
+    end
+  end
+
+  block activate_changed(i [index])
+    store.epoch = store.epoch + as [u32](1)
+    call GridStore.enqueue(store, as [u8]([EffectKind.BEEP]), as [u8](0), as [u8](0);
+      queued = resume(i),
+      full = resume(i)
+    )
+  end
+
+  block on_cycle(target [i32], i [index])
+    if target >= as [i32](0) and target < as [i32](store.cell_count) then
+      call CellFrame.blur(&store.cells[target];
+        changed = cycle_changed(i),
+        same = resume(i)
+      )
+    else
+      jump resume(i)
+    end
+  end
+
+  block cycle_changed(i [index])
+    store.epoch = store.epoch + as [u32](1)
+    jump resume(i)
+  end
+
+  block on_tick(i [index])
+    call TaskFrame.step(store.task;
+      running = resume(i),
+      done = task_done(i)
+    )
+  end
+
+  block task_done(i [index])
+    store.task_result = as [u8](1)
+    call GridStore.enqueue(store, as [u8]([EffectKind.SAVE]), as [u8](0), as [u8](1);
+      queued = resume(i),
+      full = resume(i)
+    )
+  end
+
+  block on_unsupported(op [u8], i [index])
+    call GridStore.enqueue(store, as [u8]([EffectKind.ERROR]), op, as [u8](0);
+      queued = resume(i),
+      full = resume(i)
+    )
+  end
+
+  block project()
+    call CellFrame.view(&store.cells[0], as [u8]([GridId.CELL_A]), store;
+      written = project_b,
+      full = decl_full
+    )
+  end
+
+  block project_b()
+    call CellFrame.view(&store.cells[1], as [u8]([GridId.CELL_B]), store;
+      written = project_task,
+      full = decl_full
+    )
+  end
+
+  block project_task()
+    call TaskFrame.view(store.task, store;
+      written = solve_start,
+      full = decl_full
+    )
+  end
+
+  block decl_full()
+    call GridStore.enqueue(store, as [u8]([EffectKind.ERROR]), as [u8](1), as [u8](0);
+      queued = finish,
+      full = finish
+    )
+  end
+
+  block solve_start()
+    call GridStore.solve(store;
+      done = raster_start,
+      overflow = solve_overflow
+    )
+  end
+
+  block solve_overflow()
+    call GridStore.enqueue(store, as [u8]([EffectKind.ERROR]), as [u8](2), as [u8](0);
+      queued = finish,
+      full = finish
+    )
+  end
+
+  block raster_start()
+    call GridStore.raster(store; done = finish)
+  end
+
+  block finish()
+    return as [i32](store.effect_count)
+  end
+end
