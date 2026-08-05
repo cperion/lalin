@@ -1,6 +1,6 @@
 # Compiler Entity and Identity Model
 
-Status: Step 2 of the ground-up Lua-ASDL compiler model.
+Status: Step 2 closed; authority assignment continues in `docs/COMPILER_CONCERN_AUTHORITY_MODEL.md`.
 Prerequisite: `docs/COMPILER_SEMANTIC_OBLIGATIONS.md`.
 
 This document determines what is an entity, what is only a value or coordinate, where
@@ -750,7 +750,7 @@ The entity/identity model is closed enough to begin concern decomposition becaus
 - unresolved current defects are captured as required regressions;
 - no replacement ASDL product, machine, spine, or facet has yet been declared.
 
-## Next step — Concern and authority decomposition
+## Step 3 authority result
 
-Step 3 assigns every obligation and identity creation decision to one distinguished Lua-ASDL
-semantic receiver. Only after that authority graph is closed will we define spines and facets.
+`docs/COMPILER_CONCERN_AUTHORITY_MODEL.md` assigns every obligation and identity creation
+decision to one closed concern authority. With that graph closed, Step 4 may define spines.
