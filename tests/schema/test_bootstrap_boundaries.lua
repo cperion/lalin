@@ -61,9 +61,20 @@ for _, forbidden in ipairs {
 } do
   assert(not canonical_impl:match(forbidden), "canonical implementation imports forbidden old code: " .. forbidden)
 end
-for _, path in ipairs { "lua/lalin/impl/compiler_api.lua", "lua/lalin/pipeline.lua" } do
-  local text = source(path)
-  assert(not text:match('require%("lalin%.impl%.stencil_machine"%)'), path .. " must not load excluded stencil machine")
+local compiler_api_source = source("lua/lalin/impl/compiler_api.lua")
+assert(not compiler_api_source:match('require%("lalin%.impl%.stencil_machine"%)'),
+  "canonical compiler API must not load excluded stencil machine")
+
+for _, retired in ipairs {
+  "code_graph", "code_flow_facts", "code_value_facts", "code_mem_facts",
+  "code_effect_facts", "code_kernel_plan", "code_schedule_plan", "code_lower_plan",
+  "exec_plan", "kernel_emit_support", "kernel_validate", "lower_kernel_rewrite",
+  "stencil_methods", "compile", "pipeline", "residual_bc",
+} do
+  local path = "lua/lalin/" .. retired .. ".lua"
+  local file = io.open(path, "rb")
+  if file then file:close() end
+  assert(file == nil, path .. " is retired cutoff residue and must not return")
 end
 
 print("schema bootstrap boundaries ok")

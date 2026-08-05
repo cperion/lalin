@@ -9,10 +9,9 @@ local Code = T.LalinCode
 local CodeType = require("lalin.impl.code_type")(T)
 local CV = T.LalinCodeValidation
 
--- Binding smoke: both implementation and complete pipeline must bind against
--- the schema signature vocabulary without constructor aliases.
+-- Binding smoke: the canonical implementation binds directly against the
+-- schema signature vocabulary without constructor aliases.
 assert(require("lalin.impl.tree_code"))
-assert(require("lalin.pipeline"))
 
 local i32 = Ty.TScalar(Core.ScalarI32)
 local state = TreeCode.TreeCodeModuleSigState("sig-v2", {}, {})
