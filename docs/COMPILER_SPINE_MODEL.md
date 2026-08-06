@@ -1,6 +1,6 @@
 # Compiler Structural Spine Model
 
-Status: Step 4 closed for the ground-up Lua-ASDL compiler model.
+Status: Step 4 closed; semantic alignment continues in `docs/COMPILER_FACET_MODEL.md`.
 Prerequisites:
 
 - `docs/COMPILER_SEMANTIC_OBLIGATIONS.md`
@@ -788,8 +788,8 @@ Step 4 is closed because:
 - no facet, world, ASDL product, machine receiver, operation, result sum, or implementation has been
   defined.
 
-## Next step — Facets
+## Step 5 facet result
 
-Step 5 will assign every persistent derived fact to its sole producing concern and exactly one of
-S1–S8, decide dense versus sparse alignment, and state exact invalidation. It must define minimal
-facts rather than wrap current fact bags.
+`docs/COMPILER_FACET_MODEL.md` assigns persistent derived facts to 33 concern-owned facet families
+across S1–S7, gives every family an exact density and input frontier, and explicitly admits no S8
+facet because physical backend meaning belongs to S8 entities.
