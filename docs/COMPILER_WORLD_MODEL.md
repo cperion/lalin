@@ -299,8 +299,8 @@ Step 6 is closed because:
 - no ASDL fields, machines, operations, requests, result sums, caching, implementation, migration, or
   compatibility layer has been defined.
 
-## Next step — Semantic receivers, operations, and outcomes
+## Step 7 receiver/result result
 
-Step 7 will assign each closed concern its distinguished Lua-ASDL receiver shape, exact typed inputs,
-semantic operation, and complete result alternatives. It must use result-leaf continuation behavior
-rather than manual dispatch and must not reintroduce generic contexts or chronological pass machines.
+`docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md` assigns all thirty-two compiler authorities and
+the host boundary one distinguished receiver family, narrow operation leaves, typed result classes,
+and leaf-owned continuations. It introduces no compiler machine frame or world.

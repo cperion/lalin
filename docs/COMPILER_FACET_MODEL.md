@@ -1,7 +1,7 @@
 # Compiler Semantic Facet Model
 
-Status: Step 5 closed, including the F07/F34 ownership split exposed by Step 6; world admission
-continues in `docs/COMPILER_WORLD_MODEL.md`.
+Status: Step 5 closed, including the F07/F34 ownership split exposed by Step 6; receiver/operation
+alignment continues in `docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md`.
 Prerequisites:
 
 - `docs/COMPILER_SEMANTIC_OBLIGATIONS.md`
@@ -485,9 +485,9 @@ plane over the backend entities.
 - **Producer:** kernel recognition.
 - **Alignment/density:** dense over accepted S5 kernels and their lane/binding/result subpopulations.
 - **Facts:** recognized computation kind, counter/domain reference, lane roles, binding expressions,
-  semantic result shape/protocol, equivalence requirement, and typed references to F19/F21/F24–F26/
-  F16–F17 evidence.
-- **Input frontier:** S3 candidate, F19–F21, F24–F27, F16/F17, and exact proof premises.
+  semantic result shape/protocol, equivalence requirement, and typed references to F14/F15/F19/F21/
+  F24–F26/F16–F17 evidence.
+- **Input frontier:** S3 candidate, F14/F15, F19–F21, F24–F27, F16/F17, and exact proof premises.
 - **Consumers:** schedule selection, fused projection, strategy, diagnostics.
 - **Excludes:** copied trips/reductions/memory/effects, kernel/lane/binding identity/order (S5), and
   rejected-candidate result values.
@@ -717,7 +717,7 @@ The facet model adds these focused regression requirements to the earlier obliga
 5. F16/F17 are the only producers of observable contract consequences;
 6. F24/F25 dense counts equal the exact S4 object/access populations;
 7. F26 exact pairwise noalias is the only evidence capable of supporting F33 `restrict`;
-8. F28 references rather than copies F19/F21/F24–F27/F16 evidence;
+8. F28 references rather than copies F14/F15/F19–F21/F24–F27/F16/F17 evidence;
 9. F32 has exactly one entry per S7 use and rejects missing/duplicate/ambiguous alignment;
 10. F23 dominance is derived once per exact topology generation and reused by all fragment attempts;
 11. failed optional coordinate/fragment realization returns to F22 strategy before F18 final coverage;

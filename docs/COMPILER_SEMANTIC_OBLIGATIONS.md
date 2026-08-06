@@ -1,6 +1,7 @@
 # Compiler Semantic Obligations
 
-Status: requirements ledger for ground-up ASDL modeling.
+Status: requirements ledger for ground-up ASDL modeling; conservative-versus-terminal outcome
+classification refined by `docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md`.
 
 This document records what the compiler must mean and preserve. It deliberately does
 not prescribe replacement ASDL products, machine names, phase boundaries, or migration
@@ -587,10 +588,11 @@ Flow facts for one exact code/topology generation.
 
 Edge, block parameter, value, loop, axis, and domain identity.
 
-**Rejections**
+**Conservative/negative alternatives**
 
 Non-counted loop, missing latch/header/condition, ambiguous induction, unsupported recurrence,
-contradictory direction, invalid domain, and unprovable trip fact.
+contradictory direction, invalid domain, and unprovable trip fact become typed flow alternatives.
+They disable dependent optimization and preserve baseline execution; they are not program rejection.
 
 **Consumers**
 
@@ -622,10 +624,11 @@ Value-semantic facts aligned to exact code values and loops.
 
 Code value, defining instruction/block, loop, reduction accumulator, and proof identity.
 
-**Rejections**
+**Conservative/negative alternatives**
 
-Unsupported expression, ambiguous recurrence, unsafe arithmetic semantics, incompatible
-floating mode, non-associative reduction, and unavailable proof.
+Unsupported expression, ambiguous recurrence, unsafe arithmetic analysis, incompatible floating mode,
+non-associative reduction, and unavailable proof become typed unavailable outcomes or sparse-facet
+alternatives. They preserve baseline execution rather than rejecting the program.
 
 **Consumers**
 
@@ -658,10 +661,12 @@ Memory facts aligned to exact objects, accesses, instructions, values, and loops
 Memory object, base, access, code instruction/place/value, loop, contract subject, and proof
 identity. Pairwise relations require explicit pair identity.
 
-**Rejections**
+**Semantic rejections and conservative alternatives**
 
-Unresolved place, unknown provenance, unavailable extent/stride, unproven bounds, possible
-trap, ambiguous alias, incomparable dependence, illegal movement, and contract contradiction.
+Unresolved structural place/provenance and contradictory mandatory contracts are typed semantic or
+coherence rejections. Unavailable extent/stride, unproven bounds, possible trap, ambiguous alias,
+incomparable dependence, and illegal movement are explicit conservative memory alternatives unless
+the source contract requires the missing proof; they disable strengthening and preserve baseline.
 
 **Consumers**
 
@@ -692,10 +697,12 @@ Per-operation and per-function effect facts with evidence and unresolved alterna
 
 Function, call site, instruction, terminator, memory object/access, and contract identity.
 
-**Rejections**
+**Semantic rejections and conservative alternatives**
 
-Unknown callee, unresolved external effect, contradictory contract, unsafe effect for a
-requested transformation, and incomplete summary.
+Contradictory mandatory effect contracts are typed semantic rejections. Unknown callees, unresolved
+external effects, incomplete summaries, and unsafe capability for a requested transformation are
+explicit conservative effect alternatives or optional-admission outcomes; they disable the
+transformation and preserve baseline.
 
 **Consumers**
 
@@ -718,16 +725,16 @@ all/any/comparison/find results, trip evidence, and exact rejection causes.
 
 **Persistent output**
 
-Kernel plans or explicit no-plan facts for candidate subjects.
+Admitted kernel computations or explicit no-plan outcomes for candidate subjects.
 
 **Identity and alignment**
 
 Loop/subject, kernel, lane, value, access, memory object, result, and proof identity.
 
-**Rejections**
+**Optional-admission outcomes**
 
-Unsupported control, unsafe memory, missing proof, unsupported expression/effect, invalid
-trip shape, ambiguous lane, unsupported result, and non-transformable candidate.
+Unsupported control, unsafe memory, missing proof, unsupported expression/effect, invalid trip shape,
+ambiguous lane, unsupported result, and non-transformable candidate return to baseline strategy.
 
 **Consumers**
 
@@ -758,10 +765,10 @@ A schedule per planned kernel with proof and rejected alternatives.
 
 Kernel, schedule, target capability, lane, tail, and proof identity.
 
-**Rejections**
+**Optional-admission outcomes**
 
-Unsupported target, missing emitter, illegal vector/tail form, insufficient proof, invalid
-memory movement, unsupported result shape, and policy rejection.
+Unsupported target, missing emitter, illegal vector/tail form, insufficient proof, invalid memory
+movement, unsupported result shape, and policy rejection return to baseline strategy.
 
 **Consumers**
 
@@ -793,10 +800,10 @@ A fused computation projection or precise rejection. This is still semantic shap
 Kernel, iteration axis, stream, access, producer, sink, result, memory object, and provenance
 identity.
 
-**Rejections**
+**Optional-admission outcomes**
 
-Unsupported domain/result/operator, missing bounds or noalias evidence, unsafe access,
-incompatible schedule, unsupported window/tail, and capacity/shape contradiction.
+Unsupported domain/result/operator, missing bounds or noalias evidence, unsafe access, incompatible
+schedule, unsupported window/tail, and capacity/shape contradiction reject only that candidate.
 
 **Consumers**
 
@@ -824,18 +831,19 @@ accesses do not silently proceed.
 
 **Persistent output**
 
-A memory-use alignment, coordinate facts, and physical address plan or typed rejection.
+Memory-use alignment and coordinate/qualification facts. The physical address plan is a one-consumer
+boundary record; failed realization is a typed optional-candidate outcome.
 
 **Identity and alignment**
 
 Memory-use occurrence, stream/access, object/base, iteration axis, coordinate, cursor, and
 address identity. A width or noalias property must trace to declared/proven evidence.
 
-**Rejections**
+**Optional-realization outcomes**
 
-Coordinate disagreement, unknown stride/extent, invalid window, unsafe dereference, missing
-alignment, contradictory alias evidence, unsupported multidimensional form, overflow, pinned
-or immovable access, potentially trapping access, and missing exact noalias provenance.
+Coordinate disagreement, unknown stride/extent, invalid window, unsafe dereference, missing alignment,
+contradictory alias evidence, unsupported multidimensional form, overflow, pinned or immovable access,
+potentially trapping access, and missing exact noalias provenance return to lowering strategy.
 Reject-boundary windows are never emitted as unchecked loads; a nonzero reject displacement
 requires a narrow affine interior-domain proof.
 
@@ -865,17 +873,17 @@ or duplicate access, alias, proof, sink-index, or write facts.
 
 **Persistent output**
 
-A complete backend-function assembly or typed assembly rejection.
+A complete substitutable fragment contribution or typed unrealizable outcome.
 
 **Identity and alignment**
 
-Function, fragment, covered block/loop, local, helper, materialized use, and emitted block
-identity.
+Function, direct fragment, covered block/loop, helper, materialized use, and fragment-local occurrence
+identity. Final physical local/label/block identity belongs to backend-unit construction.
 
-**Rejections**
+**Optional-realization outcomes**
 
-Invalid coverage, dominance failure, duplicate contribution, missing coordinate, unsupported
-closed form, fragment emission failure, helper conflict, and incomplete assembly.
+Invalid coverage, dominance failure, duplicate contribution, missing coordinate, unsupported closed
+form, fragment emission failure, helper conflict, and incomplete contribution return to strategy.
 
 **Consumers**
 

@@ -1,6 +1,7 @@
 # Compiler Concern and Authority Model
 
-Status: Step 3 closed; structural alignment continues in `docs/COMPILER_SPINE_MODEL.md`.
+Status: Step 3 closed; structural/facet/world/receiver alignment continues through
+`docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md`.
 Prerequisites:
 
 - `docs/COMPILER_SEMANTIC_OBLIGATIONS.md`
@@ -31,8 +32,9 @@ Chronology and file placement are not evidence of ownership. Several operations 
 sequenced together without becoming one concern. Conversely, two decisions implemented in one
 file do not become one authority.
 
-A concern label in this document does not imply an empty `FooMachine` record. Step 7 will select
-the honest distinguished ASDL receiver for each concern.
+A concern label in this document does not imply an empty `FooMachine` record.
+`docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md` selects the honest distinguished ASDL receiver
+family for each concern.
 
 ---
 
@@ -317,22 +319,30 @@ It terminates at checked subjects. Only memory semantics maps those subjects to 
 
 ### 4.10 Ownership and access semantics
 
-**Operation:** track authority and temporary access through typed control and authorize erasure.
+**Operations:** derive static ownership/access/erasure authority, then independently refine only the
+verdicts that require storage identity and composed effects.
 
-**Consumes:** nominal entity/handle facts, checked bindings/control/calls/regions, contracts, capture
-facts, and memory/effect evidence where storage identity is required.
+**Static frontier:** nominal entity/handle facts, checked bindings/control/calls/regions, contracts,
+capture, representation facts required by trusted crossing, and declared call semantics. It contains
+no memory-object/access identity and no composed effects.
 
-**Owns:** owned-value transfer/discharge, copy/drop/equality legality, lease origin/liveness/escape,
-noescape and retaining-call rules, invalidation conflicts, handle Domain resolver lease contract,
-trusted representation permission, and the sole physical-erasure authorization.
+**Storage frontier:** static ownership authority, memory-object/access provenance and facts, composed
+operation/callable effects, and referenced source/code/control call occurrences.
+
+**Owns:** static transfer/discharge, copy/drop/equality legality, lexical lease/noescape admissibility,
+Domain resolver/trusted-crossing permission, and sole erasure authorization; then storage-mapped lease
+origin/liveness/escape, retaining-call consequences, invalidation conflicts, use-after-invalidation,
+and storage-specific discharge.
 
 **Rejects:** illegal copy/drop/double discharge, `var owned`, durable lease, lease escape, retaining
-call, conflicting invalidation, use outside lifetime, invalid resolver/grant/crossing, and premature
-erasure.
+call, conflicting invalidation, use outside lifetime, invalid resolver/grant/crossing, premature
+erasure, and the corresponding storage-specific liveness/invalidation/discharge violations.
 
-**Invalidated by:** typed control, binding, call contract, capture, or memory provenance change.
+**Invalidated by:** static output changes with typed control, binding, declared call, capture, or
+trusted-representation facts; storage refinement additionally changes with memory provenance/effects.
 
-**Consumers:** checking, contracts, capture/closure representation, memory/effects, ABI, backend.
+**Consumers:** static authority feeds checking, contracts, closure, code, memory, ABI, and backend;
+storage refinement feeds final ownership acceptance and backend safety.
 
 O33/O39 enforcement is pending. Assignment here is ownership, not false implementation credit.
 
@@ -524,8 +534,9 @@ definitions/constants needed to interpret steps and conditions.
 **Owns:** induction/recurrence role, primary counter, direction, start/stop/step, inclusive/exclusive
 convention, domain shape/intent, ranges, exits, and the sole trip evidence.
 
-**Rejects:** non-counted loop, missing structural premise, ambiguous/unsupported induction,
-contradictory direction, invalid domain, and unprovable trip.
+**Conservative outcomes:** non-counted loop, missing structural premise, ambiguous/unsupported
+induction, contradictory direction, invalid domain, and unprovable trip publish typed uncounted or
+unavailable facts. They do not reject a baseline-valid program.
 
 **Invalidated by:** topology, relevant code definition, or scalar/value premise change.
 
@@ -543,8 +554,9 @@ projection. The current flow/value trip merge is deleted conceptually.
 **Owns:** value-copy canonicalization, constant/range expressions over code values, no-wrap/float
 analysis evidence, reductions, closed forms, affine expressions, and algebraic proofs.
 
-**Rejects:** unsupported expression/recurrence, unsafe arithmetic analysis, non-associative
-reduction, unavailable premise/proof, and analysis incompatible with declared scalar semantics.
+**Conservative outcomes:** unsupported expression/recurrence, unsafe arithmetic analysis,
+non-associative reduction, unavailable premise/proof, and analysis incompatible with declared scalar
+semantics produce typed unavailable evidence and no sparse proof entry. They do not reject baseline.
 
 **Invalidated by:** code definition, topology/flow, or scalar semantic change.
 
@@ -563,8 +575,10 @@ ownership/storage facts.
 extent/stride, access mode, bounds, alignment with layout provenance, trap, same-store/alias/
 noalias/disjoint, dependence, dereference width, and memory-based movement legality.
 
-**Rejects:** unresolved place/provenance, unknown extent/stride/alignment, unproven bounds, possible
-trap, ambiguous alias, incomparable dependence, illegal memory movement, and contract contradiction.
+**Semantic rejection/conservative split:** unresolved structural place/provenance and contradictory
+mandatory contracts reject. Unknown geometry, unproven bounds, possible trap, ambiguous alias,
+incomparable dependence, and illegal movement are explicit conservative facts unless an authored
+contract makes the missing guarantee mandatory.
 
 **Invalidated by:** code access, flow/value, contract, layout, ownership, or storage-provenance change.
 
@@ -583,8 +597,9 @@ effect declarations.
 **Owns:** reads, writes, preserve/invalidate, retain/noescape, traps, volatility, atomicity, calls,
 external/allocation behavior, per-operation facts, and function/callee summaries.
 
-**Rejects:** unknown callee/external effect, contradictory effect contract, incomplete summary, and
-unsafe effect capability for a requested transformation.
+**Semantic rejection/conservative split:** contradictory mandatory effect declarations reject.
+Unknown callees/extern effects, incomplete summaries, and unsafe capability for a requested
+transformation publish conservative facts or optional-admission outcomes that preserve baseline.
 
 **Invalidated by:** operation, contract, memory subject mapping, callee, or external declaration
 change. A callee-summary change does not invalidate memory alias proofs.
@@ -604,8 +619,9 @@ change. A callee-summary change does not invalidate memory alias proofs.
 **Owns:** kernel identity, candidate admission, counter, lanes, bindings, semantic effects, result
 shape, reduction/scan/find/all/any/all-compare recognition, and no-plan reasons.
 
-**Rejects:** unsupported control/domain/result/expression/effect, unsafe memory, missing proof/trip,
-ambiguous lane, and incomplete computation.
+**No-plan outcomes:** unsupported control/domain/result/expression/effect, unsafe memory, missing proof/
+trip, ambiguous lane, and incomplete computation are typed optional-admission outcomes returned to
+lowering strategy; they do not reject the baseline program.
 
 **Invalidated by:** topology or any consumed analysis/evidence change.
 
@@ -624,8 +640,8 @@ backend-emitter capability facts.
 **Owns:** candidate order, form/tail selection, policy/profit decision, capability consumption, and
 rejected-alternative history.
 
-**Rejects:** unsupported target/emitter/form/tail/result, insufficient proof, illegal movement, and
-policy rejection.
+**No-plan outcomes:** unsupported target/emitter/form/tail/result, insufficient proof, illegal
+movement, and policy rejection return typed optional-admission outcomes to lowering strategy.
 
 **Invalidated by:** kernel, policy, target capability, or emitter capability change.
 
@@ -643,8 +659,9 @@ actually emit. Scheduling consumes their intersection; it must not manufacture e
 **Owns:** semantic iteration, axes, producers, streams, accesses, sinks, result protocol, declared
 guarantee provenance, and fused child occurrence identity.
 
-**Rejects:** unsupported domain/result/operator/window/tail, incompatible schedule, unsafe or
-unproven required access, and shape/capacity contradiction.
+**Unavailable outcomes:** unsupported domain/result/operator/window/tail, incompatible schedule, unsafe
+or unproven required access, and shape/capacity contradiction reject only that fused candidate and
+return to lowering strategy.
 
 **Invalidated by:** kernel, schedule, semantic evidence, or policy change.
 
@@ -664,9 +681,9 @@ target representation.
 basis, displacement, windows, cursors, dereference width, physical addressing, and pointer
 qualification including `restrict`.
 
-**Rejects:** use/provenance mismatch, coordinate/induction disagreement, unknown stride/extent/
-alignment, invalid/unsafe window, overflow, unsafe dereference, trapping/pinned access, and absent
-exact pairwise noalias for requested `restrict`.
+**Unrealizable outcomes:** use/provenance mismatch, coordinate/induction disagreement, unknown stride/
+extent/alignment, invalid/unsafe window, overflow, unsafe dereference, trapping/pinned access, and
+absent exact pairwise noalias for a requested `restrict` return typed candidate outcomes to strategy.
 
 **Invalidated by:** fused-use topology, iteration, memory evidence, layout, schedule, or target change.
 
@@ -708,8 +725,9 @@ topology, target, and exact value/access/exit environments.
 dominance, intended-coverage feasibility, entry/value/access/exit adapters, contribution conflicts,
 replacement/elimination relation, and exact baseline-preserving splice result.
 
-**Rejects:** unsupported realization/value/closed form, invalid coverage/dominance/adapter/exit,
-missing coordinate/value/access, namespace/helper conflict, incomplete or conflicting contribution.
+**Unrealizable outcomes:** unsupported realization/value/closed form, invalid coverage/dominance/
+adapter/exit, missing coordinate/value/access, namespace/helper conflict, and incomplete/conflicting
+contribution return to strategy; they do not reject a valid baseline.
 
 **Invalidated by:** strategy attempt, coordinates, baseline topology, dominance, target, or helper/
 namespace policy change.
@@ -988,4 +1006,7 @@ Step 3 is closed because:
 ## Step 4 spine result
 
 `docs/COMPILER_SPINE_MODEL.md` derives eight structural spine domains from this authority graph
-and the Step-2 identity model. With those domains closed, Step 5 may assign concern-owned facts.
+and the Step-2 identity model. `docs/COMPILER_FACET_MODEL.md` assigns 34 independently invalidated
+facets, `docs/COMPILER_WORLD_MODEL.md` admits zero worlds, and
+`docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md` closes the distinguished receiver and typed
+continuation shape for every authority.
