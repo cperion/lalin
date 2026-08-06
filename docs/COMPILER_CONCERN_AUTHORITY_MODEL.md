@@ -1,6 +1,6 @@
 # Compiler Concern and Authority Model
 
-Status: Step 3 closed for the ground-up Lua-ASDL compiler model.
+Status: Step 3 closed; structural alignment continues in `docs/COMPILER_SPINE_MODEL.md`.
 Prerequisites:
 
 - `docs/COMPILER_SEMANTIC_OBLIGATIONS.md`
@@ -985,8 +985,7 @@ Step 3 is closed because:
 - no replacement ASDL declaration, spine, facet, world, machine object, or result sum has been
   proposed.
 
-## Next step — Spines
+## Step 4 spine result
 
-Step 4 asks only where multiple closed concerns align to stable shared structure and where a later
-boundary creates genuinely new structural identity. It will derive candidate spines from this
-authority graph and the Step-2 identity model, not from current fact bags or pass products.
+`docs/COMPILER_SPINE_MODEL.md` derives eight structural spine domains from this authority graph
+and the Step-2 identity model. With those domains closed, Step 5 may assign concern-owned facts.
