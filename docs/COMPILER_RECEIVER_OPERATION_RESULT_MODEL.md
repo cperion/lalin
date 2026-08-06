@@ -60,8 +60,9 @@ callables, and artifacts.
 
 Use a request product or request sum when the decision is a relation among several peer values and
 no peer honestly owns the whole operation. Every request leaf has one exact frontier. Request sums
-are used for ownership, memory, effects, coordinates, strategy, and fragment realization. A32 uses
-intrinsic C-emitter leaves; A33 is a host-boundary leaf family.
+are used for flow, algebra, ownership, memory, effects, coordinates, strategy, and fragment realization.
+A32 uses the intrinsic `GnuCEmitter` leaf plus S8 entity leaf methods; A33 is a host-boundary leaf
+family.
 
 ### 1.3 Explicit authority receiver
 
@@ -94,22 +95,27 @@ They do not share a superset request.
 
 ## 3. Result and continuation law
 
-### 3.1 Five distinct outcome classes
+### 3.1 Six distinct outcome classes
 
-1. **Publication:** a spine, facet, entity, gate, or artifact becomes available.
-2. **Conservative fact:** a persistent typed fact such as uncounted, unknown, may-alias, may-trap,
-   unqualified, or incomplete evidence. It disables strengthening but does not reject the program.
-3. **Terminal semantic rejection:** an authority-specific typed reason ends the semantic transaction.
-4. **Optional candidate outcome:** no-plan, unavailable, or unrealizable evidence returns to lowering
+1. **Publication:** a spine, facet, entity, gate, artifact, intrinsic value, boundary value, or host
+   resource becomes available.
+2. **Conservative outcome:** typed weakening evidence either publishes a dense/sparse conservative entry
+   or explicitly creates no sparse entry. It continues compilation and never means rejection.
+3. **Immediate decision continuation:** a transient typed result chooses the next exact request without
+   pretending to be a persistent fact. Strategy attempts and identity-preserving unchanged decisions live
+   here.
+4. **Terminal semantic rejection:** an authority-specific typed reason ends the semantic transaction.
+5. **Optional realization outcome:** no-plan, unavailable, or unrealizable evidence returns to lowering
    strategy and preserves a correct baseline.
-5. **Host failure:** GCC/filesystem/loader/FFI/resource failure. It is never a compiler rejection.
+6. **Host failure:** GCC/filesystem/loader/FFI/resource failure. It is never a compiler rejection.
 
 These classes must not share a generic `Success/Failure` union.
 
 ### 3.2 When a result sum exists
 
 Use a named authority-specific result sum when the caller acts differently on immediate outcomes.
-Each success, unavailable/no-plan, rejection, or boundary-failure alternative is a concrete leaf.
+Each publication, conservative, immediate-decision, rejection, optional-realization, or host-failure
+alternative is a concrete leaf.
 A provably total projection, such as S3 topology after O13, returns its product directly.
 
 A result leaf carries only its authority's product or exact typed reason/provenance. Success leaves
@@ -121,9 +127,11 @@ generic result wrapper.
 Every immediate result leaf owns its transaction continuation:
 
 - semantic success publishes its value and constructs/invokes the next exact request;
+- a conservative outcome publishes its typed weakening entry or records a typed no-entry outcome, then
+  continues without strengthening;
+- an immediate decision continuation constructs exactly the request named by its concrete leaf;
 - terminal semantic rejection preserves the typed cause and stops the transaction;
 - optional no-plan/unrealizable leaves return to lowering strategy;
-- a conservative fact publishes and allows downstream consumers to weaken;
 - host failures route to the Host API as host errors.
 
 Coordinators invoke these methods. They do not inspect class, `kind`, tags, reason strings, or booleans.
@@ -149,12 +157,12 @@ upstream facts or turn the mismatch into an optional no-plan.
 
 | ID | Distinguished receiver family | Publication/decision operation | Exact additional frontier | Exhaustive immediate outcomes | Produces |
 |---|---|---|---|---|---|
-| A01 | `ProgramInput` leaves: document, builder declarations, generated-declaration admission | `materialize_authored` | source/generated origin, LLBL delivery, canonical Lalin role adaptation | materialized; lexical/syntax delivery failure; illegal root; malformed declaration/body; invalid builder/host value; splice rejection | initial or regenerated S1 |
+| A01 | `ProgramInput` leaves: document, builder declarations, generated-declaration admission | `materialize_authored` | source/generated origin, LLBL delivery, canonical Lalin role adaptation | one new S1 allocation for the exact input/admission; lexical/syntax delivery failure; illegal root; malformed declaration/body; invalid builder/host value; splice rejection | S1; never mutates a prior allocation |
 | A02 | concrete `MetaPropertyQuery` leaves | `synthesize` | declared hook, schema value, staged Lua capability, recursion bound, requested role | generated declarations; unknown hook; role mismatch; unsupported result; recursion rejection; dynamic-fallback rejection | generated declaration values and causal origin, not S1 identity |
 | A03 | S1 semantic-program allocation | `resolve_namespaces` | lexical/qualification rules | F01 published; duplicate/conflict; missing name; wrong namespace; bad qualification/shadowing/category | F01 |
 | A04 | concrete nominal declaration/child leaves | `establish_nominal_meaning` | F01 nominal references | F02 published; duplicate child; invalid recursion/category/payload/handle target/unique authority | F02 |
 | A05 | concrete type-form leaves | `establish_type_meaning` | F01/F02 references and legal composition | F03 published; unknown/recursive/extent/composition/equality/operation rejection | F03 and canonical structural values |
-| A06 | `ScalarMeaningRequest` leaves delegating to concrete scalar/pointer/cast/atomic operation leaves | `interpret_intrinsic`; `attribute_code_operation` | operand types and declared scalar contracts; code-attribution leaf additionally names one S2 operation | intrinsic meaning or typed semantic rejection; F14 publication or code/meaning incoherence rejection | intrinsic operation values and F14 |
+| A06 | intrinsic scalar/pointer/cast/atomic/operator leaves; separate `CodeOperationAttributionRequest` | `interpret_intrinsic`; `attribute_code_operation` | intrinsic: exact operand types/contracts; attribution: one accepted S2 operation + intrinsic meaning | intrinsic meaning or typed semantic rejection; F14 publication or code/meaning incoherence rejection | intrinsic operation values and F14 |
 | A07 | `CheckRequest` leaves for expression, place, and statement subjects | `check` | F01–F03, expected type where required, exact control/ownership/region capability | checked F04 entry; concern-specific type/place/call/return/cast/index/nominal rejection; propagated cause | F04 |
 | A08 | concrete control-bearing body/site leaves | `prove_control_legality` | F04, function/block signatures, region protocol/capability | F05 entry; termination/target/default/fallthrough/transfer/passthrough/source-control rejection | F05 |
 | A09 | concrete contract-form leaves | `canonicalize_contract` | F01 subjects, F03 types, F04 checked places/bindings | F06 entry; malformed/non-memory/missing/bounds/contradiction/unsupported rejection | F06 |
@@ -163,7 +171,7 @@ upstream facts or turn the mismatch into an optional no-plan.
 | A12 | nested callable/body occurrence | `discover_captures` | F01 lexical binding relation and checked nested body | F09 relation; unresolved/escape/shape rejection | F09 |
 | A13 | `LayoutRequest` for one canonical type/nominal and target generation | `project_layout` | F02/F03, target representation, layout policy | F10 entry; recursion/representation/alignment/target/classification/overflow rejection | F10 |
 | A14 | `CallableAbiRequest` for one callable occurrence | `project_callable_abi` | F03/F07/F10, target convention, linkage/visibility | F11 entry; parameter/result/convention/redeclaration/collision/symbol/visibility/target rejection | F11 |
-| A15 | `ClosureRepresentationRequest` for one capture-bearing callable | `represent_closure` | F09/F07/F10/F11 and target | represented derived S1+F12; unchanged-no-captures; environment/escape/storage/shape/target-ABI rejection | derived S1 and F12 |
+| A15 | `ClosureRepresentationRequest` leaves: captured representation or no-capture unchanged decision | `represent_closure`; `preserve_uncaptured_callable` | captured: F09/F07/F10/F11 and target; unchanged: exact empty F09 relation | represented derived S1+F12; typed unchanged continuation; environment/escape/storage/shape/target-ABI rejection | derived S1 and F12 only for represented closures |
 | A16 | open-region invocation leaf | `expand_open_region` | checked definition/protocol, wiring, typed environment, caller captures, target parameters, generation | derived S1; definition/argument/continuation/capture/identity/body rejection | derived S1 |
 | A17 | `SealedRegionRequest` leaves for seal materialization and invocation routing | `materialize_seal`; `route_sealed_call` | materialize: checked seal/body/protocol + F05/F11; route: materialized seal + invocation/wiring/caller state | derived seal/call S1+F13; missing seal; argument/protocol/continuation/frame/recursion/delegated-ABI rejection | derived S1 and F13 |
 
@@ -188,10 +196,10 @@ A16 and A17 remain separate receiver families and result sums: open `emit` splic
 | A18 | accepted expanded S1 allocation | `construct_monomorphic_code` | F06–F08/F10–F13 and exact target-neutral representation references | S2 constructed; unsupported construct/missing representation/initializer/relocation/unbound value/body/code-type rejection | S2 |
 | A19 | constructed S2 allocation | `validate_code_structure` | S2's exact typed relations only | accepted-code gate; typed duplicate/reference/signature/definition/transfer/memory/initializer/relocation/termination rejection | O13 gate |
 | A20 | accepted-code result leaf | `derive_control_topology` | none | direct total S3 publication; no reject alternative | S3 |
-| A21 | `FlowRequest` sum: loop-meaning request or induction-relation request | `derive_loop_meaning`; `derive_induction_relations` | loop: S3 loop/edges + S2 definitions/constants + F14 + S1 provenance; induction: S3 wiring + S2 definitions + F14 + owning F19 | F19 counted/uncounted meaning; F20 relation publication or typed relation-unavailable outcome | F19 and F20 |
+| A21 | `FlowRequest` sum: loop-meaning request or induction-relation request | `derive_loop_meaning`; `derive_induction_relations` | loop: S3 loop/edges + S2 definitions/constants + F14 + S1 provenance; induction: S3 wiring + S2 definitions + F14 + owning F19 | F19 counted/uncounted meaning; F20 relation publication or typed relation-unavailable outcome; typed generation/provenance rejection | F19 and F20 |
 | A22 | `AlgebraRequest` sum: code-value or loop-algebra request | `derive_value_algebra`; `derive_loop_algebra` | value: S2 definition + S3 def/use + F14/F19/F20; loop: S3 tuple + F15/F14/F19/F20 | derived entry or typed unavailable evidence; scalar/provenance incoherence rejection only | F15 and F21 |
 | A23 | `MemorySemanticsRequest` sum with spine, object, contract, access, and relation leaves | operations in §5.1 | exact frontier per leaf in §5.1 | structural S4 publication or rejection; dense/sparse fact publication with explicit conservative alternatives; typed coherence/contract-mapping rejection | S4 and F24–F27 |
-| A24 | `EffectRequest` sum: operation classification or callable composition | `classify_operation_effect`; `compose_callable_effects` | operation: S2 op + F06/F25/F27 + declarations; callable: F16 + S2/S3 call relation + callee F17 + extern declarations | dense effect/summary publication with pure/conservative alternatives; typed declaration/provenance contradiction rejection | F16 and F17 |
+| A24 | `EffectRequest` sum: operation, acyclic callable, or recursive callable-component composition | `classify_operation_effect`; `compose_callable_effects`; `compose_recursive_component_effects` | operation: S2 op + F06/F25/F27 + declarations; callable: F16 + direct S2 call relations + callee F17/extern declarations; recursive: one typed callable component + its exact direct call edges | dense effect/summary publication with pure/conservative alternatives; typed declaration/provenance contradiction rejection | F16 and F17 |
 
 ### 5.1 Memory operation decomposition
 
@@ -241,29 +249,35 @@ admitted.
 | A25 | `KernelRecognitionRequest` for one S3 candidate | `recognize_kernel` | F14/F15/F16/F17/F19–F21/F24–F27 and exact proofs | admitted S5+F28; typed no-plan; evidence-coherence rejection | S5 and F28 only for admitted candidates |
 | A26 | `ScheduleSelectionRequest` for one S5 kernel | `select_schedule` | F28/F25/F26/F16/F17, policy, target capabilities, A32 emitter capability | selected F29; typed no-plan | F29 only for selected schedules |
 | A27 | `FusedProjectionRequest` for one scheduled S5 kernel | `project_fused_computation` | F28/F29/F19/F21/F24–F27/F16/F17 and policy | admitted S6+F30; typed shape unavailable; evidence-coherence rejection | S6 and F30 only for admitted projections |
-| A28 | `MemoryUseRequest` sum: use materialization, coordinate derivation, pointer qualification | operations in §6.1 | exact frontier per leaf | S7+F31 or typed unrealizable; F32 or typed unrealizable; F33 entry or typed unqualified outcome; typed representation-unrealizable candidate outcome | S7 and F31–F33 |
-| A29 | `LoweringStrategyRequest` sum: baseline admission or subject commitment/resumption | operations in §6.2 | baseline: S2/S3 + A32 baseline capability; commitment: S3 subject + F18/F21/F28/F29/F30/F31–F33 + A32 capabilities + typed A28/A30 outcomes | F18 or `NoLegalBaseline`; `AttemptClosedForm`/`AttemptFused`/`CommitBaseline`; final F22 commitment; `NoLegalStrategy` | F18 and final F22 |
+| A28 | `MemoryUseRequest` sum: three candidate derivations, S7/F31/F32 publication, pointer qualification, address record | operations in §6.1 | exact frontier per leaf | transient candidate records; separately published S7, F31, F32; F33 entry or typed unqualified outcome; typed unrealizable outcomes | S7 and F31–F33 plus one-consumer address records |
+| A29 | `LoweringStrategyRequest` sum: baseline admission, subject selection, exact realization resumption, final commitment | operations in §6.2 | baseline: S2/S3 + A32 baseline capability; selection/commitment: S3 subject + F18/F21/F28/F29/F30/F31–F33 + A32 capabilities + exact typed A28/A30 outcome | F18 or `NoLegalBaseline`; transient `AttemptClosedForm`/`AttemptFused`; final F22 baseline/fragment commitment; `NoLegalStrategy` | F18 and final F22 |
 | A30 | `FragmentRealizationRequest` sum: dominance publication or fragment contribution | `derive_dominance`; `realize_fragment_contribution` | dominance: accepted S2/S3; fragment: strategy attempt + F21/F30/F31–F33/address record/F23/baseline/target/environments | direct F23; realized fragment contribution; typed unrealizable contribution | F23 and direct fragment entities/results |
 | A31 | `BackendConstructionRequest` | `construct_backend_unit` | accepted S2, F07/F34/F10/F11/F14/F16/F18/F22, selected fragment contributions, initializers/relocations, target/linkage | S8 unit; type/operation/storage/initializer/ABI/symbol/linkage/contribution/target rejection | S8 |
-| A32 | concrete `CEmitter` union leaves | `declare_capability`; `validate_and_serialize_c` | capability input: target; emission input: S8 + same target/capability/order | intrinsic capability value; C artifact; typed C reference/type/control/access/helper/feature/serialization rejection | emitter capability and C source/header artifact |
+| A32 | intrinsic `GnuCEmitter` leaf plus concrete S8 entity leaves | `declare_capability`; `validate_and_serialize_c`; entity `validate_c`/`emit_c` methods | capability input: target; emission input: S8 + same target/capability/order | intrinsic capability value; C artifact; typed C reference/type/control/access/helper/feature/serialization rejection | emitter capability and C source/header artifact |
 | A33 | `GccBoundaryReceiver` leaves: cook request, live session, released session | `cook_and_load`; `resolve_symbol`; `release` | C artifact + host policy/capabilities; live session + F11 symbol request; session liveness | live session or typed host failure; symbol capability or host failure; released/already-released | artifact paths, loaded session, symbol capabilities, liveness transition |
 
 ### 6.1 Materialized-use operation decomposition
 
-A28 has three request leaves because S7/F31, F32, and F33 have independent frontiers:
+A28 uses eight narrow request leaves. The first three produce one-consumer candidate records, not semantic
+spine/facet publications. This permits exact independent frontiers while ensuring a failed optional
+coordinate attempt cannot create fake S7 identity:
 
-1. **Use materialization:** S6/F30 create the S7 use population and dense F31 meaning/provenance.
-   A rejected attempt creates no fake S7 allocation.
-2. **Coordinate derivation:** S7/F31 plus F19/F20/F24/F25/F10/F29/target produce exactly one F32
-   entry per use or a typed candidate-unrealizable result returned to strategy.
-3. **Pointer qualification:** S7/F31 plus exact F06/F26/F27 pair evidence and target C rules produce
-   sparse F33. Lack of exact declared noalias means an explicit unqualified outcome, not inferred
-   `restrict` and not program rejection. A realization that explicitly requires qualification may
-   return that outcome to strategy as candidate failure. Unsupported pointer representation is also a
-   typed candidate-unrealizable outcome returned to A29, not a terminal program rejection.
-
-F33 never depends on F32 arithmetic. Address plans/cursors remain one-consumer boundary records and
-cannot mint S8 locals or labels.
+1. **Use-population candidate:** S6/F30 deterministically enumerate ordered proposed uses or return a
+   typed candidate-unrealizable result. The record carries candidate ordinals and provenance, not S7 IDs.
+2. **Use-meaning candidate:** the population candidate plus F30/F25 produce typed F31 candidate meaning
+   or a terminal coherence rejection.
+3. **Coordinate candidate:** the meaning candidate plus F19/F20/F24/F25/F10/F29/target produce exactly
+   one proposed coordinate per candidate use or a typed candidate-unrealizable result.
+4. **S7 admission:** coherent population/meaning/coordinate candidates create S7 identity only after all
+   optional candidate derivations succeed.
+5. **F31 publication:** S7 plus the meaning candidate publish dense F31 under the F31 frontier.
+6. **F32 publication:** S7 plus the coordinate candidate publish dense F32 under the F32 frontier. Thus
+   every accepted S7 use has exactly one F31 and F32 entry and every rejected attempt has no S7.
+7. **Pointer qualification:** S7/F31 plus exact F06/F26/F27 pair evidence and target C rules produce
+   sparse F33. Missing exact declared noalias is an explicit conservative no-entry outcome; a realization
+   requiring qualification receives a typed optional outcome. F33 never depends on F32.
+8. **Address record:** S7/F32 plus target and the exact realization environment produce a one-consumer
+   address record or typed optional outcome. Address records/cursors cannot mint S8 locals or labels.
 
 ### 6.2 Strategy continuation discipline
 
@@ -293,9 +307,10 @@ fusion truth.
 
 ### 6.4 Emitter capability and host boundary
 
-A32's concrete `CEmitter` leaf declares capabilities before scheduling and baseline admission. This
-avoids a cycle in which schedule would need capabilities produced only after S8. A26/A29 consume the
-declared value; they cannot manufacture support.
+A32's intrinsic `GnuCEmitter` leaf declares capabilities before scheduling and baseline admission.
+Concrete S8 entity leaves own their C validation and serialization behavior; the emitter sequences them
+in declared S8 order and never dispatches by class or string. A26/A29 consume the declared capability
+value and cannot manufacture support. A future emitter requires a new modeled leaf and coverage row.
 
 A33's closed receiver family has cook-request, live-session, and released-session leaves. The cook
 leaf owns host construction; the live leaf owns symbol/release behavior; the released leaf owns
@@ -403,7 +418,7 @@ No coordinator is a semantic receiver family in the A01–A33 set.
 
 | Publication | Sole receiver/operation family |
 |---|---|
-| S1 initial/regenerated | A01; derived allocations A15/A16/A17 with exact provenance |
+| S1 exact input/admission allocation | A01; derived allocations A15/A16/A17 with exact provenance |
 | O13 accepted-code gate | A19 validation; consumed once by A20 |
 | S2 | A18 code construction |
 | S3 | A20 total topology |
@@ -425,7 +440,7 @@ No coordinator is a semantic receiver family in the A01–A33 set.
 | F28 | A25 admitted kernel |
 | F29 | A26 selected schedule |
 | F30 | A27 admitted fused projection |
-| F31/F32/F33 | A28 use/coordinate/qualification request leaves |
+| F31/F32/F33 | A28 admitted-use/qualification request leaves; candidate/address records are direct boundary values |
 | O25 C acceptance | A32 success path; authorization is consumed in producing the artifact |
 | C artifact | A32 accepted C realization |
 | session/symbol capability | A33 host boundary |
@@ -465,11 +480,11 @@ Step 7 is closed because:
 
 - all thirty-two compiler concerns and the host boundary have one distinguished receiver family;
 - every independently invalidated publication operation has a narrow request leaf;
-- every result alternative is publication, conservative fact, semantic rejection, optional candidate
-  outcome, or host failure—never nil/boolean/optional soup;
+- every result alternative is a publication, conservative outcome, immediate decision continuation,
+  semantic rejection, optional realization outcome, or host failure—never nil/boolean/optional soup;
 - terminal versus fallback behavior is explicit;
 - F07/F34, F16/F17, F18/F22, F19/F20, F15/F21, S4/F24–F27, F23/fragment, and
-  F31/F32/F33 preserve their independent frontiers;
+  F31/F32/F33 preserve their independent frontiers through typed one-consumer A28 candidate records;
 - strategy cannot publish F22 before realizer outcomes return;
 - emitter capabilities exist before schedule/baseline decisions;
 - total topology follows the validation gate without a second result wrapper;
@@ -479,8 +494,9 @@ Step 7 is closed because:
 - no schema fields, implementation, migration, compatibility bridge, side table, world, or LLBL process
   has been introduced.
 
-## Next step — Complete behavior coverage
+## Step 8 behavior-coverage result
 
-Step 8 will enumerate every concrete receiver leaf, request leaf, result leaf, reason leaf, and required
-method; prove every leaf has its owned behavior/continuation; map O01–O40 and required regressions to
-those methods; and expose any missing schema alternative before ASDL transcription or implementation.
+`docs/COMPILER_BEHAVIOR_COVERAGE_MODEL.md` enumerates the closed semantic constructor/case sets, every
+A01–A33 operation and result family, reason ownership, continuation classes, O01–O40 reachability,
+required regressions, and falsifiable no-gap/no-overlap invariants. It also records the exact required
+but currently unimplemented O33/O39/O40 methods without claiming false implementation credit.

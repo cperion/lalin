@@ -1009,4 +1009,5 @@ Step 3 is closed because:
 and the Step-2 identity model. `docs/COMPILER_FACET_MODEL.md` assigns 34 independently invalidated
 facets, `docs/COMPILER_WORLD_MODEL.md` admits zero worlds, and
 `docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md` closes the distinguished receiver and typed
-continuation shape for every authority.
+continuation shape for every authority. `docs/COMPILER_BEHAVIOR_COVERAGE_MODEL.md` closes the concrete
+case/method/result/reason and regression-coverage proof.

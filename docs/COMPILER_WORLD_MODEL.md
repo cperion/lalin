@@ -303,4 +303,5 @@ Step 6 is closed because:
 
 `docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md` assigns all thirty-two compiler authorities and
 the host boundary one distinguished receiver family, narrow operation leaves, typed result classes,
-and leaf-owned continuations. It introduces no compiler machine frame or world.
+and leaf-owned continuations. `docs/COMPILER_BEHAVIOR_COVERAGE_MODEL.md` closes the concrete behavior
+coverage proof. Neither introduces a compiler machine frame or world.
