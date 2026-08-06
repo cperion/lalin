@@ -1,6 +1,7 @@
 # Compiler Semantic Facet Model
 
-Status: Step 5 closed for the ground-up Lua-ASDL compiler model.
+Status: Step 5 closed, including the F07/F34 ownership split exposed by Step 6; world admission
+continues in `docs/COMPILER_WORLD_MODEL.md`.
 Prerequisites:
 
 - `docs/COMPILER_SEMANTIC_OBLIGATIONS.md`
@@ -112,18 +113,21 @@ Cross-generation structural equality never grants validity.
 
 ## 4. Closed facet set
 
-The model admits 33 conceptual facet families:
+The model admits 34 conceptual facet families:
 
 | Spine | Facets |
 |---|---|
 | S1 Semantic program | F01–F13 |
 | S2 Monomorphic code | F14–F18 |
 | S3 Control topology | F19–F23 |
-| S4 Memory object/access | F24–F27 |
+| S4 Memory object/access | F24–F27, F34 |
 | S5 Kernel | F28–F29 |
 | S6 Fused computation | F30 |
 | S7 Materialized memory use | F31–F33 |
 | S8 Physical backend | none; physical meaning is backend-entity content |
+
+F34 was appended after the Step-6 audit exposed the static/storage ownership cycle; the existing
+F08–F33 references remain stable. Numbers identify conceptual families, not chronological order.
 
 “None” for S8 is deliberate. Backend construction creates the physical object model. Validation
 returns a gate result; serialization returns artifact values. Neither justifies a second semantic
@@ -206,19 +210,19 @@ plane over the backend entities.
   qualification, ABI, diagnostics.
 - **Excludes:** mapping a subject to an S4 object (F27) and observable effect consequences (F16/F17).
 
-### F07 — Ownership, access, and erasure
+### F07 — Static ownership, access, and erasure
 
 - **Producer:** ownership and access semantics.
 - **Alignment/density:** sparse over S1 ownership-bearing bindings, uses, transfers, calls, control
-  transitions, handle crossings, and resolver sites. S4 objects/accesses may be referenced as evidence.
-- **Facts:** owned transfer/discharge, copy/drop/equality legality, lease origin/liveness/escape,
-  noescape/retention, invalidation conflicts, Domain resolver lease grant, trusted crossing, and sole
-  physical-erasure authorization.
-- **Input frontier:** F02 entity/handle kind, F04 checked uses, F05 control, F06 contracts, F09 capture,
-  call semantics, and referenced S4 provenance/effect evidence.
-- **Consumers:** checking, contracts, closure representation, memory/effects, ABI, backend.
-- **Excludes:** optional “pending” flags. O33/O39 gaps remain missing behavior or typed rejections until
-  implemented.
+  transitions, handle crossings, and resolver sites.
+- **Facts:** owned transfer/discharge, copy/drop/equality legality, lexically provable lease/noescape
+  admissibility, Domain resolver/trusted-crossing authority, and sole physical-erasure authorization.
+- **Input frontier:** F02 entity/handle kind, F04 checked uses, F05 control, F06 declared contracts, F09
+  capture, F10 representation facts required by trusted crossing, and declared call semantics.
+- **Consumers:** checking, contracts, closure representation, code construction, memory, ABI, F34
+  storage refinement, and backend construction through exact authorization references.
+- **Excludes:** any conclusion requiring S4 object/access identity or F16/F17 composed effects, and
+  optional “pending” flags. O33/O39 gaps remain missing behavior or typed rejections until implemented.
 
 ### F08 — Constant values
 
@@ -324,7 +328,8 @@ plane over the backend entities.
   allocation/external behavior, and exact S4 object/access references.
 - **Input frontier:** S2 operation, F06 contracts, F25/F27 memory subject mapping/safety, and declared
   callee/extern effects where local interpretation requires them.
-- **Consumers:** ownership, kernel, scheduling/fusion admission, strategy, backend qualifiers.
+- **Consumers:** F34 storage-refined ownership, kernel, scheduling/fusion admission, strategy, and
+  backend qualifiers.
 - **Excludes:** memory alias/bounds decisions and function-level composition.
 
 ### F17 — Callable effect summaries
@@ -334,7 +339,8 @@ plane over the backend entities.
 - **Facts:** composed callable effect classification and precise read/write/trap/retain/external summary.
 - **Input frontier:** F16 operation effects, call graph relations from S2/S3, callee F17 summaries, and
   extern declarations.
-- **Consumers:** ownership, call checking where required, kernel, schedule/fusion, strategy.
+- **Consumers:** F34 storage-refined ownership, call checking where required, kernel, schedule/fusion,
+  and strategy.
 - **Excludes:** per-operation facts. A callee-summary change never invalidates F24–F27 memory facts.
 
 ### F18 — Baseline realization
@@ -418,7 +424,7 @@ plane over the backend entities.
 - **Alignment/density:** dense over S4 object/subobject occurrences.
 - **Facts:** storage kind, element/type interpretation, extent, stride, layout provenance, and semantic
   storage-root properties not already structural lineage.
-- **Input frontier:** S4 root/lineage, S2 storage definitions, F03, F10, F07 storage authority, and
+- **Input frontier:** S4 root/lineage, S2 storage definitions, F03, F10, F07 static storage authority, and
   relevant F19/F20/F15 premises.
 - **Consumers:** F25/F26, effects, kernel lanes, fused projection, coordinates, backend.
 - **Excludes:** object identity/root-parent topology (S4) and observable effect conclusions.
@@ -430,7 +436,7 @@ plane over the backend entities.
 - **Facts:** access mode, selected index interpretation, extent/stride use, bounds, alignment with
   provenance, trap status, dereference width, and movement legality.
 - **Input frontier:** S4 access anchor/object relation, F24, F19/F20, F15, F06/F27 contracts, F10 layout,
-  and F07 ownership.
+  and F07 static ownership authority.
 - **Consumers:** effects, kernel/fused admission, coordinates, fragment/backend realization.
 - **Excludes:** access identity/order (S4), pairwise relations (F26), and duplicated backend-info records.
 
@@ -442,7 +448,7 @@ plane over the backend entities.
   loop-carried dependence, and exact proof provenance.
 - **Input frontier:** S4 lineage/access population, F24/F25, F19/F20, F06/F27 exact pair evidence, and
   layout/ownership premises used by the proof.
-- **Consumers:** ownership refinement, effects, kernel/fusion admission, scheduling, qualification.
+- **Consumers:** F34 storage refinement, effects, kernel/fusion admission, scheduling, qualification.
 - **Excludes:** inferred `restrict`, observable read/write effects, and duplicate alias vocabulary.
 
 ### F27 — Contract realization
@@ -453,8 +459,22 @@ plane over the backend entities.
 - **Facts:** canonical contract-subject-to-object/access relation and the exact contract evidence
   applicable to that storage occurrence.
 - **Input frontier:** F06, S1→S2 provenance, S4 root/access structure, and F24 object interpretation.
-- **Consumers:** F25/F26, effects, kernel/fusion admission, F33 qualification, diagnostics.
+- **Consumers:** F25/F26, effects, kernel/fusion admission, F33 qualification, F34 storage refinement,
+  and diagnostics.
 - **Excludes:** reinterpreting contract syntax and deriving readonly/writeonly/invalidate effects.
+
+### F34 — Storage-refined ownership
+
+- **Producer:** ownership and access semantics.
+- **Alignment/density:** sparse over S4 objects/accesses and explicit S1 use/call/control references
+  whose ownership verdict requires storage identity or composed observable effects.
+- **Facts:** storage-mapped lease origin/liveness/escape, retaining-call/noescape consequences,
+  invalidation conflicts, use-after-storage-invalidation, and storage-specific discharge evidence.
+- **Input frontier:** F07 static authority, S4 provenance, F24–F27 memory facts, F16/F17 effects, and
+  referenced S1/S2/S3 call/control occurrences.
+- **Consumers:** final ownership acceptance, backend safety realization, and diagnostics.
+- **Excludes:** re-deciding static copy/transfer/erasure authority, memory alias/bounds truth, effect
+  summaries, or nullable pending-state flags.
 
 ---
 
@@ -587,11 +607,11 @@ Every consuming facet names one primary spine. Cross-spine facts are referenced 
 - F16/F17 reference S4 objects/accesses without owning memory truth;
 - F20/F21 reference S2 values while aligning to S3 loops;
 - F22 references S5/S6/S7/direct fragments while aligning to S3 subjects;
-- F24–F27 reference S1 contracts/types and S2/S3 causes while aligning to S4;
+- F24–F27 and F34 reference S1 contracts/types and S2/S3 causes while aligning to S4;
 - F28 references S2/S3/S4 evidence while aligning to S5;
 - F30 references S3/S4/S5 facts while aligning to S6;
 - F31–F33 reference S4/S6 facts while aligning to S7;
-- S8 references F10/F11/F14/F16/F18/F22/direct fragments without copying their decisions.
+- S8 references F07/F34/F10/F11/F14/F16/F18/F22/direct fragments without copying their decisions.
 
 A consumer may project a narrow view from an authoritative facet. It may not publish a second stored
 copy such as kernel trips, stencil domains, memory backend-info mirrors, code-layout copies, or
@@ -613,7 +633,7 @@ backend alias classifications.
 | `FlowFactSet` + `FlowSemanticFactSet` | F19/F20; one O15 trip authority, no second trip pass |
 | `ValueFactSet`/string projection | F15/F21; typed spine references, no rebuilt text index |
 | `MemTransferFacet` | operation-local accumulation protocol; does not survive |
-| `MemSemanticFactSet` | S4 + F24–F27; move all effect consequences to F16/F17 |
+| `MemSemanticFactSet` | S4 + F24–F27; move effects to F16/F17 and storage ownership refinement to F34 |
 | `EffectFactSet` | F16/F17; no direct reinterpretation of authored contracts |
 | `KernelModulePlan`/request bags | S5 + F28; reference authoritative evidence instead of wrapping four analyses |
 | `KernelTripProjection` | delete; F28 references F19 |
@@ -671,14 +691,14 @@ descriptor/artifact vocabulary, and the duplicate GCC runner receive no facet ho
 | O30 | F02 |
 | O31 | F11 |
 | O32 | intrinsic leaf meaning + F14 |
-| O33 | F07 |
+| O33 | F07 static authority + F34 storage refinement |
 | O34 | F18/F22 |
 | O35 | determinism/isolation law |
 | O36 | synthesis result enters S1; no facet |
 | O37 | F10 |
 | O38 | F12 |
-| O39 | F07 consuming F02/F10 |
-| O40 | F02 entity kind + F07 legality + S4 allocation identity; no unique-specific facet |
+| O39 | F07 consuming F02/F10; storage-specific consequences enter F34 |
+| O40 | F02 entity kind + F07 static legality + F34 storage refinement + S4 allocation identity; no unique-specific facet |
 
 All forty obligations have a facet, spine/entity, result/artifact, value, host-resource, coordinator,
 or law disposition. None remains in a generic facts bag.
@@ -705,7 +725,8 @@ The facet model adds these focused regression requirements to the earlier obliga
 13. no emitted/backend name is parsed to recover any facet alignment;
 14. a captured closure executes through GCC and proves F09/F12/F11 separation;
 15. authored loop code derives S3/F19/F20 without hand-built topology fixtures;
-16. pending O33/O39/O40 cases receive typed behavior rather than nullable facet fields.
+16. F07 can authorize code/memory construction without S4, while F34 alone owns storage-refined
+    O33 consequences; neither uses nullable pending fields.
 
 Tests pinning old bag constructors or positional empty lists are schema-shape evidence only and must
 not force those bags into the replacement model.
@@ -717,11 +738,12 @@ not force those bags into the replacement model.
 Step 5 is closed because:
 
 - every persistent derived fact family has one producer and one primary spine;
-- the admitted set contains 33 facets across S1–S7 and no universal analysis/backend facet;
+- the admitted set contains 34 facets across S1–S7 and no universal analysis/backend facet;
 - dense and sparse populations are explicit;
 - every facet states its exact input frontier and consumers;
-- independent invalidation splits layout/ABI, checking/control/contracts/ownership, flow/value,
-  operation/function effects, memory objects/accesses/relations/contracts, baseline/optimization, and
+- independent invalidation splits static/storage ownership, layout/ABI, checking/control/contracts,
+  flow/value, operation/function effects, memory objects/accesses/relations/contracts, baseline/
+  optimization, and use meaning/coordinates/qualification;
   use meaning/coordinates/qualification;
 - topology, identity, order, and origin remain solely in S1–S8;
 - trip, contract-effect, memory, layout, scalar, and capability authority are not duplicated;
@@ -732,7 +754,8 @@ Step 5 is closed because:
 - no ASDL fields, worlds, machines, requests, result sums, implementation, migration, or compatibility
   layer has been defined.
 
-## Next step — Worlds
+## Step 6 world result
 
-Step 6 will admit immutable worlds only at justified publication/reuse frontiers. It must not create
-one world per chronological pass or simply bundle every facet aligned to a spine.
+`docs/COMPILER_WORLD_MODEL.md` admits zero compiler worlds. S1–S8 and F01–F34 already provide direct
+immutable publication with exact generation/provenance; every proposed world is either a thin wrapper
+or an independently-invalidated context bag.

@@ -790,6 +790,6 @@ Step 4 is closed because:
 
 ## Step 5 facet result
 
-`docs/COMPILER_FACET_MODEL.md` assigns persistent derived facts to 33 concern-owned facet families
+`docs/COMPILER_FACET_MODEL.md` assigns persistent derived facts to 34 concern-owned facet families
 across S1–S7, gives every family an exact density and input frontier, and explicitly admits no S8
 facet because physical backend meaning belongs to S8 entities.
