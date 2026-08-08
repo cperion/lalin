@@ -103,7 +103,7 @@ Typed spine/facet references provide coherence without forcing these consumers t
 | Analyzed program | rejected multi-spine bag | S2/S3/S4 facts have different producers, consumers, and invalidation |
 | Memory | S4 + direct F24–F27/F34 | Consumer sets and frontiers differ; one memory world falsely invalidates unaffected consumers |
 | Kernel | S5 + direct F28 | One spine/facet pair already publishes exact kernel meaning |
-| Scheduled kernel | direct F29 over S5 | Schedule is a sparse decision facet; failed/no-plan paths are results, and consumer sets do not define a retained snapshot |
+| Scheduled kernel | direct F29 over S5 | Schedule is a sparse decision facet; no-plan and semantic rejection are direct continuation exits, and consumer sets do not define a retained snapshot |
 | Fused computation | S6 + direct F30 | Pure projection with spine-aligned facet; no retained frame or independent reuse lifetime |
 | Coordinate/materialized use | S7 + direct F31/F32 | Address planning needs F31/F32 while qualification has an independent frontier |
 | Qualified use | direct F33 | One sparse facet is not a world |
@@ -299,9 +299,9 @@ Step 6 is closed because:
 - no ASDL fields, machines, operations, requests, result sums, caching, implementation, migration, or
   compatibility layer has been defined.
 
-## Step 7 receiver/result result
+## Step 7R operation-lifetime result
 
-`docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md` assigns all thirty-two compiler authorities and
-the host boundary one distinguished receiver family, narrow operation leaves, typed result classes,
-and leaf-owned continuations. `docs/COMPILER_BEHAVIOR_COVERAGE_MODEL.md` closes the concrete behavior
-coverage proof. Neither introduces a compiler machine frame or world.
+`docs/COMPILER_OPERATION_LIFETIME_MODEL.md` assigns direct, continuation, stored, and
+sealed forms to B01–B61. Immediate control uses stable Lua continuation functions
+with optional caller-owned state. No compiler control-state family, phase machine,
+semantic world, or generic context is introduced.

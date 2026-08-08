@@ -106,7 +106,7 @@ Examples: expanded region block/value occurrence, closure environment field, cod
 code block/instruction/value occurrence, memory object, memory access occurrence, recognized
 kernel candidate.
 
-Lifetime: the generation of the producing semantic world.
+Lifetime: the generation of the producing semantic publication.
 
 ### 2.3 Structural coordinates
 
@@ -148,7 +148,7 @@ Lifetime: explicit load/free boundary.
 7. **One-to-many creation:** when one source produces several derived entities, the producing
    concern owns explicit occurrence identity or slots.
 8. **Coordinates travel with their container:** a slot/ordinal is meaningless without its
-   spine/world generation.
+   spine/publication generation.
 9. **Interning is an optimization:** structural canonicalization cannot define entity lifetime.
 10. **Symbols are physical projections:** public C spelling does not become semantic function
     identity.
@@ -619,13 +619,14 @@ authored generation
   → expanded checked generation
   → code generation
   → topology/analysis generation
-  → plan/materialization generation
+  → lowering/materialized-use generation
   → backend generation
   → artifact/session lifetime
 ```
 
-This does not require a generic global phase framework. Each published identity-bearing world
-or spine names its source generation and own generation where stale mixing is possible.
+This does not require a generic global phase framework. Each published identity-bearing
+spine or entity names its source generation and own generation where stale mixing is
+possible.
 
 Rules:
 

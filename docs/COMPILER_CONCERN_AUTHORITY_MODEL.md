@@ -1,7 +1,7 @@
 # Compiler Concern and Authority Model
 
 Status: Step 3 closed; structural/facet/world/receiver alignment continues through
-`docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md`.
+`docs/COMPILER_OPERATION_LIFETIME_MODEL.md`.
 Prerequisites:
 
 - `docs/COMPILER_SEMANTIC_OBLIGATIONS.md`
@@ -33,8 +33,8 @@ sequenced together without becoming one concern. Conversely, two decisions imple
 file do not become one authority.
 
 A concern label in this document does not imply an empty `FooMachine` record.
-`docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md` selects the honest distinguished ASDL receiver
-family for each concern.
+`docs/COMPILER_OPERATION_LIFETIME_MODEL.md` selects the honest direct, continuation,
+stored-data, aggregate-worker, or sealed form for every concern operation.
 
 ---
 
@@ -1008,6 +1008,6 @@ Step 3 is closed because:
 `docs/COMPILER_SPINE_MODEL.md` derives eight structural spine domains from this authority graph
 and the Step-2 identity model. `docs/COMPILER_FACET_MODEL.md` assigns 34 independently invalidated
 facets, `docs/COMPILER_WORLD_MODEL.md` admits zero worlds, and
-`docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md` closes the distinguished receiver and typed
-continuation shape for every authority. `docs/COMPILER_BEHAVIOR_COVERAGE_MODEL.md` closes the concrete
-case/method/result/reason and regression-coverage proof.
+`docs/COMPILER_OPERATION_LIFETIME_MODEL.md` closes the distinguished receiver,
+operation lifetime, transaction state, and typed continuation shape for every
+authority while preserving the concrete behavior and regression evidence.

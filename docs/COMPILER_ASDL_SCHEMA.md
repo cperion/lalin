@@ -1,6 +1,10 @@
 # Compiler ASDL Schema
 
-Status: **Step 9 target schema — schema only**
+Status: **Step-9R durable target schema — named-machine control, schema only**.
+
+The durable data model is canonical. Immediate multi-exit behavior uses the named-exit
+signatures in §14. No internal result junction, `k` wrapper, universal machine family,
+control-state family, or runtime region framework is part of this schema.
 
 This document is the exact normalized Lua-ASDL schema for the closed compiler model in:
 
@@ -14,9 +18,9 @@ This document is the exact normalized Lua-ASDL schema for the closed compiler mo
 - `docs/COMPILER_BEHAVIOR_COVERAGE_MODEL.md`;
 - `docs/ASDL_GUIDE.md`.
 
-It defines schema vocabulary only. It does not define files, implementation order, migration, compatibility,
-cutover, coordinator code, tests, or a replacement pipeline. Current schema declarations are evidence only.
-Names below are canonical target names, not aliases for current products.
+It defines schema vocabulary and method contracts only. It does not define files,
+implementation order, migration, compatibility, cutover, coordinator code, or a
+replacement pipeline. Names below are canonical target names.
 
 ---
 
@@ -41,7 +45,7 @@ number/str/bool         ASDL primitive scalars
 `entity`, `coordinate`, and `record` transcribe as `product`; only `entity` permits generation-scoped
 semantic identity observation, while `coordinate` identity is meaningful only together with its containing
 spine/entity. `value` transcribes as `product { interned, ... }`. A sum's identity mode follows the closed
-roster below. Entity, coordinate, request, result, rejection, candidate, artifact, and resource leaves are
+roster below. Entity, coordinate, request, rejection, candidate, artifact, and resource leaves are
 never structurally interned. Nullary leaves are real ASDL singleton values. `ref T` records a borrowed typed
 relation. `many ref T` transcribes to the DSL's `many [T]`; the schema-level `ref` marks ownership and
 provenance even though the current runtime erases it.
@@ -50,8 +54,7 @@ Only explicitly identity-bearing values permit object-identity comparison. Every
 generation-scoped identity. The fresh leaves of `Declaration`, `TypeForm`, `Expression`, `Place`, `Pattern`,
 `Statement`, `ControlTransfer`, and `ContractForm` are S1 child-occurrence entities. `CodeInstruction` and
 `CodeTerminator` leaves are coordinate sums, so they are compared only with their S2 allocation. `ProgramInput`
-and all request/result/reason leaves are fresh typed protocol values, but their object identity is not a
-compiler entity fact. The complete `variant_unique` roster is `CanonicalType`, `UnaryOperation`,
+and all request/reason leaves are fresh typed protocol values, but their object identity is not a
 `BinaryOperation`, `ComparisonOperation`, `LogicOperation`, `SourceCastOperation`, `MachineCastOperation`,
 `IntrinsicOperation`, `AtomicOperation`, `AtomicOrdering`, `ScalarOperation`, `OperationVolatility`,
 `OverflowMeaning`, `TrapContract`, `FloatContract`, `ZeroMeaning`, `ConstantValue`, `CodeValue`,
@@ -63,34 +66,39 @@ payloads, string tags, boolean protocols, semantic `nil`, generic contexts, muta
 tables, handler maps, worlds, and copied facet bags. Every keyed relation is a named entry under `many`.
 Every `many` sequence has authoritative order; it is never an unordered Lua-table projection.
 
-A spine contains structure only. A facet contains one producer's semantic plane and a typed reference to
-exactly one aligned spine allocation. A request contains exactly one operation frontier. A result leaf contains
-only its publication/decision/reason. No coordinator type exists.
+A spine contains structure only. A facet contains one producer's semantic plane and
+a typed reference to exactly one aligned spine allocation. A request contains one
+operation frontier. Running machine objects and their named graph methods are Lua
+control, not ASDL declarations. No machine receives semantic authority.
 
 ---
 
 ## 2. Namespace closure
 
-The target schema has these semantic namespaces. This is namespace ownership, not a file or migration plan.
+The target has only durable semantic and boundary namespaces. This is namespace
+ownership, not a file or migration plan.
 
 | Namespace | Owns |
 |---|---|
-| `CompilerBase` | names, ordinals, documents, origins, target/policy/capability values, cross-cutting envelopes |
-| `CompilerSource` | S1, authored declarations, C01–C20 source/checked/control/contract constructors |
+| `CompilerBase` | names, ordinals, documents, origins, target, policy, and capability values |
+| `CompilerSource` | S1, C01–C20, A01–A17 source requests, sites, and reasons |
 | `CompilerSourceFact` | F01–F13 and F34's S1 endpoint vocabulary |
-| `CompilerCode` | S2/S3, C21–C25 monomorphic code and topology |
-| `CompilerAnalysis` | F14–F27, S4, analysis requests and proof values |
-| `CompilerLower` | S5–S7, F28–F33, strategy, candidates, address and fragment records |
-| `CompilerBackend` | S8, C26–C28, C artifact |
-| `CompilerHost` | C29 host requests/resources/capabilities/failures |
-| `CompilerResult` | B01–B61 result and reason sums plus typed semantic envelope |
+| `CompilerCode` | S2/S3, C21–C25, A18–A20 requests, sites, and reasons |
+| `CompilerAnalysis` | F14–F27, S4, A06-code/A10-storage/A21–A24 requests, sites, reasons, and F22 rejection history |
+| `CompilerLower` | S5–S7, F28–F33, A25–A30 requests, sites, reasons, candidates, addresses, and fragments |
+| `CompilerBackend` | S8, C26–C28, A31–A32 requests, sites, reasons, and C artifact |
+| `CompilerHost` | C29 host requests, resources, capabilities, failures, and sealed host results |
+| `CompilerBoundary` | `SemanticRejectReason` and `TypedSemanticRejection` only |
 
-Every declaration inherits the namespace named by its enclosing numbered section; §11's explicit authority
-mapping overrides only its subsection headings, and all §12–§13 declarations belong to `CompilerResult`.
-Direct DSL transcription qualifies every unqualified field type with that enclosing namespace before schema
-definition; it never relies on runtime relative-name resolution. A field may name a concrete sum leaf because
-the runtime registers leaf classes as checked field types; result leaves use this deliberately to make P/C
-entry alternatives precise enough that a wrong entry leaf is unconstructible.
+Declarations in §§3–11 inherit their section namespace, subject to the exact request exceptions in §11.
+The §13 ownership ledger assigns every site and reason declaration. §12 assigns sealed host and final
+boundary values. No declaration belongs to `CompilerResult` or `CompilerControl`; those namespaces do not
+exist in the target.
+Direct DSL transcription qualifies every unqualified field type through the section
+and ownership ledger before schema definition; it never relies on runtime relative-name
+resolution. A field may name a concrete sum leaf because the runtime registers leaf
+classes as checked field types. This is used for exact durable relations, never for
+an internal operation-result junction.
 Cross-namespace references are typed object references. There is no umbrella `CompilerModule`, analysis
 bundle, backend world, or phase header.
 
@@ -162,7 +170,6 @@ The typed rejection envelope preserves causes instead of flattening them.
 
 ```text
 sum ProvenanceExpectation = S1Expectation { expected:ref CompilerSource.SemanticProgramSpine, actual:ref CompilerSource.SemanticProgramSpine } | S2Expectation { expected:ref CompilerCode.MonomorphicCodeSpine, actual:ref CompilerCode.MonomorphicCodeSpine } | S3Expectation { expected:ref CompilerCode.ControlTopologySpine, actual:ref CompilerCode.ControlTopologySpine } | S4Expectation { expected:ref CompilerAnalysis.MemorySpine, actual:ref CompilerAnalysis.MemorySpine } | S5Expectation { expected:ref CompilerLower.KernelSpine, actual:ref CompilerLower.KernelSpine } | S6Expectation { expected:ref CompilerLower.FusedComputationSpine, actual:ref CompilerLower.FusedComputationSpine } | S7Expectation { expected:ref CompilerLower.MaterializedUseSpine, actual:ref CompilerLower.MaterializedUseSpine } | S8Expectation { expected:ref CompilerBackend.PhysicalBackendSpine, actual:ref CompilerBackend.PhysicalBackendSpine } | TargetExpectation { expected:ref TargetSpec, actual:ref TargetSpec }
-record TypedSemanticRejection { reason:CompilerResult.SemanticRejectReason }
 ```
 
 ---
@@ -628,7 +635,7 @@ sum CodeReturnResult = VoidCodeReturn | ValueCodeReturn { value:CodeValue }
 ### 6.3 Validation gate and S3
 
 ```text
-record CodeAccepted { code:ref MonomorphicCodeSpine }
+record CodeAccepted { code:ref MonomorphicCodeSpine, topology:ref TopologyDerivationInput }
 coordinate ControlEdgeOccurrence { function:ref CodeFunctionIdentity, source:ref CodeBlockIdentity, target:ref CodeBlockIdentity, role:EdgeRole, ordinal:CompilerBase.Ordinal }
 sum EdgeRole = JumpEdge | TrueEdge | FalseEdge | SwitchArmEdge { arm:CompilerBase.Ordinal } | SwitchDefaultEdge | VariantArmEdge { arm:CompilerBase.Ordinal } | VariantDefaultEdge
 record EdgeArgumentEntry { edge:ref ControlEdgeOccurrence, argument:CodeValue, parameter:ref CodeParameter, ordinal:CompilerBase.Ordinal }
@@ -643,9 +650,14 @@ sum DefUseContribution = DefinitionContribution { definition:ref DefinitionEntry
 record DefUseContributions { entries:many DefUseContribution }
 sum TopologyContribution = EdgeContribution { edge:ref ControlEdgeOccurrence } | EdgeArgumentContribution { argument:ref EdgeArgumentEntry } | LoopContribution { loop:ref NaturalLoopOccurrence }
 record TopologyContributions { entries:many TopologyContribution }
+record TopologyDerivationInput { def_use:many DefUseContributions, topology:many TopologyContributions }
 record TopologyOrderEntry { ordinal:CompilerBase.Ordinal, occurrence:TopologyOccurrence }
 sum TopologyOccurrence = EdgeTopologyOccurrence { edge:ref ControlEdgeOccurrence } | UseTopologyOccurrence { use:ref UseOccurrence } | LoopTopologyOccurrence { loop:ref NaturalLoopOccurrence }
 ```
+
+`CodeAccepted` is the O13 validation gate, not a publication wrapper. B23 can
+construct it only from a complete `CodeValidationFinalizationInput`; it carries the
+validated topology contribution boundary consumed exactly once by B24.
 
 ---
 
@@ -707,8 +719,9 @@ record BaselineCoverage { blocks:many BaselineCoveredBlock }
 
 sum OptimizationCommitmentEntry = BaselineCommitment { spine:ref CompilerCode.ControlTopologySpine, subject:OptimizationSubject, baseline:ref BaselineEntry, rejected:many RejectedAlternative } | ClosedFormCommitment { spine:ref CompilerCode.ControlTopologySpine, subject:OptimizationSubject, fragment:ref CompilerLower.FragmentContribution, proof:ref LoopAlgebraEntry, rejected:many RejectedAlternative } | FusedCommitment { spine:ref CompilerCode.ControlTopologySpine, subject:OptimizationSubject, fragment:ref CompilerLower.FragmentContribution, fused:ref CompilerLower.FusedComputationSpine, rejected:many RejectedAlternative }
 sum OptimizationSubject = FunctionOptimizationSubject { function:ref CompilerCode.CodeFunction } | LoopOptimizationSubject { loop:ref CompilerCode.NaturalLoopOccurrence }
-record RejectedAlternative { attempt:LoweringAttempt, outcome:CompilerResult.OptionalRealizationReason }
 sum LoweringAttempt = ClosedFormAttempt { subject:OptimizationSubject } | FusedAttempt { subject:OptimizationSubject, fused:ref CompilerLower.FusedComputationSpine }
+sum StrategyAlternative = KernelPlanningAlternative { request:ref CompilerLower.LoopKernelCandidateRequest } | SchedulePlanningAlternative { request:ref CompilerLower.ScheduleSelectionRequest } | FusionPlanningAlternative { request:ref CompilerLower.FusedProjectionRequest } | RealizationStrategyAlternative { attempt:LoweringAttempt }
+record RejectedAlternative { alternative:StrategyAlternative, outcome:OptionalRealizationReason }
 
 record DominanceFacet { topology:ref CompilerCode.ControlTopologySpine, entries:many DominanceEntry }
 sum DominanceEntry = BlockDominance { function:ref CompilerCode.CodeFunction, dominator:ref CompilerCode.CodeBlockIdentity, dominated:ref CompilerCode.CodeBlockIdentity } | ValueAvailability { function:ref CompilerCode.CodeFunction, value:CompilerCode.CodeValue, block:ref CompilerCode.CodeBlockIdentity } | IncomingArgumentAvailability { function:ref CompilerCode.CodeFunction, edge:ref CompilerCode.ControlEdgeOccurrence, argument:CompilerCode.CodeValue, parameter:ref CompilerCode.CodeParameter } | AdapterFeasibility { function:ref CompilerCode.CodeFunction, entry:ref CompilerCode.CodeBlockIdentity, exit:ref CompilerCode.CodeBlockIdentity, values:many CompilerCode.CodeValue }
@@ -787,7 +800,7 @@ sum KernelEvidenceReference = KernelScalarEvidence { entry:ref CompilerAnalysis.
 record ScheduleEntry { spine:ref KernelSpine, kernel:ref KernelOccurrence, form:ScheduleForm, tail:ScheduleTail, policy:ref CompilerBase.CompilerPolicy, target:ref CompilerBase.TargetSpec, capability:ref CompilerBase.GnuCEmitterCapability, proofs:many KernelEvidenceReference, rejected:many ScheduleRejectedAlternative }
 sum ScheduleForm = ScalarSchedule | VectorSchedule { width:CompilerBase.UnsignedExtent } | TiledSchedule { tile:CompilerBase.UnsignedExtent }
 sum ScheduleTail = ExactScheduleTail | MaskedScheduleTail | ScalarRemainderTail
-record ScheduleRejectedAlternative { form:ScheduleForm, reason:CompilerResult.ScheduleNoPlanReason }
+record ScheduleRejectedAlternative { form:ScheduleForm, reason:CompilerLower.ScheduleNoPlanReason }
 ```
 
 ### 8.2 S6 and F30
@@ -966,7 +979,7 @@ construction/extraction are closed nested payload sums. Backend labels are preal
 ```text
 sum CEmitter = GnuCEmitter
 record CSerializationInput { backend:ref PhysicalBackendSpine, target:ref CompilerBase.TargetSpec, capability:ref CompilerBase.GnuCEmitterCapability }
-sum CEntityValidationResult = CEntityAccepted { subject:BackendValidationSubject } | CEntityRejected { reason:CompilerResult.CSerializationReason }
+record CSerializationFinalizationInput { input:ref CSerializationInput, texts:many CEntityText }
 record CEntityText { subject:BackendValidationSubject, text:str }
 record CArtifact { backend:ref PhysicalBackendSpine, target:ref CompilerBase.TargetSpec, source:str, header:str, symbols:many CArtifactSymbol }
 record CArtifactSymbol { key:CompilerBase.SymbolKey, entity:BackendSymbolEntity }
@@ -999,11 +1012,11 @@ unreachable from pure compiler methods.
 ## 11. Narrow request schema A01–A33 / B01–B61
 
 Requests are immutable operation receivers. Every field is in that operation's exact invalidation frontier.
-A leaf never carries a nullable selector for another operation. A01–A17 request/input types live in
-`CompilerSource` (persistent publications remain in `CompilerSourceFact`); A18–A20 live in `CompilerCode`;
-A21–A24 live in `CompilerAnalysis`; A25–A30 live in `CompilerLower`; A31–A32 live in
-`CompilerBackend`; A33 lives in `CompilerHost`. All operation result/reason/site types live in
-`CompilerResult`.
+A leaf never carries a nullable selector for another operation. A01–A17 request/input declarations live in
+`CompilerSource`, except `ScalarCodeOperationSubject`, `AtomicCodeOperationSubject`,
+`CodeOperationAttributionRequest`, `StorageOwnershipRequest`, and `StorageOwnershipInput`, which live in
+`CompilerAnalysis`. A18–A20 live in `CompilerCode`; A21–A24 live in `CompilerAnalysis`; A25–A30 live in
+`CompilerLower`; A31–A32 live in `CompilerBackend`; A33 lives in `CompilerHost`.
 
 A `many ref` field in a request contains only the exact entries cited by that subject's derivation, never
 the owning facet's complete population. Passing unrelated entries is an authority-specific provenance
@@ -1013,6 +1026,7 @@ rejection. The field is a typed proof-premise sequence, not a copied fact bag or
 
 ```text
 sum ResolutionInput = PermitLexicalShadowing | RejectLexicalShadowing
+record ResolutionFinalizationInput { policy:ResolutionInput, occupancies:many CompilerSourceFact.NamespaceOccupancyEntry, references:many CompilerSourceFact.ResolvedReferenceEntry }
 
 record NominalMeaningInput { program:ref CompilerSource.SemanticProgramSpine, resolution:many ref CompilerSourceFact.ResolvedReferenceEntry }
 sum NominalSubject = NominalDeclarationSubject { declaration:CompilerSource.NominalDeclaration } | NominalChildSubject { child:CompilerSource.NominalChild }
@@ -1020,7 +1034,7 @@ record TypeMeaningInput { program:ref CompilerSource.SemanticProgramSpine, resol
 record IntrinsicInterpretationInput { operand_types:many CompilerSource.CanonicalType, result_type:ref CompilerSource.CanonicalType, contracts:many DeclaredScalarContract }
 sum ScalarCodeOperationSubject = UnaryCodeOperationSubject { operation:ref CompilerCode.UnaryInstruction } | BinaryCodeOperationSubject { operation:ref CompilerCode.BinaryInstruction } | FloatBinaryCodeOperationSubject { operation:ref CompilerCode.FloatBinaryInstruction } | CompareCodeOperationSubject { operation:ref CompilerCode.CompareInstruction } | CastCodeOperationSubject { operation:ref CompilerCode.CastInstruction } | VoidIntrinsicCodeOperationSubject { operation:ref CompilerCode.VoidIntrinsicInstruction } | ValueIntrinsicCodeOperationSubject { operation:ref CompilerCode.ValueIntrinsicInstruction }
 sum AtomicCodeOperationSubject = AtomicLoadCodeOperationSubject { operation:ref CompilerCode.AtomicLoadInstruction } | AtomicStoreCodeOperationSubject { operation:ref CompilerCode.AtomicStoreInstruction } | AtomicRmwCodeOperationSubject { operation:ref CompilerCode.AtomicRmwInstruction } | AtomicCompareExchangeCodeOperationSubject { operation:ref CompilerCode.AtomicCompareExchangeInstruction } | AtomicFenceCodeOperationSubject { operation:ref CompilerCode.AtomicFenceInstruction }
-sum CodeOperationAttributionRequest = ScalarCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, subject:ScalarCodeOperationSubject, type_meaning:many ref CompilerSourceFact.TypeMeaningEntry, intrinsic:ref IntrinsicMeaning } | SelectCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, operation:ref CompilerCode.SelectInstruction, result_type:ref CompilerSource.CanonicalType } | AddressCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, operation:ref CompilerCode.AddressOfInstruction, result_type:ref CompilerSource.CanonicalType } | GlobalReferenceCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, operation:ref CompilerCode.GlobalReferenceInstruction, result_type:ref CompilerSource.CanonicalType } | PointerOffsetCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, operation:ref CompilerCode.PointerOffsetInstruction, pointer_type:ref CompilerSource.CanonicalType, index_type:ref CompilerSource.CanonicalType, result_type:ref CompilerSource.CanonicalType } | LoadCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, operation:ref CompilerCode.LoadInstruction, value_type:ref CompilerSource.CanonicalType, volatility:OperationVolatility } | StoreCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, operation:ref CompilerCode.StoreInstruction, value_type:ref CompilerSource.CanonicalType, volatility:OperationVolatility } | AtomicCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, subject:AtomicCodeOperationSubject, value_type:ref CompilerSource.CanonicalType, intrinsic:ref IntrinsicMeaning }
+sum CodeOperationAttributionRequest = ScalarCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, subject:ScalarCodeOperationSubject, type_meaning:many ref CompilerSourceFact.TypeMeaningEntry, intrinsic:ref CompilerSource.IntrinsicMeaning } | SelectCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, operation:ref CompilerCode.SelectInstruction, result_type:ref CompilerSource.CanonicalType } | AddressCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, operation:ref CompilerCode.AddressOfInstruction, result_type:ref CompilerSource.CanonicalType } | GlobalReferenceCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, operation:ref CompilerCode.GlobalReferenceInstruction, result_type:ref CompilerSource.CanonicalType } | PointerOffsetCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, operation:ref CompilerCode.PointerOffsetInstruction, pointer_type:ref CompilerSource.CanonicalType, index_type:ref CompilerSource.CanonicalType, result_type:ref CompilerSource.CanonicalType } | LoadCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, operation:ref CompilerCode.LoadInstruction, value_type:ref CompilerSource.CanonicalType, volatility:CompilerSource.OperationVolatility } | StoreCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, operation:ref CompilerCode.StoreInstruction, value_type:ref CompilerSource.CanonicalType, volatility:CompilerSource.OperationVolatility } | AtomicCodeAttributionRequest { code:ref CompilerCode.MonomorphicCodeSpine, subject:AtomicCodeOperationSubject, value_type:ref CompilerSource.CanonicalType, intrinsic:ref CompilerSource.IntrinsicMeaning }
 record IntrinsicMeaning { operation:CompilerSource.ScalarOperation, operand_types:many CompilerSource.CanonicalType, result_type:ref CompilerSource.CanonicalType, overflow:OverflowMeaning, trap:TrapContract, float:FloatContract }
 
 sum CheckRequest = ExpressionCheckRequest { program:ref CompilerSource.SemanticProgramSpine, expression:ref CompilerSource.Expression, input:ExpressionCheckInput } | PlaceCheckRequest { program:ref CompilerSource.SemanticProgramSpine, place:ref CompilerSource.Place, input:PlaceCheckInput } | StatementCheckRequest { program:ref CompilerSource.SemanticProgramSpine, statement:ref CompilerSource.Statement, input:StatementCheckInput }
@@ -1063,10 +1077,14 @@ sum SealedRegionRequest = SealMaterializationRequest { program:ref CompilerSourc
 ```text
 record CodeConstructionRequest { program:ref CompilerSource.SemanticProgramSpine, resolution:ref CompilerSourceFact.ResolutionFacet, nominal_declarations:many ref CompilerSourceFact.NominalDeclarationMeaningEntry, nominal_children:many ref CompilerSourceFact.NominalChildMeaningEntry, types:many ref CompilerSourceFact.TypeMeaningEntry, checked:many ref CompilerSourceFact.CheckedMeaningEntry, control:many ref CompilerSourceFact.ControlMeaningEntry, contracts:many ref CompilerSourceFact.ContractEvidenceEntry, ownership:many ref CompilerSourceFact.StaticOwnershipEntry, constants:many ref CompilerSourceFact.ConstantValueEntry, layout:many ref CompilerSourceFact.LayoutEntry, abi:many ref CompilerSourceFact.CallableAbiEntry, closure:many ref CompilerSourceFact.ClosureRepresentationEntry, sealed:many ref CompilerSourceFact.SealedRegionEntry }
 record CodeLeafConstructionInput { request:ref CodeConstructionRequest, identities:ref CompilerCode.CodeIdentityProjection }
+record CodeConstructionFinalizationInput { identities:ref CompilerCode.CodeIdentityProjection, contributions:many CompilerCode.CodeConstructionContribution }
 record CodeValidationRequest { code:ref CompilerCode.MonomorphicCodeSpine }
+record CodeValidationFinalizationInput { accepted:many CompilerCode.CodeValidationSubject, topology:ref TopologyDerivationInput }
 record LoopMeaningRequest { topology:ref CompilerCode.ControlTopologySpine, loop:ref CompilerCode.NaturalLoopOccurrence, definitions:many ref CompilerCode.DefinitionEntry, edge_arguments:many ref CompilerCode.EdgeArgumentEntry, constants:many CompilerCode.CodeConstant, scalar:many ref CompilerAnalysis.ScalarAttributionEntry, source:ref CompilerSource.SemanticProgramSpine }
 record InductionRelationRequest { topology:ref CompilerCode.ControlTopologySpine, loop:ref CompilerCode.NaturalLoopOccurrence, flow:ref CompilerAnalysis.LoopFlowEntry, scalar:many ref CompilerAnalysis.ScalarAttributionEntry }
 record CodeValueAlgebraRequest { code:ref CompilerCode.MonomorphicCodeSpine, topology:ref CompilerCode.ControlTopologySpine, value:CompilerCode.CodeValue, scalar:many ref CompilerAnalysis.ScalarAttributionEntry, flow:many ref CompilerAnalysis.LoopFlowEntry, induction:many ref CompilerAnalysis.InductionEntry }
+record CodeValueAlgebraSubject { value:CompilerCode.CodeValue, ordinal:CompilerBase.Ordinal }
+record CodeValueAlgebraPopulation { code:ref CompilerCode.MonomorphicCodeSpine, subjects:many CodeValueAlgebraSubject }
 record LoopValueSubject { loop:ref CompilerCode.NaturalLoopOccurrence, value:CompilerCode.CodeValue, role:LoopValueRole }
 sum LoopValueRole = AccumulatorRole | ScanRole | RecurrenceRole | DerivedIndexRole
 record LoopAlgebraRequest { topology:ref CompilerCode.ControlTopologySpine, subject:LoopValueSubject, values:many ref CompilerAnalysis.ValueAlgebraEntry, scalar:many ref CompilerAnalysis.ScalarAttributionEntry, flow:many ref CompilerAnalysis.LoopFlowEntry, induction:many ref CompilerAnalysis.InductionEntry }
@@ -1075,7 +1093,10 @@ record MemorySpineRequest { code:ref CompilerCode.MonomorphicCodeSpine, topology
 record MemoryObjectMeaningRequest { memory:ref CompilerAnalysis.MemorySpine, object:ref CompilerAnalysis.MemoryObjectOccurrence, types:many ref CompilerSourceFact.TypeMeaningEntry, layout:many ref CompilerSourceFact.LayoutEntry, ownership:many ref CompilerSourceFact.StaticOwnershipEntry, flow:many ref CompilerAnalysis.LoopFlowEntry, induction:many ref CompilerAnalysis.InductionEntry, values:many ref CompilerAnalysis.ValueAlgebraEntry }
 record MemoryContractRealizationRequest { memory:ref CompilerAnalysis.MemorySpine, evidence:ref CompilerSourceFact.ContractEvidenceEntry, objects:many ref CompilerAnalysis.MemoryObjectEntry }
 record MemoryAccessMeaningRequest { memory:ref CompilerAnalysis.MemorySpine, access:ref CompilerAnalysis.MemoryAccessOccurrence, objects:many ref CompilerAnalysis.MemoryObjectEntry, contracts:many ref CompilerAnalysis.ContractRealizationEntry, flow:many ref CompilerAnalysis.LoopFlowEntry, induction:many ref CompilerAnalysis.InductionEntry, values:many ref CompilerAnalysis.ValueAlgebraEntry, layout:many ref CompilerSourceFact.LayoutEntry, ownership:many ref CompilerSourceFact.StaticOwnershipEntry }
+record MemoryRelationPopulationRequest { memory:ref CompilerAnalysis.MemorySpine, objects:many ref CompilerAnalysis.MemoryObjectEntry, accesses:many ref CompilerAnalysis.MemoryAccessEntry, contracts:many ref CompilerAnalysis.ContractRealizationEntry, flow:many ref CompilerAnalysis.LoopFlowEntry, induction:many ref CompilerAnalysis.InductionEntry, declared:many ref CompilerSourceFact.ContractEvidenceEntry, layout:many ref CompilerSourceFact.LayoutEntry, ownership:many ref CompilerSourceFact.StaticOwnershipEntry }
 record MemoryRelationRequest { memory:ref CompilerAnalysis.MemorySpine, left:MemoryRelationEndpoint, right:MemoryRelationEndpoint, objects:many ref CompilerAnalysis.MemoryObjectEntry, accesses:many ref CompilerAnalysis.MemoryAccessEntry, contracts:many ref CompilerAnalysis.ContractRealizationEntry, flow:many ref CompilerAnalysis.LoopFlowEntry, induction:many ref CompilerAnalysis.InductionEntry, declared:many ref CompilerSourceFact.ContractEvidenceEntry, layout:many ref CompilerSourceFact.LayoutEntry, ownership:many ref CompilerSourceFact.StaticOwnershipEntry }
+record MemoryRelationSubject { ordinal:CompilerBase.Ordinal, request:ref MemoryRelationRequest }
+record MemoryRelationPopulation { memory:ref CompilerAnalysis.MemorySpine, subjects:many MemoryRelationSubject }
 sum MemoryRelationEndpoint = ObjectRelationEndpoint { object:ref CompilerAnalysis.MemoryObjectOccurrence } | AccessRelationEndpoint { access:ref CompilerAnalysis.MemoryAccessOccurrence }
 
 record EffectAccessEvidence { operation:ref CompilerAnalysis.MemoryAccessOperationMeaning, safety:ref CompilerAnalysis.MemoryAccessSafetyMeaning }
@@ -1104,16 +1125,18 @@ sum QualificationRequirement = OptionalQualification | RequiredQualification
 record AddressRecordRequest { uses:ref CompilerLower.MaterializedUseSpine, use:ref CompilerLower.MaterializedUseOccurrence, coordinate:ref CompilerLower.CoordinateEntry, target:ref CompilerBase.TargetSpec, environment:ref CompilerLower.RealizationEnvironment }
 
 record BaselineAdmissionRequest { code:ref CompilerCode.MonomorphicCodeSpine, topology:ref CompilerCode.ControlTopologySpine, capability:ref CompilerBase.GnuCEmitterCapability }
-record SubjectCommitmentRequest { subject:CompilerAnalysis.OptimizationSubject, baseline:ref CompilerAnalysis.BaselineEntry, candidates:many StrategyCandidate }
+record SubjectCommitmentRequest { subject:CompilerAnalysis.OptimizationSubject, baseline:ref CompilerAnalysis.BaselineEntry, candidates:many StrategyCandidate, rejected:many CompilerAnalysis.RejectedAlternative }
 sum StrategyCandidate = ClosedFormStrategyCandidate { algebra:ref CompilerAnalysis.LoopAlgebraEntry } | FusedStrategyCandidate { kernel:ref CompilerLower.KernelOccurrence, meaning:ref CompilerLower.KernelMeaningEntry, schedule:ref CompilerLower.ScheduleEntry, fused:ref CompilerLower.FusedComputationSpine, fused_meaning:many ref CompilerLower.FusedMeaningEntry }
-sum QualificationRealizationFailure = RequiredQualificationFailure { reason:CompilerResult.QualificationUnavailableReason } | PointerRepresentationFailure { reason:CompilerResult.PointerRepresentationReason }
-sum StrategyResumeRequest = ResumeAfterUseFailure { attempt:ref CompilerAnalysis.FusedAttempt, baseline:ref CompilerAnalysis.BaselineEntry, reason:CompilerResult.UsePopulationUnrealizableReason } | ResumeAfterCoordinateFailure { attempt:ref CompilerAnalysis.FusedAttempt, baseline:ref CompilerAnalysis.BaselineEntry, reason:CompilerResult.CoordinateUnrealizableReason } | ResumeAfterQualificationFailure { attempt:ref CompilerAnalysis.FusedAttempt, baseline:ref CompilerAnalysis.BaselineEntry, failure:QualificationRealizationFailure } | ResumeAfterAddressFailure { attempt:ref CompilerAnalysis.FusedAttempt, baseline:ref CompilerAnalysis.BaselineEntry, reason:CompilerResult.AddressUnrealizableReason } | ResumeAfterFragmentFailure { attempt:CompilerAnalysis.LoweringAttempt, baseline:ref CompilerAnalysis.BaselineEntry, reason:CompilerResult.FragmentUnrealizableReason }
+sum QualificationRealizationFailure = RequiredQualificationFailure { reason:CompilerLower.QualificationUnavailableReason } | PointerRepresentationFailure { reason:CompilerLower.PointerRepresentationReason }
+sum StrategyResumeRequest = ResumeAfterUseFailure { attempt:ref CompilerAnalysis.FusedAttempt, baseline:ref CompilerAnalysis.BaselineEntry, reason:CompilerLower.UsePopulationUnrealizableReason, remaining:many StrategyCandidate, rejected:many CompilerAnalysis.RejectedAlternative } | ResumeAfterCoordinateFailure { attempt:ref CompilerAnalysis.FusedAttempt, baseline:ref CompilerAnalysis.BaselineEntry, reason:CompilerLower.CoordinateUnrealizableReason, remaining:many StrategyCandidate, rejected:many CompilerAnalysis.RejectedAlternative } | ResumeAfterQualificationFailure { attempt:ref CompilerAnalysis.FusedAttempt, baseline:ref CompilerAnalysis.BaselineEntry, failure:QualificationRealizationFailure, remaining:many StrategyCandidate, rejected:many CompilerAnalysis.RejectedAlternative } | ResumeAfterAddressFailure { attempt:ref CompilerAnalysis.FusedAttempt, baseline:ref CompilerAnalysis.BaselineEntry, reason:CompilerLower.AddressUnrealizableReason, remaining:many StrategyCandidate, rejected:many CompilerAnalysis.RejectedAlternative } | ResumeAfterFragmentFailure { attempt:CompilerAnalysis.LoweringAttempt, baseline:ref CompilerAnalysis.BaselineEntry, reason:CompilerLower.FragmentUnrealizableReason, remaining:many StrategyCandidate, rejected:many CompilerAnalysis.RejectedAlternative }
+sum AlternativeRejectionRequest = RecordKernelAlternativeRejection { alternative:CompilerAnalysis.KernelPlanningAlternative, reason:CompilerLower.KernelNoPlanReason } | RecordScheduleAlternativeRejection { alternative:CompilerAnalysis.SchedulePlanningAlternative, reason:CompilerLower.ScheduleNoPlanReason } | RecordFusionAlternativeRejection { alternative:CompilerAnalysis.FusionPlanningAlternative, reason:CompilerLower.FusedUnavailableReason } | RecordUsePopulationAlternativeRejection { alternative:CompilerAnalysis.RealizationStrategyAlternative, reason:CompilerLower.UsePopulationUnrealizableReason } | RecordCoordinateAlternativeRejection { alternative:CompilerAnalysis.RealizationStrategyAlternative, reason:CompilerLower.CoordinateUnrealizableReason } | RecordQualificationAlternativeRejection { alternative:CompilerAnalysis.RealizationStrategyAlternative, reason:CompilerLower.QualificationUnavailableReason } | RecordPointerRepresentationAlternativeRejection { alternative:CompilerAnalysis.RealizationStrategyAlternative, reason:CompilerLower.PointerRepresentationReason } | RecordAddressAlternativeRejection { alternative:CompilerAnalysis.RealizationStrategyAlternative, reason:CompilerLower.AddressUnrealizableReason } | RecordFragmentAlternativeRejection { alternative:CompilerAnalysis.RealizationStrategyAlternative, reason:CompilerLower.FragmentUnrealizableReason }
 record CommitRealizedFragmentRequest { subject:CompilerAnalysis.OptimizationSubject, baseline:ref CompilerAnalysis.BaselineEntry, contribution:ref CompilerLower.FragmentContribution, rejected:many CompilerAnalysis.RejectedAlternative }
 
 record DominanceRequest { code:ref CompilerCode.MonomorphicCodeSpine, topology:ref CompilerCode.ControlTopologySpine }
 sum FragmentContributionRequest = ClosedFormContributionRequest { attempt:CompilerAnalysis.ClosedFormAttempt, dominance:many ref CompilerAnalysis.DominanceEntry, algebra:ref CompilerAnalysis.LoopAlgebraEntry, baseline:ref CompilerAnalysis.BaselineEntry, target:ref CompilerBase.TargetSpec, environment:ref CompilerLower.RealizationEnvironment } | FusedContributionRequest { attempt:CompilerAnalysis.FusedAttempt, dominance:many ref CompilerAnalysis.DominanceEntry, fused:ref CompilerLower.FusedComputationSpine, meaning:many ref CompilerLower.FusedMeaningEntry, uses:ref CompilerLower.MaterializedUseSpine, use_meaning:many ref CompilerLower.MaterializedUseEntry, coordinates:many ref CompilerLower.CoordinateEntry, qualifications:many ref CompilerLower.PointerQualificationEntry, addresses:many CompilerLower.AddressRecord, baseline:ref CompilerAnalysis.BaselineEntry, target:ref CompilerBase.TargetSpec, environment:ref CompilerLower.RealizationEnvironment }
 
 record BackendConstructionRequest { code:ref CompilerCode.MonomorphicCodeSpine, static_ownership:many ref CompilerSourceFact.StaticOwnershipEntry, storage_ownership:many ref CompilerAnalysis.StorageOwnershipEntry, layout:many ref CompilerSourceFact.LayoutEntry, abi:many ref CompilerSourceFact.CallableAbiEntry, scalar:many ref CompilerAnalysis.ScalarAttributionEntry, objects:many ref CompilerAnalysis.MemoryObjectEntry, accesses:many ref CompilerAnalysis.MemoryAccessEntry, effects:many ref CompilerAnalysis.OperationEffectEntry, baseline:ref CompilerAnalysis.BaselineFacet, commitment:many ref CompilerAnalysis.OptimizationCommitmentEntry, target:ref CompilerBase.TargetSpec }
+record BackendConstructionFinalizationInput { identities:ref CompilerBackend.BackendIdentityProjection, contributions:many CompilerBackend.BackendConstructionContribution }
 record BackendLeafConstructionInput { request:ref BackendConstructionRequest, identities:ref CompilerBackend.BackendIdentityProjection }
 record EmitterCapabilityInput { target:ref CompilerBase.TargetSpec }
 ```
@@ -1123,93 +1146,28 @@ A33 uses `CompilerHost.GccCookRequest`, `CompilerHost.SymbolRequest`, `LiveGccSe
 
 ---
 
-## 12. Result schema B01–B61
+## 12. Durable boundary schema and deleted-result proof
 
-### 12.1 Publication and decision products
+No internal operation-result sum survives. Immediate alternatives are the peer named-exit
+signatures in §14.
+
+### 12.1 CompilerBoundary
 
 ```text
-sum NominalPublishedEntry = PublishedNominalDeclarationMeaning { entry:ref CompilerSourceFact.NominalDeclarationMeaningEntry } | PublishedNominalChildMeaning { entry:ref CompilerSourceFact.NominalChildMeaningEntry }
-record ClosurePublication { program:ref CompilerSource.SemanticProgramSpine, entry:ref CompilerSourceFact.ClosureRepresentationEntry }
-record SealPublication { program:ref CompilerSource.SemanticProgramSpine, entry:ref CompilerSourceFact.SealedRegionEntry }
-record KernelPublication { kernels:ref CompilerLower.KernelSpine, meaning:ref CompilerLower.KernelMeaningFacet }
-record FusedPublication { fused:ref CompilerLower.FusedComputationSpine, meaning:ref CompilerLower.FusedMeaningFacet }
+record TypedSemanticRejection { reason:SemanticRejectReason }
 ```
 
-### 12.2 B01–B24 result sums
+`SemanticRejectReason` is declared in §13 and assigned to `CompilerBoundary`. Each
+authority reason sum provides a field-agnostic `to_semantic_rejection` method inherited
+by its leaves; the method constructs the exact `SemanticRejectReason` wrapper and
+`TypedSemanticRejection` without class inspection. The running host machine calls that
+method and tail-calls its named `semantic_rejected(machine, rejection)` method. That
+method is the sole consumer; the value never re-enters compiler semantics.
+There is no generic success or host-failure envelope.
+
+### 12.2 CompilerHost sealed outcomes
 
 ```text
-sum AuthoredMaterializationResult = AuthoredProgramMaterialized { program:ref CompilerSource.SemanticProgramSpine } | AuthoredMaterializationRejected { reason:AuthoredMaterializationReason }
-sum SynthesisResult = GeneratedDeclarations { declarations:many CompilerSource.GeneratedDeclaration } | SynthesisRejected { reason:SynthesisReason }
-sum NamespaceContributionResult = NamespaceOccupancyContributed { entries:many CompilerSourceFact.NamespaceOccupancyEntry } | NamespaceContributionRejected { reason:ResolutionReason }
-sum ReferenceResolutionResult = DeclarationReferencesResolved { entries:many CompilerSourceFact.ResolvedReferenceEntry } | ReferenceResolutionRejected { reason:ResolutionReason }
-sum ResolutionResult = ResolutionPublished { facet:ref CompilerSourceFact.ResolutionFacet } | ResolutionRejected { reason:ResolutionReason }
-sum NominalMeaningResult = NominalMeaningPublished { entry:NominalPublishedEntry } | NominalMeaningRejected { reason:NominalMeaningReason }
-sum TypeMeaningResult = TypeMeaningPublished { entry:ref CompilerSourceFact.TypeMeaningEntry } | TypeMeaningRejected { reason:TypeMeaningReason }
-sum IntrinsicMeaningResult = IntrinsicMeaningPublished { meaning:CompilerSource.IntrinsicMeaning } | IntrinsicMeaningRejected { reason:IntrinsicMeaningReason }
-sum OperationAttributionResult = OperationAttributed { entry:ref CompilerAnalysis.ScalarAttributionEntry } | OperationAttributionRejected { reason:OperationAttributionReason }
-sum CheckingResult = CheckedMeaningPublished { entry:ref CompilerSourceFact.CheckedMeaningEntry } | CheckingRejected { reason:CheckingReason }
-sum ControlMeaningResult = ControlMeaningPublished { entry:ref CompilerSourceFact.ControlMeaningEntry } | ControlRejected { reason:ControlReason }
-sum ContractMeaningResult = ContractEvidencePublished { entry:ref CompilerSourceFact.ContractEvidenceEntry } | ContractRejected { reason:ContractReason }
-sum StaticOwnershipResult = StaticOwnershipPublished { entry:ref CompilerSourceFact.StaticOwnershipEntry } | StaticOwnershipRejected { reason:StaticOwnershipReason }
-sum StorageOwnershipResult = StorageOwnershipPublished { entry:ref CompilerAnalysis.StorageOwnershipEntry } | StorageOwnershipRejected { reason:StorageOwnershipReason }
-sum ConstantEvaluationResult = ConstantValuePublished { entry:ref CompilerSourceFact.ConstantValueEntry } | ConstantEvaluationRejected { reason:ConstantEvaluationReason }
-sum CaptureDiscoveryResult = CaptureRelationPublished { entry:ref CompilerSourceFact.CaptureEntry } | CaptureDiscoveryRejected { reason:CaptureDiscoveryReason }
-sum LayoutResult = LayoutPublished { entry:ref CompilerSourceFact.LayoutEntry } | LayoutRejected { reason:LayoutReason }
-sum CallableAbiResult = CallableAbiPublished { entry:ref CompilerSourceFact.CallableAbiEntry } | CallableAbiRejected { reason:CallableAbiReason }
-sum CapturedClosureResult = ClosureRepresented { publication:ClosurePublication } | ClosureRepresentationRejected { reason:ClosureRepresentationReason }
-sum NoCaptureResult = CallableRepresentationUnchanged { program:ref CompilerSource.SemanticProgramSpine } | NoCaptureDecisionRejected { reason:NoCaptureReason }
-sum OpenRegionResult = OpenRegionExpanded { program:ref CompilerSource.SemanticProgramSpine } | OpenRegionRejected { reason:OpenRegionReason }
-sum SealMaterializationResult = SealMaterialized { publication:SealPublication } | SealMaterializationRejected { reason:SealMaterializationReason }
-sum SealedCallRoutingResult = SealedCallRouted { publication:SealPublication } | SealedCallRoutingRejected { reason:SealedCallRoutingReason }
-sum CodeEntityConstructionResult = CodeEntityConstructed { contribution:CompilerCode.CodeConstructionContribution } | CodeEntityConstructionRejected { reason:CodeConstructionReason }
-sum CodeConstructionResult = CodeConstructed { code:ref CompilerCode.MonomorphicCodeSpine } | CodeConstructionRejected { reason:CodeConstructionReason }
-sum CodeEntityValidationResult = CodeEntityAccepted { subject:CompilerCode.CodeValidationSubject } | CodeEntityRejected { reason:CodeValidationReason }
-sum CodeValidationResult = CodeAcceptedResult { accepted:ref CompilerCode.CodeAccepted } | CodeStructureRejected { reason:CodeValidationReason }
-```
-
-B24 returns `CompilerCode.ControlTopologySpine` directly.
-
-### 12.3 B25–B36 result sums
-
-```text
-sum LoopMeaningResult = CountedRangeLoopResult { entry:ref CompilerAnalysis.CountedRangeLoop } | CountedGridLoopResult { entry:ref CompilerAnalysis.CountedGridLoop } | CountedTiledLoopResult { entry:ref CompilerAnalysis.CountedTiledLoop } | CountedWindowLoopResult { entry:ref CompilerAnalysis.CountedWindowLoop } | CountedTraversalLoopResult { entry:ref CompilerAnalysis.CountedTraversalLoop } | UncountedLoopResult { entry:ref CompilerAnalysis.UncountedLoop } | FlowMeaningRejected { reason:FlowMeaningReason }
-sum InductionResult = InductionWithTripResult { entry:ref CompilerAnalysis.InductionEntry } | InductionWithoutTripResult { entry:ref CompilerAnalysis.InductionEntry } | InductionRelationUnavailable { reason:InductionUnavailableReason } | InductionRejected { reason:InductionReason }
-sum ValueAlgebraResult = ConstantRangeResult { entry:ref CompilerAnalysis.ConstantRangeEntry } | CopyCanonicalResult { entry:ref CompilerAnalysis.CopyCanonicalEntry } | AffineValueResult { entry:ref CompilerAnalysis.AffineValueEntry } | NoWrapResult { entry:ref CompilerAnalysis.NoWrapEntry } | FloatEvidenceResult { entry:ref CompilerAnalysis.FloatEvidenceEntry } | ValueProofResult { entry:ref CompilerAnalysis.ValueProofEntry } | ValueAlgebraUnavailable { reason:ValueAlgebraUnavailableReason } | ValueAlgebraRejected { reason:ValueAlgebraReason }
-sum LoopAlgebraResult = ReductionResult { entry:ref CompilerAnalysis.ReductionEntry } | ScanResult { entry:ref CompilerAnalysis.ScanEntry } | RecurrenceResult { entry:ref CompilerAnalysis.RecurrenceEntry } | ClosedFormResult { entry:ref CompilerAnalysis.ClosedFormEntry } | AssociativeOrderResult { entry:ref CompilerAnalysis.AssociativeOrderEntry } | AffineLoopResult { entry:ref CompilerAnalysis.AffineLoopEntry } | LoopAlgebraUnavailable { reason:LoopAlgebraUnavailableReason } | LoopAlgebraRejected { reason:LoopAlgebraReason }
-sum MemorySpineResult = MemorySpinePublished { memory:ref CompilerAnalysis.MemorySpine } | MemorySpineRejected { reason:MemorySpineReason }
-sum ObjectMeaningResult = ObjectMeaningKnown { entry:ref CompilerAnalysis.MemoryObjectEntry } | ObjectMeaningUnknown { entry:ref CompilerAnalysis.MemoryObjectEntry } | ObjectMeaningRejected { reason:ObjectMeaningReason }
-sum ContractRealizationResult = MemoryContractRealized { entry:ref CompilerAnalysis.ContractRealizationEntry } | MemoryContractRejected { reason:ContractRealizationReason }
-sum AccessMeaningResult = AccessMeaningPublished { entry:ref CompilerAnalysis.MemoryAccessEntry } | AccessMeaningRejected { reason:AccessMeaningReason }
-sum MemoryRelationResult = SameStoreResult { entry:ref CompilerAnalysis.SameStore } | SubobjectOverlapResult { entry:ref CompilerAnalysis.SubobjectOverlap } | DisjointResult { entry:ref CompilerAnalysis.Disjoint } | ExactNoaliasResult { entry:ref CompilerAnalysis.ExactNoalias } | ProvenAliasResult { entry:ref CompilerAnalysis.ProvenAlias } | DependenceResult { entry:ref CompilerAnalysis.Dependence } | LoopCarriedDependenceResult { entry:ref CompilerAnalysis.LoopCarriedDependence } | MayAliasResult { entry:ref CompilerAnalysis.MayAlias } | IncomparableRelationResult { entry:ref CompilerAnalysis.IncomparableRelation } | UnknownDependenceResult { entry:ref CompilerAnalysis.UnknownDependence } | RelationUnavailable { reason:RelationUnavailableReason } | MemoryRelationRejected { reason:MemoryRelationReason }
-sum OperationEffectResult = OperationEffectPublished { entry:ref CompilerAnalysis.OperationEffectEntry } | OperationEffectRejected { reason:OperationEffectReason }
-sum CallableEffectResult = CallableEffectPublished { entry:ref CompilerAnalysis.CallableEffectEntry } | IncompleteCallableEffectResult { entry:ref CompilerAnalysis.CallableEffectEntry } | CallableEffectRejected { reason:CallableEffectReason }
-sum RecursiveEffectResult = RecursiveComponentEffectsPublished { entries:many CompilerAnalysis.CallableEffectEntry } | RecursiveConservativeEffects { entries:many CompilerAnalysis.CallableEffectEntry } | RecursiveEffectsRejected { reason:RecursiveEffectReason }
-```
-
-### 12.4 B37–B61 result sums
-
-```text
-sum KernelRecognitionResult = KernelAdmitted { publication:KernelPublication } | KernelNoPlan { reason:KernelNoPlanReason } | KernelRejected { reason:KernelRecognitionReason }
-sum ScheduleSelectionResult = ScheduleSelected { entry:ref CompilerLower.ScheduleEntry } | ScheduleNoPlan { reason:ScheduleNoPlanReason } | ScheduleRejected { reason:ScheduleSelectionReason }
-sum FusedProjectionResult = FusedComputationAdmitted { publication:FusedPublication } | FusedShapeUnavailable { reason:FusedUnavailableReason } | FusedProjectionRejected { reason:FusedProjectionReason }
-sum UsePopulationResult = UsePopulationCandidate { candidate:ref CompilerLower.UsePopulationCandidateRecord } | UsePopulationUnrealizable { reason:UsePopulationUnrealizableReason } | UsePopulationRejected { reason:UsePopulationReason }
-sum UseMeaningCandidateResult = UseMeaningCandidate { candidate:ref CompilerLower.UseMeaningCandidateRecord } | UseMeaningRejected { reason:UseMeaningReason }
-sum CoordinateCandidateResult = CoordinateCandidate { candidate:ref CompilerLower.CoordinateCandidateRecord } | CoordinateUnrealizable { reason:CoordinateUnrealizableReason } | CoordinateRejected { reason:CoordinateReason }
-sum UseAdmissionResult = UseSpineAdmitted { spine:ref CompilerLower.MaterializedUseSpine } | UseAdmissionRejected { reason:UseAdmissionReason }
-record UseMeaningPublished { facet:ref CompilerLower.MaterializedUseFacet }
-record CoordinatesPublished { facet:ref CompilerLower.CoordinateFacet }
-sum PointerQualificationResult = PointerQualified { entry:ref CompilerLower.PointerQualificationEntry } | PointerUnqualified { reason:PointerUnqualifiedReason } | QualificationRequiredUnavailable { reason:QualificationUnavailableReason } | PointerRepresentationUnrealizable { reason:PointerRepresentationReason } | PointerQualificationRejected { reason:PointerQualificationReason }
-sum AddressRecordResult = AddressRecordReady { record:ref CompilerLower.AddressRecord } | AddressRecordUnrealizable { reason:AddressUnrealizableReason } | AddressRecordRejected { reason:AddressReason }
-sum BaselineAdmissionResult = BaselineAdmitted { facet:ref CompilerAnalysis.BaselineFacet } | NoLegalBaseline { reason:BaselineReason }
-sum StrategyDecisionResult = AttemptClosedForm { attempt:CompilerAnalysis.ClosedFormAttempt } | AttemptFused { attempt:CompilerAnalysis.FusedAttempt } | CommitBaseline { entry:ref CompilerAnalysis.BaselineCommitment } | NoLegalStrategy { reason:StrategyFailureReason }
-sum StrategyFailureReason = InitialStrategyFailure { reason:StrategyReason } | ResumedStrategyFailure { reason:StrategyResumeReason }
-sum FragmentCommitResult = FragmentCommitted { entry:ref CompilerAnalysis.OptimizationCommitmentEntry } | FragmentCommitRejected { reason:FragmentCommitReason }
-record DominancePublished { facet:ref CompilerAnalysis.DominanceFacet }
-sum FragmentRealizationResult = FragmentContributionRealized { contribution:ref CompilerLower.FragmentContribution } | FragmentUnrealizable { reason:FragmentUnrealizableReason } | FragmentRejected { reason:FragmentReason }
-sum BackendEntityConstructionResult = BackendEntityConstructed { contribution:CompilerBackend.BackendConstructionContribution } | BackendEntityConstructionRejected { reason:BackendConstructionReason }
-sum BackendConstructionResult = BackendUnitConstructed { backend:ref CompilerBackend.PhysicalBackendSpine } | BackendConstructionRejected { reason:BackendConstructionReason }
-record EmitterCapabilityPublished { capability:ref CompilerBase.GnuCEmitterCapability }
-sum CSerializationResult = CArtifactAccepted { artifact:ref CompilerBackend.CArtifact } | CSerializationRejected { reason:CSerializationReason }
 sum GccCookResult = LiveGccSessionResult { session:ref CompilerHost.LiveGccSession } | GccCookFailed { failure:GccCookFailure }
 sum SymbolResolutionResult = SymbolCapabilityResult { capability:ref CompilerHost.SymbolCapability } | SymbolResolutionFailed { failure:SymbolResolutionFailure }
 record SessionReleased { session:ref CompilerHost.ReleasedGccSession }
@@ -1217,15 +1175,51 @@ record AlreadyReleased { session:ref CompilerHost.ReleasedGccSession }
 record UseAfterReleaseFailed { failure:UseAfterReleaseFailure }
 ```
 
-`StrategyDecisionResult` is the direct result type of both B49 subject selection and B50 resumption; no
-alias or wrapper type is introduced.
+### 12.3 Exact deletion proof
+
+Old §12 contained 59 sums and 11 records.
+
+Sums:
+
+- 55 internal operation-result sums are deleted;
+- `NominalPublishedEntry` is deleted because B04 has distinct declaration and child
+  publication continuations;
+- `StrategyFailureReason` moves to `CompilerLower`;
+- `GccCookResult` and `SymbolResolutionResult` remain in `CompilerHost`.
+
+Records:
+
+- `ClosurePublication`, `SealPublication`, `KernelPublication`, `FusedPublication`,
+  `UseMeaningPublished`, `CoordinatesPublished`, `DominancePublished`, and
+  `EmitterCapabilityPublished` are deleted;
+- `SessionReleased`, `AlreadyReleased`, and `UseAfterReleaseFailed` remain sealed.
+
+`CEntityValidationResult`, formerly declared outside old §12, is also deleted. The
+schema-wide internal result-sum deletion count is 56. `CompilerResult` owns no
+declaration and does not exist.
 
 ---
 
-## 13. Rejection and optional/host reason schema
+## 13. Authority site, reason, and host-failure schema
 
-Every leaf below owns `render_reason`. Unless extra fields are shown, a leaf carries exactly one typed `site`
-field of the authority-specific site product. No reason string selects behavior.
+Every concrete reason leaf owns `render_reason`. Unless extra fields are shown, a leaf
+carries exactly one typed `site` field. No reason string selects behavior.
+
+The following ledger assigns every declaration in this section. It is part of the
+normalized schema, not an implementation hint. Unqualified references in the compact
+blocks resolve to the unique declaration named by this ledger before DSL
+transcription.
+
+| Declaration family | Namespace |
+|---|---|
+| A01–A05, A06 intrinsic, A07–A09, A10 static, A11–A17 sites and reasons | `CompilerSource` |
+| A06 code, A10 storage, A21–A24 sites and reasons | `CompilerAnalysis` |
+| A18–A20 sites and reasons | `CompilerCode` |
+| A25–A30 sites and reasons, `BaselineFailureSubject`, `StrategyFailureReason` | `CompilerLower` |
+| A31–A32 sites and reasons, `BackendConstructionSubject` | `CompilerBackend` |
+| `OptionalRealizationReason` | `CompilerAnalysis` |
+| `SemanticRejectReason` | `CompilerBoundary` |
+| `GccCookFailure`, `SymbolResolutionFailure`, `UseAfterReleaseFailure` | `CompilerHost` |
 
 ### 13.1 Authority-specific sites
 
@@ -1313,7 +1307,7 @@ sum SealedCallRoutingReason = SealedArgumentMismatch { site:A17Site } | SealedCo
 
 ```text
 sum CodeConstructionReason = UnsupportedCheckedConstruct { site:A18Site } | MissingRepresentation { site:A18Site } | IllegalInitializer { site:A18Site } | IllegalRelocation { site:A18Site } | UnboundLoweredValue { site:A18Site } | MalformedCodeBody { site:A18Site } | UnrepresentableCodeType { site:A18Site } | A18GenerationMismatch { site:A18Site, mismatch:CompilerBase.ProvenanceExpectation }
-sum CodeValidationReason = DuplicateCodeOccurrence { site:A19Site } | MissingCodeReference { site:A19Site } | CodeSignatureMismatch { site:A19Site } | UndefinedCodeValue { site:A19Site } | InvalidBlockTarget { site:A19Site } | InvalidTransferArguments { site:A19Site } | MalformedMemoryOperation { site:A19Site } | IllegalCodeInitializer { site:A19Site } | InvalidCodeRelocation { site:A19Site } | UnterminatedCodeBlock { site:A19Site }
+sum CodeValidationReason = DuplicateCodeOccurrence { site:A19Site } | MissingCodeReference { site:A19Site } | CodeSignatureMismatch { site:A19Site } | UndefinedCodeValue { site:A19Site } | InvalidBlockTarget { site:A19Site } | InvalidTransferArguments { site:A19Site } | MalformedMemoryOperation { site:A19Site } | IllegalCodeInitializer { site:A19Site } | InvalidCodeRelocation { site:A19Site } | UnterminatedCodeBlock { site:A19Site } | A19GenerationMismatch { site:A19Site, mismatch:CompilerBase.ProvenanceExpectation }
 sum FlowMeaningReason = A21FlowMismatch { site:A21FlowSite, mismatch:CompilerBase.ProvenanceExpectation }
 sum InductionUnavailableReason = NonInductionValue { site:A21InductionSite } | AmbiguousInductionRelation { site:A21InductionSite } | UnsupportedInductionRecurrence { site:A21InductionSite } | MissingEdgeWiring { site:A21InductionSite }
 sum InductionReason = A21InductionMismatch { site:A21InductionSite, mismatch:CompilerBase.ProvenanceExpectation }
@@ -1357,6 +1351,7 @@ sum AddressReason = A28AddressMismatch { site:A28AddressSite, mismatch:CompilerB
 sum BaselineReason = UnsupportedBaselineOperation { site:A29BaselineSite } | IncompleteBaselineCoverage { site:A29BaselineSite } | MissingBaselineEmitterCapability { site:A29BaselineSite } | BaselineTargetMismatch { site:A29BaselineSite }
 sum StrategyReason = NoCorrectSubjectRealization { site:A29StrategySite }
 sum StrategyResumeReason = NoCorrectFallbackRealization { site:A29ResumeSite }
+sum StrategyFailureReason = InitialStrategyFailure { reason:StrategyReason } | ResumedStrategyFailure { reason:StrategyResumeReason }
 sum FragmentCommitReason = FragmentCommitSubjectMismatch { site:A29CommitSite } | A29CommitMismatch { site:A29CommitSite, mismatch:CompilerBase.ProvenanceExpectation }
 sum FragmentUnrealizableReason = UnsupportedFragmentRealization { site:A30Site } | UnsupportedFragmentValue { site:A30Site } | UnsupportedClosedForm { site:A30Site } | InvalidFragmentCoverage { site:A30Site } | DominanceFailure { site:A30Site } | InvalidAdapter { site:A30Site } | InvalidFragmentExit { site:A30Site } | MissingFragmentCoordinate { site:A30Site } | MissingFragmentValue { site:A30Site } | MissingFragmentAccess { site:A30Site } | NamespaceConflict { site:A30Site } | HelperConflict { site:A30Site } | IncompleteContribution { site:A30Site } | ConflictingContribution { site:A30Site }
 sum FragmentReason = A30EvidenceMismatch { site:A30Site, mismatch:CompilerBase.ProvenanceExpectation }
@@ -1380,125 +1375,218 @@ sum UseAfterReleaseFailure = UseAfterRelease { session:ref CompilerHost.Released
 
 ---
 
-## 14. Concrete method ownership signatures
+## 14. Direct and named-exit method signatures
 
-Each signature below is installed on every supporting concrete leaf. A parent sum may declare the method
-contract but may not inspect the leaf to choose behavior.
+`docs/COMPILER_OPERATION_LIFETIME_MODEL.md` §§7–10 is the exact B01–B61 and
+subordinate exit ledger. Those tables are incorporated into this schema by B ID.
+Payload names there resolve to the ASDL declarations in §§3–13.
 
-| Coverage | Receiver method | Exact input/result |
+### 14.1 ABI notation
+
+A total method returns its one output directly:
+
+```text
+receiver:operation(input?) -> Output
+```
+
+An immediate multi-exit value method receives the exact named machine object and one
+stable unbound method from that machine class per peer exit:
+
+```text
+receiver:operation(input?, machine, on_exit_1, ..., on_exit_n) -> Answer
+on_exit_i(machine, payload...) -> Answer
+```
+
+`Answer` is the ordinary Lua value returned by the selected machine edge. It is not a
+semantic result type, and the producer must not inspect or transform it.
+
+`input?` is present unless the receiver owns the complete semantic frontier. `machine`
+is the named computation in progress, not opaque state or a continuation frame. The
+producer forwards it unchanged and calls exactly one peer exit. Each exit is a stable
+unbound method such as `ResolutionMachine.namespace_contributed`.
+
+Machine methods own the static control graph. They name and tail-call their successors
+directly; another continuation parameter is not threaded through them. A stable named
+method can be stored on the machine only for a genuinely variable join or suspension.
+
+Every selected exit and machine transition is a strict tail call. Exit functions are
+created once as class methods, never per semantic invocation. There is no `k` wrapper,
+result junction, callback table, string lookup, scheduler, or runtime region descriptor.
+
+### 14.2 Direct operations
+
+These operations return the named value directly:
+
+| Coverage | Receiver method | Direct output |
 |---|---|---|
-| B01 | each `ProgramInput:materialize_authored` | no extra input → `AuthoredMaterializationResult` |
-| B02 | each `MetaPropertyQuery:synthesize` | no extra input → `SynthesisResult` |
-| B03 | `SemanticProgramSpine:resolve_namespaces` | `ResolutionInput` → `ResolutionResult` |
-| B04 | each `NominalSubject:establish_nominal_meaning` | `NominalMeaningInput` → `NominalMeaningResult` |
-| B05 | each `TypeForm:establish_type_meaning` | `TypeMeaningInput` → `TypeMeaningResult` |
-| B06 | every C06–C12 leaf `interpret_intrinsic` | `IntrinsicInterpretationInput` → `IntrinsicMeaningResult` |
-| B07 | `CodeOperationAttributionRequest:attribute_code_operation` | no extra input → `OperationAttributionResult` |
-| B08 | every C13–C18 leaf `check` | exact `CheckRequest` leaf → `CheckingResult` |
-| B09 | every C19 leaf `prove_control_legality` | `ControlLegalityInput` → `ControlMeaningResult` |
-| B10 | every C20 leaf `canonicalize_contract` | `ContractMeaningInput` → `ContractMeaningResult` |
-| B11 | each `StaticOwnershipRequest:derive_static_ownership` leaf | no extra input → `StaticOwnershipResult` |
-| B12 | each `StorageOwnershipRequest:refine_storage_ownership` leaf | no extra input → `StorageOwnershipResult` |
-| B13 | each foldable expression `evaluate_constant` | `ConstantEvaluationInput` → `ConstantEvaluationResult` |
-| B14 | each `CaptureDiscoveryRequest:discover_captures` leaf | no extra input → `CaptureDiscoveryResult` |
-| B15 | each `LayoutRequest:project_layout` leaf | no extra input → `LayoutResult` |
-| B16 | each `CallableAbiRequest:project_callable_abi` leaf | no extra input → `CallableAbiResult` |
-| B17 | `CapturedClosureRepresentationRequest:represent_closure` | no extra input → `CapturedClosureResult` |
-| B18 | `NoCaptureRepresentationRequest:preserve_uncaptured_callable` | no extra input → `NoCaptureResult` |
-| B19 | `OpenRegionInvocation:expand_open_region` | no extra input → `OpenRegionResult` |
-| B20 | `SealMaterializationRequest:materialize_seal` | no extra input → `SealMaterializationResult` |
-| B21 | `SealedCallRoutingRequest:route_sealed_call` | no extra input → `SealedCallRoutingResult` |
-| B22 | `CodeConstructionRequest:construct_monomorphic_code` first creates one immutable `CodeIdentityProjection`, then sequences admitted C03/C13–C19 leaf contributions | no extra input → `CodeConstructionResult` |
-| B23 | `CodeValidationRequest:validate_code_structure` sequences C21–C25 leaf validation | no extra input → `CodeValidationResult` |
-| B24 | `CodeAccepted:derive_control_topology` | no extra input → `ControlTopologySpine` |
-| B25 | `LoopMeaningRequest:derive_loop_meaning` | no extra input → `LoopMeaningResult` |
-| B26 | `InductionRelationRequest:derive_induction_relations` | no extra input → `InductionResult` |
-| B27 | `CodeValueAlgebraRequest:derive_value_algebra` | no extra input → `ValueAlgebraResult` |
-| B28 | `LoopAlgebraRequest:derive_loop_algebra` | no extra input → `LoopAlgebraResult` |
-| B29 | `MemorySpineRequest:derive_memory_spine` | no extra input → `MemorySpineResult` |
-| B30 | `MemoryObjectMeaningRequest:derive_object_meaning` | no extra input → `ObjectMeaningResult` |
-| B31 | `MemoryContractRealizationRequest:realize_contracts` | no extra input → `ContractRealizationResult` |
-| B32 | `MemoryAccessMeaningRequest:derive_access_meaning` | no extra input → `AccessMeaningResult` |
-| B33 | `MemoryRelationRequest:derive_relations` | no extra input → `MemoryRelationResult` |
-| B34 | `OperationEffectRequest:classify_operation_effect` | no extra input → `OperationEffectResult` |
-| B35 | `AcyclicCallableEffectRequest:compose_callable_effects` | no extra input → `CallableEffectResult` |
-| B36 | `RecursiveCallableComponentEffectRequest:compose_recursive_component_effects` | no extra input → `RecursiveEffectResult` |
-| B37 | `LoopKernelCandidateRequest:recognize_kernel` | no extra input → `KernelRecognitionResult` |
-| B38 | `ScheduleSelectionRequest:select_schedule` | no extra input → `ScheduleSelectionResult` |
-| B39 | `FusedProjectionRequest:project_fused_computation` | no extra input → `FusedProjectionResult` |
-| B40 | `UsePopulationCandidateRequest:enumerate_use_candidate` | no extra input → `UsePopulationResult` |
-| B41 | `UseMeaningCandidateRequest:derive_use_meaning_candidate` | no extra input → `UseMeaningCandidateResult` |
-| B42 | `CoordinateCandidateRequest:derive_coordinate_candidate` | no extra input → `CoordinateCandidateResult` |
-| B43 | `UseSpineAdmissionRequest:admit_use_spine` | no extra input → `UseAdmissionResult` |
-| B44 | `UseMeaningPublicationRequest:publish_use_meaning` | no extra input → `UseMeaningPublished` |
-| B45 | `CoordinatePublicationRequest:publish_coordinates` | no extra input → `CoordinatesPublished` |
-| B46 | `PointerQualificationRequest:qualify_pointer_uses` | no extra input → `PointerQualificationResult` |
-| B47 | `AddressRecordRequest:realize_address_record` | no extra input → `AddressRecordResult` |
-| B48 | `BaselineAdmissionRequest:admit_baseline` | no extra input → `BaselineAdmissionResult` |
-| B49 | `SubjectCommitmentRequest:select_subject_strategy` | no extra input → `StrategyDecisionResult` |
-| B50 | each `StrategyResumeRequest:resume_subject` leaf | no extra input → `StrategyDecisionResult` |
-| B51 | `CommitRealizedFragmentRequest:commit_fragment` | no extra input → `FragmentCommitResult` |
-| B52 | `DominanceRequest:derive_dominance` | no extra input → `DominancePublished` |
-| B53 | each `FragmentContributionRequest:realize_fragment_contribution` leaf | no extra input → `FragmentRealizationResult` |
-| B54 | `BackendConstructionRequest:construct_backend_unit` plus C21–C27 leaf delegation | no extra input → `BackendConstructionResult` |
-| B55 | `GnuCEmitter:declare_capability` | `EmitterCapabilityInput` → `EmitterCapabilityPublished` |
-| B56 | `GnuCEmitter:validate_and_serialize_c` plus C26/C27 leaf methods | `CSerializationInput` → `CSerializationResult` |
-| B57 | `GccCookRequest:cook_and_load` | no extra input → `GccCookResult` |
-| B58 | `LiveGccSession:resolve_symbol` | `SymbolRequest` → `SymbolResolutionResult` |
-| B59 | `LiveGccSession:release` | no extra input → `SessionReleased` |
-| B60 | `ReleasedGccSession:release` | no extra input → `AlreadyReleased` |
-| B61 | `ReleasedGccSession:resolve_symbol` | `CompilerBase.SymbolKey` → `UseAfterReleaseFailed` |
-| C03 subordinate | every declaration leaf owns `contribute_namespace` and `resolve_decl_references` | `ResolutionInput` → `NamespaceContributionResult` / `ReferenceResolutionResult` |
-| C03/C13–C19 subordinate | every admitted source leaf owns `construct_code_entity` | `CodeLeafConstructionInput` → `CodeEntityConstructionResult` |
-| C21–C25 subordinate | every code structural/payload leaf owns `validate_structure`; C24/C25 own `contribute_def_use`; C25 owns `contribute_topology` | `CodeValidationRequest` → `CodeEntityValidationResult`; no extra input → `DefUseContributions` / `TopologyContributions` |
-| C22/C24 subordinate | every memory-revealing place/instruction leaf owns `memory_access_causes` | named ordered `MemoryAccessCause` sequence consumed only by A23 |
-| C24/C25 subordinate | every operation leaf owns `classify_operation_effect`; every C21–C27 backend-capable leaf owns `construct_backend_entity` | `OperationEffectRequest` → `OperationEffectResult`; `BackendLeafConstructionInput` → `BackendEntityConstructionResult` |
-| C26/C27 subordinate | every physical structural/payload leaf owns `validate_c`; `CEntityAccepted:emit_c` delegates to its concrete `BackendValidationSubject:emit_c`; statement/terminator subjects delegate to their payload leaf without inspection | `CSerializationInput` → `CEntityValidationResult` / `CEntityText` |
+| B24 | `CodeAccepted:derive_control_topology` (consumes receiver field `topology`) | `CompilerCode.ControlTopologySpine` |
+| B44 | `UseMeaningPublicationRequest:publish_use_meaning` | `CompilerLower.MaterializedUseFacet` |
+| B45 | `CoordinatePublicationRequest:publish_coordinates` | `CompilerLower.CoordinateFacet` |
+| B52 | `DominanceRequest:derive_dominance` | `CompilerAnalysis.DominanceFacet` |
+| B55 | `GnuCEmitter:declare_capability` with `EmitterCapabilityInput` | `CompilerBase.GnuCEmitterCapability` |
+| C24/C25 | `contribute_def_use` | `CompilerCode.DefUseContributions` |
+| C25 | `contribute_topology` | `CompilerCode.TopologyContributions` |
+| C22/C24 | `memory_access_causes` | ordered `many CompilerAnalysis.MemoryAccessCause` |
+| accepted C26/C27 | concrete physical leaf `emit_c` with `CSerializationInput` | `CompilerBackend.CEntityText` |
+| A18 | `CodeConstructionRequest:project_code_identities` | `CompilerCode.CodeIdentityProjection` |
+| A22 | `MonomorphicCodeSpine:project_value_algebra_population` | `CompilerAnalysis.CodeValueAlgebraPopulation` |
+| A23 | `MemoryRelationPopulationRequest:project_relation_population` | `CompilerAnalysis.MemoryRelationPopulation` |
+| A31 | `BackendConstructionRequest:project_backend_identities` | `CompilerBackend.BackendIdentityProjection` |
+| A29 | each `AlternativeRejectionRequest:record_rejection` leaf | `CompilerAnalysis.RejectedAlternative` |
 
-`NamespaceContributionResult`, `ReferenceResolutionResult`, `CodeConstructionContribution`,
-`DefUseContributions`, `TopologyContributions`, `CodeIdentityProjection`, `BackendIdentityProjection`,
-`BackendConstructionContribution`, and `CEntityText` are
-one-consumer boundary records. The records themselves are consumed only by their named aggregate authority
-and are never published as facets or recovered through names.
+The A18/A22/A23/A31 projection methods use ordinary direct loops with one local dense
+array and construct their ASDL output once. They allocate no aggregate machine or cursor.
+### 14.3 Aggregate finalization operations
 
-Every result sum has `continue_after_<operation>` on every concrete leaf. Publication/conservative/decision/
-optional leaves construct the exact next request; semantic rejection leaves return `TypedSemanticRejection`;
-host-failure leaves return only host-boundary results. Every reason leaf owns `render_reason`. These methods
-are contracts in the schema transcription; their Lua bodies are not part of this document.
+| Coverage | Receiver method | Input | Exact continuations |
+|---|---|---|---|
+| B03 | `SemanticProgramSpine:resolve_namespaces` | `CompilerSource.ResolutionFinalizationInput` | `resolution_published(ResolutionFacet)`; `resolution_rejected(ResolutionReason)` |
+| B22 | `CodeConstructionRequest:construct_monomorphic_code` | `CompilerCode.CodeConstructionFinalizationInput` | `code_constructed(MonomorphicCodeSpine)`; `code_construction_rejected(CodeConstructionReason)` |
+| B23 | `CodeValidationRequest:validate_code_structure` | `CompilerCode.CodeValidationFinalizationInput` | `code_accepted(CodeAccepted)`; `code_validation_rejected(CodeValidationReason)` |
+| B54 | `BackendConstructionRequest:construct_backend_unit` | `CompilerBackend.BackendConstructionFinalizationInput` | `backend_constructed(PhysicalBackendSpine)`; `backend_rejected(BackendConstructionReason)` |
+| B56 | `GnuCEmitter:validate_and_serialize_c` | `CompilerBackend.CSerializationFinalizationInput` | `c_artifact_accepted(CArtifact)`; `c_serialization_rejected(CSerializationReason)` |
+
+The narrow aggregate machines are `ResolutionMachine`, `CodeConstructionMachine`,
+`CodeValidationMachine`, `BackendConstructionMachine`, and `CSerializationMachine`;
+their exact state and builder planes are in the lifetime model §5. They are ordinary Lua
+objects, not ASDL declarations. Builder freeze closes one accumulation plane but does
+not terminate the machine; its named methods continue the graph. B03 derives
+`ResolutionFacet.shadowing` at finalization from its
+program receiver, policy, collected occupancies, and collected resolved references;
+C03 has no separate shadowing contribution. All six subordinate rejection
+continuations in §14.4 are terminal. Step-9R defines no aggregate rejection fold.
+
+### 14.4 Other immediate named-exit operations
+
+The following B operations use the exact peer exits and payloads in the lifetime ledger:
+
+```text
+B01–B02, B04–B21
+B25–B43
+B46–B51
+B53
+```
+
+B03, B22, and B23 use the aggregate inputs above. B04 has three exits and no carrier
+sum:
+
+```text
+nominal_declaration_published(NominalDeclarationMeaningEntry)
+nominal_child_published(NominalChildMeaningEntry)
+nominal_rejected(NominalMeaningReason)
+```
+
+The subordinate named-exit operations are:
+
+| Owner operation | Input | Exact continuations |
+|---|---|---|
+| C03 declaration leaf `contribute_namespace` | `ResolutionInput` | `namespace_contributed(many NamespaceOccupancyEntry)`; `namespace_rejected(ResolutionReason)` |
+| C03 declaration leaf `resolve_decl_references` | `ResolutionInput` | `references_resolved(many ResolvedReferenceEntry)`; `references_rejected(ResolutionReason)` |
+| admitted C03/C13–C19 leaf `construct_code_entity` | `CodeLeafConstructionInput` | `code_entity_contributed(CodeConstructionContribution)`; `code_entity_rejected(CodeConstructionReason)` |
+| C21–C25 leaf `validate_structure` | `CodeValidationRequest` | `code_entity_accepted(CodeValidationSubject)`; `code_entity_rejected(CodeValidationReason)` |
+| C21–C27 leaf `construct_backend_entity` | `BackendLeafConstructionInput` | `backend_entity_contributed(BackendConstructionContribution)`; `backend_entity_rejected(BackendConstructionReason)` |
+| C26/C27 leaf `validate_c` | `CSerializationInput` | `c_entity_accepted(BackendValidationSubject)`; `c_entity_rejected(CSerializationReason)` |
+
+### 14.5 Sealed host methods
+
+| Coverage | Receiver method | Boundary output |
+|---|---|---|
+| B57 | `GccCookRequest:cook_and_load` | `CompilerHost.GccCookResult` |
+| B58 | `LiveGccSession:resolve_symbol(SymbolRequest)` | `CompilerHost.SymbolResolutionResult` |
+| B59 | `LiveGccSession:release` | `CompilerHost.SessionReleased` |
+| B60 | `ReleasedGccSession:release` | `CompilerHost.AlreadyReleased` |
+| B61 | `ReleasedGccSession:resolve_symbol(SymbolKey)` | `CompilerHost.UseAfterReleaseFailed` |
+
+The disjoint public semantic-rejection boundary has this exact signature:
+
+```text
+authority_reason:to_semantic_rejection() -> CompilerBoundary.TypedSemanticRejection
+HostCompilationMachine.semantic_rejected(machine, rejection:CompilerBoundary.TypedSemanticRejection) -> Answer
+```
+
+It is not a B operation or host-failure result. It is the one named host-machine edge
+by which typed semantic rejection leaves compiler control.
+### 14.6 Leaf and shared-method ownership
+
+Each supporting concrete sum leaf owns its semantic method. A parent method is legal
+only as a field-agnostic shared default or same-contract delegation. It must not
+inspect class, `kind`, tag, action, or field shape. Several leaves can reference the
+same stable Lua function directly. A leaf override shadows a shared parent default.
+
+The closed compiler tests enumerate concrete leaves from ASDL sum membership, call every
+declared value method, and drive every named exit with its exact machine and payload.
+They verify direct ownership, legal shared inheritance, or explicit delegation from the
+ordinary class method tables. They also verify that each machine method names its static
+successor directly. Tests do not reproduce the graph in an operation descriptor or
+conformance registry.
+
+`CodeConstructionContribution`, `DefUseContributions`, `TopologyContributions`,
+`CodeIdentityProjection`, `BackendIdentityProjection`,
+`BackendConstructionContribution`, `CEntityText`, the A22/A23 population records,
+`TopologyDerivationInput`, and the five finalization inputs are typed one-consumer
+boundary data. They are not facets, worlds, caches, or control-result wrappers.
 
 ---
 
 ## 15. Schema closure proof
 
-The schema is closed only if all of the following remain true:
+The Step-9R schema is closed only if all statements hold:
 
 1. S1–S8 are the only identity/alignment spines and are non-interned allocations.
-2. F01–F34 each have exactly one aligned spine and one producer authority; S8 has no facet.
-3. C01–C29 are represented by concrete leaves with no category-placeholder payload or manual selector.
-4. A01–A33 and B01–B61 have an intrinsic receiver or one narrow request leaf with one exact frontier.
-5. Every B result alternative belongs to exactly one of publication, conservative outcome, immediate decision,
-   semantic rejection, optional realization, or host failure.
-6. Dense facets contain exactly one explicit entry per eligible occurrence; sparse lookup absence is represented
-   by typed result leaves, never `nil`.
-7. A28 candidate records contain no S7 identity; B43 alone creates S7, then B44/B45 publish total F31/F32.
-8. F33 has no F32 dependency and `restrict` requires the complete exact declared pairwise-noalias relation
-   over at least two distinct qualified memory objects.
-9. B49/B50 attempts publish no F22; only deliberate baseline commitment or B51 fragment commitment does.
-10. Fragment locals/labels are fragment-local coordinates; B54 alone creates final S8 physical identity.
-11. C26/C27 physical leaves own C behavior and `GnuCEmitter` is the sole emitter leaf.
-12. A33 host resources carry only typed artifact/ABI provenance and private liveness; no host runtime handle
-    enters compiler ASDL.
-13. All relation keys are named products under `many`; no map, hidden index, side cache, or encoded-name recovery
-    is admitted.
-14. No product combines independently invalidated facets into a context, phase, result, plan, or world bag.
-15. Every rejection preserves its typed authority-specific cause and every generated occurrence preserves typed
-    provenance to its causal predecessor.
-16. Every spine's flat order is an exact once-only permutation of its typed population fields; order entries
-    are structural relations, not a second occurrence family.
-17. F04 consumes only structural ownership-role capability; F07 consumes checked entries, so no F04/F07
-    invalidation cycle or hidden fixpoint exists.
-18. Only F01/F18/F23/F28/F30/F31/F32 use aggregate facet products; every other facet is an independently
-    aligned direct entry family.
+2. F01–F34 each retain one producer authority and exact spine alignment; S8 has no
+   facet.
+3. C01–C29 behavior remains on concrete leaves without category placeholders or
+   manual variant dispatch.
+4. A01–A33 and B01–B61 retain an intrinsic receiver or one narrow request frontier.
+5. B01–B61 occur exactly once in the direct/continuation/sealed ledger.
+6. Every total operation returns one exact ASDL value directly.
+7. Every immediate multi-exit operation has one fixed ordered peer-exit signature and
+   no internal result sum.
+8. Every owning sum leaf implements its operation through a legal shared default,
+   delegation, or leaf override.
+9. Every named exit has a focused test with the exact machine, payload class, and arity.
+10. Dense conservative meanings remain ASDL entries. Sparse no-entry alternatives
+    remain typed named exits, never `nil` or booleans.
+11. A28 candidates contain no S7 identity; B43 alone creates S7; B44/B45 publish
+    total F31/F32.
+12. F33 has no F32 dependency. `restrict` requires complete declared pairwise-noalias
+    evidence over at least two distinct qualified objects.
+13. B49/B50 attempts publish no F22. Only deliberate baseline or committed fragment
+    realization creates F22.
+14. Fragment locals and labels are fragment coordinates. B54 alone creates S8 physical
+    identity.
+15. C26/C27 physical leaves own C behavior. `GnuCEmitter` is the sole emitter leaf.
+16. A33 resources expose typed provenance and liveness while runtime handles remain
+    private.
+17. Every keyed relation is a named product under `many`; no map, side cache, or
+    encoded-name recovery exists.
+18. No ASDL product combines independently invalidated facets into a context, phase,
+    result, plan, world, frame, or machine bag.
+19. Every reason preserves its authority site and every generated occurrence preserves
+    causal provenance.
+20. Every spine order is an exact once-only permutation of its population.
+21. Only F01/F18/F23/F28/F30/F31/F32 are aggregate facet products.
+22. The five aggregate inputs preserve authoritative order and receive no mutable
+    accumulator after construction.
+23. `CompilerResult`, `CompilerControl`, `CompilerControlState`,
+    `SourceCheckingDestination`, `CEntityValidationResult`, old internal `*Result`
+    sums, and `continue_after_*` methods are absent.
+24. Host failures remain disjoint from `SemanticRejectReason`.
+25. All ASDL references resolve, all declaration names are unique, and O/A/B/C/S/F
+    coverage closes.
+26. Every running machine owns one coherent computation. Every passed exit is a stable
+    unbound method of that exact machine class, and every static successor is a named
+    machine method rather than another threaded continuation.
+27. All six subordinate rejection continuations are terminal; no aggregate rejection
+    fold exists.
+28. C24/C25 direct contributions populate `TopologyDerivationInput` exactly once; B23
+    freezes it in `CodeAccepted`, and B24 is its sole consumer.
+29. B03 alone derives `ResolutionFacet.shadowing` from the frozen resolution frontier.
+30. An authority reason’s field-agnostic boundary method alone constructs
+    `TypedSemanticRejection`; the running host machine’s named
+    `semantic_rejected` method is its sole consumer.
+31. No operation, exit, machine, or conformance descriptor IR exists; authored Lua
+    classes, method signatures, and strict tail calls are the control graph.
 
-No migration or cutover conclusion follows from this schema document. Any implementation discussion is a
-later, separately authorized step.
+This document defines schema and method contracts only. Runtime implementation and
+compiler migration require separate authorization.

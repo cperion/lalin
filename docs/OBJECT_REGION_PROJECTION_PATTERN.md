@@ -749,6 +749,8 @@ describe one system instead of four loosely synchronized implementations.
 
 - `docs/ASDL_GUIDE.md` — schema ownership, leaf behavior, products, projections,
   facets, and the pure-Lalin mirror.
+- `docs/LUA_OBJECT_REGIONS.md` — bootstrap Lua regions with direct static
+  continuation parameters and no immediate result allocation.
 - `docs/DESIGN_BIBLE.md` — type forest/control graph, object-machine stack, worlds,
   reuse frontiers, region algebra, ownership, and review doctrine.
 - `docs/LANGUAGE_REFERENCE.md` — structs, qualified functions/regions/handles,

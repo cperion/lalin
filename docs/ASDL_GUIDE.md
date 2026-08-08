@@ -30,23 +30,27 @@ If behavior is spread through side tables, rule runners, handler maps, and
 string dispatch, the agent has to reconstruct a hidden architecture from global
 search results and is much more likely to make a bad patch.
 
-When compiler code needs to classify a value, choose an alternative, remember a
-fact, pass state, return a decision, or route to behavior, first ask what ASDL
-type is missing. Add that product, union, leaf, field, projection, facet, or
-result before writing implementation code.
+When compiler code needs to classify a value, remember a fact, or route behavior,
+first classify the lifetime. Add the missing ASDL value for durable data. Use peer
+named exits on a named machine object for an immediate decision. Do not encode control
+as data only because Lua has one return edge.
 
 ## Pure Lalin Mirror
 
 The ASDL + Lua-method pattern has a direct compiled Lalin mirror:
 
 ```text
-ASDL product        -> Lalin struct
-ASDL unique product -> Lalin unique struct
-ASDL sum/leaf       -> Lalin union or encoded product + consumer region
-Lua method          -> qualified fn Struct.method
-Lua protocol helper -> qualified region Struct.protocol
-ASDL identity fact  -> unique struct identity or qualified handle
+ASDL product          -> Lalin struct
+ASDL unique product   -> Lalin unique struct
+ASDL sum/leaf         -> Lalin union or encoded product + consumer region
+Lua machine object     -> compiled Lalin state struct or unique struct
+Lua named exit method  -> qualified region continuation when compiled control needs it
+ASDL identity fact     -> unique struct identity or qualified handle
 ```
+
+`docs/LUA_OBJECT_REGIONS.md` specifies bootstrap Lua named control. A multi-exit
+operation receives the named computation object as `cc` and stable unbound exit methods
+from that object's class. It forwards `cc` unchanged and tail-calls one peer exit.
 
 Use the Lua ASDL pattern for bootstrap compiler semantics, staging, schema
 projection, and tooling. Prefer the pure Lalin mirror for fast monomorphic
@@ -54,11 +58,11 @@ semantic systems, including future compiler phases rewritten in Lalin. The
 architectural rule is the same in both forms: the semantic thing owns its
 behavior.
 
-For repeated systems, make the machine an object. One struct or unique struct
-should own the machine's retained state, methods, resolver regions, handles,
-world products, diagnostics, and memory-invalidation authority. Split only when
-there are genuinely separate owners. Do not replace a missing machine object
-with a generic context bag or side table.
+For a running computation, make the machine an ordinary Lua object. The machine owns
+its exact evolving state, services, cursors, builders, and pending work. Its named
+methods are static control nodes and tail calls are graph edges. Split machines only
+when there are genuinely separate computations. Do not replace a missing machine
+object with an anonymous context bag, optional state record, or universal phase object.
 
 ## Products And Unions
 
@@ -102,12 +106,12 @@ the behavior. Calling the method is the dispatch.
 Correct:
 
 ```lua
-function Tree.ExprCall:typecheck(input)
-  return Tree.TypeExprResult(...)
+function Tree.ExprCall:typecheck(input, cc, on_typed, on_rejected)
+  return self.callee:check_call(input, cc, on_typed, on_rejected)
 end
 
-function Tree.ExprInt:typecheck(input)
-  return Tree.TypeExprResult(...)
+function Tree.ExprInt:typecheck(input, cc, on_typed, _on_rejected)
+  return on_typed(cc, Tree.TypedIntegerExpression(self, input.expected))
 end
 ```
 
@@ -149,11 +153,10 @@ local code = lower(module, ctx, facts, flags)
 local artifact = materialize(kind, payload, tables)
 ```
 
-The receiver should be a deep semantic object: it owns the data, invariants,
-operation vocabulary, and typed result shape. If there is no honest receiver for
-an operation, the schema is probably missing a product such as
-`CompilationRequest`, `TypedModule`, `CodeEmissionRequest`, `KernelPlanRequest`,
-or another domain-specific value.
+The receiver should be a deep semantic object. It owns the data, invariants,
+operation vocabulary, and durable result shape or immediate direct-continuation exits. If
+there is no honest receiver, the schema is probably missing a product such as
+`CompilationRequest`, `TypedModule`, `CodeEmissionRequest`, or `KernelPlanRequest`.
 
 Free helper functions are allowed only for small implementation details whose
 main subject is not an ASDL semantic value. If a helper takes an ASDL value as
@@ -161,10 +164,10 @@ the thing it is really about, move it onto that ASDL type. If a public function
 takes loose Lua arguments, replace the argument bundle with an ASDL request
 product and call a method on that product.
 
-Avoid half-methodification. A method that returns a string, boolean, or selector
-only so another function can branch later is still external dispatch. Prefer a
-leaf method that performs the next semantic action directly, or return a typed
-ASDL result union whose leaves own the next method.
+Avoid half-methodification. A method that returns a string, boolean, or selector only
+so another function can branch later is still external dispatch. Use peer named machine
+exits when the caller consumes the choice now. Use a typed ASDL result union only when
+the outcome must persist or cross a sealed boundary.
 
 ## Object Wiring Is The Good Part
 
@@ -176,11 +179,11 @@ ASDL value and the result should be compiled code, the clear Lua shape is:
 local artifact = unit:compile(input)
 ```
 
-The call is ordinary Lua object wiring, but the receiver and result are ASDL.
-`CompilationUnit:compile` calls methods on child ASDL values. Those children
-call methods on their children. Each step constructs typed ASDL products/unions
-for the next semantic layer. The compiler becomes a tower of typed values and
-owned methods instead of a pile of external passes guessing node shapes.
+The call is ordinary Lua object wiring. Receivers and durable outputs are ASDL. A
+running computation is an ordinary named machine object. Child ASDL values call methods
+and select peer exits such as `Machine.on_ready` or `Machine.on_rejected`; those machine
+methods name the next graph node directly. The compiler becomes a graph of durable typed
+values plus explicit running objects, not external passes that guess node shapes.
 
 This is why leaf ownership matters. The object method gives Lua a simple local
 interface, while ASDL keeps the data and dispatch type-safe. The method chain
@@ -193,8 +196,10 @@ stmt:lower_to_code(...)
 expr:lower_to_code(...)
 ```
 
-Each method returns declared ASDL results, not loose tables. The root method is
-then easy to call from the rest of Lua, and the internal compiler remains typed.
+Each direct method returns a declared ASDL value. Each multi-exit value method tail-calls
+one stable unbound method on the passed machine object. Machine methods tail-call their
+next named machine method and do not receive another continuation parameter. Neither
+form returns a loose table.
 
 ## Methods Are Ideally Pure
 
@@ -209,10 +214,12 @@ value. The method should not mutate the receiver, mutate child nodes, write
 hidden fields, update side tables, depend on ambient globals, or smuggle facts
 through external caches.
 
-If the method needs accumulated facts, pass a typed ASDL input product and return
-a typed ASDL result product/union. If it derives a new world, return a projection
-or facet. If it rejects, return a typed reject/diagnostic. Side effects belong at
-explicit runtime or IO boundaries, not in ordinary compiler semantics.
+If a computation needs accumulated facts, give its named machine a narrow builder for
+one ordered element family. The machine passes itself to multi-exit child operations and
+passes stable unbound machine methods as the peer exits. Freezing publishes the durable
+ASDL product once and prohibits later builder mutation; the machine can then tail-call
+its next named method. Return a typed product, projection, facet, or durable result union
+only when the value survives. Side effects belong at explicit runtime or IO boundaries.
 
 ## Constructors Compose ASDL
 
@@ -247,10 +254,10 @@ If a constructor argument is conceptually a record, decision, capability, fact,
 context, buffer, payload, or result, define that thing as an ASDL product or
 union.
 
-## Inputs And Results
+## Inputs, Results, Machines, And Named Exits
 
-Semantic method inputs and results must be explicit ASDL products or other named
-ASDL values.
+Semantic method inputs and durable results must be explicit ASDL values or declared
+primitive values.
 
 Do not pass:
 
@@ -258,10 +265,21 @@ Do not pass:
 - hidden Lua fields
 - loose Lua tables
 - ad hoc `{ ok = ... }`, `{ kind = ... }`, or `{ tag = ... }` result records
-- multiple Lua return values for a semantic operation
+- loose multiple returns that encode a semantic alternative
 
-If an operation can succeed, fail, reject, choose, classify, explain, or lower,
-define an ASDL result product or union for that operation.
+Classify each operation before declaring its result:
+
+- one honest output returns an ASDL value directly;
+- an immediate alternative tail-calls a peer named exit on the passed machine;
+- a stored, queued, reusable, or host-boundary alternative uses an ASDL sum or
+  precise boundary record.
+
+A named exit can carry an exact typed reason or publication. It must not allocate an
+operation-result wrapper only to restore control. Exit functions are stable unbound
+methods on the named machine class, not per-call capturing closures. The machine object
+is the computation in progress; it is never an opaque `ctx`, generic state bag, callback
+table, or ASDL escape hatch. Its methods name successors directly, so continuation
+parameters are not threaded through machine frames.
 
 ## No Any, No Table, No Map Type
 
@@ -284,12 +302,13 @@ classes, tags, handles, or strings is forbidden when it carries compiler facts,
 decisions, diagnostics, lowering results, type facts, layout facts, control-flow
 facts, or backend facts.
 
-Move those facts into ASDL:
+Move those facts or decisions into the correct form:
 
-- a product field when the fact is intrinsic to that phase value
-- a projection when a phase derives a new shape
-- a facet when several semantic planes align to a shared spine
-- a result union when the fact is an operation outcome
+- a product field when the fact is intrinsic to that phase value;
+- a projection when a phase derives a new shape;
+- a facet when several semantic planes align to a shared spine;
+- direct continuation parameters when the caller consumes the decision now;
+- a result union when the outcome must persist or cross a sealed boundary.
 
 ## No Nil Passthrough
 
@@ -463,11 +482,17 @@ and measure. They must never introduce a second untyped protocol beside ASDL.
 When tempted to write untyped Lua plumbing:
 
 1. Stop implementation work.
-2. Name the missing semantic thing.
-3. Add the ASDL product, union, leaf, field, projection, facet, or result.
-4. Install behavior on the concrete leaf types that own it.
-5. Return ASDL values from semantic methods.
-6. Let tests fail loudly until call sites are moved to the typed shape.
+2. Classify the pressure as a durable value, immediate control choice, direct value,
+   running computation, variable destination, or sealed boundary.
+3. For a durable fact or boundary value, name the exact ASDL product, union, leaf,
+   field, projection, or facet. For an immediate choice, name peer machine exits. For
+   a direct value, return it directly.
+4. Install value-kind behavior on the concrete ASDL leaf types that own it.
+5. If state survives calls, name the computation and make it a machine object. Make its
+   named methods the static graph; store a named method only for a genuinely variable
+   destination.
+6. Let tests fail loudly until call sites use exact ASDL values, named machines, and
+   strict tail-call edges.
 
 The answer to unclear compiler semantics is more precise ASDL, not more Lua
 dispatch.

@@ -1,64 +1,64 @@
 # The Lalin Design Bible
 
-## Object-machines are the center of gravity
+## Values, machines, and named control are the center of gravity
 
 **Status:** design canon for Lua ASDL systems and compiled Lalin systems.
 
-The entire method begins with one law:
+The bootstrap Lua model keeps three things distinct:
 
-> **One concern → one object-machine → one semantic authority.**
+```text
+ASDL     the universe of durable values
+objects  the state of computations in progress
+methods  behavior on values and static control nodes on machines
+```
 
-A system is a composition of objects that own meaning. Each object-machine owns one
-concern: its persistent facts, identities, operations, protocols, diagnostics, stores,
-invalidation rules, and derived projections. Objects communicate through typed values and
-typed control. No concern is smeared across helpers, side tables, drivers, callbacks, or
-parallel representations.
+ASDL values carry persistent semantic meaning. Concrete ASDL leaf methods own behavior
+that depends on value kind. A named machine object owns one running computation. Its
+named methods are the control graph and tail calls are the edges. A machine does not
+become the semantic owner of every ASDL value it carries.
 
 Everything else in this book follows from that law:
 
 ```text
-persistent fact       → object frame or owned store
+persistent fact       → ASDL value, owned store, spine, facet, or projection
 durable identity      → entity or handle
-immediate decision    → region continuation
-case-specific behavior→ concrete ASDL/Lalin leaf method
-derived fact          → readonly projection
-shared alignment      → spine
-one semantic plane    → facet
-reusable domain state → world
+immediate decision    → peer named exits on a running machine
+value-kind behavior   → concrete ASDL/Lalin leaf method
+computation state     → named machine object
+static control node   → named machine method
+control edge          → strict tail call
+variable destination  → stable named method stored on the machine
 stored/queued choice  → encoded boundary record + one consumer
 external boundary     → sealed function, artifact, or bridge
 family variation      → Lua factory
 ```
 
-This is not class-oriented object programming. There is no inheritance tree, universal
-base object, vtable culture, or getter/setter shell. An object is an explicit owner of a
-semantic concern and the operations that give its facts meaning.
+This is not class-oriented object programming. There is no universal base object, vtable
+culture, getter/setter shell, machine hierarchy, or control runtime. Semantic authority
+and running computation are related but distinct ownership roles.
 
 ---
 
-# 1. The object-machine law
+# 1. Ownership and machine law
 
-## 1.1 What an object-machine owns
+## 1.1 What values, authorities, and machines own
 
-An object-machine may own:
+A durable semantic value or authority may own:
 
-- durable entity identity;
-- a retained frame or store, when the concern genuinely retains state;
-- exact capacities and storage lifetimes;
-- methods and regions implementing its operations;
-- resolver regions for handles in its identity domain;
-- diagnostics and rejection vocabulary;
-- generations, epochs, and invalidation authority;
-- readonly projections published to other objects;
-- one instruction language, when the concern consumes stored commands;
-- one physical boundary image, when serialization or ABI portability requires one.
+- entity identity, facts, diagnostics, generations, invalidation, stores, and readonly
+  projections;
+- methods that interpret those durable values;
+- one physical boundary image when serialization or ABI portability requires it.
 
-It does not automatically need all of these. A stateless compiler concern may own only an
-operation over immutable ASDL values. A store may own identity, bytes, generations, and
-resolver protocols. A serializer may own no durable state at all.
+A running machine object may own:
 
-Do not invent state to make something look object-oriented. The point is ownership, not
-ceremony.
+- the cursor, builders, services, and pending work of one computation in progress;
+- named methods that form that computation's static control graph;
+- one stored named destination only when a join or suspension genuinely varies.
+
+Neither owner automatically needs every feature. Do not invent durable identity for a
+transient machine, and do not turn a durable ASDL value into a mutable control object.
+The point is exact ownership, not ceremony.
 
 ## 1.2 One fact, one owner
 
@@ -79,15 +79,15 @@ If no value or object clearly owns the answer, the design has missing authority.
 
 ## 1.3 One operation, one owner
 
-An operation belongs to the object whose invariants it interprets or changes.
-
-A coordinator may sequence operations:
+Value-kind behavior belongs to the ASDL leaf whose invariants it interprets. Sequencing
+belongs to the named machine whose computation is in progress. A machine may sequence:
 
 ```text
 resolve → check → project → materialize
 ```
 
-but it may not duplicate child validation, inspect child encodings, or modify child stores.
+but it may not duplicate child semantics, inspect child encodings, or modify published
+facts. The machine owns ordering and evolving computation state only.
 A coordinator owns ordering only.
 
 ## 1.4 When to split objects
@@ -139,120 +139,61 @@ They are architecturally isomorphic.
 
 ## 2.1 Lua ASDL realization
 
-Lua ASDL is not compiled Lalin, and its “object” is not necessarily a mutable runtime
-instance or a product named `FooMachine`. In Lua ASDL, an object-machine is a closed semantic
-family organized around one distinguished ASDL receiver:
+Lua bootstrap semantics has three independent axes:
 
 ```text
-distinguished ASDL receiver
-  + precise input products
-  + immutable frames/projections when needed
-  + result sums
-  + methods on concrete variant leaves
+ASDL value or request  durable semantic vocabulary
+ASDL leaf method       behavior for one value case
+Lua machine object     one computation in progress
+machine method         one named static control node
 ```
 
-The receiver is the semantic entrypoint for the concern. It may have one of three shapes.
-
-### Request-owned operation
-
-A stateless compiler concern is often best represented by a request product:
+A total value operation returns its exact value directly. A multi-exit value operation
+receives the running machine and stable unbound exit methods from that machine class:
 
 ```lua
-product. FlowRequest {
-  code [Code.Program],
-  topology [Control.Topology],
-}
+function FlowRequest:project(machine, on_projected, on_rejected)
+  return self.code:project_flow(
+    FlowInput(self.topology), machine, on_projected, on_rejected)
+end
 
-sum. FlowResult {
-  FlowProjected { projection [Flow.Projection] },
-  FlowRejected { issues [many [Flow.Issue]] },
-}
-
-function FlowRequest:project()
-  return self.code:project_flow(FlowInput(self.topology))
+function FlowMachine:flow_projected(facet)
+  self.flow = facet
+  return self:begin_induction()
 end
 ```
 
-The request is the transaction boundary and concern-level receiver. No retained machine
-instance is required.
+The producer forwards `machine` unchanged and selects one peer exit. The selected method
+already names its successor; it receives no further continuation parameter.
 
-### Explicit authority product
+A request is an ASDL value that names one semantic frontier. It is not the running
+machine. A machine is an ordinary Lua object with a coherent evolving computation. Do
+not create empty machine objects, universal phase machines, or anonymous callback
+contexts. Create a machine when state genuinely survives calls or several named control
+nodes belong to one running computation.
 
-Use an explicit machine product when the concern genuinely retains configuration, policy,
-capability, identity, or a reusable service boundary:
+Concrete ASDL leaves continue to own semantic cases:
 
 ```lua
-product. LayoutMachine {
-  target [Target.Model],
-  policy [Layout.Policy],
-}
+function ExprInt:typecheck(input, machine, on_typed, _on_rejected)
+  return on_typed(machine, TypedIntegerExpression(input.expected, self))
+end
 
-product. LayoutRequest {
-  program [Typed.Program],
-}
-
-function LayoutMachine:project(request)
-  return request.program:project_layout(LayoutInput(self.target, self.policy))
+function ExprCall:typecheck(input, machine, on_typed, on_rejected)
+  return self.callee:check_call(
+    TypeCallInput(input.scope, self.args), machine, on_typed, on_rejected)
 end
 ```
 
-Do not create empty `*Machine` products everywhere merely to satisfy terminology.
+Manual handler maps remain forbidden. The ASDL leaf is behavioral dispatch; the machine
+method selected by the exit is control dispatch.
 
-### Immutable frame transition
+Therefore the bootstrap form has two ownership laws:
 
-When a concern genuinely accumulates state, represent the state as an explicit ASDL frame
-and return a new frame from each transition:
+> **One durable semantic concern → one ASDL authority.**
 
-```lua
-product. WriterFrame {
-  generation [Generation],
-  nodes [many [Node]],
-  scopes [many [Scope]],
-}
+> **One computation in progress → one named machine object.**
 
-sum. WriterOpenResult {
-  WriterOpened { frame [WriterFrame], identity [NodeIdentity] },
-  WriterFull { frame [WriterFrame], capacity [Capacity] },
-}
-```
-
-ASDL semantic methods do not mutate hidden Lua fields. The previous frame remains an ASDL
-value; the result carries the next frame.
-
-### Concern owner and case owner
-
-The distinguished receiver owns the complete operation. Concrete ASDL leaves own individual
-semantic cases:
-
-```lua
-function TypeCheckRequest:execute()
-  return self.program:typecheck(TypeProgramInput(self.target))
-end
-
-function ExprInt:typecheck(input)
-  return TypeExprChecked(input.expected, self)
-end
-
-function ExprCall:typecheck(input)
-  return self.callee:check_call(TypeCallInput(input.scope, self.args))
-end
-```
-
-Wrong:
-
-```lua
-local handlers = { ExprInt = check_int, ExprCall = check_call }
-return handlers[node.kind](node, ctx)
-```
-
-Therefore the Lua-ASDL form of the central law is:
-
-> **One concern → one distinguished ASDL semantic receiver → one authority.**
-
-That receiver may be a request, explicit authority, immutable frame transition, intrinsic
-entity, or result leaf continuing an operation. “Object-machine” names this ownership shape;
-it does not force a mutable object, an OO class, or a `Machine` suffix.
-## 2.2 Compiled Lalin realization
 
 ```text
 ASDL product          → struct
@@ -269,8 +210,8 @@ compiled Lalin when the semantic object itself must execute as fast monomorphic 
 
 ## 2.3 The rule for alternatives
 
-There is no contradiction between ASDL sums and Lalin protocols. They serve different
-execution media.
+There is no contradiction between ASDL sums and region protocols. They represent
+different lifetimes.
 
 ### Immediate alternatives in compiled Lalin
 
@@ -281,41 +222,58 @@ region Store.borrow(self [ptr [Store]], ref [StoreRef];
   borrowed(record [lease [ptr [Record]]]),
   stale,
   missing
- )
+)
 ```
 
 The caller wires continuations. It does not receive and switch on a boxed result.
 
-### Alternatives in bootstrap Lua ASDL
+### Immediate alternatives in bootstrap Lua
 
-Lua has no typed CFG continuation system. A named ASDL result sum is the typed encoding of
-the operation outcome. Its concrete leaves own the next behavior:
+Bootstrap Lua passes the running machine and its stable unbound exit methods:
 
 ```lua
-function ResolveFound:continue_check(input)
-  return self.value:check(input)
+function Store:borrow(reference, machine, on_borrowed, on_stale, on_missing)
+  local record = self:find(reference)
+  if record then return on_borrowed(machine, record) end
+  if self:is_stale(reference) then return on_stale(machine) end
+  return on_missing(machine)
 end
 
-function ResolveMissing:continue_check(input)
-  return TypeRejected(TypeIssueMissing(self.name))
+function BorrowMachine:borrowed(record)
+  return self:check_record(record)
+end
+
+function BorrowMachine:stale()
+  return self:reject_stale()
+end
+
+function BorrowMachine:missing()
+  return self:reject_missing()
+end
+
+function BorrowMachine:begin(reference)
+  return self.store:borrow(reference, self,
+    BorrowMachine.borrowed, BorrowMachine.stale, BorrowMachine.missing)
 end
 ```
 
-The caller invokes the result method; it does not manually inspect `kind`, `tag`, or class.
+The exit functions are allocated once as methods. `BorrowMachine` is the computation in
+progress, not opaque caller state or a continuation wrapper. Its methods name successors
+directly. No runtime wiring object or conformance registry is required.
 
 ### Stored or portable alternatives
 
-A queued event, AST node, bytecode instruction, wire message, or ABI result is stored data.
-Encode it physically, then give the encoding exactly one named consumer object/region.
-The encoding is not the semantic authority; the consumer is.
+A queued event, AST node, bytecode instruction, wire message, or ABI result is
+stored data. Encode it physically, then give the encoding exactly one named
+consumer object or region. The encoding is not the semantic authority.
 
 Therefore:
 
 ```text
-immediate compiled choice → protocol
-bootstrap typed outcome   → ASDL result sum with leaf-owned behavior
-stored/queued choice      → encoded fact + one consumer
-ABI choice                → encoded boundary + decoder/consumer
+immediate compiled choice -> Lalin region
+immediate bootstrap choice -> peer named exits on a running machine
+stored or queued choice    -> ASDL sum or encoded fact + one consumer
+ABI choice                 -> encoded boundary + decoder or consumer
 ```
 
 ---
@@ -410,8 +368,9 @@ Lua upvalue, side table, global, or convention between calls.
 
 ## 4.2 Decision belongs to control
 
-A decision that is consumed now is control. In compiled Lalin, expose it as named region
-continuations. In Lua ASDL, expose it as a named result sum whose leaves continue behavior.
+A decision that is consumed now is control. Compiled Lalin uses named region
+continuations. Bootstrap Lua tail-calls one stable continuation function supplied by
+the caller.
 
 Do not collapse semantic alternatives into:
 
@@ -586,6 +545,10 @@ If these questions have no precise answers, remove or redraw the boundary.
 ---
 
 # 7. Typed control: regions, blocks, emits, calls, and seals
+
+This section describes compiled Lalin control. Bootstrap compiler control uses ordinary
+Lua methods and stable direct continuation functions; it has no block/jump/emit control
+IR.
 
 ## 7.1 Region
 
@@ -867,9 +830,10 @@ If two planes have different producers or invalidation, they are different facet
 
 ## Step 8 — Define operations and outcomes
 
-For each machine operation, write exact inputs and every semantic outcome. In Lua ASDL use
-named result sums with leaf-owned continuation behavior. In compiled Lalin use regions for
-immediate alternatives.
+For each machine operation, write exact inputs and every semantic outcome. Use stable
+direct continuation functions for an immediate Lua choice. Use a compiled region for
+an immediate Lalin choice. Use an ASDL sum only when the outcome must persist or cross
+a sealed boundary.
 
 No nil, boolean, string action, optional soup, or loose multi-return protocol.
 
@@ -946,6 +910,8 @@ type forest   → what facts, entities, frames, spines, and facets exist
 control graph → what operations, decisions, transitions, and outcomes occur
 ```
 
+For bootstrap Lua, the control side is only the authored method signatures and stable
+continuation functions. There is no separate control graph or descriptor IR.
 The object-machine owns the relevant part of both. Products without an owner become data
 soup. Control without an owner becomes callbacks, handlers, and orchestration soup.
 
@@ -1109,8 +1075,9 @@ An immediate compiled decision is boxed, returned, and switched. Use a region pr
 
 ## Manual ASDL result dispatch
 
-Lua code uses `classof`/`kind` to branch over a result sum. Put continuation behavior on the
-result leaves.
+Lua code uses `classof`/`kind` to branch over a result sum. Pass stable direct
+continuation functions instead; the concrete semantic leaf selects the exit and the
+caller owns the continuation behavior.
 
 ## Optional soup
 
@@ -1212,8 +1179,8 @@ semantic obligation requires them.
 
 ## Control
 
-- [ ] Are immediate compiled choices protocols?
-- [ ] Are bootstrap result sums consumed through leaf methods?
+- [ ] Are all immediate choices compiled regions or stable direct Lua continuations?
+- [ ] Are per-call closures, mandatory `k` objects, and universal frame families absent?
 - [ ] Are stored encodings owned by one consumer?
 - [ ] Are block parameters complete state?
 - [ ] Are emit fills and jumps total?
@@ -1245,8 +1212,9 @@ semantic obligation requires them.
  2. The machine owns the concern; concrete leaves own the cases.
  3. Persistent facts live in the owning frame or store.
  4. Durable identity is an entity or handle, never an encoded-name convention.
- 5. Immediate compiled choices are protocols.
- 6. Bootstrap alternatives are ASDL sums with leaf-owned continuation behavior.
+ 5. Immediate choices use region protocols in compiled Lalin and stable direct
+    continuation functions in bootstrap Lua.
+ 6. Durable alternatives are ASDL sums or precise boundary encodings.
  7. Stored choices are encoded facts with one named consumer.
  8. Regions are object-owned typed control operations.
  9. Blocks carry complete state; jumps construct it totally.

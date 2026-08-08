@@ -162,6 +162,7 @@ an encoded exit union and dispatch back to named exits.
 
 Authoritative reference:
 - `docs/ASDL_GUIDE.md` — binding ASDL and compiler-method doctrine
+- `docs/LUA_OBJECT_REGIONS.md` — bootstrap Lua direct-continuation specification
 - `docs/DESIGN_BIBLE.md` — long-form explicit architecture method
 - `docs/OBJECT_REGION_PROJECTION_PATTERN.md` — general Lalin object-machine pattern
 - `docs/LANGUAGE_REFERENCE.md` — public Lalin language reference
@@ -171,6 +172,7 @@ Authoritative reference:
 
 Active compiler design and planning:
 - `docs/HYPERMEDIA_ARCHITECTURE.md` — active hypermedia design proposal
+- `docs/COMPILER_OPERATION_LIFETIME_MODEL.md` — compiler data/control reclassification
 
 ## Design Rules
 

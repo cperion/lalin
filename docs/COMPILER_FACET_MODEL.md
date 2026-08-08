@@ -1,7 +1,7 @@
 # Compiler Semantic Facet Model
 
 Status: Step 5 closed, including the F07/F34 ownership split exposed by Step 6; receiver/operation
-alignment continues in `docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md`.
+alignment continues in `docs/COMPILER_OPERATION_LIFETIME_MODEL.md`.
 Prerequisites:
 
 - `docs/COMPILER_SEMANTIC_OBLIGATIONS.md`

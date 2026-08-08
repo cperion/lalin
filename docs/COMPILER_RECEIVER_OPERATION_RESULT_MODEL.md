@@ -1,6 +1,10 @@
 # Compiler Receiver, Operation, and Result Model
 
-Status: Step 7 closed for the ground-up Lua-ASDL compiler model.
+Status: **pre-region Step-7 evidence only**. `docs/COMPILER_OPERATION_LIFETIME_MODEL.md`
+and `docs/COMPILER_ASDL_SCHEMA.md` supersede every control signature, result-sum rule,
+and continuation mechanism in this document. Only receiver, authority, frontier,
+outcome, reason, and coordinator evidence that the current documents explicitly retain
+remains binding.
 Prerequisites:
 
 - `docs/COMPILER_SEMANTIC_OBLIGATIONS.md`
@@ -21,9 +25,10 @@ The closed result is:
 - thirty-two compiler receiver families plus one host-boundary receiver family;
 - zero generic compiler machines, mutable compiler frames, worlds, or phase receivers;
 - concrete subject/request leaves as case owners;
-- authority-specific result sums only where control alternatives exist;
+- direct continuations for immediate choices;
 - direct products for total projections;
-- concern-local typed rejection reasons and leaf-owned continuations.
+- ASDL result values only for durable/stored or sealed-boundary alternatives;
+- concern-local typed rejection reasons and stable continuation functions.
 
 ---
 
@@ -82,7 +87,9 @@ does not permit copying them into a bag.
 
 Forbidden inputs:
 
-- `ctx`, `env`, `state`, option bags, loose tables, or positional tuples;
+- ASDL `ctx`, `env`, `state`, option bags, loose tables, or positional tuples (this
+  does not prohibit the narrow opaque Lua continuation state defined by the current
+  direct-CPS ABI);
 - maps or side tables keyed by nodes, names, IDs, or classes;
 - copied spine/facet populations;
 - target, policy, layout, or evidence fields not consumed by that exact request leaf;
@@ -93,7 +100,12 @@ They do not share a superset request.
 
 ---
 
-## 3. Result and continuation law
+## 3. Pre-region result and continuation evidence
+
+**Superseded control encoding:** The six semantic outcome classes below remain
+binding. `docs/COMPILER_OPERATION_LIFETIME_MODEL.md` replaces immediate result sums
+and result-leaf continuation ownership with direct returns and stable direct
+continuation-function parameters. No compiler control-state family replaces them.
 
 ### 3.1 Six distinct outcome classes
 
@@ -101,9 +113,9 @@ They do not share a superset request.
    resource becomes available.
 2. **Conservative outcome:** typed weakening evidence either publishes a dense/sparse conservative entry
    or explicitly creates no sparse entry. It continues compilation and never means rejection.
-3. **Immediate decision continuation:** a transient typed result chooses the next exact request without
-   pretending to be a persistent fact. Strategy attempts and identity-preserving unchanged decisions live
-   here.
+3. **Immediate decision continuation:** a direct continuation exit chooses the next exact
+   request without pretending to be a persistent fact. Strategy attempts and
+   identity-preserving unchanged decisions live here.
 4. **Terminal semantic rejection:** an authority-specific typed reason ends the semantic transaction.
 5. **Optional realization outcome:** no-plan, unavailable, or unrealizable evidence returns to lowering
    strategy and preserves a correct baseline.
@@ -113,30 +125,27 @@ These classes must not share a generic `Success/Failure` union.
 
 ### 3.2 When a result sum exists
 
-Use a named authority-specific result sum when the caller acts differently on immediate outcomes.
-Each publication, conservative, immediate-decision, rejection, optional-realization, or host-failure
-alternative is a concrete leaf.
-A provably total projection, such as S3 topology after O13, returns its product directly.
+Under Step-9R, a named result sum exists only when an alternative is stored, queued,
+suspended, reusable, serialized, or crosses a sealed public boundary. A caller’s
+immediate choice among exits is not sufficient reason to allocate result data; use
+stable direct continuation parameters. A provably total projection returns its exact
+value directly.
 
-A result leaf carries only its authority's product or exact typed reason/provenance. Success leaves
-never carry trailing issue lists. Optional candidate history belongs in F29/F22 decisions, not in a
+A durable result leaf carries only its authority's product or exact typed
+reason/provenance. Optional candidate history belongs in F29/F22 decisions, not in a
 generic result wrapper.
+### 3.3 Direct continuation ownership
 
-### 3.3 Leaf-owned continuation
+Each immediate multi-exit producer tail-calls one stable continuation function with the
+exact payload. Semantic success publishes its value; conservative exits preserve typed
+weakening; decisions construct the exact next request; semantic rejection terminates;
+optional realization returns to strategy; and host failure stays at the Host boundary.
+The producer does not inspect caller state or select a callback through data.
 
-Every immediate result leaf owns its transaction continuation:
-
-- semantic success publishes its value and constructs/invokes the next exact request;
-- a conservative outcome publishes its typed weakening entry or records a typed no-entry outcome, then
-  continues without strengthening;
-- an immediate decision continuation constructs exactly the request named by its concrete leaf;
-- terminal semantic rejection preserves the typed cause and stops the transaction;
-- optional no-plan/unrealizable leaves return to lowering strategy;
-- host failures route to the Host API as host errors.
-
-Coordinators invoke these methods. They do not inspect class, `kind`, tags, reason strings, or booleans.
-A persistent publication may have several later consumers; its immediate result leaf continues to the
-sequencing coordinator, which constructs those consumers' exact requests without semantic branching.
+Coordinators supply continuations and sequence the returned answer. They do not inspect
+class, `kind`, tags, reason strings, or booleans. A durable publication can have
+several later consumers; ordinary coordinator code constructs those consumers’ exact
+requests without semantic branching.
 
 ### 3.4 Rejection is the diagnostic
 
@@ -323,6 +332,9 @@ Semantic ABI conformance remains A14/F11.
 
 ## 7. Canonical continuation graph
 
+**Superseded edge ownership:** The ordering and outcomes in this graph remain
+binding. Concrete producers now tail-call stable continuation functions supplied by
+the caller. Result leaves do not own these arrows.
 ```text
 [any terminal A01–A19 outcome] ---------------------> semantic transaction rejection
 ProgramInput materialized
@@ -357,8 +369,8 @@ ProgramInput materialized
                                      symbol/release --> host-boundary outcome
 ```
 
-Every arrow selected by an operation outcome is behavior on that concrete result leaf. The diagram is
-not a phase object, plan, or LLBL process.
+Every arrow selected by an immediate operation outcome is one direct continuation
+call. The diagram is not a phase object, plan, or LLBL process.
 
 ---
 

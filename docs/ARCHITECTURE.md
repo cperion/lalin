@@ -1,7 +1,10 @@
 # Lalin Architecture
 
-This document describes the active architecture. Historical backend designs and
-completed migration assessments are intentionally not retained in `docs/`.
+This document describes the currently executable architecture. The Step-9R target
+compiler reconstruction in `docs/COMPILER_ASDL_SCHEMA.md` and
+`docs/COMPILER_OPERATION_LIFETIME_MODEL.md` is schema-only and is not yet a runtime
+migration. Historical backend designs and completed migration assessments are
+intentionally not retained in `docs/`.
 
 ## System model
 
@@ -39,7 +42,7 @@ LalinTree
 ```
 
 The canonical C backend boundary is
-`lua/lalin/compiler_schema_c_backend.lua:code_result_to_c`. Public compile
+`lua/lalin/compiler_c_backend.lua:code_result_to_c`. Public compile
 APIs route through `lua/lalin/impl/compiler_api.lua`.
 
 ## Backend policy
@@ -75,7 +78,6 @@ Concrete ASDL leaves own semantic behavior. Inputs and results are named ASDL
 products or unions. Semantic side maps, class/tag dispatch, generic context
 bags, nil protocols, and ad hoc result tables are architecture bugs.
 
-The ownership inventory and executable duplicate guard are documented in
 The ownership inventory and executable duplicate guard are documented in the
 "Schema ownership" section of this document. The binding doctrine is `docs/ASDL_GUIDE.md`.
 
@@ -123,8 +125,7 @@ noalias.
 ## Memory coordinates
 
 Fused address strength reduction is designed around memory-use coordinates, not
-the disconnected carrier/address plans that remain to be deleted. The governing
-equation, type forest, gates, and deletion boundary are defined in
+rather than the retired carrier/address plans. The governing
 equation, type forest, gates, and deletion boundary are defined in the
 "CMat memory-coordinate architecture" section of this document.
 
@@ -162,8 +163,7 @@ lua/lalin/dsl/                       Lalin builder heads
 lua/lalin/schema/                 canonical typed schemas
 lua/lalin/impl/                      phase and backend methods
 lua/lalin/impl/lower_emit_c/         CMat environment, fragment, and assembly
-lua/lalin/compiler_schema_c_backend.lua
-                                      canonical C backend composition
+lua/lalin/compiler_c_backend.lua        canonical C backend composition
 lua/lalin/impl/compiler_api.lua      public compiler API implementation
 lua/lalin/impl/cemit_emit.lua        CBackendUnit C emission
 tests/schema/                     typed semantic boundary tests
@@ -186,9 +186,10 @@ the final typed C boundary; they do not replace local semantic tests.
 ## Authoritative documentation
 
 - `docs/ASDL_GUIDE.md` — binding compiler/schema doctrine.
+- `docs/LUA_OBJECT_REGIONS.md` — bootstrap Lua direct-continuation specification.
+- `docs/COMPILER_OPERATION_LIFETIME_MODEL.md` — compiler operation lifetime and direct-CPS model.
 - `docs/DESIGN_BIBLE.md` — long-form design method.
 - `docs/LANGUAGE_REFERENCE.md` — public language surface.
-- `docs/LLBL_GUIDE.md` — LLBL workbench and region model.
 - `docs/CONVENTIONS.md` — repository and naming conventions.
 - `docs/LLBL_GUIDE.md` — LLBL workbench, region model, and role-directed bracket evaluation.
 
@@ -263,6 +264,9 @@ CodeModule + CodeGraph
   -> CBackend blocks, cursor locals, and places
   -> emitted C -> GCC -O3
 ```
+
+This is current implementation vocabulary. The Step-9R target dispositions for these
+world/plan names are in `docs/COMPILER_WORLD_MODEL.md` §11.
 
 ### Reuse boundaries
 
@@ -644,8 +648,8 @@ outcome, or carry semantic state in a Lua map.
 _Merged from the former SCHEMA_OWNERSHIP.md. The v1/v2 cutover is complete; schema-v2 vocabulary is the sole schema, and ownership remains the guard against re-introducing parallel implementations._
 
 
-This is the executable ownership inventory for the canonical schema.
-The guard is `tests/schema/test_schema_ownership_inventory.lua`.
+This is the current ownership inventory for the canonical schema. The executable guard
+is planned as `tests/schema/test_schema_ownership_inventory.lua` but is not yet built.
 
 ### Rules
 
@@ -681,12 +685,6 @@ phase vocabulary.
 ### Shared and excluded boundaries
 
 `lua/lalin/schema/host.lua` is consumed directly by the schema bootstrap.
-
-The following explicit non-main backend schemas remain outside the neutral C
-ownership cutover:
-
-- `lua/lalin/schema/luajit.lua` — explicit LuaJIT bytecode boundary;
-- `lua/lalin/schema/luatrace.lua` — excluded legacy LuaTrace vocabulary.
 
 The native copy-patch schema is deleted and must remain absent.
 

@@ -48,12 +48,12 @@ that supports the operation. The leaf implementation is the dispatch. This is
 the required shape:
 
 ```lua
-function Tree.ExprCall:typecheck(input)
-  return Tree.TypeExprResult(...)
+function Tree.ExprCall:typecheck(input, cc, on_typed, on_rejected)
+  return self.callee:check_call(input, cc, on_typed, on_rejected)
 end
 
-function Tree.ExprInt:typecheck(input)
-  return Tree.TypeExprResult(...)
+function Tree.ExprInt:typecheck(input, cc, on_typed, _on_rejected)
+  return on_typed(cc, Tree.TypedIntegerExpression(self, input.expected))
 end
 ```
 
@@ -75,10 +75,20 @@ They must not inspect child classes, `kind` strings, action names, tags, or
 selector tables to decide behavior. If a parent method would need that kind of
 branch, move the branch to the relevant leaf methods or fix the ASDL shape.
 
-Inputs and results for semantic methods must be explicit ASDL products or other
-named ASDL values. Do not pass generic `ctx`, `env`, `state`, option bags,
-hidden Lua fields, or loose tables through migrated compiler semantics. If an
-operation needs data, model that data in the schema with a precise product name.
+Inputs and durable results for semantic methods must be explicit ASDL products or
+other named ASDL values. Immediate alternatives use peer named exits. When an operation
+needs surrounding computation state, pass the named machine object as `cc` and stable
+unbound methods of that same machine:
+
+```lua
+return subject:operation(input, machine,
+  Machine.on_ready, Machine.on_rejected)
+```
+
+`cc` is not an opaque context, state slot, continuation frame, or generic bag. It is the
+specific computation in progress, with a coherent interface and named graph methods.
+The operation forwards it unchanged. Machine methods name their successors directly and
+do not receive another continuation parameter.
 
 ASDL constructors in migrated compiler semantics must consume ASDL values and
 primitive scalar fields declared by the schema. Do not pass ad hoc Lua records
@@ -95,37 +105,41 @@ bag.
 Side tables are not semantic state. A Lua table keyed by ASDL nodes, symbols,
 classes, tags, handles, or strings is forbidden when it carries compiler facts,
 decisions, diagnostics, lowering results, type facts, layout facts, control-flow
-facts, or backend facts. Those facts must be fields of named ASDL products or
-members of named ASDL unions.
+facts, or backend facts. Put durable facts in named ASDL values or projections.
+Put immediate decisions in direct calls to named machine exits.
 
 Ad hoc Lua result records are forbidden in migrated semantic code. Do not return
 `{ kind = ... }`, `{ ok = ... }`, `{ tag = ... }`, `{ action = ... }`, or
-untyped report/decision tables from compiler semantics. If an operation can
-succeed, fail, reject, choose, classify, or explain, define an ASDL union/product
-for that result and return its constructor.
+untyped report or decision tables. Use peer named exits when the caller consumes the
+alternative now. Use an ASDL product or union when the outcome must
+persist or cross a sealed boundary.
 
 Optional soup is forbidden. Do not model semantic alternatives as one product
-with many nullable fields, boolean switches, mode strings, or mutually-exclusive
-option clusters. Use an ASDL union whose leaves represent the alternatives, and
-put behavior on those leaves.
+with nullable fields, boolean switches, mode strings, or mutually-exclusive option
+clusters. Use named machine exits for an immediate alternative. Use an ASDL union whose
+leaves represent durable alternatives.
 
 Nil passthrough is forbidden. Do not let `nil` mean success, failure, absence,
 unknown, unsupported, default, unchanged, no-op, or "keep going" by convention.
-If absence is a real field property, declare `optional [T]` and handle it
-locally. If nil represents a semantic alternative or decision, define an ASDL
-union leaf such as `Missing`, `Rejected`, `Unsupported`, `Unchanged`, or a more
-precise domain name. A method may return nil only when the parent ASDL method
-contract explicitly says "operation not supported by this leaf" and the caller
-handles that exact contract.
+If absence is a real field property, declare `optional [T]` and handle it locally.
+Use a named machine exit for an immediate alternative. Use an ASDL leaf such as
+`Missing`, `Rejected`, or `Unsupported` when the alternative must persist.
+
+Exit functions must be stable unbound methods on the named machine object. Do not
+allocate capturing continuations per call, bundle exits in a table, or create a `k`
+wrapper merely to hold exits. The machine itself owns the computation state; its named
+methods are the static control graph and strict tail calls are the edges. Store a named
+method in a machine field only for a genuinely variable join or suspension. No universal
+machine base, compiler control-state family, scheduler, or control runtime is permitted.
 
 Manual dispatch is forbidden even when it looks small or temporary. Do not use
 `schema.classof(x)`, `x.kind`, `x.tag`, string action names, enum-like Lua
 fields, handler maps, visitor tables, rule tables, or `if/elseif` chains to pick
 behavior for ASDL variants. Add or call a method on the ASDL union leaf instead.
 
-Missing behavior must be visible as a missing leaf method, a typed reject, or a
-typed diagnostic. Do not add compatibility shims, fake visitors, rule runners,
-or fallback dispatch just to preserve old behavior during the rewrite.
+Missing behavior must be visible as a missing leaf method, missing named exit method,
+typed rejection, or typed diagnostic. Do not add compatibility shims, fake
+visitors, rule runners, or fallback dispatch to preserve old behavior.
 
 ### Terra ASDL Pattern
 
@@ -189,7 +203,6 @@ fusion is a typed decision over the exact emitted shape plus declared
 memory/noalias/bounds facts, with contracts recomputed after fusion. The
 The binary copy-patch / binary-bank backend is deleted and must not be reopened.
 Only the stencil/CMat vocabulary survives as the deterministic emitted-C shape
-the stencil/CMat vocabulary survives as the deterministic emitted-C shape
 contract (`schema/stencil.lua` -> CMat fragment path -> `emit_c`). The LuaJIT
 bytecode path (`opts.luajit`, `opts.bytecode`, `compile_luajit`) is removed: only
 emitted C cooked with GCC remains, plus the explicit LuaJIT FFI function-pointer
@@ -344,13 +357,15 @@ lua/lalin/impl/                   compiler phase and backend methods
 lua/lalin/impl/compiler_api.lua   public compiler API implementation
 lua/lalin/impl/lower_emit_c/      CMat environment, fragment, and assembly
 lua/lalin/impl/cemit_emit.lua     CBackendUnit C emission
-lua/lalin/impl/cemit_emit.lua     CBackendUnit C emission
 ```
 
 ## Key Docs
 
 ```text
 docs/ASDL_GUIDE.md          binding ASDL modeling doctrine
+docs/LUA_OBJECT_REGIONS.md  bootstrap Lua direct-continuation specification
+docs/COMPILER_OPERATION_LIFETIME_MODEL.md
+                            compiler operation lifetime and direct-CPS model
 docs/LLBL_GUIDE.md          LLBL workbench, regions, and bracket evaluation
 docs/LANGUAGE_REFERENCE.md public Lalin language reference
 docs/ARCHITECTURE.md       active compiler and backend architecture (incl.
@@ -359,6 +374,7 @@ docs/CONVENTIONS.md        naming, style, and repository conventions
 docs/DESIGN_BIBLE.md       long-form design philosophy
 docs/OBJECT_REGION_PROJECTION_PATTERN.md
                            general object-machine/region/projection pattern
+```
 
 ## Non-Negotiable Rules
 

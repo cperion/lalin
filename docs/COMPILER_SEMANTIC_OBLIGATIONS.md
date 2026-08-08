@@ -1,7 +1,7 @@
 # Compiler Semantic Obligations
 
 Status: requirements ledger for ground-up ASDL modeling; conservative-versus-terminal outcome
-classification refined by `docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md`.
+classification refined by `docs/COMPILER_OPERATION_LIFETIME_MODEL.md`.
 
 This document records what the compiler must mean and preserve. It deliberately does
 not prescribe replacement ASDL products, machine names, phase boundaries, or migration
@@ -1704,12 +1704,12 @@ Step 1 resolved the intended obligation where active architecture and older pros
    language/compiler obligation.
 4. LLBL owns generic HostEval delivery and role algebra; Lalin owns adaptation into Lalin
    semantic roles. Older LLBL migration prose describing a dual HostEscape path is stale.
-5. Architecture references to `compiler_schema_c_backend.lua` and a nonexistent
-   `test_schema_ownership_inventory.lua` are stale. The active backend entry is
-   `lua/lalin/compiler_c_backend.lua`; the ownership guard still needs to be built.
+5. The prior backend-path conflict is resolved: architecture names
+   `lua/lalin/compiler_c_backend.lua`. The planned ownership guard
+   `tests/schema/test_schema_ownership_inventory.lua` is not yet built.
 
-These documentation defects are follow-up edits. They do not become replacement-schema
-requirements by accident.
+The remaining implementation gaps and stale external statements above are follow-up
+work. They do not become replacement-schema requirements by accident.
 
 ## Step 1 Exit Verdict
 

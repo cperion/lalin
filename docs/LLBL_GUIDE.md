@@ -655,12 +655,12 @@ Role algebra decides whether the result is inserted or spliced.
 
 ### Incentives
 
-The current implementation splits bracket behavior across unrelated mechanisms.
-Parsed `.lln` brackets are Lalin-local `HostEscape` nodes evaluated by
-`lua/lalin/syntax/ast.lua`, then interpreted ad hoc by separate lowering paths
-in `syntax/init.lua` and `syntax/to_tree.lua`. Lua DSL brackets are Lua
-`__index` events classified as `index:type`, `index:value`, etc. before role
-normalization, which prevents values such as declarations from adapting to type
+The current implementation routes parsed `.lln` brackets through LLBL HostEval and
+role adaptation. `lua/lalin/syntax/init.lua` is the facade, and
+`lua/lalin/syntax/document.lua` owns parsed-ASDL-to-Tree lowering through concrete leaf
+methods. The former separate `syntax/to_tree.lua` path no longer exists. Lua DSL
+brackets remain Lua `__index` events that LLBL role algebra adapts before Lalin
+consumes the result.
 roles.
 
 Fragment/spread behavior is duplicated between generic LLBL and Lalin-specific
@@ -797,10 +797,9 @@ they appear:
 - declaration collection accepts parsed declarations and arrays of parsed
   declarations, but not top-level host escapes/fragments
 
-There is also an inconsistency: `lua/lalin/syntax/init.lua` has
-declaration-to-type projection for parsed declarations such as `DeclStruct`,
-`DeclUnion`, and `DeclHandle`, but `lua/lalin/syntax/to_tree.lua` does not
-consistently expose the same projection.
+The former declaration-to-type projection split between `syntax/init.lua` and
+`syntax/to_tree.lua` is removed. Any declaration-to-type projection added now must be
+one role-owned behavior shared by parsed and builder entry paths.
 
 ### First Principles
 

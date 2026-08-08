@@ -1,6 +1,9 @@
 # Compiler Behavior-Coverage Model
 
-Status: **Step 8 closed — conceptual coverage before ASDL transcription or implementation**
+Status: **pre-region Step-8 evidence only**. `docs/COMPILER_OPERATION_LIFETIME_MODEL.md`
+and `docs/COMPILER_ASDL_SCHEMA.md` supersede all result constructors, signatures, and
+`continue_after_*` ownership here. The B01–B61 behavior, reason, regression, and
+O/A/B/C/S/F coverage remains binding only where the current documents retain it.
 
 This document is downstream of:
 
@@ -13,7 +16,8 @@ This document is downstream of:
 - `docs/COMPILER_RECEIVER_OPERATION_RESULT_MODEL.md`;
 - `docs/ASDL_GUIDE.md`.
 
-Its closed target transcription is `docs/COMPILER_ASDL_SCHEMA.md`.
+Its current Step-9R transcription is `docs/COMPILER_ASDL_SCHEMA.md`; the exact
+operation form is closed by `docs/COMPILER_OPERATION_LIFETIME_MODEL.md`.
 
 It closes the missing behavior proof. Names here are conceptual ASDL constructor and method contracts,
 not compatibility aliases, file layouts, constructor field orders, or implementation instructions.
@@ -42,21 +46,23 @@ a child's semantics.
 |---|---|---|
 | P | publication | publishes a spine/facet/entity/gate/artifact/value/resource, then returns to exact sequencing |
 | C | conservative outcome | either publishes a typed conservative entry or explicitly produces no sparse entry; continues weakened |
-| D | immediate decision | transient one-consumer result constructs exactly one next request; publishes no semantic fact |
+| D | immediate decision | direct continuation exit selects exactly one next request; publishes no semantic fact |
 | R | terminal semantic rejection | preserves typed cause/origin and ends the semantic transaction |
 | U | optional realization outcome | returns typed no-plan/unrealizable evidence to A29; baseline remains valid |
 | H | host failure | routes only through A33/Host API; never becomes semantic rejection |
 
-`AttemptClosedForm`, `AttemptFused`, no-capture unchanged, and A28 candidate records are D, not fake
-facts. A21/A22 unavailable outcomes are C with `entry = no`; A25–A30 optional failures are U. LLBL
+`AttemptClosedForm`, `AttemptFused`, and no-capture unchanged are D continuations.
+Stored A28 candidate records remain durable data. A21/A22 unavailable outcomes are C
+with `entry = no`; A25–A30 optional failures are U. LLBL
 delivery/adaptation failures are A01 R leaves with typed foreign causes. A33 is the sole H family.
 
 ### 1.3 Required methods
 
-Every operation-specific result sum has a correspondingly named `continue_after_<operation>` method on
-all concrete result leaves. P/C/D/U leaves invoke or construct the exact next request named in §§3–6;
-R leaves return the typed transaction rejection; H leaves return the typed host outcome. Reason leaves
-own `render_reason`. Coordinators call these methods and never classify results.
+B01–B56 immediate alternatives are direct outputs or stable direct continuation
+calls under the operation-lifetime model. No transaction-state family owns them.
+B57/B58 retain sealed result sums; B59/B60 are direct; B61 returns a sealed host
+failure. Reason leaves retain `render_reason`. Coordinators sequence and never
+classify semantic values.
 
 Every operation that crosses a generation or provenance boundary also admits an authority-specific
 `GenerationMismatch` or `ProvenanceMismatch` R reason when expected and actual allocations differ. Those
@@ -214,7 +220,7 @@ unproven or absent; this is recorded in regressions, not erased from the model.
 | ID | Receiver/request and method | Result constructors and entry policy | R reason constructors | cont |
 |---|---|---|---|---|
 | B22 | accepted S1 plus C03/C13–C18 and admitted C19 `construct_monomorphic_code` | `CodeConstructed[P]`; `CodeConstructionRejected[R]` | `UnsupportedCheckedConstruct`; `MissingRepresentation`; `IllegalInitializer`; `IllegalRelocation`; `UnboundLoweredValue`; `MalformedCodeBody`; `UnrepresentableCodeType`; `A18GenerationMismatch` | A19 or terminal |
-| B23 | S2 plus C21–C25 `validate_code_structure` | `CodeAccepted[P]`; `CodeStructureRejected[R]` | `DuplicateCodeOccurrence`; `MissingCodeReference`; `CodeSignatureMismatch`; `UndefinedCodeValue`; `InvalidBlockTarget`; `InvalidTransferArguments`; `MalformedMemoryOperation`; `IllegalCodeInitializer`; `InvalidCodeRelocation`; `UnterminatedCodeBlock` | accepted leaf invokes A20; rejection terminal |
+| B23 | S2 plus C21–C25 `validate_code_structure` | `CodeAccepted[P]`; `CodeStructureRejected[R]` | `DuplicateCodeOccurrence`; `MissingCodeReference`; `CodeSignatureMismatch`; `UndefinedCodeValue`; `InvalidBlockTarget`; `InvalidTransferArguments`; `MalformedMemoryOperation`; `IllegalCodeInitializer`; `InvalidCodeRelocation`; `UnterminatedCodeBlock`; `A19GenerationMismatch` | accepted continuation invokes A20; rejection terminal |
 | B24 | `CodeAccepted.derive_control_topology` plus C24/C25 contributions | direct `ControlTopology[P]`; no result sum | none—impossibility is B23 defect | analysis sequencing |
 | B25 | `LoopMeaningRequest.derive_loop_meaning` | `CountedRangeLoop[P entry]`; `CountedGridLoop[P entry]`; `CountedTiledLoop[P entry]`; `CountedWindowLoop[P entry]`; `CountedTraversalLoop[P entry]`; `UncountedLoop[C entry]`; `FlowMeaningRejected[R]` | C reason constructors: `NonCountedLoop`; `MissingLatch`; `MissingHeader`; `MissingCondition`; `AmbiguousInduction`; `UnsupportedRecurrence`; `ContradictoryDirection`; `InvalidDomain`; `UnprovableTrip`; R: `A21FlowMismatch` | F19 fan-out or terminal |
 | B26 | `InductionRelationRequest.derive_induction_relations` | `InductionWithTrip[P entry]`; `InductionWithoutTrip[P entry]`; `InductionRelationUnavailable[C no-entry]`; `InductionRejected[R]` | C: `NonInductionValue`; `AmbiguousInductionRelation`; `UnsupportedInductionRecurrence`; `MissingEdgeWiring`; R: `A21InductionMismatch` | F20 fan-out or terminal |
