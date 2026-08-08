@@ -477,6 +477,7 @@ The law is:
 
 > **Spine owns shared structure. Facet owns one concern's meaning. Machine owns the facet.**
 
+
 ---
 
 # 6. Worlds and projections

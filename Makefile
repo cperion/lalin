@@ -13,7 +13,7 @@ LALIN_BC_BANK_H = $(LALIN_BIN_DIR)/lalin_embedded_bc_bank.h
 LALIN_BIN_OBJ_DIR = $(LALIN_BIN_DIR)/obj
 MAXPROCS ?= $(shell n=$$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1); if [ "$$n" -gt 0 ] 2>/dev/null; then echo "$$n"; else echo 1; fi)
 
-.PHONY: all luajit lalin-bin clean bench libtcc gcc
+.PHONY: all luajit lalin-bin clean bench libtcc gcc test-next
 
 all: luajit
 luajit: $(LUAJIT)/libluajit.a
@@ -75,6 +75,11 @@ clean:
 	$(MAKE) -C $(LUAJIT) clean
 	rm -f $(LUAJIT)/libluajit-5.1.a
 	rm -rf $(LALIN_BIN_DIR) $(LALIN_BIN)
+
+test-next:
+	LUA_PATH='./next/lua/?.lua;./next/lua/?/init.lua;./next/tests/?.lua;./next/tests/?/init.lua' \
+	  luajit next/tests/run.lua
+	git diff --check -- next Makefile
 
 bench:
 	luajit benchmarks/bench_json_stack_decode.lua

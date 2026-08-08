@@ -1,0 +1,4 @@
+-- Compiled with official Lua 5.5.0 luac for the opcode_closure_*_fixture files.
+-- clo0: return function() local function g(x) return x + 1 end; return g end
+-- clo1: return function(seed) local offset = seed
+--            local function g(x) return x + offset end; return g end

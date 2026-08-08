@@ -475,6 +475,7 @@ typed module
 
 Each product is a projection with an explicit owner and invalidation rule.
 
+
 ### Parser and indexer
 
 ```text

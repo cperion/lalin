@@ -1,7 +1,7 @@
 # ADT arena vertical-slice experiment
 
 This is an intentionally hardcoded M1 experiment for the architecture in
-[`ADT_ARCHITECTURE.md`](../ADT_ARCHITECTURE.md). It tests whether the
+[`ADT_ARCHITECTURE.md`](../../docs/archive/adt/ADT_ARCHITECTURE.md). It tests whether the
 runtime representation has useful LuaJIT trace and memory behavior before any
 schema dialect, layout IR, or generator is built.
 

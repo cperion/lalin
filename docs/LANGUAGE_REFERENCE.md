@@ -6,8 +6,8 @@ typed ASDL facts into the semantic `emit_c` C backend, and uses that emitted C a
 both the main GCC-backed JIT-like execution path and the AOT artifact path.
 Native C-stencil copy-patch is retired and deleted; only the stencil/CMat
 vocabulary survives as the deterministic emitted-C shape contract. LuaJIT
-bytecode emission is removed: the compiled artifact is always emitted C, cooked
-with GCC for local execution or handed to a user-owned AOT build.
+bytecode is an explicit non-main mode selected by API option; it is not the
+default native path and is not an implicit fallback.
 
 This reference treats the parsed syntax as the standard source surface. The
 Lua/LLBL DSL is documented in one chapter near the end because it is still the
@@ -241,6 +241,7 @@ The boundary rule is strict:
 type meta-property query = staged synthesis
 compiled Lalin method call = static call/region/protocol artifact
 ```
+
 
 ### Document Host Environment
 
@@ -2303,8 +2304,9 @@ The emitted C remains available for AOT builds through `emit_c` and `compile_c`.
 The user/build system owns AOT compiler flags, linker inputs, and target ABI
 choices.
 
-Explicit LuaJIT bytecode mode is removed. The public surface exposes only the
-emitted-C path: `compile_c_gcc` cooks emitted C with GCC for local execution,
+Explicit LuaJIT bytecode mode remains available for non-native/local use through
+`compile_luajit` or `compile(..., { bytecode = true })`. The main native path is
+still emitted C: `compile_c_gcc` cooks emitted C with GCC for local execution,
 and `emit_c` / `compile_c` produce the C artifact for AOT builds.
 ### Retired Native Template Banks
 
@@ -2328,7 +2330,8 @@ local artifact = lalin.emit_c(decls, {
 The C path lowers through the semantic `CBackendUnit` pipeline and emits the
 selected program as ordinary C translation units. The user then compiles that C
 with `gcc` or another C toolchain for AOT, or lets `compile_c_gcc` cook it into a
-shared object for JIT-like local execution. There is no LuaJIT bytecode path.
+shared object for JIT-like local execution. LuaJIT bytecode is a separate explicit
+mode, not the main native backend.
 
 ---
 

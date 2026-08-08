@@ -1,0 +1,10 @@
+-- Compiled with official Lua 5.5.0 luac (Lua 5.5.0) for
+-- opcode_call_callee_fixture_source.lua: ADD + MMBIN + RETURN1 + RETURN0.
+local hex = table.concat({
+    "1b4c7561550019930d0a1a0a0488a9ffff04785634120888a9ffffffffffff0800000000002877c00100000001020400",
+    "530000004f0000004600020146000101000101000001010302000304220100012e000106480102004701010000000011",
+    "402f746d702f63616c6c65652e6c75610004010000010002026100000402620000040000010401020000000001055f45",
+    "4e5600",
+})
+
+return (hex:gsub("..", function(pair) return string.char(assert(tonumber(pair, 16))) end))

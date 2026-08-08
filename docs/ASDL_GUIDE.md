@@ -375,6 +375,7 @@ Use this vocabulary when deciding what schema shape is missing:
 - Facet: one semantic plane aligned to a spine, such as type, layout, control,
   lowering, memory, schedule, or backend facts.
 
+
 ## Terra Runtime Pattern
 
 Lalin follows the useful Terra ASDL runtime mechanics:

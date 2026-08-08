@@ -1,0 +1,31 @@
+local Compiler = require("lalin.compiler.schema")
+local spec = require("support.spec")
+local fixtures = require("compiler.support.fixtures")
+local tempdir = require("compiler.support.tempdir")
+local generation = require("compiler.support.generation")
+
+local describe, it = spec.describe, spec.it
+
+describe("compiler harness helpers", function()
+  it("construct fixture values as real ASDL values", function()
+    local origin = fixtures.origin("@helpers.lln", "fn add", 0, 6)
+    spec.assert_truthy(Compiler.Source.Origin:isclassof(origin), "origin is Source.Origin")
+    spec.assert_truthy(Compiler.Types.Type:isclassof(fixtures.i32()), "i32 is Types.Type")
+    spec.assert_truthy(Compiler.Types.Type:isclassof(fixtures.void()), "void is Types.Type")
+    spec.assert_truthy(Compiler.Source.Symbol:isclassof(fixtures.symbol("helper")), "symbol is Source.Symbol")
+  end)
+
+  it("creates and removes temporary directories for cook tests", function()
+    local dir = tempdir.create("lalin-next-helper")
+    local path = tempdir.write(dir, "sample.txt", "hello")
+    spec.assert_equal(tempdir.read(path), "hello", "tempdir readback")
+    tempdir.remove(dir)
+    spec.assert_nil(io.open(path, "r"), "tempdir removed")
+  end)
+
+  it("asserts generation equality through a helper", function()
+    local left = fixtures.generation("same")
+    local right = fixtures.generation("same")
+    generation.assert_equal(spec, left, right, "same generation")
+  end)
+end)

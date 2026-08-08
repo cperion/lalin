@@ -11,7 +11,7 @@ module Source {
   ByteOffset = (number value) unique
   ByteLength = (number value) unique
   Range = (ByteOffset start, ByteLength length) unique
-  File = (Path path, string bytes)
+  File = (Path path, string bytes) unique
 
   Origin = Written(File file, Range range)
          | Built(string source, Ordinal ordinal)
@@ -101,7 +101,6 @@ module Source {
            | ClosureType(TypeForm* parameters, TypeForm result)
            | NamedType(TypeUse name)
            | ImportedCType(string spelling)
-           | ImportedFunctionPointerType(string spelling, TypeForm* parameters, TypeForm result)
              attributes (Origin origin)
 
   UnaryOperator = Negate() unique
@@ -274,12 +273,10 @@ module Source {
             | SwitchStatement(Expression selector, StatementSwitchArm* arms, Statement* default_body)
             | VariantSwitchStatement(Expression selector, VariantSwitchArm* arms, Statement* default_body)
             | LoopStatement(LoopDomain domain, Statement* body)
-            | FoldStatement(Binding accumulator, TypeForm type, Expression initial, BuiltinReducer reducer, Expression step)
-            | ScanStatement(Binding accumulator, TypeForm type, Expression initial, BuiltinReducer reducer, ScanMode mode, Expression axis, Expression step, Place destination)
+            | FoldStatement(Binding accumulator, TypeForm type, Expression initial, BuiltinReducer reducer, LoopDomain domain, Binding element, Expression step)
+            | ScanStatement(Binding accumulator, TypeForm type, Expression initial, BuiltinReducer reducer, ScanMode mode, LoopDomain domain, Binding element, Expression step, Place destination)
             | ReturnVoidStatement()
             | ReturnValueStatement(Expression value)
-            | YieldVoidStatement()
-            | YieldValueStatement(Expression value)
             | JumpStatement(ControlApplication target)
             | ConditionalJumpStatement(Expression condition, ControlApplication true_target, ControlApplication false_target)
             | ContractStatement(Contract* contracts)
@@ -415,7 +412,6 @@ module Types {
        | Union(Source.UnionDeclaration declaration) unique
        | Handle(Source.HandleDeclaration declaration) unique
        | ImportedC(string spelling) unique
-       | ImportedFunctionPointer(string spelling, Type* parameters, Type result) unique
 
   Constant = IntegerConstant(string raw, string value, Type type) unique
            | FloatConstant(string raw, string value, Type type) unique
@@ -442,6 +438,7 @@ module Types {
 
   Passing = Direct(Type type)
           | IndirectParameter(Type type, number alignment)
+          | SretResult(Type type, number alignment)
 
   AbiResult = VoidResult() unique
             | DirectResult(Type type)
@@ -498,8 +495,9 @@ module Semantic {
                   | ExternReference(Extern extern)
                   | StaticReference(Static static)
                   | ConstantReference(ConstantDeclaration constant)
-                  | StringReference(Source.StringLiteral literal)
+                  | DataReference(Data data)
 
+  Data = (string bytes) unique
   Reducer = (Source.BuiltinReducer reducer, ScalarMeaning meaning)
 
   StaticInitializer = StaticZeroInitializer() unique
@@ -542,8 +540,7 @@ module Semantic {
              | BinaryExpression(Source.BinaryOperator operator, Expression left, Expression right, ScalarMeaning meaning)
              | CompareExpression(Source.ComparisonOperator operator, Expression left, Expression right)
              | LogicExpression(Source.LogicOperator operator, Expression left, Expression right)
-             | CastExpression(Types.Type target, Expression value, ScalarMeaning meaning)
-             | MachineCastExpression(MachineCast operation, Types.Type target, Expression value, ScalarMeaning meaning)
+             | CastExpression(MachineCast operation, Types.Type target, Expression value, ScalarMeaning meaning)
              | IntrinsicExpression(Source.Intrinsic intrinsic, Expression* arguments, ScalarMeaning meaning)
              | ReferenceExpression(ReferenceTarget target)
              | AddressOfExpression(Place place)
@@ -560,7 +557,7 @@ module Semantic {
              | AggregateExpression(AggregateField* fields)
              | ArrayExpression(Expression* elements)
              | SelectExpression(Expression condition, Expression true_value, Expression false_value)
-             | ClosureExpression(Source.ClosureExpression source, Parameter* parameters, Types.Type result, Capture* captures, Body body)
+             | ClosureExpression(Parameter* parameters, Types.Type result, Capture* captures, Body body)
              | ViewExpression(Expression data, Expression length, Expression stride)
              | ConstructorExpression(Variant variant, Expression* arguments)
              | NullExpression()
@@ -571,7 +568,7 @@ module Semantic {
              | FromReprExpression(Types.Type handle_type, Expression raw, OwnershipAction action)
                attributes (Source.Expression source, Types.Type type)
 
-  ScalarMeaning = (Types.Type* operands, Types.Type result, Source.Overflow overflow, Source.FloatMode float_mode, Source.TrapMode trap)
+  ScalarMeaning = (Source.Overflow overflow, Source.FloatMode float_mode, Source.TrapMode trap)
   AggregateField = (Field field, Expression value)
 
   PlaceAccess = Readable() unique
@@ -648,8 +645,6 @@ module Semantic {
              | VariantSwitch(Expression selector, VariantSwitchArm* arms, BlockLabel default_target, Argument* default_arguments)
              | ReturnVoid()
              | ReturnValue(Argument value)
-             | YieldVoid()
-             | YieldValue(Argument value)
              | RegionCall(Region region, Argument* arguments, ContinuationRoute* routes)
              | Trap()
              | Unreachable()
@@ -677,7 +672,7 @@ module Code {
               | ExpressionLocal(Semantic.Expression expression)
               | GeneratedLocal(Source.Origin origin)
 
-  DataSource = StringData(Source.StringLiteral literal)
+  DataSource = StringData(Semantic.Data data)
              | ConstantData(Semantic.ConstantDeclaration declaration)
              | StaticData(Semantic.Static declaration)
              | GeneratedData(Source.Origin origin)
@@ -832,10 +827,12 @@ module Control {
   TiledAxisTrip = (TiledAxis axis, TripForm trip)
   WindowAxisTrip = (WindowAxis axis, TripForm trip)
 
-  LoopFlow = RangeLoop(Loop loop, LoopAxis axis, Bound bound, Direction direction, TripForm trip)
-           | GridLoop(Loop loop, GridAxisTrip* axes)
-           | TiledLoop(Loop loop, TiledAxisTrip* axes)
-           | WindowLoop(Loop loop, WindowAxisTrip* axes)
+  CountedFlow = RangeFlow(Loop loop, LoopAxis axis, Bound bound, Direction direction, TripForm trip)
+              | GridFlow(Loop loop, GridAxisTrip* axes)
+              | TiledFlow(Loop loop, TiledAxisTrip* axes)
+              | WindowFlow(Loop loop, WindowAxisTrip* axes)
+
+  LoopFlow = CountedLoop(CountedFlow flow)
            | TraversalLoop(Loop loop, Code.Value source)
            | UncountedLoop(Loop loop, UncountedReason reason)
 
@@ -850,10 +847,8 @@ module Control {
                   | UnprovableTrip() unique
 
 
-  Induction = PrimaryInduction(Loop loop, Code.Value value, LoopFlow flow)
-            | SecondaryInduction(Loop loop, Code.Value value, Code.Value initial, Code.Value step, Direction direction, IntegerRange range, LoopFlow flow)
-            | RecurrenceInduction(Loop loop, Code.Value value, Code.Value initial, Code.Value step, Direction direction, IntegerRange range, LoopFlow flow)
-            | DerivedInduction(Loop loop, Code.Value value, Code.Value initial, Code.Value step, Direction direction, IntegerRange range, LoopFlow flow)
+  Induction = AffineInduction(Loop loop, Code.Value value, CountedFlow flow, AffineExpression expression)
+            | RecurrenceInduction(Loop loop, Code.Value value, Code.Value initial, Code.Value step, IntegerRange range, CountedFlow flow)
 
   ValueFact = ConstantRange(Code.Value value, IntegerRange range)
             | CopyOf(Code.Value value, Code.Value canonical)
@@ -867,19 +862,18 @@ module Control {
              | FlowValueProof(LoopFlow flow)
              | InductionValueProof(Induction induction)
 
-  ReducerIdentity = (Types.Constant identity)
+  ReducerIdentity = IdentityPresent(Types.Constant identity)
+                  | IdentityAbsent() unique
 
   ReductionAlgebra = Reduction(Loop loop, Code.Value value, Semantic.Reducer reducer, ReducerIdentity identity, AssociativityEvidence associativity)
                    | Scan(Loop loop, Code.Value value, Semantic.Reducer reducer, ReducerIdentity identity, AssociativityEvidence associativity, Source.ScanMode mode)
 
-  LoopArithmetic = Recurrence(Loop loop, Code.Value value, AffineExpression expression)
-                 | ClosedForm(Loop loop, Code.Value value, AffineExpression expression)
-                 | AffineLoopValue(Loop loop, Code.Value value, AffineExpression expression)
+  LoopArithmetic = AffineLoopValue(Loop loop, Code.Value value, AffineExpression expression)
 
   Associativity = ExactAssociativity() unique
                 | ReassociationPermitted() unique
 
-  AssociativityEvidence = (Semantic.Reducer reducer, Associativity associativity)
+  AssociativityEvidence = (Associativity associativity)
 
 
 }
@@ -940,6 +934,8 @@ module Memory {
                    | ValueMovement(Control.ValueFact fact)
 
   RelationEvidence = DeclaredDisjoint(Semantic.DisjointContract contract)
+                   | DeclaredNoalias(Semantic.PairNoaliasContract contract)
+                   | DeclaredUnaryNoalias(Semantic.UnaryNoaliasContract contract)
                    | SharedStorageRoot(StorageRoot root)
                    | AccessRelationEvidence(Access access)
                    | FlowRelationEvidence(Control.LoopFlow flow)
@@ -966,16 +962,17 @@ module Memory {
          | ReadModifyWriteAccess(Code.Instruction instruction, Object object, AccessIndex index, number width, Bounds bounds, Trap trap, Alignment alignment, Movement movement, Source.Volatility volatility, Code.Ordinal ordinal, Source.Origin origin)
          | AddressAccess(Code.Instruction instruction, Object object, AccessIndex index, number width, Bounds bounds, Trap trap, Alignment alignment, Movement movement, Source.Volatility volatility, Code.Ordinal ordinal, Source.Origin origin)
 
-  Relation = SameStore(Object left, Object right, RelationEvidence proof)
-           | Overlap(Object left, Object right, RelationEvidence proof)
-           | Disjoint(Object left, Object right, RelationEvidence proof)
-           | ExactNoalias(Object left, Object right)
-           | ProvenAlias(Object left, Object right, RelationEvidence proof)
-           | Dependence(Access source, Access sink, RelationEvidence proof, Control.AffineExpression distance)
-           | LoopDependence(Control.Loop loop, Access source, Access sink, RelationEvidence proof, Control.AffineExpression distance)
-           | MayAlias(Object left, Object right)
-           | Incomparable(Object left, Object right)
-           | UnknownDependence(Access source, Access sink)
+  ObjectRelation = SameStore(Object left, Object right, RelationEvidence proof)
+                 | Overlap(Object left, Object right, RelationEvidence proof)
+                 | Disjoint(Object left, Object right, RelationEvidence proof)
+                 | ExactNoalias(Object left, Object right, RelationEvidence proof)
+                 | ProvenAlias(Object left, Object right, RelationEvidence proof)
+                 | MayAlias(Object left, Object right)
+                 | Incomparable(Object left, Object right)
+
+  Dependence = AccessDependence(Access source, Access sink, RelationEvidence proof, Control.AffineExpression distance)
+             | LoopDependence(Control.Loop loop, Access source, Access sink, RelationEvidence proof, Control.AffineExpression distance)
+             | UnknownDependence(Access source, Access sink)
 
   ContractSubject = ContractObject(Object object)
                   | ContractAccess(Access access)
@@ -984,7 +981,7 @@ module Memory {
   ContractRealization = (Semantic.Contract contract, ContractSubject subject, Source.Origin origin)
   CallRequireRealization = (Code.CallInstruction call, Semantic.Contract contract, ContractSubject subject, Source.Origin origin)
 
-  Model = (Control.FunctionGraph control, Object* objects, Access* accesses, Relation* relations, ContractRealization* contracts, CallRequireRealization* call_requires, Provenance.Generation generation)
+  Model = (Control.FunctionGraph control, Object* objects, Access* accesses, ObjectRelation* object_relations, Dependence* dependences, ContractRealization* contracts, CallRequireRealization* call_requires, Provenance.Generation generation)
 
 }
 
@@ -1008,7 +1005,7 @@ module Effect {
 
   CallableEffect = PureCallable(Code.Function fn)
                  | EffectfulCallable(Code.Function fn, Atom* effects)
-                 | ExternalCallable(Code.Extern extern, Atom* effects)
+                 | ExternalCallable(Code.Extern extern, Source.DeclaredEffectAtom* effects)
   CallableEffectEntry = (Code.Callee callee, CallableEffect effect)
 
   Summary = (Control.FunctionGraph control, OperationEffect* operations, CallableEffectEntry* callables, Provenance.Generation generation)
@@ -1016,34 +1013,42 @@ module Effect {
 
 module Ownership {
   LeaseOrigin = (Memory.Object object, Semantic.Binding source)
-  State = LeaseLive(Memory.Object object, Source.Origin use)
+  State = LeaseLive(Memory.Object object, LeaseOrigin origin, Source.Origin use)
         | Invalidated(Memory.Object object, Effect.OperationEffect cause)
         | Discharged(Memory.Object object, Source.Origin cause)
         | Noescape(Memory.Object object, Code.Instruction call, Effect.CallableEffect effect)
 
-  Model = (Memory.Model memory, LeaseOrigin* origins, State* states, Provenance.Generation generation)
+  Model = (Memory.Model memory, State* states, Provenance.Generation generation)
+}
+
+module Analysis {
+  FunctionFacts = (Control.FunctionGraph graph, Memory.Model memory, Effect.Summary effects, Ownership.Model ownership)
+  Module = (Control.Graph control, FunctionFacts* functions, Provenance.Generation generation)
 }
 
 module Kernel {
 
-  LaneSource = InductionLane(Control.Induction induction)
-             | MemoryLane(Memory.Access access)
-             | ResultLane(Code.Value value)
+  InputSource = InductionInput(Control.Induction induction)
+              | AccessInput(Memory.Access access)
+              | ResultInput(Code.Value value)
 
-  Lane = CounterLane(LaneSource source, Control.AffineExpression position, Code.Ordinal ordinal)
-       | InputLane(LaneSource source, Control.AffineExpression position, Code.Ordinal ordinal)
-       | OutputLane(LaneSource source, Control.AffineExpression position, Code.Ordinal ordinal)
-       | AccumulatorLane(LaneSource source, Control.AffineExpression position, Code.Ordinal ordinal)
+  Lane = CounterLane(Control.Induction induction, Control.AffineExpression position, Code.Ordinal ordinal)
+       | InputLane(InputSource source, Control.AffineExpression position, Code.Ordinal ordinal)
+       | OutputLane(Memory.Access destination, Control.AffineExpression position, Code.Ordinal ordinal)
+       | AccumulatorLane(Control.ReductionAlgebra algebra, Code.Ordinal ordinal)
 
   ResultTarget = RegisterTarget() unique
                | StoredTarget(Memory.Access destination)
 
-  Result = (Code.Value source, ResultTarget target, Code.Ordinal ordinal)
+  ResultCadence = OrdinaryResult() unique
+                | ReductionResult(Control.ReductionAlgebra algebra)
+
+  Result = (Code.Value source, ResultTarget target, ResultCadence cadence, Code.Ordinal ordinal)
 
 
 
 
-  Kernel = (Control.Loop source, Control.LoopFlow shape, Control.FunctionGraph graph, Memory.Model memory, Effect.Summary effects, Ownership.Model ownership, Lane* lanes, Result* results, Provenance.Generation generation)
+  Kernel = (Control.Loop source, Control.CountedFlow shape, Control.FunctionGraph graph, Memory.Model memory, Effect.Summary effects, Ownership.Model ownership, Lane* lanes, Result* results, Provenance.Generation generation)
 
 
 
@@ -1064,7 +1069,7 @@ module Kernel {
 }
 
 module CMat {
-  Axis = (Kernel.Lane source, Code.Ordinal ordinal)
+  Axis = (Kernel.CounterLane source, Code.Ordinal ordinal)
   StreamInput = LaneInput(Kernel.Lane lane)
               | ValueInput(StreamSource source)
   Stream = (Code.Instruction operation, StreamInput* inputs, Code.Ordinal ordinal)
@@ -1074,26 +1079,25 @@ module CMat {
                | AccessValue(Access access)
 
   Access = LoadAccess(Memory.Access source, Code.Ordinal ordinal)
-         | StoreAccess(Memory.Access source, Code.Ordinal ordinal)
+         | StoreAccess(Memory.Access source, StreamSource value, Code.Ordinal ordinal)
          | WindowAccess(Memory.Access source, Code.Ordinal ordinal)
 
-  Sink = (Kernel.Result source, StreamSource producer, Stream* inputs, Code.Ordinal ordinal)
+  Sink = (Kernel.Result source, StreamSource producer, Code.Ordinal ordinal)
 
   Computation = (Kernel.Schedule schedule, Axis* axes, Stream* streams, Access* accesses, Sink* sinks, Provenance.Generation generation)
 
 
 
-  Basis = ObjectBasis(Memory.Object object)
 
   Coordinate = AbsoluteCoordinate(Control.AffineExpression byte_offset)
-             | IterationCoordinate(Basis basis, Control.AffineExpression expression)
-             | WindowCoordinate(Basis basis, number displacement, number scale, Source.WindowBoundary boundary)
-             | DynamicWindowCoordinate(Basis basis, Code.Value displacement, number scale, Source.WindowBoundary boundary)
-             | ScatterCoordinate(Basis basis, Code.Value index)
+             | IterationCoordinate(Memory.Object object, Control.AffineExpression expression)
+             | WindowCoordinate(Memory.Object object, number displacement, number scale, Source.WindowBoundary boundary)
+             | DynamicWindowCoordinate(Memory.Object object, Code.Value displacement, number scale, Source.WindowBoundary boundary)
+             | ScatterCoordinate(Memory.Object object, Code.Value index)
 
 
   PointerAccess = OrdinaryPointer() unique
-               | RestrictPointer(Memory.Relation* relations)
+               | RestrictPointer(Memory.ObjectRelation* relations)
 
 
   AddressBinding = (Code.Value source, FragmentValue value)
@@ -1123,7 +1127,7 @@ module CMat {
                      | CompareExpression(Source.ComparisonOperator operator, FragmentValue left, FragmentValue right)
                      | LogicExpression(Source.LogicOperator operator, FragmentValue left, FragmentValue right)
                      | SelectExpression(FragmentValue condition, FragmentValue true_value, FragmentValue false_value, Types.Type result)
-                     | CastExpression(Semantic.MachineCast operation, FragmentValue value, Semantic.ScalarMeaning meaning)
+                     | CastExpression(Semantic.MachineCast operation, Types.Type result, FragmentValue value, Semantic.ScalarMeaning meaning)
 
   FragmentCallTarget = HelperCall(Helper helper)
                      | FunctionCall(Code.Function fn)
@@ -1157,10 +1161,9 @@ module C {
   Type = (Types.Type semantic, Types.Layout layout)
   Signature = (Code.Signature code, Types.CallableABI abi)
 
-  FunctionPart = BaselinePart(Code.Block* blocks)
-               | FragmentPart(CMat.Fragment fragment, FragmentEntryParameter* entry_parameters)
+  FragmentPart = (CMat.Fragment fragment, FragmentEntryParameter* entry_parameters)
 
-  Function = (Code.Function source, Signature signature, Source.Symbol symbol, FunctionPart* parts)
+  Function = (Code.Function source, Signature signature, Source.Symbol symbol)
   Extern = (Code.Extern source, Signature signature, Source.Symbol symbol)
   Global = (Code.Global source, Type type, Source.Symbol symbol)
   Data = (Code.Data source, Source.Symbol symbol)
@@ -1184,6 +1187,7 @@ module C {
               | FragmentLocal(CMat.FragmentLocal local)
               | CursorLocal(CMat.Cursor cursor)
               | MemoryUseLocal(CMat.MemoryUse use)
+              | GeneratedLocal(Source.Origin origin)
 
   Label = (LabelSource source, Code.Ordinal ordinal)
   LabelSource = CodeLabel(Code.Block block)
@@ -1242,7 +1246,7 @@ module C {
             | AtomicStoreOp(Place place, Value value, Source.Volatility volatility)
             | AtomicRmwOp(Local target, Source.AtomicOperator operation, Place place, Value value, Source.Volatility volatility)
             | AtomicCompareExchangeOp(Local target, Place place, Value expected, Value replacement, Source.Volatility volatility)
-            | AtomicFenceOp()
+            | AtomicFenceOp() unique
 
 
   SwitchArm = (Code.Constant match_value, Label target, Value* arguments)
@@ -1260,24 +1264,11 @@ module C {
 
   Statement = (Operation operation, Code.Ordinal ordinal, Source.Origin origin)
   Block = (Label label, Parameter* parameters, Statement* statements, Terminator terminator)
-  FunctionDefinition = (Function fn, FunctionParameter* parameters, AbiResultSlot* abi_result_slots, Local* locals, Label entry, Block* blocks)
+  FunctionDefinition = (Function fn, FunctionParameter* parameters, AbiResultSlot result, Local* locals, Label entry, Block* blocks, FragmentPart* fragment_parts)
   HelperDefinition = (Helper helper, Parameter* parameters, Local* locals, Label entry, Block* blocks)
 
-  Initializer = ZeroInitializer() unique
-              | ConstantInitializer(Code.Constant constant)
-              | BytesInitializer(string bytes)
-              | RelocatableInitializer(Relocation* relocations)
 
-  Relocation = (RelocationSource source, RelocationTarget target, number offset)
-  RelocationSource = GlobalRelocation(Global global)
-                   | DataRelocation(Data data)
-  RelocationTarget = FunctionRelocation(Function fn)
-                   | ExternRelocation(Extern extern)
-                   | GlobalRelocationTarget(Global global)
-                   | DataRelocationTarget(Data data)
-
-  GlobalDefinition = (Global global, Initializer initializer)
-  Unit = (Code.Module code, Target.Spec target, Type* types, Signature* signatures, FunctionDefinition* functions, Extern* externs, GlobalDefinition* globals, Data* data, HelperDefinition* helpers, Relocation* relocations, Provenance.Generation generation)
+  Unit = (Code.Module code, Target.Spec target, Type* types, Signature* signatures, FunctionDefinition* functions, Extern* externs, Global* globals, Data* data, HelperDefinition* helpers, Provenance.Generation generation)
 
 
   Artifact = (Unit unit, string source, string header)
@@ -1485,7 +1476,7 @@ module Diagnostic {
                              | PointerQualificationUnavailable(CMat.Access access)
                              | AddressUnavailable(CMat.Access access)
                              | UnsupportedUseMeaning(CMat.Access access)
-                             | UnsupportedRmwAccess(CMat.Access access)
+                             | UnsupportedRmwAccess(Memory.Access access)
                              | WindowBoundaryUnavailable(CMat.Access access)
                              | CursorUnavailable(CMat.MemoryUse use)
 
@@ -1524,14 +1515,13 @@ module Diagnostic {
            | MissingSymbolPolicy(Types.CallableABI abi)
            | InvalidVisibility(Source.Origin origin)
            | AbiTargetMismatch(Target.Spec expected, Target.Spec actual)
-           | MissingAbiResultSlot(Types.CallableABI abi)
 
   CEmissionError = InvalidCReference(Source.Origin origin)
                  | InvalidCType(C.Type type)
                  | InvalidCControl(C.Block block)
                  | InvalidCAbiParameter(C.Parameter parameter)
                  | InconsistentRestrictQualification(C.Operation operation)
-                 | OverlappingFunctionParts(C.Function fn)
+                 | OverlappingFunctionCoverage(C.Function fn)
                  | IncompleteRestrictQualification(C.Parameter parameter)
                  | InvalidCMemoryAccess(C.Operation operation)
                  | UnsupportedCEntity(Source.Origin origin)

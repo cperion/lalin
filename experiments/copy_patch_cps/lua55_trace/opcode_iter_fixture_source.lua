@@ -1,0 +1,4 @@
+-- Compiled with official Lua 5.5.0 luac for the opcode_iter_*_fixture files.
+-- pairs: return function(t) local sum = 0 for k, v in pairs(t) do
+--            sum = sum + v end return sum end
+-- ipairs: same with ipairs(t).

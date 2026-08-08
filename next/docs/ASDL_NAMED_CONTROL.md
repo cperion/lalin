@@ -1,8 +1,9 @@
 # Compiler Organization with Terra ASDL and Named Control
 
-**Status:** design basis for the new compiler schema. This document defines organization
-and control style only. It does not define the new schema and does not authorize compiler
-migration or runtime implementation.
+**Status:** design basis for the frozen `next` compiler schema. This document defines
+organization and control style; the authoritative schema is
+`next/lua/lalin/compiler/schema.lua`. It does not authorize wiring `next/` into the
+active compiler.
 
 ## 1. Authorities
 
@@ -11,9 +12,10 @@ The redesign starts from two direct sources:
 1. Terra's `asdl.lua` implementation and its documented programming style.
 2. `values_machines_named_control.md` for named-exit continuation passing.
 
-The current `docs/ASDL_GUIDE.md` and the existing compiler-model documents are not
-authorities for the redesign. They can supply behavioral evidence later, but no type,
-inventory, restriction, or abstraction transfers automatically into the new schema.
+The current `docs/ASDL_GUIDE.md` is binding doctrine. The archived pre-`next`
+compiler-model documents under `docs/archive/compiler-model/` are behavioral
+evidence only; no type, inventory, restriction, or abstraction transfers
+automatically into the frozen schema.
 
 ## 2. The model
 
@@ -357,8 +359,8 @@ semantic authority for the values it carries.
 
 The new schema does not automatically retain:
 
-- the current compiler schema;
-- the current O/A/B/C/S/F inventories;
+- the active compiler schema;
+- the archived O/A/B/C/S/F inventories;
 - a fixed number of spines or facets;
 - result unions created for immediate branches;
 - compiler contexts, worlds, phase objects, or control-state values;

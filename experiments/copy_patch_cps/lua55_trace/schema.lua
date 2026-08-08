@@ -1,0 +1,1 @@
+-- Retired: trace staging uses domain-local exotype classes in model.lua.

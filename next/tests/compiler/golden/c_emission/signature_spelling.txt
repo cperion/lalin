@@ -1,0 +1,2 @@
+i32_i32_to_i32 => int32_t (*)(int32_t, int32_t)
+void_i32 => void (*)(int32_t)

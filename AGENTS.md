@@ -7,8 +7,9 @@ formatting, indexing, dialect extension, and generic regions. Lalin is the compi
 language dialect that lowers typed programs through `CBackendUnit` to `emit_c`.
 The main JIT-like path cooks emitted C with GCC and exposes function pointers
 through LuaJIT FFI; the same emitted C is the AOT path. Native C-stencil
-copy-patch / binary patchers are retired and must not be reopened; only the
-stencil/CMat vocabulary survives as the deterministic emitted-C shape contract.
+copy-patch / binary patchers are not part of the production compiler; only the
+stencil/CMat vocabulary survives there as the deterministic emitted-C shape contract.
+An isolated research exception for `experiments/copy_patch_cps/` is defined below.
 The runtime path is emitted C cooked with GCC only; LuaJIT bytecode emission is retired.
 
 Before compiler/schema work, read `docs/ASDL_GUIDE.md`. Those rules are
@@ -201,8 +202,10 @@ The active fast path is GCC over `emit_c` output: `CBackendUnit -> emit_c -> gcc
 AOT artifact path. Fused emitted C + GCC -O3 is the performance path; generic
 fusion is a typed decision over the exact emitted shape plus declared
 memory/noalias/bounds facts, with contracts recomputed after fusion. The
-The binary copy-patch / binary-bank backend is deleted and must not be reopened.
-Only the stencil/CMat vocabulary survives as the deterministic emitted-C shape
+The production binary copy-patch / binary-bank backend is deleted and must not be restored.
+The isolated `experiments/copy_patch_cps/` research path may investigate a GCC-built
+relocatable stencil bank without becoming a compiler backend. The production stencil/CMat
+vocabulary remains the deterministic emitted-C shape contract.
 contract (`schema/stencil.lua` -> CMat fragment path -> `emit_c`). The LuaJIT
 bytecode path (`opts.luajit`, `opts.bytecode`, `compile_luajit`) is removed: only
 emitted C cooked with GCC remains, plus the explicit LuaJIT FFI function-pointer
@@ -217,7 +220,8 @@ make
 `make gcc` builds the vendored GCC C compiler under `.vendor/gcc/.local` when a
 local GCC is desired for the `emit_c` cooking path. The main runtime C path uses
 GCC/cc to compile emitted C into a shared object and then `dlopen`s it.
-Native copy-patch bank generation is retired; it has no prebuild flow and must not be reopened.
+Production native copy-patch bank generation has no prebuild flow. The isolated
+`experiments/copy_patch_cps/` experiment owns any local stencil-bank build it requires.
 
 ## Authoring Lalin Code
 
@@ -287,6 +291,7 @@ local add_fn = assert(session:symbol("add", "int32_t (*)(int32_t, int32_t)"))
 print(add_fn(3, 4)) -- 7
 session:free()
 ```
+
 The compiled module is always materialized as emitted C. Compile and link it
 through GCC with `compile_c_gcc` (the example above), or emit the C text for an
 AOT build. There is no LuaJIT bytecode module path.
@@ -316,6 +321,7 @@ luajit tests/compiler_process/test_compiler_driver.lua
 Two authoring paths converge on one pipeline:
 
 ### Primary (hand-written)
+
 ```text
 .lln declaration document
   -> lalin.loadfile/loadstring
@@ -326,6 +332,7 @@ Two authoring paths converge on one pipeline:
 ```
 
 ### Builder API (macros/generators)
+
 ```text
 Lua source
   -> Lua values
@@ -335,6 +342,7 @@ Lua source
 ```
 
 ### Shared backend
+
 ```text
 LalinTree ASDL
   -> typecheck
@@ -364,15 +372,20 @@ lua/lalin/impl/cemit_emit.lua     CBackendUnit C emission
 ```text
 docs/ASDL_GUIDE.md          binding ASDL modeling doctrine
 docs/LUA_OBJECT_REGIONS.md  bootstrap Lua direct-continuation specification
-docs/COMPILER_OPERATION_LIFETIME_MODEL.md
-                            compiler operation lifetime and direct-CPS model
+next/README.md              isolated next-compiler root and validation commands
+next/lua/lalin/compiler/schema.lua
+                           frozen next compiler ASDL schema
+next/docs/SCHEMA_REVIEW_SYNTHESIS.md
+                           schema review/freeze synthesis
+next/docs/ASDL_NAMED_CONTROL.md
+                           ASDL values with named-machine control
 docs/LLBL_GUIDE.md          LLBL workbench, regions, and bracket evaluation
 docs/LANGUAGE_REFERENCE.md public Lalin language reference
-docs/ARCHITECTURE.md       active compiler and backend architecture (incl.
-                           CMat memory coordinates and schema ownership)
+docs/ARCHITECTURE.md       active compiler and backend architecture
 docs/CONVENTIONS.md        naming, style, and repository conventions
 docs/DESIGN_BIBLE.md       long-form design philosophy
 docs/OBJECT_REGION_PROJECTION_PATTERN.md
+                           general object-machine/region/projection pattern
                            general object-machine/region/projection pattern
 ```
 
@@ -412,6 +425,7 @@ We use herdr for multi-agent coordination. All agents work in the same
 workspace (`w4`) at `/home/cedric/dev/lalin`. Each agent is a pane (terminal split).
 
 ### Status
+
 ```bash
 herdr pane list --workspace w4    # all panes + agent_status (idle/working/done)
 herdr pane list --workspace w4 | python3 -c "
@@ -421,35 +435,43 @@ for p in d['result']['panes']:
 ```
 
 ### Send text to a running agent
+
 ```bash
 herdr pane send-text <pane_id> \"your message\"
 herdr pane send-keys <pane_id> Enter    # press Enter to submit
 ```
+
 `send-text` types into the terminal. `send-keys` presses keys (Enter, escape, etc.).
 Use this to send prompts to a running `pi` agent.
 
 ### Read agent output
+
 ```bash
 herdr pane read <pane_id> --source recent --lines 30        # recent scrollback
 herdr pane read <pane_id> --source visible --lines 30       # current viewport
 herdr pane read <pane_id> --source recent-unwrapped --lines 30  # joined wraps
 ```
+
 `--source recent-unwrapped` joins soft-wrapped lines, best for matching text.
 
 ### Wait for agent state
+
 ```bash
 herdr wait agent-status <pane_id> --status done --timeout 300000  # wait 5 min
 herdr wait agent-status <pane_id> --status idle --timeout 10000   # 10 sec
 ```
+
 Status values: `idle`, `working`, `blocked`, `done`, `unknown`.
 
 ### Wait for output text
+
 ```bash
 herdr wait output <pane_id> --match \"ready\" --timeout 30000
 herdr wait output <pane_id> --match \"error.*line\" --regex --timeout 60000
 ```
 
 ### Split panes (spawn teammates)
+
 ```bash
 # Split current pane right, get new pane ID
 NEW=$(herdr pane split w4:p1 --direction right --no-focus | python3 -c \"
@@ -460,25 +482,53 @@ herdr pane send-text \"$NEW\" \"pi\" && herdr pane send-keys \"$NEW\" Enter
 ```
 
 ### Run a shell command in a pane
+
 ```bash
 herdr pane run <pane_id> \"ls -la\"     # runs command, NOT pi input
 ```
+
 Note: `pane run` executes a shell command. For pi input, use `send-text` + `send-keys`.
 
 ### Tab management
+
 ```bash
 herdr tab create --workspace w4 --label \"agents\"    # new tab
 herdr tab list --workspace w4
 ```
 
 ### Close
+
 ```bash
 herdr pane close <pane_id>
 ```
 
 ### Current layout (known panes)
+
 | Pane | Who |
 |------|-----|
 | w4:p1 | Coordinator (us) |
 | w4:p7 | ASDL Guru |
 | w4:pZ | Parser rewrite agent |
+
+THIS FILE IS EDITABLE AND SHOULD BE KEPT UP TO DATE
+
+## Isolated GCC C-Stencil Copy-and-Patch Experiment
+
+`experiments/copy_patch_cps/` is permitted to investigate native copy-and-patch CPS without
+changing or being imported by the production compiler. Its initial target is x86-64 SysV.
+The experiment may:
+
+- compile a controlled C stencil vocabulary with GCC `-O3`, `-fno-pic`, and one function
+  per ELF section;
+- extract code by ELF symbol boundaries and consume explicit relocation records;
+- concatenate reached stencils and patch typed data and CPS-successor relocations;
+- allocate code RW, finish all patches, then change it to RX before execution;
+- define a small exact native register protocol and direct cyclic tail-transfer graph;
+- use Lua only for staging, ownership, extraction, linking, validation, and the terminal FFI
+  boundary; recurring stencil execution is native.
+
+The experiment must remain a narrow research implementation, not a compatibility backend,
+generic native compiler framework, or hidden restoration of a production binary-bank path.
+Its stencil vocabulary, ABI states, relocation alternatives, exits, and durable artifacts must
+be exact domain values with leaf-owned behavior. Validate emitted object assumptions and reject
+unsupported relocation or machine-code shapes visibly.

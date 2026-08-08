@@ -1,10 +1,11 @@
 # Lalin Architecture
 
-This document describes the currently executable architecture. The Step-9R target
-compiler reconstruction in `docs/COMPILER_ASDL_SCHEMA.md` and
-`docs/COMPILER_OPERATION_LIFETIME_MODEL.md` is schema-only and is not yet a runtime
-migration. Historical backend designs and completed migration assessments are
-intentionally not retained in `docs/`.
+This document describes the currently executable architecture. The isolated
+next-compiler redesign is frozen under `next/`:
+`next/lua/lalin/compiler/schema.lua` is the authoritative ASDL schema and
+`next/docs/SCHEMA_REVIEW_SYNTHESIS.md` records the review/freeze decision.
+Historical compiler-model inventories are archived under
+`docs/archive/compiler-model/` and are not implementation authority.
 
 ## System model
 
@@ -51,9 +52,9 @@ Fused emitted C compiled by GCC at `-O3` is the performance path. The same C
 artifact is the AOT path. Stencil and CMat name the deterministic fused-C shape
 contract; they are not binary templates.
 
-LuaJIT bytecode emission is removed: the compiled artifact is always emitted C,
-cooked with GCC for local JIT-like execution or handed to a user-owned AOT
-build. The public surface exposes only the `compile_c_gcc` / emit-C paths.
+LuaJIT bytecode is an explicit non-main mode selected through `compile_luajit`
+or `compile(..., { bytecode = true })`. It is not an implicit fallback and is
+separate from the main emitted-C native path.
 
 Binary copy-patch banks, native template installers, and the former Rust /
 Cranelift route are deleted. They are not supported, historical, or planned
@@ -187,7 +188,9 @@ the final typed C boundary; they do not replace local semantic tests.
 
 - `docs/ASDL_GUIDE.md` — binding compiler/schema doctrine.
 - `docs/LUA_OBJECT_REGIONS.md` — bootstrap Lua direct-continuation specification.
-- `docs/COMPILER_OPERATION_LIFETIME_MODEL.md` — compiler operation lifetime and direct-CPS model.
+- `next/README.md` — isolated next-compiler root and validation commands.
+- `next/lua/lalin/compiler/schema.lua` — frozen next compiler ASDL schema.
+- `next/docs/SCHEMA_REVIEW_SYNTHESIS.md` — schema review/freeze synthesis.
 - `docs/DESIGN_BIBLE.md` — long-form design method.
 - `docs/LANGUAGE_REFERENCE.md` — public language surface.
 - `docs/CONVENTIONS.md` — repository and naming conventions.
@@ -265,8 +268,9 @@ CodeModule + CodeGraph
   -> emitted C -> GCC -O3
 ```
 
-This is current implementation vocabulary. The Step-9R target dispositions for these
-world/plan names are in `docs/COMPILER_WORLD_MODEL.md` §11.
+This is current implementation vocabulary. Historical Step-9R dispositions for these
+world/plan names are archived in `docs/archive/compiler-model/COMPILER_WORLD_MODEL.md`;
+the frozen `next/` schema supersedes them for new implementation work.
 
 ### Reuse boundaries
 

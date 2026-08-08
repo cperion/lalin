@@ -170,9 +170,11 @@ Authoritative reference:
 - `docs/ARCHITECTURE.md` — active compiler and backend architecture
 - `docs/CONVENTIONS.md` — naming, style, and repository conventions
 
-Active compiler design and planning:
-- `docs/HYPERMEDIA_ARCHITECTURE.md` — active hypermedia design proposal
-- `docs/COMPILER_OPERATION_LIFETIME_MODEL.md` — compiler data/control reclassification
+Active compiler redesign:
+- `next/README.md` — isolated next-compiler root and validation commands
+- `next/lua/lalin/compiler/schema.lua` — frozen compiler ASDL schema
+- `next/docs/SCHEMA_REVIEW_SYNTHESIS.md` — review/freeze synthesis
+- `next/docs/ASDL_NAMED_CONTROL.md` — ASDL values with named-machine control
 
 ## Design Rules
 

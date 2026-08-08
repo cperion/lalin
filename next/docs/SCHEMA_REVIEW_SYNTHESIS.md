@@ -39,7 +39,7 @@ Applied rebalancing in the schema:
 - CMat memory uses now have one coordinate plus address bindings, with no duplicate `UseIndex`, `Address`, or `CursorKind`;
 - helper symbols, backend symbols, ABI signature collisions, and host symbol requests all use the same typed symbol value;
 - cook policy carries `Host.FloatCompilerMode` so fast-math/reassociation choices are represented at the GCC boundary;
-- restrict qualification now directly references proven `Memory.Relation` values instead of `CMat.RestrictGroup`/`QualificationPair` wrappers;
+- restrict qualification now directly references proven `Memory.ObjectRelation` values instead of `CMat.RestrictGroup`/`QualificationPair` wrappers;
 - C function definitions now carry explicit ABI parameter/result-slot zippers and fragment-entry parameter zippers, with diagnostics for invalid ABI parameters, inconsistent restrict qualification, and overlapping C function parts;
 - review-4 cleanup typed `CMat.FragmentValue`, removed hidden-result double modeling, deleted dead `Semantic.OwnershipEvidence`, folded scalar-only schedule fields, removed unreachable find/all/any/allcompare result leaves, and folded `CMat.Producer`;
 - code instructions and terminators now carry their owning block and ordinal, multi-axis loop flows carry per-axis trips, and Memory no longer depends on Ownership states;
@@ -53,13 +53,18 @@ Applied rebalancing in the schema:
 - multi-axis loop trips are carried by axis/trip entry products instead of parallel arrays;
 - custom reducer scaffolding was trimmed: only built-in reducers remain until an authored reducer-law declaration exists;
 - reduction algebra and loop arithmetic are split, scan mode lives at the control algebra owner;
-- CMat edges now flow through consumer inputs and `StreamSource` values, CMat basis is object-only, sinks name their producer, and scatter coordinates are explicit;
-- C ABI result slots name hidden sret parameters, intrinsic operations use `CallResult`, C terminators carry origin, and host cook failures include `FastMathRefused`;
-- memory/effect/ownership facets are aligned per function graph, noescape/contract realization has real consumers, and CMat memory uses carry live ownership states;
-- schema churn is frozen unless a true P0 schema correctness issue appears.
+- CMat edges now flow through consumer inputs and `StreamSource` values, sinks name their producer, scatter coordinates are explicit, and the single-leaf `CMat.Basis` wrapper was folded into direct `Memory.Object` coordinates;
+- C ABI result slots are singular and name hidden sret parameters, sret is represented in `Types.Passing`, intrinsic operations use `CallResult`, C terminators carry origin, generated C locals are explicit, and host cook failures include `FastMathRefused`;
+- memory/effect/ownership facets are aligned per function graph, the `Analysis.Module` zipper makes those facets reachable without side tables, noescape/contract realization has real consumers, and CMat memory uses carry live ownership states;
+- the elegance review resolved the remaining SOAC authoring/model issues: fold/scan share `LoopDomain`, counted flows are split from traversal/uncounted rejects, kernel shape admits only counted flow, lanes encode only valid role/source pairings, reduction result cadence is explicit, and scalar meaning is only the mode triple;
+- front/backend cleanup folded resolved semantic casts to one leaf, removed unreachable yield leaves, interned source files, removed imported function-pointer dual authority, made string data a semantic interned value, carried extern declared effects at the boundary, and deleted the duplicate C initializer/relocation/global-definition mirror;
+- object relations and dependences are distinct memory facts, declared noalias is relation evidence, live lease states name their lease origin, and RMW materialization diagnostics point at the reachable `Memory.Access` value;
+- schema churn is frozen unless a true P0 schema correctness issue appears;
+- spec-harness review found and repaired two P0 schema defects before implementation: `Semantic.ClosureExpression` no longer duplicates the inherited `source` attribute field, and nullary `C.AtomicFenceOp()` is now `unique` like the other singleton operation leaves.
 
-Still open for the next pass:
+Freeze invariant: schema churn is frozen unless a true P0 schema correctness issue appears. `Program`, `Origin`, and `GenerationCause` embeddings must reference complete ancestor/source programs, never the program or origin currently being constructed. `Origin.Generated` causes must not embed a construct that transitively contains that generated origin.
+
+Still open for implementation-driven review:
 
 - finish diagnostic family granularity without reintroducing process scaffolding;
 - ByteSpan is deliberately not restored as a separate semantic/code type for now: byte spans lower through `view`/`slice`, `ByteRangePlace`, and width/alignment facts. Restore a minimal ByteSpan only if implementation proves this loses a durable decision.
-
