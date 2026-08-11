@@ -13,3 +13,6 @@ experiments/lua_interpreter_vm/build/
 .aider*
 experiments/lua_interpreter_vm/spongejit/build/
 museum/gps.lua
+
+# valgrind core dumps
+vgcore.*
