@@ -544,11 +544,15 @@ classes[11].project_native_path = function(self, proto, pc, cc, on_occurrence, o
 end
 
 classes[15].project_native_path = function(self, proto, pc, cc, on_occurrence, on_rejected)
-    -- SETTABUP A B C: UpValue[A][K[B]] = R[C]
+    -- SETTABUP A B C: UpValue[A][K[B]] = RK(C) — the source is RK-decoded
     local constant = constant_key(proto, pc, cc, on_rejected, self.name, self.B)
     if constant == nil then return constant end
-    return on_occurrence(cc,
-        GTable.GenericTableOccurrence.settabup(pc, self.A, constant, self.C), pc + 1)
+    local value = rk_value(proto, pc, cc, on_rejected, self.name, self.C, self.k)
+    if value == nil then return value end
+    local o = GTable.GenericTableOccurrence.settabup(pc, self.A, constant,
+        value.reg or 0)
+    if value.const then o.const_value = value.const end
+    return on_occurrence(cc, o, pc + 1)
 end
 
 classes[20].project_native_path = function(self, proto, pc, cc, on_occurrence, on_rejected)
@@ -706,13 +710,20 @@ end
 -- immediately after a terminator (call, standalone JMP, return) or after
 -- a compare's owned JMP. So every branch target coincides with a segment
 -- start produced by the split walk below; the walk asserts this.
-function M.project_call_plan(proto, heap_owner)
-    local blocks, calls, returns, block_at, forpreps = {}, {}, {}, {}, {}
+function M.project_call_plan(proto, heap_owner, opts)
+    opts = opts or {}
+    local scalar_only = opts.scalar_only == true
+    local blocks, calls, returns, block_at, forpreps, superinstructions, call_superinstructions =
+        {}, {}, {}, {}, {}, {}, {}
     local code = proto.code
     local n = #code
     local seg_start = 0
     local pc = 0
-    local targets = {}
+    local targets, incoming = {}, {}
+    local function mark_target(target)
+        targets[target] = true
+        incoming[target] = (incoming[target] or 0) + 1
+    end
     local function close_block(start, stop)
         if stop <= start then return end
         local path = M.project(proto, start, stop, heap_owner)
@@ -747,7 +758,8 @@ function M.project_call_plan(proto, heap_owner)
             -- host-setup boundary: the forprep decision (skip vs entry) is
             -- made by the host; the loop body starts at pc + 1
             close_block(seg_start, pc)
-            forpreps[pc] = { A = ins.A, skip_pc = pc + ins.Bx + 2, body_pc = pc + 1 }
+            forpreps[pc] = ForLoop.NumericForBoundary.new(
+                pc, ins.A, pc + 1, pc + ins.Bx + 2)
             pc = pc + 1
             seg_start = pc
         elseif name == "TFORPREP" then
@@ -765,12 +777,12 @@ function M.project_call_plan(proto, heap_owner)
             seg_start = pc
         elseif name == "CALL" or name == "TAILCALL" then
             close_block(seg_start, pc)            -- call excluded: host dispatch
-            calls[pc] = { A = ins.A, B = ins.B, C = ins.C, tail = name == "TAILCALL" }
+            calls[pc] = { pc = pc, A = ins.A, B = ins.B, C = ins.C, tail = name == "TAILCALL" }
             pc = pc + 1
             seg_start = pc
         elseif name == "JMP" then
             close_block(seg_start, pc + 1)        -- the JMP is the last occurrence
-            targets[pc + 1 + ins.sJ] = true
+            mark_target(pc + 1 + ins.sJ)
             pc = pc + 1
             seg_start = pc
         elseif compare_names[name] then
@@ -782,13 +794,13 @@ function M.project_call_plan(proto, heap_owner)
             close_block(pc, pc + 2)
             local jmp = code[pc + 2]
             if jmp ~= nil and jmp.name == "JMP" then
-                targets[pc + 2 + jmp.sJ] = true
+                mark_target(pc + 2 + jmp.sJ)
             end
             pc = pc + 2
             seg_start = pc
         elseif name == "FORLOOP" then
             close_block(seg_start, pc + 1)   -- terminal: the FORLOOP is the last occurrence
-            targets[pc + 1 - ins.Bx] = true  -- the back-edge (the body start)
+            mark_target(pc + 1 - ins.Bx)  -- the back-edge (the body start)
             pc = pc + 1
             seg_start = pc
         elseif name == "RETURN" or name == "RETURN0" or name == "RETURN1" then
@@ -804,9 +816,109 @@ function M.project_call_plan(proto, heap_owner)
         assert(block_at[target] ~= nil,
             ("branch target %d is not a block start"):format(target))
     end
+    -- Rewrite evidence-backed fused shapes only in the normal production image.
+    -- scalar_only is a staging/test projection mode: it preserves the original
+    -- concrete occurrences and does not select a different runtime backend.
+    if not scalar_only then
+    -- Rewrite exact three-leaf read/ADDI/write shapes through concrete leaf
+    -- methods. Learning and residual publication now see one family-owned
+    -- occurrence rather than three independently selected leaves.
+    for _, block in ipairs(blocks) do
+        local source, rewritten = block.path.occurrences, {}
+        local index = 1
+        while index <= #source do
+            local first = source[index]
+            local s2, s3, s4, s5, s6 = source[index + 1], source[index + 2],
+                source[index + 3], source[index + 4], source[index + 5]
+            -- six-leaf dictionary accumulation: GETFIELD GETFIELD GETTABLE
+            -- GETFIELD ADD SETTABLE (the source field read sits before the
+            -- ADD); five-leaf when the source was already computed.
+            local super
+            local project6 = s5 and s5.project_accumulate_field
+            if project6 then super = project6(s5, first, s2, s3, s4, s6) end
+            if super then
+                rewritten[#rewritten + 1] = super
+                index = index + 6
+            else
+                local project5 = s4 and s4.project_accumulate_field
+                if project5 then super = project5(s4, first, s2, s3, nil, s5) end
+                if super then
+                    rewritten[#rewritten + 1] = super
+                    index = index + 5
+                else
+                local project_super = first and first.project_superinstruction
+                super = project_super and project_super(first, s2, s3) or nil
+                if super then
+                    rewritten[#rewritten + 1] = super
+                    index = index + 3
+                else
+                    rewritten[#rewritten + 1] = first
+                    index = index + 1
+                end
+            end
+            end
+        end
+        block.path.occurrences = rewritten
+    end
+
+    -- Whole-block canonical call preludes become one learned call occurrence.
+    -- The learning image still executes the component leaves before its call
+    -- learner; the retained image publishes one fused exact callee-family leaf.
+    for _, block in ipairs(blocks) do
+        local call = calls[block.stop]
+        local occurrences = block.path.occurrences
+        local super, cut
+        if call and #occurrences >= 2 then
+            local first = occurrences[#occurrences - 1]
+            local project_call = first and first.project_call_super
+            if project_call then
+                super = project_call(first, occurrences[#occurrences], call)
+                if super then cut = #occurrences - 1 end
+            end
+        end
+        if call and not super and #occurrences >= 1 then
+            local first = occurrences[#occurrences]
+            local project_call = first and first.project_call_super
+            if project_call then
+                super = project_call(first, nil, call)
+                if super then cut = #occurrences end
+            end
+        end
+        if super then
+            local rewritten = {}
+            for index = 1, cut - 1 do rewritten[#rewritten + 1] = occurrences[index] end
+            rewritten[#rewritten + 1] = super
+            block.path.occurrences = rewritten
+            call_superinstructions[call.pc] = super
+        end
+    end
+
+    end -- not scalar_only
+
+    -- Project only closed numeric-for cycles: one ADDI leaf plus its owned
+    -- MMBINI companion and the matching FORLOOP. The back-edge must be the
+    -- body's only explicit incoming branch; any external edge keeps scalar
+    -- per-op leaves. Concrete leaves own candidate recognition.
+    if not scalar_only then
+    for pc, boundary in pairs(forpreps) do
+        local block_index = block_at[boundary.body_pc]
+        local block = block_index and blocks[block_index] or nil
+        local occurrences = block and block.path.occurrences or nil
+        if block and block.stop == boundary.skip_pc and occurrences
+            and #occurrences == 2 and incoming[boundary.body_pc] == 1 then
+            local body, terminal = occurrences[1], occurrences[2]
+            local project_cycle = body.project_numeric_for_cycle
+            if project_cycle then
+                local super = project_cycle(body, boundary, terminal)
+                if super then superinstructions[pc] = super end
+            end
+        end
+    end
+    end
     return {
         proto = proto, n = n, blocks = blocks, calls = calls, returns = returns,
-        block_at = block_at, forpreps = forpreps,
+        block_at = block_at, forpreps = forpreps, superinstructions = superinstructions,
+        call_superinstructions = call_superinstructions, scalar_only = scalar_only,
     }
 end
 

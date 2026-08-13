@@ -83,11 +83,38 @@ Return1Occurrence.__index = ReturnOccurrence
 
 -- ---- Native CPS Frame V2 leaf -----------------------------------------
 function ReturnOccurrence:append_v2(machine)
-    local record = machine.bank.cps[self.learner_name == "return" and "ret"
-        or (self.learner_name == "return0" and "ret0" or "ret1")]
-    machine:emit(record, {
-        call_a = self.A, call_b = self.B, call_pc = self.pc,
+    -- RETURN B==0 consumes the genuinely dynamic top. Fixed RETURN, RETURN0,
+    -- and RETURN1 compose one exact source fragment per authored result.
+    if self.B == 0 and self.quote_base == 70 * 65536 then
+        machine:emit(assert(machine.bank.residual.ret_all,
+            "cps v2: missing residual ret_all"), {
+            call_a = self.A, call_pc = self.pc,
+            base_disp = self.A * ffi.sizeof("Lua55ValueV2"),
+        })
+        return
+    end
+    local nres = self.B == 0 and 0 or self.B - 1
+    if nres == 1 then
+        machine:emit(assert(machine.bank.residual.ret_fixed_one,
+            "cps v2: missing exact one-result RETURN residual"), {
+            source_disp = self.A * ffi.sizeof("Lua55ValueV2"),
+            call_pc = self.pc,
+        })
+        return
+    end
+    machine:emit(assert(machine.bank.residual.ret_fixed_begin,
+        "cps v2: missing residual ret_fixed_begin"), {
+        span = nres, call_pc = self.pc,
     })
+    for slot = 0, nres - 1 do
+        machine:emit(assert(machine.bank.residual.ret_fixed_slot,
+            "cps v2: missing residual ret_fixed_slot"), {
+            source_disp = (self.A + slot) * ffi.sizeof("Lua55ValueV2"),
+            span = slot,
+        })
+    end
+    machine:emit(assert(machine.bank.residual.ret_fixed_finish,
+        "cps v2: missing residual ret_fixed_finish"), { span = nres })
 end
 
 return {

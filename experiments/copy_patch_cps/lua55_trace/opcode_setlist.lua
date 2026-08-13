@@ -61,13 +61,25 @@ function SetListOccurrence:append_residual(bank, slot, arena, table_slot)
 end
 
 
+local function value_disp(index) return index * ffi.sizeof("Lua55ValueV2") end
+
 -- ---- Native CPS Frame V2 leaf -----------------------------------------
 function SetListOccurrence:append_v2(machine)
-    machine:emit(machine.bank.v2[78], {
-        setlist_base = self.A,
+    -- Array capacity is mutable data; NeedGrow is an operation-owned exit.
+    machine:emit_need_grow(machine.bank.residual.setlist_inbounds,
+        "setlist_grow", {
+        base_disp = value_disp(self.A),
         setlist_count = self.B,
         setlist_key = tonumber(self.C),
     })
+    for slot = 1, self.B do
+        machine:emit(assert(machine.bank.residual.setlist_slot,
+            "cps v2: missing residual setlist_slot"), {
+            base_disp = value_disp(self.A),
+            source_disp = value_disp(self.A + slot),
+            array_disp = (tonumber(self.C) + slot - 1) * ffi.sizeof("Lua55ValueV2"),
+        })
+    end
 end
 
 return {

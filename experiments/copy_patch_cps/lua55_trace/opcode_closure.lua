@@ -62,22 +62,26 @@ function ClosureOccurrence:append_residual(bank, slot, arena)
 end
 
 
+local function value_disp(index) return index * ffi.sizeof("Lua55ValueV2") end
+
 -- ---- Native CPS Frame V2 leaf -----------------------------------------
 function ClosureOccurrence:append_v2(machine)
-    local product = {
-        target_index = self.target,
-        proto_index = self.proto_index,
-        nupvals = #(self.descriptors or {}),
-    }
+    -- the capture vector is projection-proven; the exact leaf bakes the
+    -- count and owns only its capture holes (no runtime nupvals branch)
     local descriptors = self.descriptors or {}
-    for i = 0, 3 do
+    local n = #descriptors
+    assert(n <= 4, "cps v2: unsupported closure capture count " .. tostring(n))
+    local product = {
+        target_disp = value_disp(self.target),
+        proto_index = self.proto_index,
+    }
+    for i = 0, n - 1 do
         local descriptor = descriptors[i + 1]
-        if descriptor then
-            product["instack" .. i] = descriptor.instack
-            product["idx" .. i] = descriptor.idx
-        end
+        product["instack" .. i] = descriptor.instack
+        product["idx" .. i] = descriptor.idx
     end
-    machine:emit(machine.bank.cps.closure, product)
+    machine:emit(assert(machine.bank.residual["closure_" .. n],
+        "cps v2: missing residual closure_" .. n), product)
 end
 
 return {

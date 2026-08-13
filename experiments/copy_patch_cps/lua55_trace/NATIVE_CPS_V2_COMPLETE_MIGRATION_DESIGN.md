@@ -984,3 +984,282 @@ After each batch, update `V2_RESIDUAL_SPECIALIZATION_INVENTORY.md` entry by
 entry. Do not describe V2 as exact-residual complete while any red case or
 unjustified static amber case remains. Semantic opcode coverage may stay green
 throughout the correction, but specialization completion is a separate gate.
+
+## 22. Implementation status — batch 1 of the exact-residual correction
+
+Implemented per section 21 (in place, no V3, no generic backend) and green
+under JIT and `-joff`:
+
+- **Separate bank vocabularies.** `build_v2_bank.lua` now extracts
+  `lua55_v2r_*` sections into `bank.residual` (exact leaves; every section must
+  be declared in the exact vocabulary, undeclared sections reject the build)
+  and `lua55_v2l_*` sections into `bank.learning` (family-specific learners
+  that classify only because they are never published).
+- **Constants are exact.** `LOADK`/`LOADKX` select tag-specific leaves
+  (`loadk_nil/false/true/int/flt/str`) from the projection-proven constant kind.
+  No generic constant-cell construction remains in a published constant leaf;
+  the string leaf carries only its exact kind and reference as patched value
+  holes.
+- **Table key domains are learned.** `GETTABLE`/`SETTABLE` key domains are
+  observed in a separate learning invocation (learners write per-occurrence
+  `Lua55TableLearnSlotV2` products into invocation-owned mmap storage; slot 0
+  is reserved for tables without a NEWTABLE site). The residual pass selects
+  exact `gettable_int`/`gettable_str` and `settable_{int,str}_...` leaves from
+  those products. An unseen or conflicting slot rejects publication with an
+  exact reason; no generic fallback is installed.
+- **Value shapes are exact.** Constant-value SETTABLE/SETI/SETFIELD select
+  `const_nil/false/true/int/flt/str` leaves (projection-proven value); register
+  values use `reg` leaves that copy any cell (no value classification).
+- **Growth/create are named mutable-data exits.** Capacity and field presence are
+  program data, not learned semantic alternatives. Exact `*_inbounds`/`*_existing`
+  leaves transfer through `need_grow_link` or `need_create_link` to concrete
+  `NeedGrowV2`/`NeedCreateV2` publication values. Their cold operation leaves are
+  appended after authored blocks and return to the exact successor through
+  `resume_link`. Exact key/value/receiver guards still publish typed mismatch;
+  only mutable capacity or absence takes these operation-owned exits.
+- **Capacity is learned per NEWTABLE site.** Write learners record the
+  site's high-water array index / field count through `table->site_id`; the
+  residual NEWTABLE preallocates the guarded `next_pow2(observed_max)` floor.
+  The sieve no longer pays repeated growth on retained runs.
+- **Typed mismatch.** A wrong learned shape makes the exact guard publish
+  `LUA55_V2_REJECT_SPECIALIZATION_MISMATCH` (kind 9) with expected/observed
+  tags; no sibling implementation executes.
+- **Layout:** `Lua55GuestTableV2` gained `site_id`; the invocation gained a
+  bounded `learning` region; the rejected payload gained expected/observed
+  tags (all offsets verified by C and Lua probes; `git diff --check` clean).
+
+Validation:
+- `run55_native_v2_exact_test.lua` (new): exact leaf selection, deliberate
+  mismatch publishes the typed rejection, learned capacity floor on retained
+  re-entry.
+- `run55_native_v2_diff_test.lua` gained sieve, table-init, float-value,
+  interned-string-key, and dynamic-key shapes; all byte-identical to stock.
+- 44 lua55_trace checks (22 tests x JIT/-joff) green; `tests/run.lua` 149
+  passed; mechanical ABI gate green (no C-stack call in the call family, no
+  ret except host_exit; pow/concat helper calls target declared shared-library
+  symbols).
+
+Retained whole-program results (build once, re-enter):
+- sieve to 200000: ~3.9 ms (previously ~5.5 ms; stock ~4.7 ms).
+- particle simulation, orders, fib, tail, numeric-for, table-read, concat
+  retain prior performance (no regression).
+
+Remaining from section 21.4: arithmetic/unary/compare exact operand products,
+numeric-for integer/float/sign leaves, exact call-site leaves, CONCAT
+operand-vector leaves, closure capture-vector leaves, and remaining amber
+static alternatives. They are subsequent batches, not accepted final state.
+
+## 23. Implementation status — batch 3 (arithmetic, unary, comparisons)
+
+Implemented per section 21 and green under JIT and `-joff`:
+
+- **Exact arithmetic operand products.** Every numeric operation (add/sub/mul/
+  addi/addk/subk/mulk/mod/idiv/modk/idivk/div/divk/pow/powk/band/bor/bxor/
+  bandk/bork/bxork/shl/shr/shli/shri) selects exact
+  `IntegerInteger`/`IntegerFloat`/`FloatInteger`/`FloatFloat` leaves from
+  learned operand tags; the const/imm side is embedded per leaf. Zero-divisor
+  and integral-float-coercion checks are guards/exits of the selected leaf.
+- **Exact unary leaves.** `unm_int`/`unm_flt`, `bnot_int`/`bnot_flt` (float
+  leaf guards integrality), `len_str`/`len_table`. `NOT` stays green.
+- **Exact comparison leaves.** LT/LE numeric + string products; LTI/LEI/GTI/GEI
+  numeric products against the immediate; EQ numeric/string/ref-identity/
+  same-primitive/mixed-false; EQI/EQK by the projection-proven immediate/const
+  kind (EQK nil/false/true consts are single identity leaves). The `k` edge
+  and taken/fall successors remain patched program data.
+- **Learned operand tags.** Arithmetic/compare/unary occurrences are assigned
+  learning slots; the separate learning invocation observes operand tag pairs,
+  and the residual pass selects exact leaves. Conflicting/unseen slots reject
+  publication; no generic fallback.
+- **Staging ownership.** Every concrete occurrence class owns `append_v2`
+  (`AddOccurrence`, `EqOccurrence`, `UnmOccurrence`, ...); shared helpers carry
+  only common mechanics. The self-referential `__index` pattern keeps the V1
+  learner path reachable for legacy fixtures.
+- **Fixed latent bugs found by the differential gates:**
+  - SHL/SHR/SHLI/SHRI mirrored neither luaV_shiftl nor the bytecode sign
+    encoding (SHRI carries a negated count). Both the learners and the exact
+    leaves now match lua 5.5 exactly.
+  - `constant_facts` returned `false` for string constants, silently dropping
+    EQK-string support; the string kind/ref are now populated.
+  - Register-index hole values collided with unrelated instruction
+    displacements (a `je` rel32 of 0x111 matched the target-index pattern,
+    corrupting a patch and causing SIGILL). The register holes now use compact
+    non-canonical values; a builder manifest audit checks named table-data-exit
+    linkage and hole sets.
+  - `lua55_dtoa_g14` lacked lua_number2str's round-trip fallback (14 vs 17
+    digits) and the integer-looking ".0" suffix; it now mirrors PUC Lua 5.5
+    exactly (verified: 10/3 -> "3.3333333333333335", 5.0 -> "5.0", -0.0 ->
+    "-0.0").
+
+Validation: 44 lua55_trace checks (22 tests x JIT/-joff) green including new
+differential shapes (shifts, mixed arithmetic, const arithmetic, mixed
+comparisons, `== nil`/`== "s"`/`== 0`/`== true`, unary); `tests/run.lua` 149
+passed; mechanical ABI gate green; `git diff --check` clean.
+
+The bank now holds 32 interim generic records, 205 exact residuals, and 47
+learners. Remaining red families (per the inventory): numeric-for protocols,
+exact call sites, CONCAT operand vectors, closure capture vectors, GETVARG
+keys.
+
+Retained performance after batch 3 (core-pinned, relative to pinned stock on
+a contended machine): fib(25) 0.97x, million-iteration tail 1.46x,
+10M numeric-for 2.10x, 10M table reads 1.76x, 10K concat 3.05x; whole
+programs: particle 1.54x, sieve to 200K 1.42x (still faster than stock),
+orders 1.15x. The V2_HOLE32 register-hole macro initially doubled the mov
+count per hole (u64 intermediate + truncation copy); the compact-value form
+restored the single-mov prologue. Absolute times were inflated by unrelated
+machine load, so ratios are the meaningful comparison.
+
+## 24. Implementation status — batch 4 (numeric-for)
+
+Implemented per section 21 and green under JIT and `-joff`:
+
+- **Exact protocol/sign leaves.** FORPREP (a plan boundary, not an occurrence)
+  and FORLOOP select exact leaves from learned facts: `forprep_int_pos/neg`
+  (all-integer triple, guarded step sign, precomputed count-down),
+  `forprep_flt_pos/neg` (float protocol with per-operand int-to-double
+  coercion and guarded sign), `forloop_int` (count-down; the sign is baked
+  into the precomputed count, so the leaf is sign-agnostic),
+  `forloop_flt_pos/neg` (float termination check by guarded sign).
+- **Learning.** The FORPREP learner records (protocol, sign); the FORLOOP
+  learner records (step tag, sign) after the forprep sets the protocol cells.
+  Conflicting/unseen protocols reject publication; step-zero remains a typed
+  rejection exit of the selected leaf.
+- **Staging.** The FORPREP boundary emission in the arena builder and
+  `ForLoopOccurrence:append_v2` select exact leaves in residual mode and the
+  learners in learning mode.
+
+Validation: 44 lua55_trace checks (22 tests x JIT/-joff) green with new
+differential shapes (integer positive/negative loops, float loops, mixed
+int/float operands, non-executing loops with both signs, step-7 loops, nested
+loops) byte-identical to stock; `tests/run.lua` 149 passed; mechanical ABI
+gate green; `git diff --check` clean. Retained 10M numeric-for measures
+~2.17x stock (core-pinned; machine still contended).
+
+Remaining red families: exact call sites (CALL/TAILCALL/TFORCALL), CONCAT
+operand vectors, closure capture vectors, GETVARG keys.
+
+## 25. Implementation status — batch 5 (exact call sites)
+
+Implemented per section 21 and green under JIT and `-joff`:
+
+- **Exact call-site leaves.** CALL/TAILCALL/TFORCALL select exact leaves from
+  learned callee facts: `call_native_fixed` (callee is a native non-vararg
+  closure; the frame never allocates a vararg slice), `call_native_vararg`
+  (vararg callee; the slice count is data), `call_host` (declared builtin;
+  typed suspension with the exact payload), and the matching
+  `tailcall_native_fixed/vararg`, `tailcall_host`, `tforcall_native`,
+  `tforcall_host` leaves. The exact callee-shape guard (tag, object kind,
+  proto range, entry presence, vararg flag) validates the selected leaf; a
+  changed callee publishes a typed `SpecializationMismatchV2`.
+- **Learning.** Each call site learns (callee class, vararg flag). Invalid
+  callees reject during the learning pass and are never published; a
+  conflicting class rejects the residual build.
+- **Staging.** `V2Machine:emit_call` and the TFORCALL emission select learners
+  in learning mode and exact leaves in residual mode; call sites receive
+  learning slots.
+
+Validation: 44 lua55_trace checks (22 tests x JIT/-joff) green with new
+differential shapes (vararg callees, builtin tail calls, select in tail
+position, nested mixed-arity calls) byte-identical to stock; `tests/run.lua`
+149 passed; mechanical ABI gate green; `git diff --check` clean.
+
+Retained performance (core-pinned, machine settling): fib(25) ~1.06x stock
+(first time above parity), million-iteration tail ~1.47x, 10M numeric-for
+~2.23x.
+
+Remaining red families: CONCAT operand vectors, closure capture vectors,
+GETVARG keys.
+
+## 26. Implementation status — batch 6 (CONCAT operand vectors)
+
+Implemented per section 21 and green under JIT and `-joff`:
+
+- **Exact operand-vector leaves.** CONCAT selects one of 36 exact leaves from
+  the learned operand-shape vector and the projection-proven count (B <= 3):
+  every 3^2 + 3^3 combination of String/Integer/Float. Each leaf has every
+  position's shape guard, measure, and write baked in (string length copy,
+  exact `lua55_itoa_ll`/`lua55_dtoa_g14` formatting, one guest-heap
+  allocation); no runtime tag classification or scan. Result length and
+  short/long output remain program data.
+- **Learning.** The concat learner records the operand tags (two in key/value
+  tags, the third in the slot's index field); conflicting vectors or widths
+  beyond 3 reject publication.
+- **Staging.** `ConcatOccurrence:append_v2` selects the vector leaf in
+  residual mode; the count is asserted projection-proven.
+
+Validation: 44 lua55_trace checks (22 tests x JIT/-joff) green with new
+differential shapes (3-operand concat, mixed 5-operand sequence, per-iteration
+`"n=" .. i .. ";"`) byte-identical to stock; `tests/run.lua` 149 passed;
+mechanical ABI gate green; `git diff --check` clean.
+
+Remaining red families: closure capture vectors, GETVARG keys.
+
+## 27. Implementation status — batch 7 (closure capture vectors)
+
+Implemented per section 21 and green under JIT and `-joff`:
+
+- **Exact capture-vector leaves.** CLOSURE selects `closure_0`..`closure_4` by
+  the projection-proven capture count; each leaf bakes the count and owns only
+  its instack/index holes, with the unrolled `v2_set_cell` calls. No runtime
+  `nupvals` branch. Open-cell search stays mutable identity protocol.
+- **Visible rejection for wide captures.** Counts above four reject at
+  staging; the previous generic record silently dropped captures beyond four
+  (a latent bug, now impossible).
+
+Validation: 44 lua55_trace checks (22 tests x JIT/-joff) green; `tests/run.lua`
+149 passed; mechanical ABI gate green; `git diff --check` clean.
+
+Remaining red family: GETVARG keys (batch 8 will also clear the amber items and
+staging dispatch).
+
+## 28. Implementation status — batch 8 (final: GETVARG, static splits, staging cleanup)
+
+Implemented per section 21 and green under JIT and `-joff`. **The inventory now
+has zero red and zero static-amber cases.**
+
+- **GETVARG** exact key-shape leaves (`getvarg_int`/`getvarg_n`/`getvarg_mx`)
+  selected from the learned key tag.
+- **RETURN** split: `ret_fixed` (projection-proven B >= 2, baked count) and
+  `ret_all` (B == 0, top-based); RETURN0/RETURN1 were already exact.
+- **VARARG** split: `vararg_fixed` / `vararg_all` by the projection-proven
+  wanted encoding (0xFFFFFFFF = all).
+- **LOADNIL** unrolled span leaves (`loadnil_1`..`loadnil_8`).
+- **SETTABUP** exact key/value leaves with named `NeedCreate` data exits;
+  **SETLIST** exact fixed slots with a named `NeedGrow` data exit.
+- **Staging cleanup:** the generic-table family is now per-op classes
+  (`GettableOccurrence`, `SettableOccurrence`, `GettabupOccurrence`,
+  `SettabupOccurrence`, `SelfOccurrence`, `NewtableOccurrence`), each owning
+  its `append_v2`; no `quote_base`/`learner_name` dispatch remains in the V2
+  leaf path.
+- **Justified remaining variable state:** upvalue open/closed state changes
+  during a published image (genuinely mutable protocol); TBC's nil/false
+  check and TFORPREP's closing-value check are typed rejection exits of the
+  operation, not alternative implementations.
+- **Latent bugs fixed by the differential gates:** the projection silently
+  treated SETTABUP's RK source constant as a register index (fixed with
+  RK-decoding + const-value exact leaves); the V1 GETTABUP/SETTABUP quote
+  swap crossed the new per-op classes (fixed).
+
+Validation: 44 lua55_trace checks (22 tests x JIT/-joff) green with new
+differential shapes (global writes/reads, growing setlist literals, LOADNIL
+spans, all-value returns, `select("#", ...)` forwarding); `tests/run.lua` 149
+passed; mechanical ABI gate green; `git diff --check` clean.
+
+CONCAT vector leaves were extended to widths 4 and 5 (the order-report
+`report .. i .. ":" .. totals[i] .. ";"` shape), with the learning slot
+packing five operand shapes (key/value tags, two packed halves of
+`max_array_index`, and `max_field_count`) and short/long string tags
+normalized (a growing string crossing 40 bytes must not conflict). SETTABUP
+gained const-value existing/create pairs (the projection's RK source was
+silently treated as a register index; fixed with RK-decoding).
+
+The bank holds 23 interim generic records (genuinely-variable boundary and
+protocol leaves: host_exit, return0/1, test/testset, move/loadi/loadf
+constants, upvalue state, geti/getfield/gettabup/self, not, tforprep/loop,
+close/tbc), 616 exact residuals, and 54 learners.
+
+Retained performance at batch-8 completion (core-pinned): fib(25) ~1.06x
+stock, million-iteration tail ~1.54x, 10M numeric-for ~1.96x, 10M table reads
+~1.55x, 10K concat ~3.1x; whole programs: particle ~1.7x, sieve ~1.4x,
+orders ~1.2x. The exact-residual correction is complete: zero red and zero
+static-amber inventory cases.

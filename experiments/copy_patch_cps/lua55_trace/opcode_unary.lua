@@ -73,15 +73,64 @@ local NotOccurrence = make_unary("not", 51)
 local LenOccurrence = make_unary("len", 52)
 
 for _, klass in ipairs({ UnmOccurrence, BnotOccurrence, NotOccurrence, LenOccurrence }) do
-    klass.__index = UnaryOccurrence
+    klass.__index = klass
+    setmetatable(klass, { __index = UnaryOccurrence })
 end
 
 
--- ---- Native CPS Frame V2 leaf -----------------------------------------
-function UnaryOccurrence:append_v2(machine)
-    local opcode = math.floor(self.quote_base / 65536)
-    machine:emit(machine.bank.v2[opcode], {
-        target_index = self.target, source_index = self.source,
+-- ---- Native CPS Frame V2 leaves -----------------------------------------
+-- Batch 3: exact operand-product leaves. The operand tag is learned in the
+-- separate learning invocation; NOT stays green (truthiness is the result).
+
+local function value_disp(index) return index * ffi.sizeof("Lua55ValueV2") end
+
+local function unary_facts(machine, slot)
+    local f = machine.facts[assert(slot, "cps v2: unary slot unassigned")]
+    if not f or f.seen == 0 then
+        error("cps v2: unary occurrence slot " .. tostring(slot)
+            .. " was never observed in the learning pass (cold path);"
+            .. " refusing to publish a generic fallback", 0)
+    end
+    if f.key_tag == 0xFFFFFFFF then
+        error("cps v2: unary occurrence slot " .. tostring(slot)
+            .. " observed conflicting operand tags;"
+            .. " refusing to publish a generic fallback", 0)
+    end
+    return f
+end
+
+local function unary_leaf(klass, family, suffix_fn)
+    function klass:append_v2(machine)
+        if machine.mode == "learning" then
+            machine:emit(machine.bank.learning[assert(self.learner_name,
+                "cps v2: unary learner missing")], {
+                target_disp = value_disp(self.target),
+                source_disp = value_disp(self.source),
+                occ_slot = assert(self.learn_slot, "cps v2: unary slot unassigned"),
+            })
+            return
+        end
+        local f = unary_facts(machine, self.learn_slot)
+        local suffix = suffix_fn(f.key_tag)
+        machine:emit(assert(machine.bank.residual[family .. "_" .. suffix],
+            "cps v2: missing residual " .. family .. "_" .. suffix), {
+            target_disp = value_disp(self.target),
+            source_disp = value_disp(self.source),
+        })
+    end
+end
+
+unary_leaf(UnmOccurrence, "unm", function(t) return t == 3 and "int" or "flt" end)
+unary_leaf(BnotOccurrence, "bnot", function(t) return t == 3 and "int" or "flt" end)
+unary_leaf(LenOccurrence, "len", function(t)
+    return (t == 5 or t == 6) and "str" or "table"
+end)
+
+-- NOT stays green: truthiness is the operation's data result.
+function NotOccurrence:append_v2(machine)
+    machine:emit(machine.bank.v2[51], {
+        target_disp = value_disp(self.target),
+        source_disp = value_disp(self.source),
     })
 end
 

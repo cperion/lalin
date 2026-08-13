@@ -24,13 +24,34 @@ The exhaustive audit and required migration order are in
 completion gate; section 21.6 specifies the file-by-file correction procedure,
 family-specific learning products, separate learning/residual images, table
 capacity learning, typed mismatch behavior, and executable acceptance gates.
-The current generic arithmetic, comparison, dynamic-table, call, numeric-for,
-CONCAT, GETVARG, and closure records are mandatory corrective work, not accepted
-final residuals.
+All singular opcode corrective batches and the scalar completion gate are complete. Recursive
+Fibonacci now meets the executable PUC parity floor through exact one-argument CALL and
+one-result RETURN leaves.
+The production V2 bank contains 450 exact sections; CONCAT uses eight reusable exact
+fragments instead of 360 Cartesian leaves. Named typed mismatch exits, mutable table-data
+exits, strict physical-hole publication, local-CFG stack audits, call/return budgets, and
+direct displacement manifests remain mandatory.
+
+The test-only `scalar_only` projection switch suppresses evidence-backed fusion while using
+the same learner, exact residual bank, proper-tail CPS runtime, ownership, and W^X publication.
+It is used only by the scalar differential and retained-performance gates; it is not a
+fallback backend.
 
 The active public runner is Native CPS Frame V2. LuaJIT owns bytecode staging,
 outer lifetime, and explicit host/library boundaries; recurring guest control
 uses immutable RX arenas and proper-tail native CPS.
+
+Focused V2 completion gate:
+
+```text
+experiments/copy_patch_cps/lua55_trace/run55_native_v2_scalar_gate.sh
+```
+
+It runs scalar stock differentials, exact/mismatch/publication audits, core-pinned retained
+performance thresholds, JIT and `-joff`, and `git diff --check` sequentially. Do not run
+`luac`-using experiment gates concurrently.
+
+Historical and component gates:
 
 ```text
 luajit experiments/copy_patch_cps/lua55_trace/build_opcode_00_08_bank.lua

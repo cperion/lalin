@@ -121,6 +121,8 @@ typedef struct Lua55GuestTableV1 {
     Lua55ValueV1 *array_values;
     Lua55GuestFieldV1 *field_values;
     Lua55GuestHeapV1 *heap;
+    uint32_t site_id;            /* shared guest layout: NEWTABLE site identity (V2 learning) */
+    uint32_t learn_reserved;
 } Lua55GuestTableV1;
 
 typedef struct Lua55RecordingSlotV1 {

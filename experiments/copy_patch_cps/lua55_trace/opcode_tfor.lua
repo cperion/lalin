@@ -87,16 +87,18 @@ function TForCallOccurrence:append_residual(_bank, _slot, _arena)
 end
 
 
+local function value_disp(index) return index * ffi.sizeof("Lua55ValueV2") end
+
 -- ---- Native CPS Frame V2 leaves ---------------------------------------
 function TForPrepOccurrence:append_v2(machine)
     machine:emit(machine.bank.v2[75], {
-        base_index = self.A,
+        base_disp = value_disp(self.A),
         ["link:taken_link"] = self.target_pc,
     })
 end
 function TForLoopOccurrence:append_v2(machine)
     machine:emit(machine.bank.v2[77], {
-        base_index = self.A,
+        base_disp = value_disp(self.A),
         ["link:body_link"] = self.target_pc,
     })
 end

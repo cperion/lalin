@@ -81,17 +81,54 @@ function GetVargOccurrence:append_residual(bank, slot, arena)
 end
 
 
+local function value_disp(index) return index * ffi.sizeof("Lua55ValueV2") end
+
 -- ---- Native CPS Frame V2 leaves ---------------------------------------
 function VarargOccurrence:append_v2(machine)
-    machine:emit(machine.bank.v2[80], {
-        target_index = self.target,
-        wanted = tonumber(self.wanted),
+    -- wanted is projection-proven (0xFFFFFFFF = all, otherwise a fixed count)
+    local all = self.wanted == 0xFFFFFFFF or self.wanted == -1
+    if all then
+        machine:emit(assert(machine.bank.residual.vararg_all,
+            "cps v2: missing residual vararg_all"), {
+            target_index = self.target,
+            target_disp = value_disp(self.target),
+        })
+        return
+    end
+    local wanted = tonumber(self.wanted)
+    assert(wanted >= 0 and wanted <= 254,
+        "cps v2: unsupported fixed VARARG count " .. tostring(wanted))
+    for slot = 0, wanted - 1 do
+        machine:emit(assert(machine.bank.residual.vararg_fixed_slot,
+            "cps v2: missing residual vararg_fixed_slot"), {
+            target_disp = value_disp(self.target + slot),
+            span = slot,
+        })
+    end
+    machine:emit(assert(machine.bank.residual.vararg_fixed_finish,
+        "cps v2: missing residual vararg_fixed_finish"), {
+        top_index = self.target + wanted,
     })
 end
 function GetVargOccurrence:append_v2(machine)
-    machine:emit(machine.bank.v2[81], {
-        target_index = self.target,
-        key_index = self.key,
+    if machine.mode == "learning" then
+        machine:emit(machine.bank.learning.getvarg, {
+            target_disp = value_disp(self.target),
+            key_disp = value_disp(self.key),
+            occ_slot = assert(self.learn_slot, "cps v2: getvarg slot unassigned"),
+        })
+        return
+    end
+    local f = machine.facts[assert(self.learn_slot,
+        "cps v2: getvarg slot unassigned")]
+    local name
+    if f.key_tag == 3 then name = "getvarg_int"
+    elseif f.key_tag == 5 or f.key_tag == 6 then name = "getvarg_n"
+    else name = "getvarg_mx" end
+    machine:emit(assert(machine.bank.residual[name],
+        "cps v2: missing residual " .. name), {
+        target_disp = value_disp(self.target),
+        key_disp = value_disp(self.key),
     })
 end
 

@@ -96,18 +96,21 @@ function ErrnnilOccurrence:append_residual(bank, slot, arena)
 end
 
 
+local function value_disp(index) return index * ffi.sizeof("Lua55ValueV2") end
+
 -- ---- Native CPS Frame V2 leaves ---------------------------------------
 function CloseOccurrence:append_v2(machine)
-    machine:emit(machine.bank.v2[54], { call_a = self.A or self.target })
+    machine:emit(machine.bank.v2[54],
+        { base_disp = value_disp(self.A or self.target) })
 end
 function TbcOccurrence:append_v2(machine)
-    machine:emit(machine.bank.v2[55], { call_a = self.target })
+    machine:emit(machine.bank.v2[55], { base_disp = value_disp(self.target) })
 end
 
 
 function ErrnnilOccurrence:append_v2(machine)
     machine:emit(machine.bank.v2[82], {
-        call_a = self.target,
+        base_disp = value_disp(self.target),
         call_pc = self.pc,
     })
 end

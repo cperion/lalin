@@ -289,6 +289,8 @@ function GuestHeap:table(array_capacity, field_capacity)
     object[0].array_values = arrays
     object[0].field_values = fields
     object[0].heap = self.heap
+    object[0].site_id = 0
+    object[0].learn_reserved = 0
     self.heap[0].object_count = generation
     local owner = setmetatable({
         heap_owner = self, object = object, array_values = arrays, field_values = fields,

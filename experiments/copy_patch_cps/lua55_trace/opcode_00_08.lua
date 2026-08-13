@@ -57,6 +57,8 @@ typedef struct Lua55GuestTableV1 {
     Lua55ValueV1 *array_values;
     Lua55GuestFieldV1 *field_values;
     Lua55GuestHeapV1 *heap;
+    uint32_t site_id;
+    uint32_t learn_reserved;
 } Lua55GuestTableV1;
 
 
@@ -342,6 +344,10 @@ function MoveOccurrence:append_residual(bank, slot, arena)
     patch_resume(arena, offset, record, self.pc)
 end
 
+function MoveOccurrence:project_gettabup_call(gettabup, call)
+    return gettabup:project_move_call(self, call)
+end
+
 local LoadIOccurrence = class()
 function LoadIOccurrence.new(pc, target, value)
     return setmetatable({ pc = pc, target = target, value = value }, LoadIOccurrence)
@@ -516,6 +522,14 @@ function FloatConstant:patch_poly(cc) return cc:floating(self.value) end
 function ShortStringConstant:patch_poly(cc) return cc:short_string(self.owner) end
 function LongStringConstant:patch_poly(cc) return cc:long_string(self.owner) end
 
+function NilConstant:global_call_kind() return "nil" end
+function FalseConstant:global_call_kind() return "false" end
+function TrueConstant:global_call_kind() return "true" end
+function IntegerConstant:global_call_kind() return "int" end
+function FloatConstant:global_call_kind() return "flt" end
+function ShortStringConstant:global_call_kind() return "str" end
+function LongStringConstant:global_call_kind() return "str" end
+
 local LoadKOccurrence = class()
 function LoadKOccurrence.new(pc, target, constant)
     return setmetatable({ pc = pc, target = target, constant = constant }, LoadKOccurrence)
@@ -525,6 +539,10 @@ function LoadKOccurrence:append_learner(bank, arena)
 end
 function LoadKOccurrence:append_residual(bank, slot, arena)
     self.constant:append_loadk_residual(bank, slot, arena, self.target)
+end
+
+function LoadKOccurrence:project_gettabup_call(gettabup, call)
+    return gettabup:project_constant_call(self, call)
 end
 
 local LoadKXOccurrence = class()
@@ -914,50 +932,100 @@ end
 
 
 -- ---- Native CPS Frame V2 leaves (leaf-owned patch products) ------------
+local function value_disp(index)
+    return index * ffi.sizeof("Lua55ValueV2")
+end
 function MoveOccurrence:append_v2(machine)
     machine:emit(machine.bank.v2[0], {
-        target_index = self.target, source_index = self.source,
+        target_disp = value_disp(self.target), source_disp = value_disp(self.source),
     })
 end
 function LoadIOccurrence:append_v2(machine)
     machine:emit(machine.bank.v2[1], {
-        target_index = self.target,
+        target_disp = value_disp(self.target),
         ["u64::integer"] = ffi.cast("uint64_t", ffi.new("int64_t", self.value)),
     })
 end
 function LoadFOccurrence:append_v2(machine)
     local holder = ffi.new("double[1]", self.value)
     machine:emit(machine.bank.v2[2], {
-        target_index = self.target,
+        target_disp = value_disp(self.target),
         ["u64::floating"] = ffi.cast("uint64_t *", holder)[0],
     })
 end
 function LoadKOccurrence:append_v2(machine)
-    machine:emit(machine.bank.v2[3], { target_index = self.target, const = self.constant })
+    self.constant:append_loadk_v2(machine, self.target)
 end
 function LoadKXOccurrence:append_v2(machine)
-    machine:emit(machine.bank.v2[4], { target_index = self.target, const = self.constant })
+    self.constant:append_loadk_v2(machine, self.target)
 end
 function LoadFalseOccurrence:append_v2(machine)
-    machine:emit(machine.bank.v2[5], { target_index = self.target })
+    machine:emit(machine.bank.v2[5], { target_disp = value_disp(self.target) })
 end
 function LoadFalseSkipOccurrence:append_v2(machine)
-    machine:emit(machine.bank.v2[6], { target_index = self.target })
+    machine:emit(machine.bank.v2[6], { target_disp = value_disp(self.target) })
 end
 function LoadTrueOccurrence:append_v2(machine)
-    machine:emit(machine.bank.v2[7], { target_index = self.target })
+    machine:emit(machine.bank.v2[7], { target_disp = value_disp(self.target) })
 end
 function LoadNilOccurrence:append_v2(machine)
-    machine:emit(machine.bank.v2[8], { target_index = self.target, span = self.span })
+    -- span is projection-proven; the exact leaf unrolls the nil stores
+    assert(self.span >= 1 and self.span <= 8,
+        "cps v2: unsupported LOADNIL span " .. tostring(self.span))
+    machine:emit(machine.bank.residual["loadnil_" .. self.span],
+        { target_disp = value_disp(self.target) })
 end
 function GetUpvalueOccurrence:append_v2(machine)
     machine:emit(machine.bank.v2[9], {
-        target_index = self.target, upvalue_index = self.upvalue,
+        target_disp = value_disp(self.target), upvalue_index = self.upvalue,
     })
 end
 function SetUpvalueOccurrence:append_v2(machine)
     machine:emit(machine.bank.v2[10], {
-        source_index = self.source, upvalue_index = self.upvalue,
+        source_disp = value_disp(self.source), upvalue_index = self.upvalue,
+    })
+end
+
+
+-- ---- Native CPS Frame V2: exact constant leaves -------------------------
+-- Each constant kind selects exactly one residual (no tag dispatch inside
+-- the published record). Strings share one leaf; the exact string kind is a
+-- patched value hole (5 short / 6 long), not a classification.
+local function emit_loadk_v2(machine, target, record_name, extra)
+    local product = { target_disp = value_disp(target) }
+    for key, value in pairs(extra or {}) do product[key] = value end
+    machine:emit(machine.bank.residual[record_name], product)
+end
+function NilConstant:append_loadk_v2(machine, target)
+    emit_loadk_v2(machine, target, "loadk_nil")
+end
+function FalseConstant:append_loadk_v2(machine, target)
+    emit_loadk_v2(machine, target, "loadk_false")
+end
+function TrueConstant:append_loadk_v2(machine, target)
+    emit_loadk_v2(machine, target, "loadk_true")
+end
+function IntegerConstant:append_loadk_v2(machine, target)
+    emit_loadk_v2(machine, target, "loadk_int", {
+        ["u64::const_int"] = ffi.cast("uint64_t", self.value),
+    })
+end
+function FloatConstant:append_loadk_v2(machine, target)
+    local holder = ffi.new("double[1]", self.value)
+    emit_loadk_v2(machine, target, "loadk_flt", {
+        ["u64::const_flt"] = ffi.cast("uint64_t *", holder)[0],
+    })
+end
+function ShortStringConstant:append_loadk_v2(machine, target)
+    emit_loadk_v2(machine, target, "loadk_str", {
+        const_tag = 5,
+        ["u64::const_ref"] = self.owner:reference(),
+    })
+end
+function LongStringConstant:append_loadk_v2(machine, target)
+    emit_loadk_v2(machine, target, "loadk_str", {
+        const_tag = 6,
+        ["u64::const_ref"] = self.owner:reference(),
     })
 end
 

@@ -43,4 +43,34 @@ luajit experiments/copy_patch_cps/lua55_trace/perf_bench.lua joff 200000
   residual keeps sum/index/limit/step in native registers.
 - The recorder/learner itself is native C (`lua55_trace_learn_integer_add_forloop`
   and the per-opcode `lua55_learn_*` stencils); Lua performs only mechanical
-  linking after the learner returns.
+linking after the learner returns.
+
+## Native CPS V2 scalar completion gate
+
+`run55_native_v2_scalar_perf_gate.lua` disables only evidence-backed fusion during
+projection. It still publishes the same exact V2 opcode residuals and uses the same native
+runtime. The gate measures retained execution, pins both processes to one CPU, uses median
+samples, and compares against `/tmp/lua-5.5.0/src/lua`.
+
+```sh
+luajit experiments/copy_patch_cps/lua55_trace/run55_native_v2_scalar_perf_gate.lua
+luajit -joff experiments/copy_patch_cps/lua55_trace/run55_native_v2_scalar_perf_gate.lua
+```
+
+Representative gate run on CPU 2:
+
+| workload | JIT PUC/V2 | `-joff` PUC/V2 | required floor |
+|---|---:|---:|---:|
+| arithmetic + comparison, 2M iterations | 1.83× | 1.84× | 1.20× |
+| recursive Fibonacci 25 | **1.12×** | **1.13×** | **1.00×** |
+| proper-tail recursion, 1M calls | 1.31× | 1.46× | 1.05× |
+| scalar numeric-for, 10M iterations | 2.41× | 2.42× | 1.50× |
+| scalar table read/write, 5M iterations | 1.29× | 1.23× | 1.15× |
+| composed CONCAT, 10K iterations | 3.47× | 3.03× | 1.50× |
+
+Fibonacci's former regression was fixed at the opcode-family level, not hidden by fusion:
+exact fixed native CALL with one authored argument now publishes one direct leaf, and exact
+one-result RETURN uses a narrow fixed-one sink path. Both remain guarded exact CALL/RETURN
+semantics with no native guest `call`/`ret`. The parity floor remains mandatory. The gate
+rejects a plan that contains any numeric-for, call, RMW, store-cycle, or accumulation
+superinstruction.

@@ -33,6 +33,7 @@ enum {
     LUA55_V2_REJECT_RELEASED_OWNER = 6,
     LUA55_V2_REJECT_UNSUPPORTED_CALLEE = 7,
     LUA55_V2_REJECT_STEP_ZERO = 8,
+    LUA55_V2_REJECT_SPECIALIZATION_MISMATCH = 9,
 };
 
 /* ---- guest values and objects (V2-owned physical layouts) ------------- */
@@ -88,6 +89,8 @@ typedef struct Lua55GuestTableV2 {
     Lua55ValueV2 *array_values;
     Lua55GuestFieldV2 *field_values;
     struct Lua55GuestHeapV2 *heap;
+    uint32_t site_id;            /* NEWTABLE allocation-site identity for capacity learning */
+    uint32_t learn_reserved;
 } Lua55GuestTableV2;
 
 typedef struct Lua55GuestBuiltinV2 {
@@ -146,6 +149,22 @@ typedef struct Lua55TbcNodeV2 {
     Lua55ValueV2 value;
 } Lua55TbcNodeV2;
 
+/* ---- family-specific learning products (separate learning image) ------- */
+/* One slot per learnable occurrence / NEWTABLE site. Learners write these
+   facts during the separate first invocation; Lua staging reads them and
+   selects exact residual leaves for the retained image. */
+typedef struct Lua55TableLearnSlotV2 {
+    uint32_t key_tag;            /* 0 unseen, 3 int, 5|6 string, 0xFFFFFFFF conflict */
+    uint32_t value_tag;          /* observed stored value tag (unused for reg copies) */
+    uint64_t max_array_index;    /* observed high-water array key for the NEWTABLE site */
+    uint32_t max_field_count;    /* observed high-water field count for the NEWTABLE site */
+    uint32_t seen;
+    uint32_t field_slot;          /* exact zero-based field slot when found */
+    uint32_t field_layout_capacity; /* field-vector layout fact */
+    uint32_t field_state;         /* 0 unseen, 1 found, 2 missing, 3 conflict */
+    uint32_t field_site_id;       /* owning NEWTABLE site, or zero */
+} Lua55TableLearnSlotV2;
+
 /* ---- boundary outcome: discriminant + exact union --------------------- */
 
 typedef struct Lua55HostCallPayloadV2 {
@@ -183,7 +202,8 @@ typedef struct Lua55RejectedPayloadV2 {
     uint32_t rejection_kind;
     uint32_t opcode;
     uint32_t pc;
-    uint32_t reserved;
+    uint32_t expected_tag;       /* specialization mismatch: selected shape */
+    uint32_t observed_tag;       /* specialization mismatch: observed shape */
 } Lua55RejectedPayloadV2;
 
 typedef struct Lua55NativeBoundaryOutcomeV2 {
@@ -198,6 +218,34 @@ typedef struct Lua55NativeBoundaryOutcomeV2 {
     } u;
 } Lua55NativeBoundaryOutcomeV2;
 
+/* Exact temporary state between mechanically composed CALL fragments. No guest
+   transfer occurs while either product is live. */
+typedef struct Lua55PreparedCallV2 {
+    Lua55NativeFrameV2 *callee;
+    Lua55NativeEntryV2 entry;
+    uint8_t *next_frame;
+    uint32_t nparams;
+    uint32_t nargs;
+} Lua55PreparedCallV2;
+
+typedef struct Lua55PreparedTailCallV2 {
+    Lua55NativeEntryV2 entry;
+    Lua55UpvalueCellV2 **upvalues;
+    uint8_t *frame_end;
+    uint32_t nparams;
+    uint32_t nargs;
+    uint32_t vararg_count;
+    uint32_t maxstack;
+    uint32_t value_capacity;
+    uint32_t tbc_capacity;
+} Lua55PreparedTailCallV2;
+
+typedef struct Lua55PreparedConcatV2 {
+    uint64_t total;
+    Lua55GuestStringV2 *string;
+    uint8_t *out;
+} Lua55PreparedConcatV2;
+
 typedef struct Lua55NativeInvocationV2 {
     uint8_t *frame_begin;
     uint8_t *frame_next;
@@ -210,7 +258,19 @@ typedef struct Lua55NativeInvocationV2 {
     Lua55ValueV2 *result_values;
     uint32_t result_capacity;
     uint32_t result_count;
+    uint8_t *learning;           /* mmap learning region (0 in residual mode) */
+    uint32_t learning_capacity;  /* bytes */
+    uint32_t learning_slots;     /* slot count */
     Lua55NativeBoundaryOutcomeV2 outcome;
+    Lua55PreparedCallV2 prepared_call;
+    Lua55PreparedTailCallV2 prepared_tail_call;
+    Lua55PreparedConcatV2 prepared_concat;
+    struct {
+        uint32_t pc;
+        uint32_t expected_tag;
+        uint32_t observed_tag;
+        uint32_t reserved;
+    } specialization_mismatch;
 } Lua55NativeInvocationV2;
 
 /* Final frame shape: no V1 prefix, no recording slots, no destination
@@ -238,6 +298,13 @@ typedef struct Lua55NativeFrameV2 {
 /* One function section per stencil: the bank builder extracts by name. */
 #define STENCIL(name)                                                           \
 __attribute__((section(".text." #name), aligned(1), noinline, noclone, used)) \
+void name
+
+/* Closed scalar-cycle stencils must not acquire compiler-created constant
+   pools or SIMD side data outside their copied function section. */
+#define STENCIL_NOVEC(name)                                                     \
+__attribute__((section(".text." #name), aligned(1), noinline, noclone, used,   \
+               optimize("no-tree-vectorize")))                                \
 void name
 
 /* Patchable sentinels shared by the V2 stencils and the bank builder. */

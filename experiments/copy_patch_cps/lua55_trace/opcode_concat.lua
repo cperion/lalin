@@ -1,3 +1,4 @@
+local bit = require("bit")
 local Native = require("experiments.copy_patch_cps.lua55_trace.opcode_00_08")
 local ffi = Native.ffi
 
@@ -67,14 +68,53 @@ end
 
 
 -- ---- Native CPS Frame V2 leaf -----------------------------------------
+local function shape_char(tag)
+    if tag == 3 then return "i"
+    elseif tag == 4 then return "f"
+    else return "s" end
+end
+
 function ConcatOccurrence:append_v2(machine)
-    machine:emit(machine.bank.v2[53], {
-        target_index = self.target,
-        setlist_base = self.base,
-        setlist_count = self.count,
-        ["u64::itoa_addr"] = ITOA_ADDR,
-        ["u64::dtoa_addr"] = DTOA_ADDR,
-    })
+    if machine.mode == "learning" then
+        machine:emit(machine.bank.learning.concat, {
+            target_index = self.target,
+            setlist_base = self.base,
+            setlist_count = self.count,
+            ["u64::itoa_addr"] = ITOA_ADDR,
+            ["u64::dtoa_addr"] = DTOA_ADDR,
+            occ_slot = assert(self.learn_slot, "cps v2: concat slot unassigned"),
+        })
+        return
+    end
+    assert(self.count >= 2 and self.count <= 5,
+        "cps v2: unsupported concat width " .. tostring(self.count))
+    local f = machine.facts[assert(self.learn_slot,
+        "cps v2: concat slot unassigned")]
+    if not f or f.seen == 0 then
+        error("cps v2: concat slot " .. tostring(self.learn_slot)
+            .. " was never observed in the learning pass (cold path);"
+            .. " refusing to publish a generic fallback", 0)
+    end
+    if f.key_tag == 0xFFFFFFFF then
+        error("cps v2: concat slot " .. tostring(self.learn_slot)
+            .. " observed conflicting operand shapes;"
+            .. " refusing to publish a generic fallback", 0)
+    end
+    -- the learning slot packs up to five operand shapes: key/value tags,
+    -- t2 in the low half of max_array_index, t3 in the high half, and t4
+    -- in max_field_count
+    local chars = { shape_char(f.key_tag), shape_char(f.value_tag) }
+    local packed = tonumber(f.max_array_index)
+    if self.count >= 3 then
+        chars[3] = shape_char(packed % 4294967296)
+    end
+    if self.count >= 4 then
+        chars[4] = shape_char(math.floor(packed / 4294967296))
+    end
+    if self.count >= 5 then
+        chars[5] = shape_char(tonumber(f.max_field_count))
+    end
+    machine:compose_concat(chars, self.base, ITOA_ADDR, DTOA_ADDR)
 end
 
 return {

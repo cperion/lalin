@@ -75,7 +75,8 @@ end
 -- global index so the host can resolve a closure's plan from the guest
 -- object (Lua55GuestClosureV1.proto_index).
 
-local function build_plans(main, heap)
+local function build_plans(main, heap, opts)
+    opts = opts or {}
     local proto_global = {}
     local function assign(proto, next_index)
         proto_global[proto] = next_index
@@ -88,7 +89,9 @@ local function build_plans(main, heap)
     assign(main, 0)
     local plans = {}
     for proto, global_index in pairs(proto_global) do
-        local plan = Projection.project_call_plan(proto, heap)
+        local plan = Projection.project_call_plan(proto, heap, {
+            scalar_only = opts.scalar_only == true,
+        })
         for _, block in ipairs(plan.blocks) do
             for _, occurrence in ipairs(block.path.occurrences) do
                 if occurrence.learner_name == "closure" then

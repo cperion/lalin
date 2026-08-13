@@ -3,6 +3,7 @@ package.path = "./lua/?.lua;./lua/?/init.lua;./?.lua;./?/init.lua;" .. package.p
 
 local ffi = require("ffi")
 local CPS = require("experiments.copy_patch_cps.lua55_trace.cps_invocation_v2")
+local root_frame_bytes = CPS.root_frame_bytes
 
 local function run(source, opts)
     local path = os.tmpname() .. ".lua"
@@ -66,6 +67,19 @@ end
 return loop(1000000, 0)
 ]=], { return_invocation = true, frame_region = 4096 })
 assert(#tail == 1 and tail[1] == 500000500000, "cps v2 tail loop result changed")
+-- the retained owner is returned unexecuted; re-enter it through the exact
+-- residuals and prove the million-iteration tail still reuses ONE frame
+local tail_frame = ffi.cast("Lua55NativeFrameV2 *", tail_inv.frame_begin)
+local tail_bytes = root_frame_bytes(
+    tonumber(tail_frame[0].value_count), tonumber(tail_frame[0].value_capacity))
+local tail_entry = tail_inv.functions[tail_inv.main_index].entry
+tail_inv.invocation[0].frame_next = tail_inv.frame_begin + tail_bytes
+tail_inv.invocation[0].current_frame = tail_frame
+tail_inv.invocation[0].outcome.discriminant = 0
+tail_frame[0].top = 0
+tail_entry(tail_frame)
+assert(tonumber(tail_inv.invocation[0].outcome.discriminant) == 1,
+    "cps v2 retained tail re-entry did not return")
 assert(tonumber(ffi.cast("uintptr_t", tail_inv.invocation[0].frame_next))
     == tonumber(ffi.cast("uintptr_t", tail_inv.invocation[0].frame_begin)),
     "cps v2 tail recursion did not reuse a bounded frame")

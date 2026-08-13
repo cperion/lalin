@@ -28,9 +28,6 @@ local function patch_value_index(arena, offset, record, role, index)
     patch_many(arena, offset, record.holes[role .. "_reserved"], base + 4, patch_i32)
 end
 
--- A pow occurrence owns its companion (MMBIN/MMBINK): a numeric success
--- skips it (fallthrough at pc + 2). pow() runs through the patched libm
--- address; non-numeric operands reject to the host (__pow metamethod).
 local function append_occurrence(arena, record, occurrence)
     local offset = arena:append(record)
     patch_value_index(arena, offset, record, "target", occurrence.target)
@@ -55,8 +52,6 @@ local function class()
     return result
 end
 
--- Shared base: dispatch on the per-instance learner_name ("pow"/"powk").
--- Instances of both classes look methods up here via __index.
 local PowOccurrence = class()
 
 function PowOccurrence:append_learner(bank, arena)
@@ -110,27 +105,72 @@ end
 
 PowKOccurrence.__index = PowOccurrence
 
+-- ---- Native CPS Frame V2 leaves -----------------------------------------
+-- Batch 3: exact operand-product leaves (POW is float-result arithmetic).
 
--- ---- Native CPS Frame V2 leaf -----------------------------------------
-function PowOccurrence:append_v2(machine)
-    local opcode = math.floor(self.quote_base / 65536)
-    local product = {
-        target_index = self.target,
-        left_index = self.left,
-        right_index = self.right,
-        ["u64::pow_addr"] = POW_ADDRESS,
-    }
+local TAG_INT = 3
+
+local function pow_facts(machine, slot)
+    local f = machine.facts[assert(slot, "cps v2: pow slot unassigned")]
+    if not f or f.seen == 0 then
+        error("cps v2: pow occurrence slot " .. tostring(slot)
+            .. " was never observed in the learning pass (cold path);"
+            .. " refusing to publish a generic fallback", 0)
+    end
+    if f.key_tag == 0xFFFFFFFF then
+        error("cps v2: pow occurrence slot " .. tostring(slot)
+            .. " observed conflicting operand tags;"
+            .. " refusing to publish a generic fallback", 0)
+    end
+    return f
+end
+
+local function side(tag) return tag == TAG_INT and "i" or "f" end
+local function value_disp(index) return index * ffi.sizeof("Lua55ValueV2") end
+
+local function pow_learn(machine, self)
+    local product = { target_disp = value_disp(self.target),
+        left_disp = value_disp(self.left), ["u64::pow_addr"] = POW_ADDRESS,
+        occ_slot = assert(self.learn_slot, "cps v2: pow slot unassigned") }
+    if self.right ~= nil then product.right_disp = value_disp(self.right) end
     if self.const ~= nil then
         product.const_tag = self.const.tag
         product["u64::const_int"] = self.const.int_bits
         product["u64::const_flt"] = self.const.flt_bits
     end
-    machine:emit(machine.bank.v2[opcode], product)
+    machine:emit(machine.bank.learning[assert(self.learner_name,
+        "cps v2: pow learner missing")], product)
+end
+
+function PowOccurrence:append_v2(machine)
+    if machine.mode == "learning" then pow_learn(machine, self) return end
+    local f = pow_facts(machine, self.learn_slot)
+    local name = "pow_" .. side(f.key_tag) .. side(f.value_tag)
+    machine:emit(assert(machine.bank.residual[name],
+        "cps v2: missing residual " .. name), {
+        target_disp = value_disp(self.target), left_disp = value_disp(self.left),
+        right_disp = value_disp(self.right),
+        ["u64::pow_addr"] = POW_ADDRESS,
+    })
+end
+
+function PowKOccurrence:append_v2(machine)
+    if machine.mode == "learning" then pow_learn(machine, self) return end
+    local f = pow_facts(machine, self.learn_slot)
+    local ct = self.const.tag == TAG_INT and "i" or "f"
+    local name = "powk_" .. side(f.key_tag) .. ct
+    local product = { target_disp = value_disp(self.target),
+        left_disp = value_disp(self.left), ["u64::pow_addr"] = POW_ADDRESS }
+    if ct == "i" then
+        product["u64::const_int"] = self.const.int_bits
+    else
+        product["u64::const_flt"] = self.const.flt_bits
+    end
+    machine:emit(assert(machine.bank.residual[name],
+        "cps v2: missing residual " .. name), product)
 end
 
 return {
-    PowOccurrence = PowOccurrence,
-    PowKOccurrence = PowKOccurrence,
-    POW_ADDRESS = POW_ADDRESS,
+    PowOccurrence = PowOccurrence, PowKOccurrence = PowKOccurrence,
     ffi = ffi,
 }
