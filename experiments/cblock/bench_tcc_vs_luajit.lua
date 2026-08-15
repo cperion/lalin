@@ -10,13 +10,17 @@ local module, runtime = assert(C.jit(function()
         field: checksum (i64),
     }
 
-    Machine: classify (cont(Machine), cont(Machine), cont(Machine))
-        (function(self, halted, even, odd)
+    Machine: classify (
+        cont: halted (Machine), cont: even (Machine), cont: odd (Machine)
+    )(function(p, c)
+            local self = p.self
+            local halted, even, odd = c.halted, c.even, c.odd
             return if_(eq(self.value, 1), halted(self),
                 if_(eq(self.value % 2, 0), even(self), odd(self)))
         end)
 
-    Machine: execute_even (cont(Machine)) (function(self)
+    Machine: execute_even () (Machine) (function(p)
+        local self = p.self
         return Machine {
             input = self.input,
             limit = self.limit,
@@ -26,7 +30,8 @@ local module, runtime = assert(C.jit(function()
         }
     end)
 
-    Machine: execute_odd (cont(Machine)) (function(self)
+    Machine: execute_odd () (Machine) (function(p)
+        local self = p.self
         return Machine {
             input = self.input,
             limit = self.limit,
@@ -36,7 +41,8 @@ local module, runtime = assert(C.jit(function()
         }
     end)
 
-    Machine: next_input (cont(Machine)) (function(self)
+    Machine: next_input () (Machine) (function(p)
+        local self = p.self
         local next = self.input + 1
         return Machine {
             input = next,
@@ -47,11 +53,20 @@ local module, runtime = assert(C.jit(function()
         }
     end)
 
-    local checksum = region(i64, cont(i64), cont())(function(limit, done, _trapped)
-        local dispatch, execute_even, execute_odd, advance
+    local checksum = region(
+        param: limit (i64),
+        cont: done (i64),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local limit = p.limit
+            local done, trapped = c.done, c.trapped
+            local dispatch, execute_even, execute_odd, advance
 
         dispatch = block(Machine)(function(machine)
-            return machine:classify()(advance, execute_even, execute_odd)
+            return machine:classify() {
+                halted = advance, even = execute_even, odd = execute_odd,
+            }
         end)
 
         execute_even = block(Machine)(function(machine)
@@ -76,12 +91,15 @@ local module, runtime = assert(C.jit(function()
         })
     end)
 
-    local saxpy = func(ptr(f64), ptr(f64), ptr(f64), i64, f64, ret())
-        (function(dst, xs, ys, count, a)
-            local each = range(0, count)
-            return zip(each:load(xs), each:load(ys)):map(function(x, y)
-                return a * x + y
-            end):store(dst)
+    local saxpy = func
+        (param: dst (ptr(f64)), param: xs (ptr(f64)), param: ys (ptr(f64)),
+         param: count (i64), param: a (f64))
+        (void)
+        (function(p)
+            local each = range(0, p.count)
+            return zip(each:load(p.xs), each:load(p.ys)):map(function(x, y)
+                return p.a * x + y
+            end):store(p.dst)
         end)
 
     local checksum_fn = call(checksum)
@@ -134,7 +152,7 @@ local rounds = tonumber(arg[2]) or 5
 local begin = os.clock()
 local cook_exit, cook_checksum = module.hailstone.checksum(1)
 local cook_elapsed = os.clock() - begin
-assert(cook_exit == 1 and tonumber(cook_checksum) == 0)
+assert(cook_exit == "done" and tonumber(cook_checksum) == 0)
 
 -- Warm LuaJIT until the hot loops have compiled before measuring them.
 local warm_limit = math.min(limit, 100000)
@@ -144,7 +162,7 @@ assert(warm_expected > 0)
 
 local tcc_elapsed, tcc_checksum = measure(function()
     local exit, value = module.hailstone.checksum(limit)
-    assert(exit == 1)
+    assert(exit == "done")
     return tonumber(value)
 end, rounds)
 

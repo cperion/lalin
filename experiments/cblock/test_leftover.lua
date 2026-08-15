@@ -21,11 +21,20 @@ local csrc, errors = C.compile(function()
     local lut = global(array(i32, 4), { 10, 20, 30, 40 })
     local greeting = cstring("hi")
 
-    local host_apply = extern(Binop, i32, i32, ret(i32))
-    local host_read = extern(ptr(File), ret(i32))
+    local host_apply = extern
+        (param: fn (Binop), param: a (i32), param: b (i32))
+        (i32)
+    local host_read = extern (param: file (ptr(File))) (i32)
 
-    local sum_array = region(ptr(Vec4), cont(f64), cont())(function(p, done, trapped)
-        local v = var(Vec4, load(deref(p)))
+    local sum_array = region(
+        param: input (ptr(Vec4)),
+        cont: done (f64),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local input = p.input
+            local done, trapped = c.done, c.trapped
+            local v = var(Vec4, load(deref(input)))
         local acc = var(f64, 0.0)
         return store(acc, acc + at(v.data, 0)),
                store(acc, acc + at(v.data, 1)),
@@ -34,35 +43,66 @@ local csrc, errors = C.compile(function()
                done(acc)
     end)
 
-    local classify = region(i64, cont(f64), cont(i64))(function(v, as_float, as_int)
+    local classify = region(
+        param: value (i64),
+        cont: as_float (f64),
+        cont: as_int (i64)
+    )(function(p, c)
+        local v = p.value
+        local as_float, as_int = c.as_float, c.as_int
         local f = Value { floating = cast(f64, v) }
         local i = Value { integer = v }
         return if_(eq(v, 7)):then_(as_float(f.floating)):else_(as_int(i.integer))
     end)
 
-    local read_lut = region(i32, cont(i32), cont())(function(i, done, trapped)
-        return done(load(at(lut, i)))
+    local read_lut = region(
+        param: index (i32),
+        cont: done (i32),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local done, trapped = c.done, c.trapped
+            return done(load(at(lut, p.index)))
     end)
 
-    local first_char = region(cont(i32), cont())(function(done, trapped)
-        return done(cast(i32, load(at(greeting, 0))))
+    local first_char = region(
+        cont: done (i32),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local done, trapped = c.done, c.trapped
+            return done(cast(i32, load(at(greeting, 0))))
     end)
 
-    local sum_view = region(ptr(Slice), cont(f64), cont())(function(p, done, trapped)
-        local s = load(deref(p))
+    local sum_view = region(
+        param: input (ptr(Slice)),
+        cont: done (f64),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local done, trapped = c.done, c.trapped
+            local s = load(deref(p.input))
         local each = range(0, s.length)
         return done(each:load(s.ptr):reduce(add, 0.0))
     end)
 
-    local add_two = func(i32, i32, ret(i32))(function(x, y)
-        return x + y
-    end)
-    local apply = func(i32, i32, ret(i32))(function(x, y)
-        return host_apply(address(add_two), x, y)
-    end)
+    local add_two = func
+        (param: x (i32), param: y (i32))
+        (i32)
+        (function(p) return p.x + p.y end)
+    local apply = func
+        (param: x (i32), param: y (i32))
+        (i32)
+        (function(p) return host_apply(address(add_two), p.x, p.y) end)
 
-    local read_file = region(ptr(File), cont(i32), cont())(function(f, done, trapped)
-        return done(host_read(f))
+    local read_file = region(
+        param: file (ptr(File)),
+        cont: done (i32),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local done, trapped = c.done, c.trapped
+            return done(host_read(p.file))
     end)
 
     local sum_array_fn = call(sum_array)
@@ -132,16 +172,34 @@ local module, runtime = C.jit(function()
     local Binop = fnptr(i32, i32, i32)
     local lut = global(array(i32, 4), { 10, 20, 30, 40 })
 
-    local classify = region(i64, cont(f64), cont(i64))(function(v, as_float, as_int)
+    local classify = region(
+        param: value (i64),
+        cont: as_float (f64),
+        cont: as_int (i64)
+    )(function(p, c)
+        local v = p.value
+        local as_float, as_int = c.as_float, c.as_int
         local f = Value { floating = cast(f64, v) }
         local i = Value { integer = v }
         return if_(eq(v, 7)):then_(as_float(f.floating)):else_(as_int(i.integer))
     end)
-    local read_lut = region(i32, cont(i32), cont())(function(i, done, trapped)
-        return done(load(at(lut, i)))
+    local read_lut = region(
+        param: index (i32),
+        cont: done (i32),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local done, trapped = c.done, c.trapped
+            return done(load(at(lut, p.index)))
     end)
-    local sum_view = region(ptr(Slice), cont(f64), cont())(function(p, done, trapped)
-        local s = load(deref(p))
+    local sum_view = region(
+        param: input (ptr(Slice)),
+        cont: done (f64),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local done, trapped = c.done, c.trapped
+            local s = load(deref(p.input))
         local each = range(0, s.length)
         return done(each:load(s.ptr):reduce(add, 0.0))
     end)
@@ -162,16 +220,16 @@ assert(module, runtime)
 
 local ffi = require("ffi")
 local exit, value = module.machine.classify(7)
-assert(exit == 1 and tonumber(value) == 7.0)
+assert(exit == "as_float" and tonumber(value) == 7.0)
 exit, value = module.machine.classify(9)
-assert(exit == 2 and tonumber(value) == 9)
+assert(exit == "as_int" and tonumber(value) == 9)
 exit, value = module.machine.read_lut(2)
-assert(exit == 1 and tonumber(value) == 30)
+assert(exit == "done" and tonumber(value) == 30)
 
 local xs = ffi.new("double[4]", { 1.0, 2.0, 3.0, 4.0 })
 local slice = module.machine.Slice { ptr = xs, length = 4 }
 exit, value = module.machine.sum_view(ffi.cast("void *", slice))
-assert(exit == 1 and math.abs(tonumber(value) - 10.0) < 1e-9)
+assert(exit == "done" and math.abs(tonumber(value) - 10.0) < 1e-9)
 
 module:free()
 print("cblock arrays/views/unions/globals/fnptr (TCC): ok")

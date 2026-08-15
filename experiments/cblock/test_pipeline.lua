@@ -1,30 +1,45 @@
 local C = require("cblock")
 
 local csrc, errors = C.compile(function()
-    local saxpy = region(ptr(f64), ptr(f64), ptr(f64), i64, f64, cont())
-        (function(dst, xs, ys, n, a)
-            local each = range(0, n)
-            local values = zip(each:load(xs), each:load(ys)):map(function(x, y)
-                return a * x + y
-            end)
-            return values:store(dst)
+    local saxpy = region(
+        param: dst (ptr(f64)),
+        param: xs (ptr(f64)),
+        param: ys (ptr(f64)),
+        param: n (i64),
+        param: a (f64)
+    )(void)(function(p)
+        local each = range(0, p.n)
+        local values = zip(each:load(p.xs), each:load(p.ys)):map(function(x, y)
+            return p.a * x + y
         end)
+        return values:store(p.dst)
+    end)
 
-    local dot = region(ptr(f64), ptr(f64), i64, cont(f64))
-        (function(xs, ys, n)
-            local each = range(0, n)
-            local products = zip(each:load(xs), each:load(ys)):map(function(x, y)
-                return x * y
-            end)
-            return products:reduce(add, 0.0)
+    local dot = region(
+        param: xs (ptr(f64)),
+        param: ys (ptr(f64)),
+        param: n (i64)
+    )(f64)(function(p)
+        local each = range(0, p.n)
+        local products = zip(each:load(p.xs), each:load(p.ys)):map(function(x, y)
+            return x * y
         end)
+        return products:reduce(add, 0.0)
+    end)
 
-    local run_saxpy = func(ptr(f64), ptr(f64), ptr(f64), i64, f64, ret())
-        (function(dst, xs, ys, n, a) return saxpy(dst, xs, ys, n, a) end)
-    local dot_emit = func(ptr(f64), ptr(f64), i64, ret(f64))
-        (function(xs, ys, n) return dot(xs, ys, n) end)
-    local dot_call = func(ptr(f64), ptr(f64), i64, ret(f64))
-        (function(xs, ys, n) return call(dot)(xs, ys, n) end)
+    local run_saxpy = func
+        (param: dst (ptr(f64)), param: xs (ptr(f64)), param: ys (ptr(f64)),
+         param: n (i64), param: a (f64))
+        (void)
+        (function(p) return saxpy(p.dst, p.xs, p.ys, p.n, p.a) end)
+    local dot_emit = func
+        (param: xs (ptr(f64)), param: ys (ptr(f64)), param: n (i64))
+        (f64)
+        (function(p) return dot(p.xs, p.ys, p.n) end)
+    local dot_call = func
+        (param: xs (ptr(f64)), param: ys (ptr(f64)), param: n (i64))
+        (f64)
+        (function(p) return call(dot)(p.xs, p.ys, p.n) end)
 
     return { run_saxpy = run_saxpy, dot_emit = dot_emit, dot_call = dot_call }
 end)

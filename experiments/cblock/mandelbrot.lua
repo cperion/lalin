@@ -8,13 +8,13 @@ local csrc, errors = C.compile(function()
         field: im (f64),
     }
 
-    Complex: square_add (Complex, cont(Complex))
-        (function(self, addend)
-            return Complex {
-                re = self.re * self.re - self.im * self.im + addend.re,
-                im = 2.0 * self.re * self.im + addend.im,
-            }
-        end)
+    Complex: square_add (param: addend (Complex)) (Complex) (function(p)
+        local self, addend = p.self, p.addend
+        return Complex {
+            re = self.re * self.re - self.im * self.im + addend.re,
+            im = 2.0 * self.re * self.im + addend.im,
+        }
+    end)
 
     function Complex:norm_squared()
         return self.re * self.re + self.im * self.im
@@ -26,7 +26,8 @@ local csrc, errors = C.compile(function()
         field: iteration (i32),
     }
 
-    Orbit: advance (cont(Orbit)) (function(self)
+    Orbit: advance () (Orbit) (function(p)
+        local self = p.self
         local next_z = self.z:square_add(self.c)
         local next_orbit = Orbit {
             z = next_z,
@@ -37,7 +38,8 @@ local csrc, errors = C.compile(function()
     end)
 
     local function repeated_transition(T, transition, count)
-        return region(T, cont(T))(function(state)
+        return region(param: state (T))(T)(function(p)
+            local state = p.state
             local framed_transition = call(transition)
             for _ = 1, count do state = framed_transition(state) end
             return state
@@ -47,17 +49,19 @@ local csrc, errors = C.compile(function()
     Orbit.iterate = repeated_transition(Orbit, Orbit.advance, MAX_ITER)
     local run_orbit_frame = call(Orbit.iterate)
 
-    local render = func(ptr(i32), ptr(Complex), i64, ret())
-        (function(dst, points, count)
-            local each = range(0, count)
-            return each:load(points):map(function(c)
+    local render = func
+        (param: dst (ptr(i32)), param: points (ptr(Complex)), param: count (i64))
+        (void)
+        (function(p)
+            local each = range(0, p.count)
+            return each:load(p.points):map(function(c)
                 local orbit = Orbit {
                     z = Complex { re = 0.0, im = 0.0 },
                     c = c,
                     iteration = 0,
                 }
                 return run_orbit_frame(orbit).iteration
-            end):store(dst)
+            end):store(p.dst)
         end)
 
     return {

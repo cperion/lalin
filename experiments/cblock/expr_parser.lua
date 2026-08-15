@@ -31,8 +31,14 @@ local function build_parser()
     -- Exits: ok()            a token is in self.kind / self.value
     --        eof()           end of input reached
     --        malformed()     a non-token character
-    Evaluator.scan = region(ptr(Evaluator), cont(), cont(), cont())
-        (function(p, ok, eof, malformed)
+    Evaluator.scan = region(
+        param: self (ptr(Evaluator)),
+        cont: ok (),
+        cont: eof (),
+        cont: malformed ()
+    )(function(p, c)
+            local p = p.self
+            local ok, eof, malformed = c.ok, c.eof, c.malformed
             local start, first, digit, operator
 
             start = block()(function()
@@ -82,8 +88,14 @@ local function build_parser()
 
     -- Owned lookahead region: classify the character at the cursor WITHOUT
     -- advancing. Exits: ok / eof / malformed.
-    Evaluator.peek = region(ptr(Evaluator), cont(), cont(), cont())
-        (function(p, ok, eof, malformed)
+    Evaluator.peek = region(
+        param: self (ptr(Evaluator)),
+        cont: ok (),
+        cont: eof (),
+        cont: malformed ()
+    )(function(p, c)
+            local p = p.self
+            local ok, eof, malformed = c.ok, c.eof, c.malformed
             local start, classify
             start = block()(function()
                 return if_(ge(deref(p).cursor, deref(p).length), eof(), classify())
@@ -108,8 +120,13 @@ local function build_parser()
     -- primary := number | '(' expr ')'
     -- Uses the current token (already scanned). A number returns its value
     -- without consuming; parens consume '(' and ')' via explicit advances.
-    Evaluator.parse_primary = region(ptr(Evaluator), cont(i64), cont())
-        (function(p, result, malformed)
+    Evaluator.parse_primary = region(
+        param: self (ptr(Evaluator)),
+        cont: result (i64),
+        cont: malformed ()
+    )(function(p, c)
+            local p = p.self
+            local result, malformed = c.result, c.malformed
             local classify, emit_value, paren, inner, close, close_check
 
             emit_value = block()(function()
@@ -124,18 +141,22 @@ local function build_parser()
 
             -- the '(' is already the current token; load the first inner one
             paren = block()(function()
-                return scan(p)(inner, malformed, malformed)
+                return scan(p) { ok = inner, eof = malformed, malformed = malformed }
             end)
 
             inner = block()(function()
                 local on_value = function(v)
                     return seq(store(deref(p).value, v), close())
                 end
-                return call(Evaluator.parse_expr)(p)(on_value, malformed)
+                return call(Evaluator.parse_expr)(p) {
+                    result = on_value, malformed = malformed,
+                }
             end)
 
             close = block()(function()
-                return peek(p)(close_check, malformed, malformed)
+                return peek(p) {
+                    ok = close_check, eof = malformed, malformed = malformed,
+                }
             end)
 
             close_check = block()(function()
@@ -150,13 +171,18 @@ local function build_parser()
     -- term := primary (('*'|'/') primary)*
     -- fold peeks the next token without consuming; an operator is consumed
     -- by an explicit advance followed by a scan of its operand.
-    Evaluator.parse_term = region(ptr(Evaluator), cont(i64), cont())
-        (function(p, result, malformed)
+    Evaluator.parse_term = region(
+        param: self (ptr(Evaluator)),
+        cont: result (i64),
+        cont: malformed ()
+    )(function(p, c)
+            local p = p.self
+            local result, malformed = c.result, c.malformed
             local acc = var(i64, 0)
             local fold, op, mul, div, mul_rhs, div_rhs
 
             fold = block()(function()
-                return peek(p)(op, result(load(acc)), malformed)
+                return peek(p) { ok = op, eof = result(load(acc)), malformed = malformed }
             end)
 
             op = block()(function()
@@ -167,40 +193,51 @@ local function build_parser()
 
             mul = block()(function()
                 return store(deref(p).cursor, deref(p).cursor + 1),
-                       scan(p)(mul_rhs, malformed, malformed)
+                       scan(p) { ok = mul_rhs, eof = malformed, malformed = malformed }
             end)
             div = block()(function()
                 return store(deref(p).cursor, deref(p).cursor + 1),
-                       scan(p)(div_rhs, malformed, malformed)
+                       scan(p) { ok = div_rhs, eof = malformed, malformed = malformed }
             end)
 
             mul_rhs = block()(function()
                 local on_value = function(v)
                     return seq(store(acc, load(acc) * v), fold())
                 end
-                return call(Evaluator.parse_primary)(p)(on_value, malformed)
+                return call(Evaluator.parse_primary)(p) {
+                    result = on_value, malformed = malformed,
+                }
             end)
             div_rhs = block()(function()
                 local on_value = function(v)
                     return seq(store(acc, load(acc) / v), fold())
                 end
-                return call(Evaluator.parse_primary)(p)(on_value, malformed)
+                return call(Evaluator.parse_primary)(p) {
+                    result = on_value, malformed = malformed,
+                }
             end)
 
             local on_value = function(v)
                 return seq(store(acc, v), fold())
             end
-                return call(Evaluator.parse_primary)(p)(on_value, malformed)
+                return call(Evaluator.parse_primary)(p) {
+                    result = on_value, malformed = malformed,
+                }
         end)
 
     -- expr := term (('+'|'-') term)*
-    Evaluator.parse_expr = region(ptr(Evaluator), cont(i64), cont())
-        (function(p, result, malformed)
+    Evaluator.parse_expr = region(
+        param: self (ptr(Evaluator)),
+        cont: result (i64),
+        cont: malformed ()
+    )(function(p, c)
+            local p = p.self
+            local result, malformed = c.result, c.malformed
             local acc = var(i64, 0)
-            local fold, plus, minus, plus_rhs, minus_rhs
+            local fold, op, plus, minus, plus_rhs, minus_rhs
 
             fold = block()(function()
-                return peek(p)(op, result(load(acc)), malformed)
+                return peek(p) { ok = op, eof = result(load(acc)), malformed = malformed }
             end)
 
             op = block()(function()
@@ -211,35 +248,45 @@ local function build_parser()
 
             plus = block()(function()
                 return store(deref(p).cursor, deref(p).cursor + 1),
-                       scan(p)(plus_rhs, malformed, malformed)
+                       scan(p) { ok = plus_rhs, eof = malformed, malformed = malformed }
             end)
             minus = block()(function()
                 return store(deref(p).cursor, deref(p).cursor + 1),
-                       scan(p)(minus_rhs, malformed, malformed)
+                       scan(p) { ok = minus_rhs, eof = malformed, malformed = malformed }
             end)
 
             plus_rhs = block()(function()
                 local on_value = function(v)
                     return seq(store(acc, load(acc) + v), fold())
                 end
-                return call(Evaluator.parse_term)(p)(on_value, malformed)
+                return call(Evaluator.parse_term)(p) {
+                    result = on_value, malformed = malformed,
+                }
             end)
             minus_rhs = block()(function()
                 local on_value = function(v)
                     return seq(store(acc, load(acc) - v), fold())
                 end
-                return call(Evaluator.parse_term)(p)(on_value, malformed)
+                return call(Evaluator.parse_term)(p) {
+                    result = on_value, malformed = malformed,
+                }
             end)
 
             local on_value = function(v)
                 return seq(store(acc, v), fold())
             end
-                return call(Evaluator.parse_term)(p)(on_value, malformed)
+                return call(Evaluator.parse_term)(p) {
+                    result = on_value, malformed = malformed,
+                }
         end)
 
     -- Entry: build the frame, scan the first lookahead, parse, require EOF.
-    local run = region(ptr(u8), i64, cont(i64), cont())
-        (function(source, length, result, malformed)
+    local run = region(
+        param: source (ptr(u8)), param: length (i64),
+        cont: result (i64), cont: malformed ()
+    )(function(p, c)
+            local source, length = p.source, p.length
+            local result, malformed = c.result, c.malformed
             local frame = var(Evaluator, Evaluator {
                 source = source, length = length,
                 cursor = 0, kind = 0, value = 0,
@@ -249,13 +296,17 @@ local function build_parser()
                 local on_value = function(v)
                     return seq(store(deref(address(frame)).value, v), finish())
                 end
-                return call(Evaluator.parse_expr)(address(frame))(on_value, malformed)
+                return call(Evaluator.parse_expr)(address(frame)) {
+                    result = on_value, malformed = malformed,
+                }
             end)
             finish = block()(function()
                 return if_(ge(deref(address(frame)).cursor, deref(address(frame)).length),
                     result(load(deref(address(frame)).value)), malformed())
             end)
-            return scan(address(frame))(parse, malformed, malformed)
+            return scan(address(frame)) {
+                ok = parse, eof = malformed, malformed = malformed,
+            }
         end)
 
     local run_fn = call(run)
@@ -313,8 +364,8 @@ local function parse(text)
 end
 local function expect(text, want)
     local exit, value = parse(text)
-    assert(exit == 1 and value == want,
-        ("parse %q: exit=%d value=%s"):format(text, exit, tostring(value)))
+    assert(exit == "result" and value == want,
+        ("parse %q: exit=%s value=%s"):format(text, tostring(exit), tostring(value)))
 end
 expect("12+34*2", 80)
 expect("7*(3+2)", 35)
@@ -322,7 +373,7 @@ expect("100-25/5+2", 97)
 expect("(2+3)*(4-1)", 15)
 expect("((1))", 1)
 local exit, v = parse("12+")
-assert(exit == 2 and v == nil)
+assert(exit == "malformed" and v == nil)
 
 module:free()
 print("cblock fused lexer+parser (TCC): ok")

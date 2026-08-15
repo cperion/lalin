@@ -8,7 +8,14 @@ local csrc, errors = C.compile(function()
     }
 
     -- dispatch on an opcode to named blocks, threaded interpreter style
-    local run = region(i32, cont(i64), cont())(function(opcode, done, trapped)
+    local run = region(
+        param: opcode (i32),
+        cont: done (i64),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local opcode = p.opcode
+            local done, trapped = c.done, c.trapped
         local do_add, do_sub, do_halt, dispatch
 
         dispatch = block()(function()
@@ -58,8 +65,14 @@ print("cblock switch_ + enum (GCC): ok")
 -- TCC path
 local module, runtime = C.jit(function()
     local Opcode = enum { add = 0, sub = 1, halt = 2 }
-    local run = region(i32, cont(i64), cont())(function(opcode, done, trapped)
-        local do_add, do_sub, do_halt, dispatch
+    local run = region(
+        param: opcode (i32),
+        cont: done (i64),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local opcode = p.opcode
+            local done, trapped = c.done, c.trapped
         dispatch = block()(function()
             return switch_(opcode)
                 :case_(Opcode.add):then_(do_add)
@@ -77,13 +90,13 @@ end)
 assert(module, runtime)
 
 local exit, value = module.machine.run(0)
-assert(exit == 1 and tonumber(value) == 10)
+assert(exit == "done" and tonumber(value) == 10)
 exit, value = module.machine.run(1)
-assert(exit == 1 and tonumber(value) == 20)
+assert(exit == "done" and tonumber(value) == 20)
 exit, value = module.machine.run(2)
-assert(exit == 2 and value == nil)
+assert(exit == "trapped" and value == nil)
 exit, value = module.machine.run(99)
-assert(exit == 2 and value == nil)
+assert(exit == "trapped" and value == nil)
 
 module:free()
 print("cblock switch_ + enum (TCC): ok")

@@ -10,9 +10,10 @@ externs, and minimal control ceremony.
 local C = require("cblock")
 
 local source = C.compile(function()
-    local add = func(i32, i32, ret(i32))(function(a, b)
-        return a + b
-    end)
+    local add = func
+        (param: a (i32), param: b (i32))
+        (i32)
+        (function(p) return p.a + p.b end)
     return { add = add }
 end)
 -- source is ordinary C text; cook it with GCC for an AOT artifact,
@@ -28,18 +29,36 @@ end)
   result.
 - **A block is a label.** `block(params)(function(...) ... end)` is a labeled
   address in the function frame; jumping to it becomes a C `goto` edge.
-- **One outcome is direct, many are explicit.** `func` has exactly one
-  `ret(...)`. A `region` declares one `cont(...)` (inline result) or several
-  (alternatives) and is called with named handlers.
+- **Inputs are named; return types and continuations stay distinct.** Every callable
+  projects its immutable value-parameter product through `p`. Functions and externs
+  curry their native result type separately. Region continuations remain control
+  parameters; plural bodies select or forward them through immutable `c`.
 - **Inline by default, seal explicitly.** Applying a region inlines it.
   `call(region)` gives it one cached private `static` C frame. `func` is
   already a C ABI seal.
-- **The pipeline fuses.** `range → load → zip → map → reduce/store` materialize
+- **Machines compose hierarchically.** Objects own state, transitions, child
+  machines, and view projections; parent machines wire child exits directly.
+- **The pipeline fuses.** `range → load → zip → map → reduce/store` materializes
   one ordinary C loop; GCC `-O3` owns vectorization.
+
+A plural protocol reads directly:
+
+```lua
+local checked_div = region(
+    param: a (i32),
+    param: d (i32),
+    cont: divided (i32),
+    cont: zero ()
+)(function(p, c)
+    return if_(eq(p.d, 0), c:zero(), c:divided(p.a / p.d))
+end)
+
+return checked_div(a, d) { divided = on_value, zero = on_zero }
+```
 
 See [LANGUAGE_REFERENCE.md](LANGUAGE_REFERENCE.md) for the full surface and
 [lua_label_machines.md](lua_label_machines.md) for the design narrative
-(regions, continuations, object machines, direct-threaded interpreters).
+(named protocols, nested object machines, component views, interpreters).
 
 ## Quick start
 
@@ -48,14 +67,22 @@ Compile to C text and drive it from C:
 ```lua
 local C = require("cblock")
 local source = C.compile(function()
-    local clamp = region(i32, i32, i32, cont(i32))(function(x, lo, hi)
-        return if_(lt(x, lo), lo, if_(gt(x, hi), hi, x))
+    local clamp = region(
+        param: x (i32),
+        param: lo (i32),
+        param: hi (i32)
+    )(i32)(function(p)
+        return if_(lt(p.x, p.lo), p.lo, if_(gt(p.x, p.hi), p.hi, p.x))
     end)
-    local host_add = extern(i32, i32, ret(i32))
-    local demo = func(i32, i32, ret(i32))(function(x, y)
-    local demo = func(i32, i32, ret(i32))(function(x, y)
-        return clamp(host_add(x, y), 0, 100)
-    end)
+    local host_add = extern
+        (param: a (i32), param: b (i32))
+        (i32)
+    local demo = func
+        (param: x (i32), param: y (i32))
+        (i32)
+        (function(p)
+            return clamp(host_add(p.x, p.y), 0, 100)
+        end)
     return { demo = demo, host_add = host_add }
 end)
 ```
@@ -64,9 +91,10 @@ Cook with GCC and call from Lua via the JIT path, or cook in memory with TCC:
 
 ```lua
 local math = assert(C.jit(function()
-    local add = func(i32, i32, ret(i32))(function(a, b)
-        return a + b
-    end)
+    local add = func
+        (param: a (i32), param: b (i32))
+        (i32)
+        (function(p) return p.a + p.b end)
     return { add = add }
 end))
 assert(math.add(20, 22) == 42)   -- cooks the whole module on first call
@@ -83,10 +111,13 @@ ffi.cdef [[ typedef int32_t (*CBlockTestBinary)(int32_t, int32_t); ]]
 local host_mul = ffi.cast("CBlockTestBinary", function(a, b) return a * b end)
 
 local m = assert(C.jit(function()
-    local host_mul_decl = extern(i32, i32, ret(i32))
-    local twice = func(i32, ret(i32))(function(x)
-        return host_mul_decl(x, 2)
-    end)
+    local host_mul_decl = extern
+        (param: a (i32), param: b (i32))
+        (i32)
+    local twice = func
+        (param: x (i32))
+        (i32)
+        (function(p) return host_mul_decl(p.x, 2) end)
     return { twice = twice }
 end, { symbols = { host_mul = host_mul } }))
 ```
@@ -114,12 +145,17 @@ Lua build chunk
 - `C.jit(build, options)` returns `(namespace, runtime)`; the namespace has
   `:free()` and `:source`.
 
+The full architecture — the three IR layers, the inline/seal mechanism, the
+TCC runtime ABI, and the enforced invariants — is in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
 ```text
 experiments/cblock/
   cblock.lua          the DSL + compiler (staging, check, lower, codegen)
   cblock_tcc.lua      TCC memory cooking and the FFI runtime boundary
   label.lua           the keyword/DSL runtime
   lua_label_machines.md   design narrative (labels, regions, machines)
+  ARCHITECTURE.md         compiler architecture, IR layers, TCC runtime
   LANGUAGE_REFERENCE.md   systematic language reference
   TCC_VS_LUAJIT.md         TCC vs LuaJIT steady-state benchmark
   test_*.lua          surface, extern, pipeline, struct, tcc, places, switch, leftover
@@ -155,11 +191,17 @@ compilation and the TCC memory cook.
 
 - Lua owns names and composition; CBlock owns semantics; C owns layout and ABI.
 - Bodies are statement lists; every block path terminates (checked).
-- `func` = one `ret`; `region` = `cont` continuations; `ret` never mixes with
-  `cont`.
+- `func`, `extern`, and direct `region` separate their named parameter product
+  from one curried native result type (`void` for no value). Alternative regions
+  carry named continuations among their parameters instead; unnamed `cont(...)`
+  is not accepted.
+- Value inputs are ordered `param: name (type)` declarations and bodies receive
+  immutable product `p`. Plural region bodies additionally receive `c`;
+  `c:name(v)` selects an exit and `c.name` forwards it. Calls may use positional
+  input sugar, but callers provide exact named-handler tables.
 - Regions inline unless called; recursion crosses `call(region)`.
-- Handlers are named blocks, so wiring reads like Lalin's
-  `token = got_token, eof = done`.
+- Handler tables are consumed during staging and lower to direct control edges,
+  never runtime dispatch maps.
 - Field order is written explicitly (`field: name (type)`); Lua table iteration
   is never an ordering contract.
 - No implicit numeric conversions; `cast(T, v)` is the only one.

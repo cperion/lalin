@@ -8,18 +8,22 @@ local csrc, errors = C.compile(function()
     }
 
     VM: classify (
-        cont(VM), -- halted
-        cont(VM), -- execute even instruction
-        cont(VM), -- execute odd instruction
-        cont(VM)  -- trapped
-    )(function(self, halted, even, odd, trapped)
+        cont: halted (VM),
+        cont: even (VM),
+        cont: odd (VM),
+        cont: trapped (VM)
+    )(function(p, c)
+        local self = p.self
+        local halted, even, odd, trapped =
+            c.halted, c.even, c.odd, c.trapped
         return if_(le(self.value, 0), trapped(self),
             if_(eq(self.value, 1), halted(self),
                 if_(le(self.budget, 0), trapped(self),
                     if_(eq(self.value % 2, 0), even(self), odd(self)))))
     end)
 
-    VM: even_instruction (cont(VM)) (function(self)
+    VM: even_instruction () (VM) (function(p)
+        local self = p.self
         return VM {
             value = self.value / 2,
             steps = self.steps + 1,
@@ -27,7 +31,8 @@ local csrc, errors = C.compile(function()
         }
     end)
 
-    VM: odd_instruction (cont(VM)) (function(self)
+    VM: odd_instruction () (VM) (function(p)
+        local self = p.self
         return VM {
             value = self.value * 3 + 1,
             steps = self.steps + 1,
@@ -36,14 +41,22 @@ local csrc, errors = C.compile(function()
     end)
 
     -- the VM is an alternative-exit protocol: a region, sealed once
-    local hailstone = region(i64, cont(i64), cont(i64))
-        (function(input, halted, trapped)
+    local hailstone = region(
+        param: input (i64),
+        cont: halted (i64),
+        cont: trapped (i64)
+    )(function(p, c)
+            local input = p.input
+            local halted, trapped = c.halted, c.trapped
             local dispatch, execute_even, execute_odd
 
             dispatch = block(VM)(function(state)
                 local on_halted  = function(done) return halted(done.steps) end
                 local on_trapped = function(stuck) return trapped(stuck.value) end
-                return state:classify()(on_halted, execute_even, execute_odd, on_trapped)
+                return state:classify() {
+                    halted = on_halted, even = execute_even,
+                    odd = execute_odd, trapped = on_trapped,
+                }
             end)
 
             execute_even = block(VM)(function(state)

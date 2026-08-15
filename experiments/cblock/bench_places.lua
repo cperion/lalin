@@ -14,8 +14,13 @@ local immutable, runtime_i = C.jit(function()
         field: a (f64), field: b (f64), field: c (f64), field: d (f64),
         field: e (f64), field: f (f64), field: g (f64), field: h (f64),
     }
-    local run = region(cont(f64), cont())(function(done, trapped)
-        local dispatch
+    local run = region(
+        cont: done (f64),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local done, trapped = c.done, c.trapped
+            local dispatch
         dispatch = block(State)(function(s)
             local next = State {
                 a = s.a + 1.0, b = s.b + 1.0, c = s.c + 1.0, d = s.d + 1.0,
@@ -37,8 +42,13 @@ local mutable, runtime_m = C.jit(function()
         field: a (f64), field: b (f64), field: c (f64), field: d (f64),
         field: e (f64), field: f (f64), field: g (f64), field: h (f64),
     }
-    local run = region(cont(f64), cont())(function(done, trapped)
-        local frame = var(State, State {
+    local run = region(
+        cont: done (f64),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local done, trapped = c.done, c.trapped
+            local frame = var(State, State {
             a = 0, b = 0, c = 0, d = 0, e = 0, f = 0, g = 0, h = 0 })
         local dispatch
         dispatch = block()(function()
@@ -64,8 +74,15 @@ end)
 
 -- let reuse inside one hot C loop
 local plain, runtime_p = C.jit(function()
-    local f = region(i64, cont(i64), cont())(function(n, done, trapped)
-        local dispatch
+    local f = region(
+        param: n (i64),
+        cont: done (i64),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local n = p.n
+            local done, trapped = c.done, c.trapped
+            local dispatch
         dispatch = block(i64, i64)(function(i, acc)
             local x = i * 3 + 1
             local y = i * 3 + 2
@@ -80,8 +97,15 @@ local plain, runtime_p = C.jit(function()
     return { machine = { f = f_fn } }
 end)
 local bound, runtime_b = C.jit(function()
-    local f = region(i64, cont(i64), cont())(function(n, done, trapped)
-        local dispatch
+    local f = region(
+        param: n (i64),
+        cont: done (i64),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local n = p.n
+            local done, trapped = c.done, c.trapped
+            local dispatch
         dispatch = block(i64, i64)(function(i, acc)
             local base = let(i * 3)
             return if_(lt(i, n),
@@ -118,23 +142,23 @@ assert(tonumber(pv) == tonumber(bv))
 
 local t_imm = measure(function()
     local exit, v = immutable.machine.run()
-    assert(exit == 1 and tonumber(v) == 32000000)
+    assert(exit == "done" and tonumber(v) == 32000000)
     return v
 end, rounds)
 local t_mut = measure(function()
     local exit, v = mutable.machine.run()
-    assert(exit == 1 and tonumber(v) == 32000000)
+    assert(exit == "done" and tonumber(v) == 32000000)
     return v
 end, rounds)
 
 local t_plain = measure(function()
     local exit, v = plain.machine.f(loops)
-    assert(exit == 1)
+    assert(exit == "done")
     return v
 end, rounds)
 local t_bound = measure(function()
     local exit, v = bound.machine.f(loops)
-    assert(exit == 1)
+    assert(exit == "done")
     return v
 end, rounds)
 

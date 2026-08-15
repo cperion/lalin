@@ -1,16 +1,18 @@
 local C = require("cblock")
 
 local csrc, errors = C.compile(function()
-    local host_add = extern(i32, i32, ret(i32))
-    local host_note = extern(i32, ret())
+    local host_add = extern
+        (param: a (i32), param: b (i32))
+        (i32)
+    local host_note = extern (param: value (i32)) (void)
 
-    local add_twice = func(i32, i32, ret(i32))(function(a, b)
-        return host_add(a, b) * 2
-    end)
+    local add_twice = func
+        (param: a (i32), param: b (i32))
+        (i32)
+        (function(p) return host_add(p.a, p.b) * 2 end)
 
-    local note = func(i32, ret())(function(value)
-        return host_note(value)
-    end)
+    local note = func (param: value (i32)) (void)
+        (function(p) return host_note(p.value) end)
 
     return {
         host_add = host_add, host_note = host_note,

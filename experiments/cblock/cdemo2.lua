@@ -1,41 +1,57 @@
 local C = require("cblock")
 
 local csrc, errors = C.compile(function()
-    local clamp = region(i32, i32, i32, cont(i32))(function(x, lo, hi)
-        return if_(lt(x, lo), lo, if_(gt(x, hi), hi, x))
+    local clamp = region(
+        param: x (i32),
+        param: lo (i32),
+        param: hi (i32)
+    )(i32)(function(p)
+        return if_(lt(p.x, p.lo), p.lo, if_(gt(p.x, p.hi), p.hi, p.x))
     end)
 
     local fib
-    fib = func(i32, ret(i32))(function(n)
-        return if_(lt(n, 2), n, fib(n - 1) + fib(n - 2))
+    fib = func (param: n (i32)) (i32) (function(p)
+        return if_(lt(p.n, 2), p.n, fib(p.n - 1) + fib(p.n - 2))
     end)
 
-    local max3 = func(f64, f64, f64, ret(f64))(function(a, b, c)
-        local ab = if_(lt(a, b), b, a)
-        return if_(lt(ab, c), c, ab)
-    end)
-
-    local demo = func(i32, i32, ret(i32))(function(x, y)
-        local largest = if_(lt(x, y), y, x)
-        local bounded = clamp(largest, 10, 100)
-        return if_(eq(y, 0), -1, bounded + x / y)
-    end)
-
-    local clamp_called = func(i32, ret(i32))(function(x)
-        return call(clamp)(x, 10, 100)
-    end)
-
-    -- alternatives belong to regions; funcs consume them into one ret
-    local checked_div = region(i32, i32, cont(i32), cont())
-        (function(a, d, ok, zero)
-            return if_(eq(d, 0), zero(), ok(a / d))
+    local max3 = func
+        (param: a (f64), param: b (f64), param: c (f64))
+        (f64)
+        (function(p)
+            local ab = if_(lt(p.a, p.b), p.b, p.a)
+            return if_(lt(ab, p.c), p.c, ab)
         end)
 
-    local divide = func(i32, i32, ret(i32))(function(a, d, ret)
-        local on_value = function(q) return ret(q) end
-        local on_zero  = function() return ret(-1) end
-        return checked_div(a, d)(on_value, on_zero)
+    local demo = func
+        (param: x (i32), param: y (i32))
+        (i32)
+        (function(p)
+            local largest = if_(lt(p.x, p.y), p.y, p.x)
+            local bounded = clamp(largest, 10, 100)
+            return if_(eq(p.y, 0), -1, bounded + p.x / p.y)
+        end)
+
+    local clamp_called = func (param: x (i32)) (i32)
+        (function(p) return call(clamp)(p.x, 10, 100) end)
+
+    -- alternatives belong to regions; funcs consume them into one return
+    local checked_div = region(
+        param: a (i32),
+        param: d (i32),
+        cont: divided (i32),
+        cont: zero ()
+    )(function(p, c)
+        return if_(eq(p.d, 0), c:zero(), c:divided(p.a / p.d))
     end)
+
+    local divide = func
+        (param: a (i32), param: d (i32))
+        (i32)
+        (function(p, r)
+            local on_value = function(q) return r(q) end
+            local on_zero  = function() return r(-1) end
+            return checked_div(p.a, p.d) { divided = on_value, zero = on_zero }
+        end)
 
     return {
         fib = fib, max3 = max3, demo = demo,

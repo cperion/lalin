@@ -2,8 +2,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-typedef struct physics_Vec2 physics_Vec2;
 typedef struct physics_Particle physics_Particle;
+typedef struct physics_Vec2 physics_Vec2;
 
 struct physics_Vec2 {
   double x;

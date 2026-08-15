@@ -10,13 +10,18 @@ A CBlock program is a Lua chunk run inside a staging environment. Declarations
 are ordinary Lua values:
 
 ```lua
-local clamp = region(i32, i32, i32, cont(i32))(function(x, lo, hi)
-    return if_(lt(x, lo), lo, if_(gt(x, hi), hi, x))
+local clamp = region(
+    param: x (i32),
+    param: lo (i32),
+    param: hi (i32)
+)(i32)(function(p)
+    return if_(lt(p.x, p.lo), p.lo, if_(gt(p.x, p.hi), p.hi, p.x))
 end)
 
-local add = func(i32, i32, ret(i32))(function(a, b)
-    return a + b
-end)
+local add = func
+    (param: a (i32), param: b (i32))
+    (i32)
+    (function(p) return p.a + p.b end)
 ```
 
 Three structural facts organize everything else:
@@ -32,7 +37,7 @@ Three structural facts organize everything else:
    ```lua
    return store(pc, pc + 1),
           store(acc, twice + cast(i64, pc)),
-          done(load(self.acc))
+          c:done(load(self.acc))
    ```
 
    `seq(...)` remains for branch positions (an `if_` arm, a handler body) where
@@ -85,48 +90,85 @@ with guidance to use `ptr()`. `view(T)` is the bounded-range alternative.
 
 ## 4. Signatures and outcomes
 
-Types occur in one signature list; the trailing outcomes are role-named:
+Callable inputs are named. Functions and externs curry their result type after
+the parameter product; region continuations remain control parameters:
 
 ```text
-ret(...)   the single default exit — the result or void
-cont(...)  one branch of a multi-outcome alternative
+param: name (type)    one named callable input
+func(params)(type)    one native function result type
+extern(params)(type)  one native external result type
+cont: name (...)      one named region continuation
 ```
 
-- `func` has exactly one trailing `ret(...)` — never `cont`. A func is a C ABI
-  seal.
-- `region` has one `cont(...)` (an inline single result) or two or more
-  (alternatives) — never a single `cont`, never mixed with `ret`.
-- Bodies bind their exits as trailing parameters, so `ret(v)` / `ok(v)` work as
-  control statements; plain `return v` stays the direct form.
+- `func`, `extern`, and direct `region` declare ordered named parameters, then
+  one curried result type. Use `void` when no value is returned.
+- Bodies receive their immutable parameter product as `p`; `p.name` projects an
+  input. Calls may use positional sugar or one exact named-input table.
+- Region continuations are parameters, not return types. An alternative region
+  has two or more uniquely named `cont: name (...)`; unnamed `cont(...)` is not
+  accepted — a direct region curries its result type instead.
+- A plural region body receives `(p, c)`. `c:name(value)` selects a continuation
+  and `c.name` forwards it.
+- A plural application consumes one exact named-handler table. Missing, extra,
+  or unknown names are errors; there is no positional handler form.
+- A func body can receive its return edge as optional second binder `r` when local
+  control or handlers must return explicitly. Plain `return value` is direct.
 
 ## 5. Callables
 
-### `func(...)`
+### `func(params)(type)`
 
 ```lua
-local add = func(i32, i32, ret(i32))(function(a, b)
-    return a + b
-end)
+local add = func
+    (param: a (i32), param: b (i32))
+    (i32)
+    (function(p) return p.a + p.b end)
 local sum = add(a, b)          -- symbolic call in staging
 ```
 
-Direct call, used without bindings. A void func: `func(i32, ret())(...)` — used
-as a statement (`host_note(v)`) or with `void_call(f, ...)` for mid-sequence
-effects. Exported funcs are public C ABI seals; unexported funcs are private
-`static` helpers.
+Direct calls need no bindings. A void function uses `void` in the result position
+and is used as a terminating statement, or through `void_call(f, ...)` in the
+middle of a statement sequence. Exported funcs are public C ABI seals; unexported
+funcs are private `static` helpers.
 
 ### `region(...)`
 
+A region has two shapes. A direct region curries its result type like a func:
+
 ```lua
-local checked_div = region(i32, i32, cont(i32), cont())
-    (function(a, d, succeeded, failed)
-        return if_(eq(d, 0), failed(), succeeded(a / d))
-    end)
+local clamp = region(
+    param: x (i32),
+    param: lo (i32),
+    param: hi (i32)
+)(i32)(function(p)
+    return if_(lt(p.x, p.lo), p.lo, if_(gt(p.x, p.hi), p.hi, p.x))
+end)
 ```
 
-Applying a region inlines its body into the caller. `call(region)` gives it one
-cached private C frame — use it when a region would recursively emit itself or
-when the computation needs a real frame:
+An alternative region declares its named continuations among its parameters:
+
+```lua
+local checked_div = region(
+    param: a (i32),
+    param: d (i32),
+    cont: divided (i32),
+    cont: zero ()
+)(function(p, c)
+    return if_(eq(p.d, 0), c:zero(), c:divided(p.a / p.d))
+end)
+
+return checked_div(a, d) {
+    divided = on_value,
+    zero = on_zero,
+}
+```
+
+Applying a region inlines its body into the caller. Named handler tables are
+staging-time control wiring, not runtime dispatch maps. `call(region)` gives the
+region one cached private C frame while retaining the same named call surface.
+
+Use `call(region)` when a region would recursively emit itself or when the
+computation needs a real frame:
 
 ```lua
 local bounded = clamp(x, 10, 100)      -- inline
@@ -138,29 +180,34 @@ A region cannot emit itself recursively; recursion must cross `call(region)`.
 ### `block(...)`
 
 ```lua
-local run = func(VM, ret(i64))(function(s, ret)
-    local dispatch, even, done
-    done = block(VM)(function(st) return ret(st.steps) end)
-    dispatch = block(VM)(function(state) return even(state) end)
-    even = block(VM)(function(state)
-        return dispatch(VM { value = state.value / 2, steps = state.steps + 1 })
+local run = func
+    (param: initial (VM))
+    (i64)
+    (function(p, r)
+        local dispatch, even, done
+        done = block(VM)(function(st) return r(st.steps) end)
+        dispatch = block(VM)(function(state) return even(state) end)
+        even = block(VM)(function(state)
+            return dispatch(VM { value = state.value / 2, steps = state.steps + 1 })
+        end)
+        local entry = block(VM)(function(st)
+            return if_(eq(st.value, 0), done(st), even(st))
+        end)
+        return entry(p.initial)
     end)
-    local go = block(VM)(function(st)
-        return if_(eq(st.value, 0), done(st), even(st))
-    end)
-    return go(s)
-end)
 ```
 
 A label in the current function frame. `block(...)` must be declared inside a
 func/region body; block operands are values, never outcomes. Jumping to a block
 is a C `goto`.
 
-### `extern(...)`
+### `extern(params)(type)`
 
 ```lua
-local host_add = extern(i32, i32, ret(i32))
-local host_note = extern(i32, ret())
+local host_add = extern
+    (param: a (i32), param: b (i32))
+    (i32)
+local host_note = extern (param: value (i32)) (void)
 ```
 
 A prototype with the same direct signature rule and no body. Must be exported.
@@ -177,7 +224,7 @@ A body's return values are its statement list; the last terminates. Statements:
 | void call | `void_call(f, ...)` |
 | control if | `if_(c, stmt, stmt)` or the chain `if_(c):then_(b):else_(b)` |
 | switch | `switch_(v):case_(k):then_(block):default(block)` |
-| jump | a block application `loop(x)`; an exit application `ret(v)`, `ok(v)`; a tail call `f(...)` |
+| jump | a block application `loop(x)`; a return-edge application `r(v)`; a continuation application `c:ok(v)`; a tail call `f(...)` |
 | seq | `seq(effect, ..., terminator)` — branch positions only |
 | pipeline store | `stream:store(dst)` |
 
@@ -199,7 +246,7 @@ expression, block/statement branches produce control:
 
 ```lua
 return if_(lt(x, lo), lo, if_(gt(x, hi), hi, x))   -- value
-return if_(eq(d, 0)):then_(failed()):else_(succeeded(a / d))  -- control
+return if_(eq(p.d, 0)):then_(c:failed()):else_(c:succeeded(p.a / p.d)) -- control
 ```
 
 `T { field = value, ... }` constructs a C compound value; typed struct
@@ -227,7 +274,7 @@ method:
 return vec.data:at(0):store(10),       -- member :at :store
        vec.n:store(2),                 -- member :store
        acc:store(cast(i64, vec.n:load())),  -- explicit conversion
-       done(acc:load())
+       c:done(acc:load())
 ```
 
 `at` and `deref` additionally exist on pointer expressions:
@@ -247,8 +294,11 @@ function Vec2:length_squared()          -- plain Lua macro (untyped)
     return self.x * self.x + self.y * self.y
 end
 
-Vec2: add (Vec2, cont(Vec2)) (function(self, other)   -- typed owned region
-    return Vec2 { x = self.x + other.x, y = self.y + other.y }
+Vec2: add (param: other (Vec2)) (Vec2) (function(p) -- typed owned region
+    return Vec2 {
+        x = p.self.x + p.other.x,
+        y = p.self.y + p.other.y,
+    }
 end)
 ```
 
@@ -256,8 +306,9 @@ end)
   iteration order.
 - `Vec2 { ... }` constructs a compound value; field selection is ordinary Lua
   lookup.
-- Owned regions receive the owner as their first structural operand (`self`);
-  they inline by default and may enter a private frame via `call(Vec2.add)`.
+- Owned regions receive the owner as the implicit named input `p.self`; declared
+  parameters are projected from the same product. They inline by default and may
+  enter a private frame via `call(Vec2.add)`.
 - Methods are not vtables or hidden receivers; plain Lua methods expand as
   staging macros, owned regions are structural.
 - Recursive value fields are invalid; recursive topology uses pointer fields.
@@ -293,14 +344,17 @@ usable as `ptr(u8)`. Lua constructs all static data.
 Streams describe scalar point computation and materialize one ordinary C loop:
 
 ```lua
-local dot = region(ptr(f64), ptr(f64), i64, cont(f64))
-    (function(xs, ys, n)
-        local each = range(0, n)
-        local products = zip(each:load(xs), each:load(ys)):map(function(x, y)
-            return x * y
-        end)
-        return products:reduce(add, 0.0)
+local dot = region(
+    param: xs (ptr(f64)),
+    param: ys (ptr(f64)),
+    param: n (i64)
+)(f64)(function(p)
+    local each = range(0, p.n)
+    local products = zip(each:load(p.xs), each:load(p.ys)):map(function(x, y)
+        return x * y
     end)
+    return products:reduce(add, 0.0)
+end)
 ```
 
 `load`, `zip`, and `map` allocate nothing; `store` and `reduce` materialize the
@@ -315,9 +369,10 @@ and caches the FFI pointers:
 
 ```lua
 local math = assert(C.jit(function()
-    local add = func(i32, i32, ret(i32))(function(a, b)
-        return a + b
-    end)
+    local add = func
+        (param: a (i32), param: b (i32))
+        (i32)
+        (function(p) return p.a + p.b end)
     return { add = add }
 end))
 
@@ -328,10 +383,12 @@ math:free()
 - Whole-module cook keeps ordinary calls among generated functions coherent;
   later invocations reuse the TCC state and cached pointers.
 - A direct function returns its C result (or nothing for void). A sealed
-  multi-exit region returns the selected exit ordinal and its carried value:
+  multi-exit region uses declaration-order integer ordinals internally, while
+  the Lua host API returns the selected exit name and its carried value:
 
   ```lua
   local exit, quotient = math.checked_div(84, 2)
+  assert(exit == "divided")
   ```
 
 - Exported struct types construct matching LuaJIT FFI values, so by-value

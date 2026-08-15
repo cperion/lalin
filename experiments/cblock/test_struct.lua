@@ -10,20 +10,23 @@ local csrc, errors = C.compile(function()
         return self.x * self.x + self.y * self.y
     end
 
-    Vec2: add (Vec2, cont(Vec2)) (function(self, other)
-        return Vec2 { x = self.x + other.x, y = self.y + other.y }
+    Vec2: add (param: other (Vec2)) (Vec2) (function(p)
+        return Vec2 {
+            x = p.self.x + p.other.x, y = p.self.y + p.other.y,
+        }
     end)
 
-    local add = func(Vec2, Vec2, ret(Vec2))(function(a, b)
-        return a:add(b)
-    end)
-    local add_called = func(Vec2, Vec2, ret(Vec2))(function(a, b)
-        return call(Vec2.add)(a, b)
-    end)
+    local add = func
+        (param: a (Vec2), param: b (Vec2))
+        (Vec2)
+        (function(p) return p.a:add(p.b) end)
+    local add_called = func
+        (param: a (Vec2), param: b (Vec2))
+        (Vec2)
+        (function(p) return call(Vec2.add)(p.a, p.b) end)
 
-    local length_squared = func(Vec2, ret(f64))(function(v)
-        return v:length_squared()
-    end)
+    local length_squared = func (param: v (Vec2)) (f64)
+        (function(p) return p.v:length_squared() end)
 
     return {
         geometry = { Vec2 = Vec2, add = add, add_called = add_called,

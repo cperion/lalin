@@ -2,12 +2,14 @@
 --
 -- Lua owns declaration names and namespaces. CBlock values are built with
 -- ordinary calls and exported by returning a Lua table from C.compile.
--- One trailing cont(T) is a direct result, cont() is void, and two or more
--- trailing cont values describe genuine alternative exits.
+-- Callable values receive immutable named parameter products. Functions and
+-- regions curry a native result type in the result position; regions may
+-- instead carry a named continuation protocol among their parameters, and
+-- those plural bodies receive the second binder `c`.
 --
--- Regions inline by default. call(region) lazily creates one private C seal.
--- Functions are C seals, blocks are local goto targets, and externs are plain
--- C prototypes. Pipelines fuse into scalar C loops for GCC to optimize.
+-- Functions and externs curry their native result type after named parameters.
+-- Regions inline by default; call(region) creates one private C seal. Blocks are
+-- local goto targets, and pipelines fuse into scalar C loops for GCC to optimize.
 local L = require("label")
 local unpack = unpack or table.unpack
 
@@ -75,16 +77,24 @@ local function array(T, N)
     end
     return A
 end
-local function cont(...)
+local function cont_value(exit_name, ...)
     assert(select("#", ...) <= 1, "cont carries zero or one value")
-    return { kind = "cont", types = { ... }, name = "cont" }
+    return { kind = "cont", types = { ... }, name = "cont", exit_name = exit_name }
 end
--- ret = the single default exit (the return). funcs declare exactly one;
--- regions declare cont(...) continuations instead.
-local function ret(...)
-    assert(select("#", ...) <= 1, "ret carries zero or one value")
-    return { kind = "ret", types = { ... }, name = "ret" }
+local cont
+local ContDecl_mt = {}
+ContDecl_mt.__call = function(_, ...) return cont_value(nil, ...) end
+ContDecl_mt.__index = function(_, name)
+    if type(name) ~= "string" or name:sub(1, 2) == "__" then return nil end
+    return function(receiver, ...)
+        if receiver ~= cont then
+            error(("cont.%s(...) -- use colon syntax: cont: %s (...)")
+                :format(name, name), 2)
+        end
+        return cont_value(name, ...)
+    end
 end
+cont = setmetatable({}, ContDecl_mt)
 
 --====================================================================
 -- places : lvalues that auto-load in expression contexts
@@ -96,8 +106,15 @@ end
 --====================================================================
 
 local Expr_mt, Cont_mt, Func_mt, Block_mt, Region_mt, InlineCont_mt,
-      Producer_mt, Stream_mt, Zip_mt, Struct_mt, StructExpr_mt =
-      {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
+      ParamBinder_mt, ExitBinder_mt, BoundExit_mt, Producer_mt, Stream_mt, Zip_mt,
+      Struct_mt, StructExpr_mt, Place_mt =
+      {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
+
+-- exact kind checks by metatable identity, never by field-name sniffing
+local function expr_value(v)
+    local mt = type(v) == "table" and getmetatable(v)
+    return mt == Expr_mt or mt == StructExpr_mt
+end
 local function E(k, t)
     t = t or {} t.kind = k
     local agg = t.type and (t.type.kind == "struct" or t.type.kind == "union")
@@ -106,7 +123,7 @@ end
 local function lift(v)
     if type(v) == "number" then return E("const", { value = v }) end
     if type(v) == "boolean" then return E("const", { value = v }) end
-    if type(v) == "table" and type(v.place) == "string" and not v.kind and not v.stmt then
+    if getmetatable(v) == Place_mt then
         return E("load", { place = v, type = v.type })
     end
     return v
@@ -116,7 +133,6 @@ local function zero_value(T)
     if T == f32 then return E("const", { value = "0.0f", type = T }) end
     return E("const", { value = 0, type = T })
 end
-local Place_mt = {}
 local function place_load(p)
     return E("load", { place = p, type = p.type })
 end
@@ -128,8 +144,8 @@ local function place_address(p)
     return E("address", { place = p, type = t })
 end
 local function place_at(base, index)
-    local array_lvalue = type(base) == "table" and base.place
-        and not base.kind and base.type and base.type.kind == "array"
+    local array_lvalue = getmetatable(base) == Place_mt
+        and base.type and base.type.kind == "array"
     if not array_lvalue then base = lift(base) end
     local T = type(base) == "table" and base.type or nil
     local elem = T and (T.kind == "ptr" and T.elem or T.kind == "array" and T.elem) or nil
@@ -186,7 +202,9 @@ Expr_mt.__index = function(e, name)
     return nil
 end
 
-for key, value in pairs(Expr_mt) do StructExpr_mt[key] = value end
+for key, value in pairs(Expr_mt) do
+    if key ~= "__index" then StructExpr_mt[key] = value end
+end
 StructExpr_mt.__index = function(e, key)
     local T = rawget(e, "type")
     local method = T and T.methods[key]
@@ -298,7 +316,119 @@ end
 
 local function continuation_value(x)
     local mt = type(x) == "table" and getmetatable(x)
-    return mt == Cont_mt or mt == InlineCont_mt
+    return mt == Cont_mt or mt == InlineCont_mt or mt == BoundExit_mt
+end
+
+local param_binder_data = setmetatable({}, { __mode = "k" })
+local exit_binder_data = setmetatable({}, { __mode = "k" })
+local bound_exit_data = setmetatable({}, { __mode = "k" })
+
+ParamBinder_mt.__index = function(binder, name)
+    local data = param_binder_data[binder]
+    local value = data.values[name]
+    if value ~= nil then return value end
+    error(("%s has no parameter named %s"):format(data.where, tostring(name)), 2)
+end
+ParamBinder_mt.__newindex = function()
+    error("parameter binders are immutable", 2)
+end
+
+local function param_binder(owner, values, where)
+    local binder = setmetatable({}, ParamBinder_mt)
+    local data = { values = {}, where = where }
+    param_binder_data[binder] = data
+    for i, name in ipairs(owner.param_names) do data.values[name] = values[i] end
+    return binder
+end
+
+local function region_arguments(owner, ...)
+    local n = select("#", ...)
+    if n == 1 then
+        local supplied = select(1, ...)
+        if type(supplied) == "table" and getmetatable(supplied) == nil then
+            local args, expected = {}, {}
+            for i, name in ipairs(owner.param_names) do
+                expected[name] = true
+                local value = supplied[name]
+                if value == nil then
+                    error(("%s is missing parameter %s")
+                        :format(owner.name, name), 3)
+                end
+                args[i] = value
+            end
+            for name in pairs(supplied) do
+                if not expected[name] then
+                    error(("%s has no parameter named %s")
+                        :format(owner.name, tostring(name)), 3)
+                end
+            end
+            return args
+        end
+    end
+    if n ~= #owner.params then
+        error(("%s takes %d operand(s), got %d")
+            :format(owner.name, #owner.params, n), 3)
+    end
+    return { ... }
+end
+BoundExit_mt.__call = function(exit, ...)
+    local data = bound_exit_data[exit]
+    local n = select("#", ...)
+    if n > 0 and select(1, ...) == data.owner then
+        return data.dest(select(2, ...))
+    end
+    return data.dest(...)
+end
+BoundExit_mt.__tostring = function(exit)
+    return "exit<" .. bound_exit_data[exit].name .. ">"
+end
+BoundExit_mt.__newindex = function()
+    error("bound exits are immutable", 2)
+end
+
+ExitBinder_mt.__index = function(binder, name)
+    local data = exit_binder_data[binder]
+    local exit = data.exits[name]
+    if exit then return exit end
+    error(("%s has no exit named %s"):format(data.where, tostring(name)), 2)
+end
+ExitBinder_mt.__newindex = function()
+    error("exit binders are immutable", 2)
+end
+
+local function exit_binder(conts, dests, where)
+    local binder = setmetatable({}, ExitBinder_mt)
+    local data = { exits = {}, where = where }
+    exit_binder_data[binder] = data
+    for j, c in ipairs(conts) do
+        local exit = setmetatable({}, BoundExit_mt)
+        bound_exit_data[exit] = {
+            owner = binder, dest = dests[j], name = c.name, types = c.types,
+        }
+        data.exits[c.name] = exit
+    end
+    return binder
+end
+
+local function named_handlers(owner, supplied, where)
+    if type(supplied) ~= "table" or getmetatable(supplied) ~= nil then
+        error(where .. " expects one plain named-handler table", 3)
+    end
+    local expected, handlers = {}, {}
+    for j, c in ipairs(owner.conts) do
+        expected[c.name] = true
+        local handler = supplied[c.name]
+        if handler == nil then
+            error(("%s is missing handler %s"):format(where, c.name), 3)
+        end
+        handlers[j] = handler
+    end
+    for name in pairs(supplied) do
+        if not expected[name] then
+            error(("%s has no exit named %s"):format(where, tostring(name)), 3)
+        end
+    end
+    return handlers
 end
 
 local function zero_handler(handler, where)
@@ -403,9 +533,7 @@ if_ = function(c, t, f)
     end
     assert(t ~= nil and f ~= nil, "if_ (condition, value, value | block, block)")
     local tv, fv = lift(t), lift(f)
-    if type(tv) == "table" and tv.kind and tv.kind ~= "block"
-       and not tv.stmt and type(fv) == "table" and fv.kind
-       and fv.kind ~= "block" and not fv.stmt then
+    if expr_value(tv) and expr_value(fv) then
         local T = tv.type and tv.type == fv.type and tv.type or nil
         return E("select", { cond = c, t = tv, f = fv, type = T })
     end
@@ -416,9 +544,14 @@ end
 
 M.nres = 0
 Func_mt.__call = function(f, ...)
+    local args, n
+    if f.named_params then
+        args, n = region_arguments(f, ...), #f.params
+    else
+        args, n = { ... }, select("#", ...)
+    end
     local host_runtime = rawget(f, "host_runtime")
-    if host_runtime then return host_runtime:invoke(f, ...) end
-    local args, n = { ... }, select("#", ...)
+    if host_runtime then return host_runtime:invoke(f, unpack(args, 1, n)) end
     if f.direct then
         if n ~= #f.params then
             error(("%s takes %d operand(s), got %d"):format(
@@ -433,20 +566,21 @@ Func_mt.__call = function(f, ...)
 
     local nval = #f.params
     if n ~= nval then
-        error(("%s takes %d operand(s) then %d exits; got %d")
-            :format(f.name, nval, #f.conts, n), 2)
+        error(("%s takes %d operand(s), got %d")
+            :format(f.name, nval, n), 2)
     end
     for i = 1, n do args[i] = lift(args[i]) end
     return function(...)
-        local handlers, nk, got = { ... }, #f.conts, select("#", ...)
-        if got ~= nk then
-            error(("%s call takes %d exit handler(s), got %d")
-                :format(f.name, nk, got), 2)
+        local got = select("#", ...)
+        if got ~= 1 then
+            error(("%s call expects one named-handler table, got %d values")
+                :format(f.name, got), 2)
         end
+        local handlers = named_handlers(f, select(1, ...), f.name .. " call")
         local ks = {}
-        for j = 1, nk do
-            local types, bind = f.conts[j].types, nil
-            local where = ("%s exit %d handler"):format(f.name, j)
+        for j, c in ipairs(f.conts) do
+            local types, bind = c.types, nil
+            local where = ("%s exit %s handler"):format(f.name, c.name)
             local body
             if #types == 0 then
                 body = zero_handler(handlers[j], where)
@@ -459,7 +593,7 @@ Func_mt.__call = function(f, ...)
                 end
                 body = as_block(handler(bind), where .. " body")
             end
-            ks[j] = { bind = bind, body = body }
+            ks[j] = { name = c.name, bind = bind, body = body }
         end
         return { stmt = "call", callee = f, args = args, ks = ks }
     end
@@ -471,12 +605,21 @@ local function source_env(parent)
     env.u8, env.u16, env.u32, env.u64 = u8, u16, u32, u64
     env.f32, env.f64, env.bool = f32, f64, bool
     env.usize, env.isize = usize, isize
-    env.ptr, env.cont, env.ret, env.lit, env.if_ = ptr, cont, ret, lift, if_
+    env.ptr, env.cont, env.void, env.lit, env.if_ = ptr, cont, void, lift, if_
     env.field = L.keyword {
         name = "field", env = env, binds = false,
         identity = function(name) return { kind = "field", name = name } end,
         build = function(member, T)
             assert(type(T) == "table" and T.kind, "field type must be a CBlock type")
+            member.type = T
+            return member
+        end,
+    }
+    env.param = L.keyword {
+        name = "param", env = env, binds = false,
+        identity = function(name) return { kind = "param", name = name } end,
+        build = function(member, T)
+            assert(type(T) == "table" and T.kind, "parameter type must be a CBlock type")
             member.type = T
             return member
         end,
@@ -492,11 +635,18 @@ local function source_env(parent)
         rawset(T, "declare_region", function(member_name, ...)
             assert(not T.methods[member_name],
                 "duplicate struct member: " .. member_name)
-            local complete = env.region(T, ...)
-            return function(body)
-                local owned = complete(body)
-                T.methods[member_name] = owned
-                return owned
+            local stage = env.region({ kind = "param", name = "self", type = T }, ...)
+            return function(second)
+                if type(second) == "function" then
+                    local owned = stage(second)
+                    T.methods[member_name] = owned
+                    return owned
+                end
+                return function(body)
+                    local owned = stage(second)(body)
+                    T.methods[member_name] = owned
+                    return owned
+                end
             end
         end)
         -- The explicit ordered field list is the physical C layout order,
@@ -708,10 +858,8 @@ local function source_env(parent)
     end
     env.void_call = function(f, ...)
         assert(f.direct and f.result == void, "void_call expects a void func")
-        local args, n = { ... }, select("#", ...)
-        if n ~= #f.params then
-            error(("%s takes %d operand(s), got %d"):format(f.name, #f.params, n), 2)
-        end
+        local args = region_arguments(f, ...)
+        local n = #f.params
         for i = 1, n do args[i] = lift(args[i]) end
         return { stmt = "call_void", callee = f, args = args }
     end
@@ -727,35 +875,56 @@ local function source_env(parent)
     
     local function set_signature(owner, ...)
         local signature, first = { ... }, nil
-        for i, T in ipairs(signature) do
-            assert(type(T) == "table" and T.kind,
-                owner.name .. ": signature entries must be types")
-            assert(T.kind ~= "array" and T.kind ~= "opaque",
-                owner.name .. ": " .. T.kind .. "s cannot cross a call boundary; use ptr()")
-            if T.kind == "cont" or T.kind == "ret" then
+        for i, entry in ipairs(signature) do
+            assert(type(entry) == "table" and entry.kind,
+                owner.name .. ": signature entries must be declarations or types")
+            if entry.kind == "cont" or entry.kind == "ret" then
                 first = first or i
             elseif first then
                 error(owner.name .. ": outcomes must follow the operands", 2)
             end
         end
         assert(first, owner.name .. ": signature needs a trailing outcome")
-        owner.params, owner.conts = {}, {}
-        for i = 1, first - 1 do owner.params[i] = signature[i] end
+        owner.params, owner.param_names, owner.param_by_name, owner.conts = {}, {}, {}, {}
+        for i = 1, first - 1 do
+            local entry, T = signature[i]
+            assert(entry.kind == "param",
+                owner.name .. ": operands must be named with param: name (type)")
+            assert(not owner.param_by_name[entry.name],
+                owner.name .. ": duplicate parameter name " .. entry.name)
+            T = entry.type
+            owner.param_names[i] = entry.name
+            owner.param_by_name[entry.name] = i
+            assert(type(T) == "table" and T.kind,
+                owner.name .. ": operand entries must contain CBlock types")
+            assert(T.kind ~= "array" and T.kind ~= "opaque",
+                owner.name .. ": " .. T.kind .. "s cannot cross a call boundary; use ptr()")
+            owner.params[i] = T
+        end
+        owner.named_params = true
         local outcomes = {}
         for j = 0, #signature - first do outcomes[j + 1] = signature[first + j] end
 
         if owner.kind == "func" then
-            -- a func is single-exit: exactly one ret(...), the return.
-            -- alternatives belong to regions, not funcs.
             assert(#outcomes == 1 and outcomes[1].kind == "ret",
-                owner.name .. ": func has exactly one ret(...) return; "
-                .. "alternative continuations belong to regions")
+                owner.name .. ": func has exactly one curried result type")
+            owner.named_exits = false
         else
-            -- a region declares cont(...) continuations (one result or many
-            -- alternatives), never ret.
-            for _, o in ipairs(outcomes) do
-                assert(o.kind == "cont",
-                    owner.name .. ": region outcomes are cont(...) continuations")
+            if #outcomes == 1 and outcomes[1].kind == "ret" then
+                owner.named_exits = false
+            else
+                local names = {}
+                for _, o in ipairs(outcomes) do
+                    assert(o.kind == "cont" and o.exit_name,
+                        owner.name .. ": continuations must be named with cont: name (...) ")
+                    assert(not names[o.exit_name],
+                        owner.name .. ": duplicate exit name " .. o.exit_name)
+                    names[o.exit_name] = true
+                end
+                assert(#outcomes >= 2,
+                    owner.name .. ": a single continuation is not a protocol; "
+                    .. "direct regions curry their result type instead")
+                owner.named_exits = true
             end
         end
 
@@ -763,28 +932,41 @@ local function source_env(parent)
             owner.direct = true
             owner.result = outcomes[1].types[1] or void
             if owner.kind == "func" then
-                -- the func body binds its single exit, so ret(v) works as a
-                -- control statement alongside plain `return v`.
                 owner.conts[1] = { index = #owner.params + 1, ord = 1,
                     types = outcomes[1].types }
             end
         else
             owner.direct, owner.result = false, nil
             for j, o in ipairs(outcomes) do
-                owner.conts[j] = { index = #owner.params + j, ord = j, types = o.types }
+                owner.conts[j] = { index = #owner.params + j, ord = j,
+                    name = o.exit_name, types = o.types }
             end
         end
     end
     
     local function parameter_refs(owner)
-        local refs = {}
-        for i, T in ipairs(owner.params) do
-            refs[i] = E("param", { index = i, type = T })
-        end
+        local refs, dests, values = {}, {}, {}
         for j, c in ipairs(owner.conts) do
-            refs[#owner.params + j] = setmetatable({
+            dests[j] = setmetatable({
                 kind = "contref", index = c.index, ord = c.ord, types = c.types,
             }, Cont_mt)
+        end
+        for i, T in ipairs(owner.params) do
+            values[i] = E("param", { index = i, type = T })
+        end
+        if owner.named_params then
+            refs[1] = param_binder(owner, values, owner.name .. " parameters")
+            if owner.named_exits then
+                refs[2] = exit_binder(owner.conts, dests, owner.name .. " body")
+            elseif owner.kind == "func" and dests[1] then
+                refs[2] = dests[1]
+            end
+        elseif owner.named_exits then
+            refs[1] = exit_binder(owner.conts, dests, owner.name .. " body")
+            for i, value in ipairs(values) do refs[i + 1] = value end
+        else
+            for i, value in ipairs(values) do refs[i] = value end
+            for j, dest in ipairs(dests) do refs[#owner.params + j] = dest end
         end
         return refs
     end
@@ -824,14 +1006,11 @@ local function source_env(parent)
     
     local function emit_region(r, ...)
         assert(current, "region " .. r.name .. " emitted outside any func")
-        local args, got = { ... }, select("#", ...)
+        local args = region_arguments(r, ...)
         local nval = #r.params
-        if got ~= nval then
-            error(("region %s takes %d operand(s), got %d")
-                :format(r.name, nval, got), 2)
-        end
-        for i = 1, got do args[i] = lift(args[i]) end
-        
+        for i = 1, nval do args[i] = lift(args[i]) end
+        local p = param_binder(r, args, "region " .. r.name .. " parameters")
+
         if r.direct then
             if r.emitting then
                 error("region " .. r.name ..
@@ -839,7 +1018,7 @@ local function source_env(parent)
             end
             r.emitting = true
             local ok, vals = pcall(function()
-                return { r.body_builder(unpack(args)) }
+                return { r.body_builder(p) }
             end)
             r.emitting = false
             if not ok then error(vals, 0) end
@@ -852,28 +1031,29 @@ local function source_env(parent)
             end
             return as_block_list(vals, "region " .. r.name .. " body")
         end
-        
+
         return function(...)
-            local handlers, nh = { ... }, select("#", ...)
-            if nh ~= #r.conts then
-                error(("region %s takes %d exit handler(s), got %d")
-                    :format(r.name, #r.conts, nh), 2)
+            local got = select("#", ...)
+            if got ~= 1 then
+                error(("region %s expects one named-handler table, got %d values")
+                    :format(r.name, got), 2)
             end
+            local handlers = named_handlers(r, select(1, ...), "region " .. r.name)
             if r.emitting then
                 error("region " .. r.name ..
                     " recursively emits itself; use call(region)", 2)
             end
-            local refs = {}
-            for i = 1, nval do refs[i] = args[i] end
+            local dests = {}
             for j, c in ipairs(r.conts) do
-                refs[nval + j] = setmetatable({
+                dests[j] = setmetatable({
                     types = c.types, handler = handlers[j],
-                    where = ("region %s exit %d"):format(r.name, j),
+                    where = ("region %s exit %s"):format(r.name, c.name),
                 }, InlineCont_mt)
             end
+            local c = exit_binder(r.conts, dests, "region " .. r.name .. " body")
             r.emitting = true
             local ok, vals = pcall(function()
-                return { r.body_builder(unpack(refs)) }
+                return { r.body_builder(p, c) }
             end)
             r.emitting = false
             if not ok then error(vals, 0) end
@@ -885,9 +1065,10 @@ local function source_env(parent)
         if r.sealed then return r.sealed end
         local f = setmetatable({
             kind = "func", name = generated("region"), source_name = r.name,
-            internal = true, params = r.params, conts = r.conts,
-            direct = r.direct, result = r.result, blocks = {}, vars = {},
-            body_builder = r.body_builder,
+            internal = true, params = r.params, param_names = r.param_names,
+            param_by_name = r.param_by_name, named_params = true, conts = r.conts,
+            direct = r.direct, result = r.result, named_exits = r.named_exits,
+            blocks = {}, vars = {}, body_builder = r.body_builder,
         }, Func_mt)
         r.sealed = f
         functions[#functions + 1] = f
@@ -902,30 +1083,67 @@ local function source_env(parent)
         return seal_region(r)
     end
     
+    local function return_decl(T, where)
+        assert(type(T) == "table" and T.kind and T.kind ~= "param"
+            and T.kind ~= "cont" and T.kind ~= "ret",
+            where .. ": result position expects one CBlock type")
+        assert(T.kind ~= "array" and T.kind ~= "opaque",
+            where .. ": " .. T.kind .. "s cannot be returned by value")
+        return { kind = "ret", types = T == void and {} or { T } }
+    end
+
     env.region = function(...)
         assert(not current, "region declared inside a func")
+        local parameters = { ... }
+        local has_conts = false
+        for _, entry in ipairs(parameters) do
+            if type(entry) == "table" and entry.kind == "cont" then
+                has_conts = true
+                break
+            end
+        end
         local r = setmetatable({
             kind = "region", name = generated("region"), emit = emit_region,
             vars = {},
         }, Region_mt)
-        set_signature(r, ...)
-        return function(body)
-            assert(type(body) == "function", "region body must be a function")
-            r.body_builder = body
-            return r
+        if has_conts then
+            set_signature(r, unpack(parameters))
+            return function(body)
+                assert(type(body) == "function", "region body must be a function")
+                r.body_builder = body
+                return r
+            end
+        end
+        return function(result)
+            local signature = {}
+            for i, entry in ipairs(parameters) do signature[i] = entry end
+            signature[#signature + 1] = return_decl(result, "region")
+            set_signature(r, unpack(signature))
+            return function(body)
+                assert(type(body) == "function", "region body must be a function")
+                r.body_builder = body
+                return r
+            end
         end
     end
     
+
     env.extern = function(...)
         assert(not current, "extern declared inside a func")
-        local f = setmetatable({
-            kind = "func", external = true, name = generated("extern"),
-            params = {}, conts = {}, blocks = {}, vars = {},
-        }, Func_mt)
-        set_signature(f, ...)
-        f.nparams = #f.params
-        externs[#externs + 1] = f
-        return f
+        local parameters = { ... }
+        return function(result)
+            local f = setmetatable({
+                kind = "func", external = true, name = generated("extern"),
+                params = {}, conts = {}, blocks = {}, vars = {},
+            }, Func_mt)
+            local signature = {}
+            for i, entry in ipairs(parameters) do signature[i] = entry end
+            signature[#signature + 1] = return_decl(result, "extern")
+            set_signature(f, unpack(signature))
+            f.nparams = #f.params
+            externs[#externs + 1] = f
+            return f
+        end
     end
     
     env.block = function(...)
@@ -947,16 +1165,22 @@ local function source_env(parent)
     
     env.func = function(...)
         assert(not current, "func declared inside a func")
-        local f = setmetatable({
-            kind = "func", name = generated("func"), internal = true,
-            params = {}, conts = {}, blocks = {}, vars = {},
-        }, Func_mt)
-        set_signature(f, ...)
-        functions[#functions + 1] = f
-        return function(body)
-            assert(type(body) == "function", "func body must be a function")
-            f.body_builder = body
-            return f
+        local parameters = { ... }
+        return function(result)
+            local f = setmetatable({
+                kind = "func", name = generated("func"), internal = true,
+                params = {}, conts = {}, blocks = {}, vars = {},
+            }, Func_mt)
+            local signature = {}
+            for i, entry in ipairs(parameters) do signature[i] = entry end
+            signature[#signature + 1] = return_decl(result, "func")
+            set_signature(f, unpack(signature))
+            functions[#functions + 1] = f
+            return function(body)
+                assert(type(body) == "function", "func body must be a function")
+                f.body_builder = body
+                return f
+            end
         end
     end
     
@@ -2175,9 +2399,10 @@ function Runtime:invoke(f, ...)
         end
     end
     local ordinal = tonumber(pointer(unpack(arguments, 1, #arguments)))
+    local exit = assert(f.conts[ordinal], "native function returned an invalid exit ordinal")
     local output = outputs[ordinal]
-    if output then return ordinal, output[0] end
-    return ordinal
+    if output then return exit.name, output[0] end
+    return exit.name
 end
 
 function Runtime:attach(root)

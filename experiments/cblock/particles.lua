@@ -6,12 +6,14 @@ local csrc, errors = C.compile(function()
         field: y (f64),
     }
 
-    Vec2: add (Vec2, cont(Vec2)) (function(self, other)
-        return Vec2 { x = self.x + other.x, y = self.y + other.y }
+    Vec2: add (param: other (Vec2)) (Vec2) (function(p)
+        return Vec2 {
+            x = p.self.x + p.other.x, y = p.self.y + p.other.y,
+        }
     end)
 
-    Vec2: scale (f64, cont(Vec2)) (function(self, a)
-        return Vec2 { x = self.x * a, y = self.y * a }
+    Vec2: scale (param: factor (f64)) (Vec2) (function(p)
+        return Vec2 { x = p.self.x * p.factor, y = p.self.y * p.factor }
     end)
 
     function Vec2:length_squared()
@@ -24,11 +26,11 @@ local csrc, errors = C.compile(function()
         field: mass (f64),
     }
 
-    Particle: step (f64, cont(Particle)) (function(self, dt)
+    Particle: step (param: dt (f64)) (Particle) (function(p)
         return Particle {
-            position = self.position:add(self.velocity:scale(dt)),
-            velocity = self.velocity,
-            mass = self.mass,
+            position = p.self.position:add(p.self.velocity:scale(p.dt)),
+            velocity = p.self.velocity,
+            mass = p.self.mass,
         }
     end)
 
@@ -36,19 +38,24 @@ local csrc, errors = C.compile(function()
         return 0.5 * self.mass * self.velocity:length_squared()
     end
 
-    local step_all = func(ptr(Particle), ptr(Particle), i64, f64, ret())
-        (function(dst, src, n, dt)
-            local each = range(0, n)
-            return each:load(src):map(function(p)
-                return p:step(dt)
-            end):store(dst)
+    local step_all = func
+        (param: dst (ptr(Particle)), param: src (ptr(Particle)),
+         param: n (i64), param: dt (f64))
+        (void)
+        (function(p)
+            local each = range(0, p.n)
+            return each:load(p.src):map(function(particle)
+                return particle:step(p.dt)
+            end):store(p.dst)
         end)
 
-    local total_energy = func(ptr(Particle), i64, ret(f64))
-        (function(particles, n)
-            local each = range(0, n)
-            return each:load(particles):map(function(p)
-                return p:energy()
+    local total_energy = func
+        (param: particles (ptr(Particle)), param: n (i64))
+        (f64)
+        (function(p)
+            local each = range(0, p.n)
+            return each:load(p.particles):map(function(particle)
+                return particle:energy()
             end):reduce(add, 0.0)
         end)
 

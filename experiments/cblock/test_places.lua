@@ -9,8 +9,14 @@ local csrc, errors = C.compile(function()
     }
 
     -- step: mutates a Frame through a pointer, using var/seq/let/places.
-    local step = region(ptr(Frame), cont(i64), cont())
-        (function(frame_ptr, done, trapped)
+    local step = region(
+        param: frame_ptr (ptr(Frame)),
+        cont: done (i64),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local frame_ptr = p.frame_ptr
+            local done, trapped = c.done, c.trapped
             local self = var(Frame, load(deref(frame_ptr)))
             local pc = var(i32, self.pc)
             local acc = var(i64, self.acc)
@@ -25,12 +31,22 @@ local csrc, errors = C.compile(function()
                    done(self.acc:load())
         end)
 
-    local bitwork = func(u32, u32, ret(u32))(function(a, b)
-        return bit_or(shift_left(bit_and(a, 0xFF), 8), b)
-    end)
+    local bitwork = func
+        (param: a (u32), param: b (u32))
+        (u32)
+        (function(p)
+            return bit_or(shift_left(bit_and(p.a, 0xFF), 8), p.b)
+        end)
 
-    local typed = region(i32, cont(u64), cont(i32), cont(f64), cont(usize))
-        (function(selector, u, i, f, s)
+    local typed = region(
+        param: selector (i32),
+        cont: unsigned (u64),
+        cont: integer (i32),
+        cont: floating (f64),
+        cont: size (usize)
+    )(function(p, c)
+            local selector = p.selector
+            local u, i, f, s = c.unsigned, c.integer, c.floating, c.size
             return if_(eq(selector, 0), u(cast(u64, 7)),
                 if_(eq(selector, 1), i(cast(i32, 3)),
                     if_(eq(selector, 2), f(cast(f64, 2.5)),
@@ -89,8 +105,14 @@ local module, runtime = C.jit(function()
         field: acc (i64),
     }
 
-    local step = region(Frame, cont(Frame), cont())
-        (function(frame, done, trapped)
+    local step = region(
+        param: frame (Frame),
+        cont: done (Frame),
+        cont: trapped ()
+    )
+        (function(p, c)
+            local frame = p.frame
+            local done, trapped = c.done, c.trapped
             local self = var(Frame, frame)
             local pc = var(i32, self.pc)
             local acc = var(i64, self.acc)
@@ -101,9 +123,12 @@ local module, runtime = C.jit(function()
                    done(load(self))
         end)
 
-    local bitwork = func(u32, u32, ret(u32))(function(a, b)
-        return bit_or(shift_left(bit_and(a, 0xFF), 8), b)
-    end)
+    local bitwork = func
+        (param: a (u32), param: b (u32))
+        (u32)
+        (function(p)
+            return bit_or(shift_left(bit_and(p.a, 0xFF), 8), p.b)
+        end)
 
     local step_fn = call(step)
 
@@ -115,7 +140,7 @@ assert(module, runtime)
 
 local frame = module.machine.Frame { pc = 10, acc = 100 }
 local exit, stepped = module.machine.step(frame)
-assert(exit == 1)
+assert(exit == "done")
 assert(tonumber(stepped.pc) == 11)
 assert(tonumber(stepped.acc) == 211)
 
